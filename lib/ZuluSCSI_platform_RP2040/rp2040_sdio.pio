@@ -20,8 +20,8 @@
 ;
 ; Because data is written on the falling edge and read on the rising
 ; edge, it is preferrable to have a long 0 state and short 1 state.
-;.define CLKDIV 3
-.define CLKDIV 5
+;.define CLKDIV 5
+.define CLKDIV 3
 .define D0 ((CLKDIV + 1) / 2 - 1)
 .define D1 (CLKDIV/2 - 1)
 .define SDIO_CLK_GPIO 18
@@ -40,7 +40,7 @@
 ; Word 0 bits 31-24: Number of bits in command minus one (usually 47)
 ; Word 0 bits 23-00: First 24 bits of the command packet, shifted out MSB first
 ; Word 1 bits 31-08: Last 24 bits of the command packet, shifted out MSB first
-; Word 1 bits 07-00: Number of bits in response minus one (usually 47), or 0 if no response
+; Word 1 bits 07-00: Number of bits in response minus two (usually 46), or 0 if no response
 ;
 ; The response is put on RX fifo, starting with the MSB.
 ; Partial last word will be padded with zero bits at the top.
@@ -70,12 +70,12 @@ send_cmd:
 prep_resp:
     set pindirs, 0      side 0 [D0]    ; Set SDIO_CMD as input
     out X, 8            side 1 [D1]    ; Get number of bits in response
-    nop                 side 0 [D0]    ; For clock alignment
-    jmp !X resp_done    side 1 [D1]    ; Check if we expect a response
+    jmp !X resp_loop    side 0 [D0]    ; Check if we expect a response
 
 wait_resp:
-    nop                  side 0 [D0]
-    jmp PIN wait_resp    side 1 [D1]    ; Loop until SDIO_CMD = 0
+    nop                 side 1 [D1]
+    jmp PIN wait_resp   side 0 [D0]    ; Loop until SDIO_CMD = 0
+    in NULL, 1          side 1 [D1]    ; Shift start bit to ISR
 
     ; Note: input bits are read at the same time as we write CLK=0.
     ; Because the host controls the clock, the read happens before
@@ -83,6 +83,8 @@ wait_resp:
     ; for the data bit to settle.
 read_resp:
     in PINS, 1          side 0 [D0]    ; Read input data bit
+
+resp_loop:
     jmp X-- read_resp   side 1 [D1]    ; Loop to receive all data bits
 
 resp_done:
@@ -102,7 +104,7 @@ resp_done:
 wait_start:
     mov X, Y                               ; Reinitialize number of nibbles to receive
     wait 0 pin 0                           ; Wait for zero state on D0
-    wait 1 gpio SDIO_CLK_GPIO  [CLKDIV-1]  ; Wait for rising edge and then whole clock cycle
+    wait 1 gpio SDIO_CLK_GPIO  [D1]        ; Wait for rising edge and then half clock cycle
 
 rx_data:
     in PINS, 4                 [CLKDIV-2]  ; Read nibble
@@ -126,7 +128,7 @@ rx_data:
 
 .program sdio_data_tx
     wait 0 gpio SDIO_CLK_GPIO  
-    wait 1 gpio SDIO_CLK_GPIO  [CLKDIV + D1 - 1]; Synchronize so that write occurs on falling edge
+    wait 1 gpio SDIO_CLK_GPIO  [D1]    ; Synchronize so that write occurs on falling edge
 
 tx_loop:
     out PINS, 4                [D0]    ; Write nibble and wait for whole clock cycle

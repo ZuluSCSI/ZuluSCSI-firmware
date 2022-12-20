@@ -149,10 +149,10 @@ static void sdio_send_command(uint8_t command, uint32_t arg, uint8_t response_bi
         (((arg >> 0) & 0xFF) << 16) | // LSB byte of argument
         ( 1 << 8); // End bit
 
-    // Set number of bits in response minus one, or leave at 0 if no response expected
+    // Set number of bits in response minus two, or leave at 0 if no response expected
     if (response_bits)
     {
-        word1 |= ((response_bits - 1) << 0);
+        word1 |= ((response_bits - 2) << 0);
     }
 
     // Calculate checksum in the order that the bytes will be transmitted (big-endian)
@@ -214,7 +214,8 @@ sdio_status_t rp2040_sdio_command_R1(uint8_t command, uint32_t arg, uint32_t *re
         uint8_t actual_crc = ((resp1 >> 0) & 0xFE);
         if (crc != actual_crc)
         {
-            azdbg("rp2040_sdio_command_R1(", (int)command, "): CRC error, calculated ", crc, " packet has ", actual_crc);
+            azdbg("rp2040_sdio_command_R1(", (int)command, "): CRC error, calculated ", crc, " packet has ", actual_crc,
+                " (data ", resp0, " ", resp1, ")");
             return SDIO_ERR_RESPONSE_CRC;
         }
 

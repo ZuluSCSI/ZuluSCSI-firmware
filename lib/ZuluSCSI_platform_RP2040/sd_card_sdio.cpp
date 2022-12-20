@@ -69,7 +69,7 @@ bool SdioCard::begin(SdioConfig sdioConfig)
     sdio_status_t status;
     
     // Initialize at 1 MHz clock speed
-    rp2040_sdio_init(25);
+    rp2040_sdio_init(42);
 
     // Establish initial connection with the card
     for (int retries = 0; retries < 5; retries++)
@@ -146,9 +146,21 @@ bool SdioCard::begin(SdioConfig sdioConfig)
         return false;
     }
 
-    // Increase to 25 MHz clock rate
+    // Check whether card supports high-speed mode
     rp2040_sdio_init(1);
-
+            
+    // Test that reading works
+    uint8_t dummy[512];
+    if (!readSector(0, dummy))
+    {
+        azlog("SD card communication at 42 MHz failed, trying 21 MHz");
+        rp2040_sdio_init(2);
+    }
+    else
+    {
+        azlog("SDIO bus speed: 42 MHz");
+    }
+    
     return true;
 }
 
