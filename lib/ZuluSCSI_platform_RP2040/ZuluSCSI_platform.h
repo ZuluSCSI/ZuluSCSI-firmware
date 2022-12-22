@@ -65,6 +65,11 @@ void azplatform_reset_watchdog();
 typedef void (*sd_callback_t)(uint32_t bytes_complete);
 void azplatform_set_sd_callback(sd_callback_t func, const uint8_t *buffer);
 
+// Optional write cache (implemented by enabling SD card cache)
+#define PLATFORM_HAS_CACHE 1
+bool azplatform_set_cache_enabled(bool enabled);
+bool azplatform_flush_cache();
+
 // Reprogram firmware in main program area.
 #ifndef RP2040_DISABLE_BOOTLOADER
 #define AZPLATFORM_BOOTLOADER_SIZE (128 * 1024)

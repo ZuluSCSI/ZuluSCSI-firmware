@@ -312,8 +312,24 @@ bool SdioCard::erase(uint32_t firstSector, uint32_t lastSector)
 }
 
 bool SdioCard::cardCMD6(uint32_t arg, uint8_t* status) {
-    azlog("SdioCard::cardCMD6() not implemented");
-    return false;
+    uint32_t reply;
+    if (!checkReturnOk(rp2040_sdio_command_R1(CMD6, arg, &reply)))
+    {
+        return false;
+    }
+
+    // Read the 512-bit response
+    rp2040_sdio_rx_start(status, 1, 64);
+    do {
+        g_sdio_error = rp2040_sdio_rx_poll();
+    } while (g_sdio_error == SDIO_BUSY);
+
+    if (g_sdio_error != SDIO_OK)
+    {
+        azlog("SdioCard::cardCMD6: Failed to get response, ", (int)g_sdio_error);
+    }
+
+    return g_sdio_error == SDIO_OK;
 }
 
 bool SdioCard::readSCR(scr_t* scr) {
@@ -505,5 +521,40 @@ void sdCsWrite(SdCsPin_t pin, bool level) {}
 
 // SDIO configuration for main program
 SdioConfig g_sd_sdio_config(DMA_SDIO);
+
+bool azplatform_set_cache_enabled(bool enabled)
+{
+    // Read SD_STATUS register with ACMD13
+    uint32_t sd_status[16] = {0};
+    uint32_t reply;
+    if (!checkReturnOk(rp2040_sdio_command_R1(CMD55, g_sdio_rca, &reply)) ||
+        !checkReturnOk(rp2040_sdio_command_R1(ACMD13, 0, &reply)))
+    {
+        return false;
+    }
+    
+    // Read the 512-bit response
+    rp2040_sdio_rx_start((uint8_t*)sd_status, 1, 64);
+    do {
+        g_sdio_error = rp2040_sdio_rx_poll();
+    } while (g_sdio_error == SDIO_BUSY);
+
+    if (g_sdio_error != SDIO_OK)
+    {
+        azlog("azplatform_set_cache_enabled: Failed to get response to ACMD13, ", (int)g_sdio_error);
+        return false;
+    }
+
+    azlog("Performance enhance: ", sd_status[0], " ",
+        sd_status[1], " ", sd_status[2], " ",
+        sd_status[3], " ", sd_status[4], " ",
+        sd_status[5]);
+    return false;
+}
+
+bool azplatform_flush_cache()
+{
+    return false;
+}
 
 #endif

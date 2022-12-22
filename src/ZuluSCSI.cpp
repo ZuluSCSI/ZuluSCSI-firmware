@@ -128,6 +128,8 @@ void init_logfile()
   first_open_after_boot = false;
 }
 
+static uint8_t cmd6data[64] __attribute__((aligned(4)));
+  
 void print_sd_info()
 {
   uint64_t size = (uint64_t)SD.vol()->clusterCount() * SD.vol()->bytesPerCluster();
@@ -144,6 +146,12 @@ void print_sd_info()
     azlog("SD Name: ", sdname);
     azlog("SD Date: ", (int)sd_cid.mdtMonth(), "/", sd_cid.mdtYear());
     azlog("SD Serial: ", sd_cid.psn());
+  }
+
+  if (SD.card()->cardCMD6(0, cmd6data))
+  {
+    azlog("SD Power: max ", (int)((cmd6data[0] << 8) | cmd6data[1]), " mA");
+    azlog("SD Modes: ", cmd6data[13]);
   }
 }
 
@@ -466,6 +474,9 @@ static void reinitSCSI()
   scsiDiskInit();
   scsiInit();
   
+#ifdef PLATFORM_HAS_CACHE
+  azplatform_set_cache_enabled(true);
+#endif
 }
 
 extern "C" void zuluscsi_setup(void)

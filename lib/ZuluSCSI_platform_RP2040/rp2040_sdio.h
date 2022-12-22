@@ -17,9 +17,6 @@ enum sdio_status_t {
     SDIO_ERR_WRITE_FAIL = 8,       // Card reports write failure
 };
 
-#define SDIO_BLOCK_SIZE 512
-#define SDIO_WORDS_PER_BLOCK 128
-
 // Execute a command that has 48-bit reply (response types R1, R6, R7)
 // If response is NULL, does not wait for reply.
 sdio_status_t rp2040_sdio_command_R1(uint8_t command, uint32_t arg, uint32_t *response);
@@ -32,15 +29,14 @@ sdio_status_t rp2040_sdio_command_R2(uint8_t command, uint32_t arg, uint8_t *res
 sdio_status_t rp2040_sdio_command_R3(uint8_t command, uint32_t arg, uint32_t *response);
 
 // Start transferring data from SD card to memory buffer
-// Transfer block size is always 512 bytes.
-sdio_status_t rp2040_sdio_rx_start(uint8_t *buffer, uint32_t num_blocks);
+sdio_status_t rp2040_sdio_rx_start(uint8_t *buffer, uint32_t num_blocks, uint32_t blocksize = 512);
 
 // Check if reception is complete
 // Returns SDIO_BUSY while transferring, SDIO_OK when done and error on failure.
 sdio_status_t rp2040_sdio_rx_poll(uint32_t *bytes_complete = nullptr);
 
 // Start transferring data from memory to SD card
-sdio_status_t rp2040_sdio_tx_start(const uint8_t *buffer, uint32_t num_blocks);
+sdio_status_t rp2040_sdio_tx_start(const uint8_t *buffer, uint32_t num_blocks, uint32_t blocksize = 512);
 
 // Check if transmission is complete
 sdio_status_t rp2040_sdio_tx_poll(uint32_t *bytes_complete = nullptr);
