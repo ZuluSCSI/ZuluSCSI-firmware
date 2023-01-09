@@ -522,6 +522,64 @@ void sdCsWrite(SdCsPin_t pin, bool level) {}
 // SDIO configuration for main program
 SdioConfig g_sd_sdio_config(DMA_SDIO);
 
+static bool sdio_read_ext_register(int m_io, int func_no, uint32_t addr, uint32_t length, uint8_t *dest)
+{
+    uint32_t read_arg = ((uint32_t)(m_io & 1) << 31) |
+                         ((uint32_t)(func_no & 15) << 27) |
+                         ((uint32_t)(addr & 0x1FFFF) << 9) |
+                         ((uint32_t)((length - 1) & 511));
+    uint32_t reply;
+    if (!checkReturnOk(rp2040_sdio_command_R1(16, 512, &reply)) || // SET_BLOCKLEN
+        !checkReturnOk(rp2040_sdio_rx_start((uint8_t*)g_sdio_dma_buf, 1)) || // Prepare for reception
+        !checkReturnOk(rp2040_sdio_command_R1(48, read_arg, &reply))) // Read extension register
+    {
+        return false;
+    }
+
+    do {
+        uint32_t bytes_done;
+        g_sdio_error = rp2040_sdio_rx_poll(&bytes_done);
+    } while (g_sdio_error == SDIO_BUSY);
+
+    if (g_sdio_error != SDIO_OK)
+    {
+        azlog("sdio_read_ext_register(", addr, ") failed: ", (int)g_sdio_error);
+    }
+
+    memcpy(dest, g_sdio_dma_buf, length);
+    return g_sdio_error == SDIO_OK;
+}
+
+static bool sdio_write_ext_register_byte(int m_io, int func_no, uint32_t addr, uint8_t byte_val)
+{
+    g_sdio_dma_buf[0] = byte_val;
+    
+    uint32_t write_arg = ((uint32_t)(m_io & 1) << 31) |
+                         ((uint32_t)(func_no & 15) << 27) |
+                         ((uint32_t)(addr & 0x1FFFF) << 9);
+    uint32_t reply;
+
+    if (!checkReturnOk(rp2040_sdio_command_R1(16, 512, &reply)) || // SET_BLOCKLEN
+        !checkReturnOk(rp2040_sdio_command_R1(49, write_arg, &reply)) || // Write extension register
+        !checkReturnOk(rp2040_sdio_tx_start((uint8_t*)g_sdio_dma_buf, 1))) // Start transmission
+    {
+        azlog("sdio_write_ext_register_byte(", addr, ") failed: ", (int)g_sdio_error);
+        return false;
+    }
+
+    do {
+        uint32_t bytes_done;
+        g_sdio_error = rp2040_sdio_tx_poll(&bytes_done);
+    } while (g_sdio_error == SDIO_BUSY);
+
+    if (g_sdio_error != SDIO_OK)
+    {
+        azlog("sdio_write_ext_register_byte(", addr, ") failed: ", (int)g_sdio_error);
+    }
+
+    return g_sdio_error == SDIO_OK;
+}
+
 bool azplatform_set_cache_enabled(bool enabled)
 {
     // Read SD_STATUS register with ACMD13
@@ -545,16 +603,35 @@ bool azplatform_set_cache_enabled(bool enabled)
         return false;
     }
 
-    azlog("Performance enhance: ", sd_status[0], " ",
-        sd_status[1], " ", sd_status[2], " ",
-        sd_status[3], " ", sd_status[4], " ",
-        sd_status[5]);
+    bool cache_support = (sd_status[5] >> 18) & 1;
+    int cqueue_support = (sd_status[5] >> 19) & 31;
+
+    azlog("SD card cache support: ", (int)cache_support, ", command queue support:", cqueue_support);
+
+    if (cache_support)
+    {
+        uint8_t page_hdr[8];
+        sdio_read_ext_register(0, 2, 0, sizeof(page_hdr), page_hdr);
+        azlog("Performance enhancement page hdr: ", bytearray(page_hdr, 8));
+
+        // Enable cache by writing byte 260, refer to SDIO spec "Table 5-30 : Performance Enhancement Register Set"
+        if (sdio_write_ext_register_byte(0, 2, 260, enabled))
+        {
+            uint8_t state;
+            sdio_read_ext_register(0, 2, 260, 1, &state);
+
+            azlog("SD card cache state: ", state);
+            return true;
+        }
+    }
+
     return false;
 }
 
 bool azplatform_flush_cache()
 {
-    return false;
+    // Flush cache by writing byte 261
+    return sdio_write_ext_register_byte(0, 2, 261, 1);
 }
 
 #endif
