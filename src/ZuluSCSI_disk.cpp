@@ -1239,7 +1239,7 @@ static int doTestUnitReady()
         // Simulate a "close" for next time the host polls.
         checkNextCDImage();
     }
-    else if (unlikely(!(blockDev.state & DISK_PRESENT)))
+    else if (unlikely(!(blockDev.state & DISK_PRESENT)) || img.file.size() < scsiDev.target->liveCfg.bytesPerSector)
     {
         ready = 0;
         scsiDev.status = CHECK_CONDITION;
