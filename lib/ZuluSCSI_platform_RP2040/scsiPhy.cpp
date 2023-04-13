@@ -325,11 +325,16 @@ static inline void scsiWriteOneByte(uint8_t value)
 {
     SCSI_OUT_DATA(value);
     delay_100ns(); // DB setup time before REQ
+    delay_100ns();
     gpio_acknowledge_irq(SCSI_IN_ACK, GPIO_IRQ_EDGE_FALL);
     SCSI_OUT(REQ, 1);
     SCSI_WAIT_ACTIVE_EDGE(ACK);
+    delay_100ns();
+    delay_100ns();
     SCSI_RELEASE_DATA_REQ();
     SCSI_WAIT_INACTIVE(ACK);
+    delay_100ns();
+    delay_100ns();
 }
 
 extern "C" void scsiWriteByte(uint8_t value)
@@ -340,24 +345,30 @@ extern "C" void scsiWriteByte(uint8_t value)
 
 extern "C" void scsiWrite(const uint8_t* data, uint32_t count)
 {
-    scsiStartWrite(data, count);
-    scsiFinishWrite();
+    for (int i = 0; i < count; i++)
+    {
+        scsiWriteOneByte(data[i]);
+    }
+    // scsiStartWrite(data, count);
+    // scsiFinishWrite();
 }
 
 extern "C" void scsiStartWrite(const uint8_t* data, uint32_t count)
 {
     scsiLogDataIn(data, count);
-    scsi_accel_rp2040_startWrite(data, count, &scsiDev.resetFlag);
+    scsiWrite(data, count);
+    // scsi_accel_rp2040_startWrite(data, count, &scsiDev.resetFlag);
 }
 
 extern "C" bool scsiIsWriteFinished(const uint8_t *data)
 {
-    return scsi_accel_rp2040_isWriteFinished(data);
+    return true;
+    // return scsi_accel_rp2040_isWriteFinished(data);
 }
 
 extern "C" void scsiFinishWrite()
 {
-    scsi_accel_rp2040_finishWrite(&scsiDev.resetFlag);
+    // scsi_accel_rp2040_finishWrite(&scsiDev.resetFlag);
 }
 
 /*********************/
