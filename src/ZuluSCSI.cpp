@@ -560,7 +560,7 @@ extern "C" void zuluscsi_main_loop(void)
     scsiLogPhaseChange(scsiDev.phase);
 
     // Save log periodically during status phase if there are new messages.
-    if (scsiDev.phase == STATUS)
+    // if (scsiDev.phase == STATUS)
     {
       save_logfile();
     }

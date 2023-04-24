@@ -89,6 +89,8 @@ void scsi_bsy_deassert_interrupt()
         // without waiting for BSY.
         // Also required for some early Mac Plus roms
         scsiDev.selFlag = *SCSI_STS_SELECTED;
+
+        dbgmsg("SEL ", g_scsi_sts_selection);
     }
 }
 
