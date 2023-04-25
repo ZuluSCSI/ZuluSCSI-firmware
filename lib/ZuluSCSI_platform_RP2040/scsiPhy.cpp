@@ -59,9 +59,18 @@ extern "C" bool scsiStatusBSY()
 volatile uint8_t g_scsi_sts_selection;
 volatile uint8_t g_scsi_ctrl_bsy;
 
-void scsi_bsy_deassert_interrupt()
+void scsi_bsy_deassert_interrupt(uint gpio)
 {
-    if (SCSI_IN(SEL) && !SCSI_IN(BSY))
+    bool selection_trigger = (SCSI_IN(SEL) && !SCSI_IN(BSY));
+
+    if (gpio == SCSI_IN_SEL && !SCSI_IN(BSY))
+    {
+        // FIXME: Some devices seem to have very short pulse on SEL pin,
+        // this is just temporary fix for testing.
+        selection_trigger = true;
+    }
+
+    if (selection_trigger)
     {
         // Check if any of the targets we simulate is selected
         uint8_t sel_bits = SCSI_IN_DATA();
@@ -155,7 +164,7 @@ static void scsiPhyIRQ(uint gpio, uint32_t events)
         // The BSY input pin may be shared with other signals.
         if (sio_hw->gpio_out & (1 << SCSI_OUT_BSY))
         {
-            scsi_bsy_deassert_interrupt();
+            scsi_bsy_deassert_interrupt(gpio);
         }
     }
     else if (gpio == SCSI_IN_RST)

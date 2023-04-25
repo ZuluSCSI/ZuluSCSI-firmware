@@ -476,7 +476,8 @@ void platform_reset_watchdog()
 {
     static uint32_t prev_gpio = 0;
     uint32_t gpio_val = sio_hw->gpio_in;
-    if (gpio_val != prev_gpio)
+    uint32_t mask = SCSI_IO_DATA_MASK | (1 << SCSI_IN_SEL) | (1 << SCSI_IN_BSY) | (1 << SCSI_IN_RST);
+    if ((gpio_val & mask) != (prev_gpio & mask))
     {
         dbgmsg("GPIO ", (uint32_t)gpio_val, " ", (uint32_t)sio_hw->gpio_oe);
         prev_gpio = gpio_val;
