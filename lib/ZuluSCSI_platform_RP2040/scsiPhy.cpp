@@ -61,13 +61,17 @@ volatile uint8_t g_scsi_ctrl_bsy;
 
 void scsi_bsy_deassert_interrupt(uint gpio)
 {
-    bool selection_trigger = (SCSI_IN(SEL) && !SCSI_IN(BSY));
+    bool sel_in = SCSI_IN(SEL);
+    bool bsy_in = SCSI_IN(BSY);
+    bool selection_trigger = (sel_in && !bsy_in);
 
-    if (gpio == SCSI_IN_SEL && !SCSI_IN(BSY))
+    if (gpio == SCSI_IN_SEL && !sel_in && !bsy_in)
     {
         // FIXME: Some devices seem to have very short pulse on SEL pin,
         // this is just temporary fix for testing.
-        selection_trigger = true;
+        g_scsi_sts_selection = SCSI_STS_SELECTION_SUCCEEDED | SCSI_STS_SELECTION_ATN | 0;
+        scsiDev.selFlag = *SCSI_STS_SELECTED;
+        return;
     }
 
     if (selection_trigger)
