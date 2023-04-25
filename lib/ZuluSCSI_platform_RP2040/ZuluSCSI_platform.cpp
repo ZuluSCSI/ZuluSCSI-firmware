@@ -474,6 +474,14 @@ static void watchdog_callback(unsigned alarm_num)
 // It can also be left empty if the platform does not use a watchdog timer.
 void platform_reset_watchdog()
 {
+    static uint32_t prev_gpio = 0;
+    uint32_t gpio_val = sio_hw->gpio_in;
+    if (gpio_val != prev_gpio)
+    {
+        dbgmsg("GPIO ", (uint32_t)gpio_val, " ", (uint32_t)sio_hw->gpio_oe);
+        prev_gpio = gpio_val;
+    }
+
     g_watchdog_timeout = WATCHDOG_CRASH_TIMEOUT;
 
     if (!g_watchdog_initialized)

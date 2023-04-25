@@ -92,6 +92,8 @@ void scsi_bsy_deassert_interrupt()
 
         dbgmsg("SEL ", g_scsi_sts_selection);
     }
+
+    dbgmsg("IRQ ", (uint32_t)sio_hw->gpio_in, " ", (uint32_t)sio_hw->gpio_oe);
 }
 
 extern "C" bool scsiStatusSEL()
