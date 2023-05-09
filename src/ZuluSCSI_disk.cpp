@@ -610,6 +610,9 @@ struct image_config_t: public S2S_TargetCfg
 
     // Warning about geometry settings
     bool geometrywarningprinted;
+
+    // Tape support
+    uint32_t pos;
 };
 
 static image_config_t g_DiskImages[S2S_MAX_TARGETS];
@@ -1978,13 +1981,29 @@ int scsiDiskCommand()
     else if (likely(command == 0x08))
     {
         // READ(6)
-        uint32_t lba =
-            (((uint32_t) scsiDev.cdb[1] & 0x1F) << 16) +
-            (((uint32_t) scsiDev.cdb[2]) << 8) +
-            scsiDev.cdb[3];
-        uint32_t blocks = scsiDev.cdb[4];
-        if (unlikely(blocks == 0)) blocks = 256;
-        doRead(lba, blocks);
+        if (likely(img.deviceType != S2S_CFG_SEQUENTIAL))
+        {
+            uint32_t lba =
+                (((uint32_t) scsiDev.cdb[1] & 0x1F) << 16) +
+                (((uint32_t) scsiDev.cdb[2]) << 8) +
+                scsiDev.cdb[3];
+            uint32_t blocks = scsiDev.cdb[4];
+            if (unlikely(blocks == 0)) blocks = 256;
+            doRead(lba, blocks);
+        }
+        else
+        {
+            // FIXME - OMTI does not support the FIXED bit.
+            uint32_t blocks =
+                (((uint32_t) scsiDev.cdb[2]) << 16) +
+                (((uint32_t) scsiDev.cdb[3]) << 8) +
+                scsiDev.cdb[4];
+            if (likely(blocks > 0))
+            {
+                doRead(img.pos, blocks);
+                img.pos += blocks;
+            }
+        }
     }
     else if (likely(command == 0x28))
     {
@@ -2096,8 +2115,17 @@ int scsiDiskCommand()
     }
     else if (unlikely(command == 0x01))
     {
-        // REZERO UNIT
-        // Set the lun to a vendor-specific state. Ignore.
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
+        {
+            // REWIND
+            // Set tape position back to 0.
+            img.pos = 0;
+        }
+        else
+        {
+            // REZERO UNIT
+            // Set the lun to a vendor-specific state. Ignore.
+        }
     }
     else if (unlikely(command == 0x35))
     {
@@ -2142,6 +2170,60 @@ int scsiDiskCommand()
         }
 
         scsiDev.phase = DATA_IN;
+    }
+    else if (unlikely(command == 0x11))
+    {
+        // SPACE
+        // Set the tape position forward to a specified offset.
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
+        {
+            uint8_t code = scsiDev.cdb[1] & 7;
+            uint32_t count =
+                (((uint32_t) scsiDev.cdb[2]) << 24) +
+                (((uint32_t) scsiDev.cdb[3]) << 16) +
+                (((uint32_t) scsiDev.cdb[4]) << 8) +
+                scsiDev.cdb[5];
+            if (code == 0)
+            {
+                // Blocks.
+                uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+                uint32_t capacity = img.file.size() / bytesPerSector;
+
+                if (count < capacity)
+                {
+                    img.pos = count;
+                }
+                else
+                {
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = BLANK_CHECK;
+                    scsiDev.target->sense.asc = 0; // END-OF-DATA DETECTED
+                    scsiDev.phase = STATUS;
+                }
+            }
+            else if (code == 1)
+            {
+                // Filemarks.
+                // For now just indicate end of data
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = BLANK_CHECK;
+                scsiDev.target->sense.asc = 0; // END-OF-DATA DETECTED
+                scsiDev.phase = STATUS;
+            }
+            else if (code == 3)
+            {
+                // End-of-data.
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = BLANK_CHECK;
+                scsiDev.target->sense.asc = 0; // END-OF-DATA DETECTED
+                scsiDev.phase = STATUS;
+            }
+        }
+        else
+        {
+            // Not supported.
+            commandHandled = 0;
+        }
     }
     else if (img.file.isRom())
     {
