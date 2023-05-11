@@ -44,7 +44,9 @@ extern "C" {
 
 extern "C" bool scsiStatusATN()
 {
-    return SCSI_IN(ATN);
+    bool status = SCSI_IN(ATN);
+    dbgmsg("------ scsiStatusATN()=", (int)status);
+    return status;
 }
 
 extern "C" bool scsiStatusBSY()
@@ -96,6 +98,8 @@ extern "C" bool scsiStatusSEL()
 {
     if (g_scsi_ctrl_bsy)
     {
+        dbgmsg("---- scsiStatusSEL()");
+
         // We don't have direct register access to BSY bit like SCSI2SD scsi.c expects.
         // Instead update the state here.
         // Releasing happens with bus release.
@@ -119,6 +123,8 @@ extern "C" bool scsiStatusSEL()
             scsiDev.atnFlag = 0;
             scsiDev.target->unitAttention = 0;
             scsiDev.compatMode = COMPAT_SCSI1;
+
+            dbgmsg("---- scsiStatusSEL() unset atnFlag");
         }
     }
 
@@ -138,7 +144,7 @@ static void scsi_rst_assert_interrupt()
 
     if (rst1 && rst2)
     {
-        dbgmsg("BUS RESET");
+        dbgmsg("BUS RESET, gpio ", (uint32_t)sio_hw->gpio_in);
         scsiDev.resetFlag = 1;
     }
 }
@@ -202,6 +208,9 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
 {
     if (phase != g_scsi_phase)
     {
+        dbgmsg("------ PHYPHASE ", g_scsi_phase, "->", phase, " atnFlag ", scsiDev.atnFlag,
+            " dev phase ", scsiDev.phase, " gpio ", (uint32_t)sio_hw->gpio_in, " compatMode ", (int)scsiDev.compatMode);
+
         // ANSI INCITS 362-2002 SPI-3 10.7.1:
         // Phase changes are not allowed while REQ or ACK is asserted.
         while (likely(!scsiDev.resetFlag) && SCSI_IN(ACK)) {}
@@ -284,6 +293,8 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
 // Release all signals
 void scsiEnterBusFree(void)
 {
+    dbgmsg("---- scsiEnterBusFree()");
+
     g_scsi_phase = BUS_FREE;
     g_scsi_sts_selection = 0;
     g_scsi_ctrl_bsy = 0;
@@ -385,6 +396,7 @@ static inline uint8_t scsiReadOneByte(int* parityError)
 
 extern "C" uint8_t scsiReadByte(void)
 {
+    dbgmsg("------ scsiReadByte()");
     uint8_t r = scsiReadOneByte(NULL);
     scsiLogDataOut(&r, 1);
     return r;
@@ -392,6 +404,8 @@ extern "C" uint8_t scsiReadByte(void)
 
 extern "C" void scsiRead(uint8_t* data, uint32_t count, int* parityError)
 {
+    dbgmsg("------ scsiRead(", (int)count, ")");
+
     *parityError = 0;
     if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY)) { parityError = NULL; }
 
