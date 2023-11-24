@@ -703,6 +703,9 @@ static void reinitSCSI()
 #endif // ZULUSCSI_NETWORK
   
 }
+
+#include "rp_msc_reader.h"
+
 extern "C" void zuluscsi_setup(void)
 {
   platform_init();
@@ -744,6 +747,9 @@ extern "C" void zuluscsi_setup(void)
 
     print_sd_info();
     
+    // temporary
+    cr_run();
+
     char presetName[32];
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
     scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName);
