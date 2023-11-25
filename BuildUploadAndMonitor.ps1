@@ -11,6 +11,22 @@ pio run -e $env
 
 if ($LASTEXITCODE -eq 0) {
         
+    $COM = Get-CimInstance -Class Win32_SerialPort | ? {$_.PNPDeviceID -like "*$srch_PID*"} | Select -First 1
+
+    if ($COM) {
+        Write-host "Found a Pico serial device, trying to reset"
+        
+        $port= new-Object System.IO.Ports.SerialPort $COM.DeviceID,1200,None,8,one
+        # it immediately goes away on open, no way to know if it worked or not
+        # Exception calling "Open" with "0" argument(s): "A device attached to the system is not functioning.
+        try {
+            $port.open()
+            $port.close()
+        } catch {}
+    } else {
+        write-host "Ready to upload, please connect Pico in bootloader mode"
+    }
+
     if (Test-Path $inpath) {
         Write-host -NoNewline "Waiting for drive with label $srch_label"
 

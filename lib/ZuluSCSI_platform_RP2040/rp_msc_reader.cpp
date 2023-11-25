@@ -2,17 +2,29 @@
 #include "ZuluSCSI_log.h"
 #include <SdFat.h>
 #include "msc.h"
+#include <device/usbd.h>
+#include <hardware/gpio.h>
+
+#ifdef PLATFORM_CARDREADER
+
+#if CFG_TUD_MSC_EP_BUFSIZE < SD_SECTOR_SIZE
+  #error "CFG_TUD_MSC_EP_BUFSIZE is too small! needs to be at least 512  (SD_SECTOR_SIZE)"
+#endif
 
 /*
 TODO:
 
-* how do we enter cardreader mode (and do we return?)
-** need to avoid cases where we are using a data cable to power a scsi device attached to something w/o term power. 
-** maybe watch rst or other scsi lines for tells we are attached to a machine
-* handle card removal?
-* case where card not present
+* how do we enter cardreader mode (and when do we return?)
+** we can inhibit via config file...
+
+* handle card removal? 
+** maybe just exit CR mode
+
+* images not present: allow enter card reader mode?
+
 * how do we fix the tinyusb buffer without including sources??
 ** though if we do, we can perhaps repurpose static buffers for other functions
+
 * network buffer has been reduced
 ** original device has 32K
 ** need around 10k of free (nonstatic) RAM for stack/heap/dynamic use
@@ -22,57 +34,86 @@ extern "C" bool tud_msc_set_sense(uint8_t lun, uint8_t sense_key, uint8_t add_se
 
 #define SD_SECTOR_SIZE 512
 
-#if CFG_TUD_MSC_EP_BUFSIZE < SD_SECTOR_SIZE
-  #error "CFG_TUD_MSC_EP_BUFSIZE is too small! needs to be at least 512  (SD_SECTOR_SIZE)"
-#endif
+// wait up to this long during init sequence for USB enumeration to enter card reader
+#define USB_TIMEOUT 1000
 
+// global SD variable
 extern SdFs SD;
 
 // usb framework checks this func exists for mass storage config
 void __USBInstallMassStorage() { }
 
 // globals
-byte blin;
-bool unit_ready = false;
+volatile byte blin;
+volatile bool unit_ready = false;
 uint32_t sd_block_count;
 
-// does not return currently
-void cr_run() {
+bool shouldEnterReader() {
 
+#ifdef ZULUSCSI_PICO
+  // check if we're USB powered, if not, exit immediately
+  // pin on the wireless module, see https://github.com/earlephilhower/arduino-pico/discussions/835
+  if (!digitalRead(34)) 
+    return false;
+#endif
+
+  logmsg("Waiting for USB enumeration...");
+
+  // wait for up to a second to be enumerated
+  uint32_t start = millis();
+  while ((uint32_t)(millis() - start) < USB_TIMEOUT)  {
+    // return True if just got out of Bus Reset and received the very first data from host
+    // https://github.com/hathach/tinyusb/blob/master/src/device/usbd.h#L63
+    if (tud_connected()) 
+      return true;
+
+    delay(100);
+  }
+
+  return false;
+}
+
+// assumption that SD card was enumerated and is working
+void runCardReader() {
   LED_ON();
   delay(50);
   LED_OFF();
 
-  logmsg("SD card reader...");
-  logmsg("Buff size: ", CFG_TUD_MSC_EP_BUFSIZE);
+  logmsg("SD card reader mode entered.");
+  logmsg("MSC buffer size: ", CFG_TUD_MSC_EP_BUFSIZE);
   // Size in blocks (512 bytes)
   sd_block_count = SD.card()->sectorCount();
   platform_reset_watchdog();
 
   // MSC is ready for read/write
-  logmsg("blocks: ", sd_block_count);
-
   unit_ready = true;
   Serial.println("ready");
  
-  // steady state operation
-  while(1) {
+  // steady state operation / indication loop
+  // LED is steady on in CR mode
+  while(unit_ready) {
 	  if (blin == 1) { // fast flicker for reads
-      LED_ON();
+      LED_OFF();
       delay(30);
 	  } else if (blin == 2) { // slow flicker for writes
-      LED_ON();
+      LED_OFF();
       delay(100);
-    } /*else {
-         
-      delay(100);
-    }*/
-    
+    } 
+
 	  blin = 0;
-	  LED_OFF();
+	  LED_ON();
     platform_reset_watchdog();
     delay(30);
   }
+
+  logmsg("Card ejected, leaving cardreader mode.");
+
+  // indicate we are leaving reader mode
+  LED_OFF();
+  delay(200);
+  LED_ON();
+  delay(200);
+  LED_OFF();
 }
 
 // Invoked when received SCSI_CMD_INQUIRY
@@ -83,7 +124,7 @@ extern "C" void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
 
   const char vid[] = "ZuluSCSI";
   const char pid[] = "Pico"; // could use strings from the platform, but they are too long
-  const char rev[] =  "1.0";
+  const char rev[] = "1.0";
 
   memcpy(vendor_id, vid, tu_min32(strlen(vid), 8));
   memcpy(product_id, pid, tu_min32(strlen(pid), 16));
@@ -91,31 +132,28 @@ extern "C" void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
 }
 
 extern "C" uint8_t tud_msc_get_maxlun_cb(void) {
-  return 1;
+  return unit_ready?1:0;
 }
 
 extern "C" bool tud_msc_is_writable_cb (uint8_t lun)
 {
   (void) lun;
-  return true;
+  return unit_ready;
 }
 
-// TODO; sync sd on eject?
 extern "C" bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start, bool load_eject)
 {
   (void) lun;
   (void) power_condition;
 
-  if ( load_eject )
-  {
-    if (start)
-    {
+  if ( load_eject )  {
+    if (start) {
       // load disk storage
-    }else
-    {
-      unit_ready = false;
+    } else {
       // unload disk storage
-      // we could return to Zulu proper.... may be needed, for UI reasons
+      logmsg("Eject request received. Unmounting.");
+      SD.card()->syncDevice();
+      unit_ready = false;
     }
   }
 
@@ -124,9 +162,6 @@ extern "C" bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool
 
 extern "C" bool tud_msc_test_unit_ready_cb(uint8_t lun) {
   (void) lun;
-  //todo?
-  //tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3a, 0x00);
-    
   return unit_ready;
 }
 
@@ -134,7 +169,7 @@ extern "C" void tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count,
                          uint16_t *block_size) {
   (void) lun;
 
-  *block_count = sd_block_count;
+  *block_count = unit_ready ? sd_block_count : 0;
   *block_size = SD_SECTOR_SIZE;
 }
 
@@ -179,7 +214,8 @@ extern "C" int32_t tud_msc_scsi_cb(uint8_t lun, const uint8_t scsi_cmd[16], void
 // Callback invoked when received READ10 command.
 // Copy disk's data to buffer (up to bufsize) and
 // return number of copied bytes (must be multiple of block size)
-extern "C" int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void* buffer, uint32_t bufsize)
+extern "C" int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, 
+                            void* buffer, uint32_t bufsize)
 {
   (void) lun;
   bool rc;
@@ -219,3 +255,5 @@ extern "C" void tud_msc_write10_complete_cb(uint8_t lun) {
   
   SD.card()->syncDevice();
 }
+
+#endif

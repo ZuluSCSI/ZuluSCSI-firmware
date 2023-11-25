@@ -747,8 +747,17 @@ extern "C" void zuluscsi_setup(void)
 
     print_sd_info();
     
-    // temporary
-    cr_run();
+#ifdef PLATFORM_CARDREADER
+    if (! ini_getbool("SCSI", "DisableUSBReader", 0, CONFIGFILE)) {
+      // lazy hack to let the system enumerate us before checking
+      // right now, we initialize early to allow config file edits to take effect immediately on eject
+      // perform checks (USB power, have we been enumerated, etc?) and waits up to a second for enumeration
+      if (shouldEnterReader())
+        runCardReader();
+    } else {
+      logmsg("Card reader mode inhibited by config file");
+    }
+#endif
 
     char presetName[32];
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
