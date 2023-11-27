@@ -1,5 +1,5 @@
 $env = "ZuluSCSI_Pico_DaynaPORT"
-$proj = "M:\Projects\Computer Stuff\CLassic Mac\Expansion Cards\Silly Tiny SCSI (ZuluSCSI)\firmware\ZuluSCSI-firmware-crdev"
+$proj = pwd
 
 # no need to edit these paths
 $inpath = "$proj\.pio\build\$env\firmware.uf2"

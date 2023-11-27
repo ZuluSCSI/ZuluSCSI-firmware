@@ -749,7 +749,6 @@ extern "C" void zuluscsi_setup(void)
     
 #ifdef PLATFORM_CARDREADER
     if (! ini_getbool("SCSI", "DisableUSBReader", 0, CONFIGFILE)) {
-      // lazy hack to let the system enumerate us before checking
       // right now, we initialize early to allow config file edits to take effect immediately on eject
       // perform checks (USB power, have we been enumerated, etc?) and waits up to a second for enumeration
       if (shouldEnterReader())
