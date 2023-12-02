@@ -32,7 +32,15 @@ struct scsiNetworkPacketQueue {
 	uint8_t readIndex;
 };
 
-static struct scsiNetworkPacketQueue scsiNetworkInboundQueue, scsiNetworkOutboundQueue;
+struct scsiNetworkOutboundPacketBuffer {
+	uint8_t packet[NETWORK_PACKET_MAX_SIZE];
+	uint16_t size;
+	uint8_t ready;
+};
+
+
+static struct scsiNetworkPacketQueue scsiNetworkInboundQueue;
+static struct scsiNetworkOutboundPacketBuffer scsiNetworkOutboundPacket;
 
 struct __attribute__((packed)) wifi_network_entry wifi_network_list[WIFI_NETWORK_LIST_ENTRY_COUNT] = { 0 };
 
@@ -223,13 +231,30 @@ int scsiNetworkCommand()
 			off = 4;
 		}
 
-		memcpy(&scsiNetworkOutboundQueue.packets[scsiNetworkOutboundQueue.writeIndex], scsiDev.data + off, size);
-		scsiNetworkOutboundQueue.sizes[scsiNetworkOutboundQueue.writeIndex] = size;
+		/* 
+		in testing we can send packets from here without any (apparent) issue, but blocking the bus is probably not advisable....?
+		when measuring in cycles, cw43 packet send took a worst case 0x12000 cycles at max throughput on test machine, excellent signal strength.
+		600 microseconds. maybe this is acceptable? i feel like HDDs might be slower than this, but idk SCSI bus timings
 
-		if (scsiNetworkOutboundQueue.writeIndex == NETWORK_PACKET_QUEUE_SIZE - 1)
-			scsiNetworkOutboundQueue.writeIndex = 0;
-		else
-			scsiNetworkOutboundQueue.writeIndex++;
+		packet gets sent in mainloop from network_poll. i guess that may block other phases of scsi??
+		maybe we can just always send from here and not buffer at all. maybe the zuluscsi guys know better?
+		
+		todo: determine if this case ever happens. 
+		need a real fast SCSI machine to test on.
+		doesn't happen with really bad wifi signal strength, or with ideal signal strength (@ 100kb/s upload via HTTP). 68040 SE/30
+		*/
+
+		if (scsiNetworkOutboundPacket.ready) {
+			//later turn this into DBGMSG_F
+			logmsg_f("WARNING: Blocking SCSI to flush outbound packet!");
+
+			// send the queued packet now, blocking SCSI bus in current phase. Probably a bad thing.
+			scsiNetworkPurge();
+		}
+
+		memcpy(&scsiNetworkOutboundPacket.packet, scsiDev.data + off, size);
+		scsiNetworkOutboundPacket.size = size;
+		scsiNetworkOutboundPacket.ready = 1;
 
 		scsiDev.status = GOOD;
 		scsiDev.phase = STATUS;
@@ -265,7 +290,7 @@ int scsiNetworkCommand()
 			DBGMSG_F("%s: enable interface", __func__);
 			scsiNetworkEnabled = true;
 			memset(&scsiNetworkInboundQueue, 0, sizeof(scsiNetworkInboundQueue));
-			memset(&scsiNetworkOutboundQueue, 0, sizeof(scsiNetworkOutboundQueue));
+			memset(&scsiNetworkOutboundPacket, 0, sizeof(scsiNetworkOutboundPacket));
 		}
 		else
 		{
@@ -440,23 +465,12 @@ int scsiNetworkEnqueue(const uint8_t *buf, size_t len)
 
 int scsiNetworkPurge(void)
 {
-	int sent = 0;
-
-	if (!scsiNetworkEnabled)
+	if (!scsiNetworkEnabled || !scsiNetworkOutboundPacket.ready)
 		return 0;
 
-	while (scsiNetworkOutboundQueue.readIndex != scsiNetworkOutboundQueue.writeIndex)
-	{
-		platform_network_send(scsiNetworkOutboundQueue.packets[scsiNetworkOutboundQueue.readIndex], scsiNetworkOutboundQueue.sizes[scsiNetworkOutboundQueue.readIndex]);
+	scsiNetworkOutboundPacket.ready = 0;
+	platform_network_send(scsiNetworkOutboundPacket.packet, scsiNetworkOutboundPacket.size);
 
-		if (scsiNetworkOutboundQueue.readIndex == NETWORK_PACKET_QUEUE_SIZE - 1)
-			scsiNetworkOutboundQueue.readIndex = 0;
-		else
-			scsiNetworkOutboundQueue.readIndex++;
-		
-		sent++;
-	}
-
-	return sent;
+	return 1;
 }
 #endif // ZULUSCSI_NETWORK
