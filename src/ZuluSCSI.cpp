@@ -133,14 +133,13 @@ void save_logfile(bool always = false)
 
 void init_logfile()
 {
+  return;
 #ifdef ZULUSCSI_HARDWARE_CONFIG
   // Disable logging to the SD card when in direct mode
   if (g_hw_config.is_active())
     return;
 #endif
-
   static bool first_open_after_boot = true;
-
   bool truncate = first_open_after_boot;
   int flags = O_WRONLY | O_CREAT | (truncate ? O_TRUNC : O_APPEND);
   g_logfile = SD.open(LOGFILE, flags);
