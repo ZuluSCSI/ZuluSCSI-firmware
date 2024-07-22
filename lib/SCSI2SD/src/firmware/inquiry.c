@@ -59,9 +59,10 @@ static const uint8_t UnitSerialNumber[] =
 {
 0x00, // "Direct-access device". AKA standard hard disk
 0x80, // Page Code
-0x00, // Reserved
-0x10, // Page length
-'c','o','d','e','s','r','c','-','1','2','3','4','5','6','7','8'
+0x00, // Page length (MSBs)
+0x14, // Page length (LSBs)
+'Z','u','l','u','S','C','S','I',    // product serial number (8 characters)
+' ',' ','1','2','3','4','5','6','7','8','9','0' // circuit board serial number (12 character)
 };
 
 static const uint8_t ImpOperatingDefinition[] =
