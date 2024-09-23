@@ -29,7 +29,7 @@
 
 // Use variables for version number
 #define FW_VER_NUM      "24.08.22"
-#define FW_VER_SUFFIX   "release"
+#define FW_VER_SUFFIX   "special"
 #define ZULU_FW_VERSION FW_VER_NUM "-" FW_VER_SUFFIX
 #define INQUIRY_NAME  PLATFORM_NAME " v" ZULU_FW_VERSION
 #define TOOLBOX_API 0
@@ -70,7 +70,7 @@
 // SCSI raw fallback configuration when no image files are detected
 // Presents the whole SD card as an SCSI drive
 #define RAW_FALLBACK_ENABLE 1
-#define RAW_FALLBACK_SCSI_ID 1
+#define RAW_FALLBACK_SCSI_ID 2
 #define RAW_FALLBACK_BLOCKSIZE 512
 
 // Default SCSI drive information (can be overridden in INI file)
