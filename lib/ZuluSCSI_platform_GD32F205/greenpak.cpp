@@ -1,3 +1,24 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 // I2C communication with GreenPAK.
 // This uses bitbanging for I2C so that internal GPIO pull-up can be used
 // and to avoid the bugs that are present in STM32F2 I2C peripheral,
@@ -155,22 +176,22 @@ bool greenpak_load_firmware()
 
     if (!greenpak_read(0, &dummy, 1))
     {
-        azlog("Optional GreenPAK not detected");
+        logmsg("Optional GreenPAK not detected");
         return false;
     }
     else
     {
-        azlog("Optional GreenPAK detected, loading firmware");
+        logmsg("Optional GreenPAK detected, loading firmware");
     }
 
     if (!greenpak_write(0, g_greenpak_fw, sizeof(g_greenpak_fw)))
     {
-        azlog("GreenPAK firmware loading failed");
+        logmsg("GreenPAK firmware loading failed");
         return false;
     }
     else
     {
-        azlog("GreenPAK firmware successfully loaded");
+        logmsg("GreenPAK firmware successfully loaded");
         LED_ON();
         delay(10);
         LED_OFF();

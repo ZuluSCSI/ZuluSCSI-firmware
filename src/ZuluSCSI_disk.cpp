@@ -1,14 +1,43 @@
+/**
+ * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
+ * Portions Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
+ * Portions Copyright (C) 2023 Eric Helgeson
+ * ZuluSCSI™ - Copyright (c) 2022-2023 Rabbit Hole Computing™
+ *
+ * This file is licensed under the GPL version 3 or any later version. 
+ * It is derived from disk.c in SCSI2SD V6
+ *
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
+
 // This file implements the main SCSI disk emulation and data streaming.
 // It is derived from disk.c in SCSI2SD V6.
-//
-//    Licensed under GPL v3.
-//    Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
-//    Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
-//    Copyright (C) 2022 Rabbit Hole Computing
 
 #include "ZuluSCSI_disk.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
+#include "ZuluSCSI_settings.h"
+#ifdef ENABLE_AUDIO_OUTPUT
+#include "ZuluSCSI_audio.h"
+#endif
+#include "ZuluSCSI_cdrom.h"
+#include "ImageBackingStore.h"
+#include "ROMDrive.h"
+#include "QuirksCheck.h"
 #include <minIni.h>
 #include <string.h>
 #include <strings.h>
@@ -55,14 +84,6 @@ extern "C" {
 #endif
 #endif
 
-#ifndef PLATFORM_HAS_ROM_DRIVE
-// Dummy defines for platforms without ROM drive support
-#define AZPLATFORM_ROMDRIVE_PAGE_SIZE 1024
-uint32_t azplatform_get_romdrive_maxsize() { return 0; }
-bool azplatform_read_romdrive(uint8_t *dest, uint32_t start, uint32_t count) { return false; }
-bool azplatform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count) { return false; }
-#endif
-
 #ifndef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
 // For platforms that do not have non-blocking read from SCSI bus
 void scsiStartRead(uint8_t* data, uint32_t count, int *parityError)
@@ -71,7 +92,7 @@ void scsiStartRead(uint8_t* data, uint32_t count, int *parityError)
 }
 void scsiFinishRead(uint8_t* data, uint32_t count, int *parityError)
 {
-    
+
 }
 bool scsiIsReadFinished(const uint8_t *data)
 {
@@ -79,144 +100,30 @@ bool scsiIsReadFinished(const uint8_t *data)
 }
 #endif
 
-// SD card sector size is always 512 bytes
-#define SD_SECTOR_SIZE 512
-
 /************************************************/
 /* ROM drive support (in microcontroller flash) */
 /************************************************/
-
-struct romdrive_hdr_t {
-    char magic[8]; // "ROMDRIVE"
-    int scsi_id;
-    uint32_t imagesize;
-    uint32_t blocksize;
-    S2S_CFG_TYPE drivetype;
-    uint32_t reserved[32];
-};
-
-// Check if the romdrive is present
-static bool check_romdrive(romdrive_hdr_t *hdr)
-{
-    if (!azplatform_read_romdrive((uint8_t*)hdr, 0, sizeof(romdrive_hdr_t)))
-    {
-        return false;
-    }
-
-    if (memcmp(hdr->magic, "ROMDRIVE", 8) != 0)
-    {
-        return false;
-    }
-
-    if (hdr->imagesize <= 0 || hdr->scsi_id < 0 || hdr->scsi_id > 8)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-// Load an image file to romdrive
-bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S2S_CFG_TYPE type)
-{
-#ifndef PLATFORM_HAS_ROM_DRIVE
-    azlog("---- Platform does not support ROM drive");
-    return false;
-#endif
-
-    FsFile file = SD.open(filename, O_RDONLY);
-    if (!file.isOpen())
-    {
-        azlog("---- Failed to open: ", filename);
-        return false;
-    }
-
-    uint64_t filesize = file.size();
-    uint32_t maxsize = azplatform_get_romdrive_maxsize() - AZPLATFORM_ROMDRIVE_PAGE_SIZE;
-
-    azlog("---- SCSI ID: ", scsi_id, " blocksize ", blocksize, " type ", (int)type);
-    azlog("---- ROM drive maximum size is ", (int)maxsize,
-          " bytes, image file is ", (int)filesize, " bytes");
-    
-    if (filesize > maxsize)
-    {
-        azlog("---- Image size exceeds ROM space, not loading");
-        file.close();
-        return false;
-    }
-
-    romdrive_hdr_t hdr = {};
-    memcpy(hdr.magic, "ROMDRIVE", 8);
-    hdr.scsi_id = scsi_id;
-    hdr.imagesize = filesize;
-    hdr.blocksize = blocksize;
-    hdr.drivetype = type;
-
-    // Program the drive metadata header
-    if (!azplatform_write_romdrive((const uint8_t*)&hdr, 0, AZPLATFORM_ROMDRIVE_PAGE_SIZE))
-    {
-        azlog("---- Failed to program ROM drive header");
-        file.close();
-        return false;
-    }
-    
-    // Program the drive contents
-    uint32_t pages = (filesize + AZPLATFORM_ROMDRIVE_PAGE_SIZE - 1) / AZPLATFORM_ROMDRIVE_PAGE_SIZE;
-    for (uint32_t i = 0; i < pages; i++)
-    {
-        if (i % 2)
-            LED_ON();
-        else
-            LED_OFF();
-
-        if (file.read(scsiDev.data, AZPLATFORM_ROMDRIVE_PAGE_SIZE) <= 0 ||
-            !azplatform_write_romdrive(scsiDev.data, (i + 1) * AZPLATFORM_ROMDRIVE_PAGE_SIZE, AZPLATFORM_ROMDRIVE_PAGE_SIZE))
-        {
-            azlog("---- Failed to program ROM drive page ", (int)i);
-            file.close();
-            return false;
-        }
-    }
-
-    LED_OFF();
-
-    file.close();
-
-    char newname[MAX_FILE_PATH * 2] = "";
-    strlcat(newname, filename, sizeof(newname));
-    strlcat(newname, "_loaded", sizeof(newname));
-    SD.rename(filename, newname);
-    azlog("---- ROM drive programming successful, image file renamed to ", newname);
-
-    return true;
-}
-
-bool scsiDiskCheckRomDrive()
-{
-    romdrive_hdr_t hdr = {};
-    return check_romdrive(&hdr);
-}
 
 // Check if rom drive exists and activate it
 bool scsiDiskActivateRomDrive()
 {
 #ifndef PLATFORM_HAS_ROM_DRIVE
     return false;
-#endif
+#else
 
-    uint32_t maxsize = azplatform_get_romdrive_maxsize() - AZPLATFORM_ROMDRIVE_PAGE_SIZE;
-    azlog("-- Platform supports ROM drive up to ", (int)(maxsize / 1024), " kB");
+    uint32_t maxsize = platform_get_romdrive_maxsize() - PLATFORM_ROMDRIVE_PAGE_SIZE;
+    logmsg("-- Platform supports ROM drive up to ", (int)(maxsize / 1024), " kB");
 
     romdrive_hdr_t hdr = {};
-    if (!check_romdrive(&hdr))
+    if (!romDriveCheckPresent(&hdr))
     {
-        azlog("---- ROM drive image not detected");
+        logmsg("---- ROM drive image not detected");
         return false;
     }
 
     if (ini_getbool("SCSI", "DisableROMDrive", 0, CONFIGFILE))
     {
-        azlog("---- ROM drive disabled in ini file, not enabling");
+        logmsg("---- ROM drive disabled in ini file, not enabling");
         return false;
     }
 
@@ -224,584 +131,318 @@ bool scsiDiskActivateRomDrive()
     if (rom_scsi_id >= 0 && rom_scsi_id <= 7)
     {
         hdr.scsi_id = rom_scsi_id;
-        azlog("---- ROM drive SCSI id overriden in ini file, changed to ", (int)hdr.scsi_id);
+        logmsg("---- ROM drive SCSI id overriden in ini file, changed to ", (int)hdr.scsi_id);
     }
 
     if (s2s_getConfigById(hdr.scsi_id))
     {
-        azlog("---- ROM drive SCSI id ", (int)hdr.scsi_id, " is already in use, not enabling");
+        logmsg("---- ROM drive SCSI id ", (int)hdr.scsi_id, " is already in use, not enabling");
         return false;
     }
 
-
-
-    azlog("---- Activating ROM drive, SCSI id ", (int)hdr.scsi_id, " size ", (int)(hdr.imagesize / 1024), " kB");
-    bool status = scsiDiskOpenHDDImage(hdr.scsi_id, "ROM:", hdr.scsi_id, 0, hdr.blocksize, hdr.drivetype);
+    logmsg("---- Activating ROM drive, SCSI id ", (int)hdr.scsi_id, " size ", (int)(hdr.imagesize / 1024), " kB");
+    g_scsi_settings.initDevice(hdr.scsi_id, hdr.drivetype);
+    bool status = scsiDiskOpenHDDImage(hdr.scsi_id, "ROM:", 0, hdr.blocksize, hdr.drivetype);
 
     if (!status)
     {
-        azlog("---- ROM drive activation failed");
+        logmsg("---- ROM drive activation failed");
         return false;
     }
     else
     {
         return true;
     }
+
+#endif
 }
 
 
 /***********************/
-/* Backing image files */
+/* Image configuration */
 /***********************/
 
 extern SdFs SD;
 SdDevice sdDev = {2, 256 * 1024 * 1024 * 2}; /* For SCSI2SD */
 
-// This class wraps SdFat library FsFile to allow access
-// through either FAT filesystem or as a raw sector range.
-//
-// Raw access is activated by using filename like "RAW:0:12345"
-// where the numbers are the first and last sector.
-//
-// If the platform supports a ROM drive, it is activated by using
-// filename "ROM:".
-class ImageBackingStore
-{
-public:
-    ImageBackingStore()
-    {
-        m_israw = false;
-        m_isrom = false;
-        m_isreadonly_attr = false;
-        m_blockdev = nullptr;
-        m_bgnsector = m_endsector = m_cursector = 0;
-    }
-
-    ImageBackingStore(const char *filename, uint32_t scsi_block_size): ImageBackingStore()
-    {
-        if (strncasecmp(filename, "RAW:", 4) == 0)
-        {
-            char *endptr, *endptr2;
-            m_bgnsector = strtoul(filename + 4, &endptr, 0);
-            m_endsector = strtoul(endptr + 1, &endptr2, 0);
-
-            if (*endptr != ':' || *endptr2 != '\0')
-            {
-                azlog("Invalid format for raw filename: ", filename);
-                return;
-            }
-
-            if ((scsi_block_size % SD_SECTOR_SIZE) != 0)
-            {
-                azlog("SCSI block size ", (int)scsi_block_size, " is not supported for RAW partitions (must be divisible by 512 bytes)");
-                return;
-            }
-
-            m_israw = true;
-            m_blockdev = SD.card();
-
-            uint32_t sectorCount = SD.card()->sectorCount();
-            if (m_endsector >= sectorCount)
-            {
-                azlog("Limiting RAW image mapping to SD card sector count: ", (int)sectorCount);
-                m_endsector = sectorCount - 1;
-            }
-        }
-        else if (strncasecmp(filename, "ROM:", 4) == 0)
-        {
-            if (!check_romdrive(&m_romhdr))
-            {
-                m_romhdr.imagesize = 0;
-            }
-            else
-            {
-                m_isrom = true;
-            }
-        }
-        else
-        {
-            m_isreadonly_attr = !!(FS_ATTRIB_READ_ONLY & SD.attrib(filename));
-            if (m_isreadonly_attr)
-            {
-                m_fsfile = SD.open(filename, O_RDONLY);
-                azlog("---- Image file is read-only, writes disabled");
-            }
-            else
-            {
-                m_fsfile = SD.open(filename, O_RDWR);
-            }
-
-            uint32_t sectorcount = m_fsfile.size() / SD_SECTOR_SIZE;
-            uint32_t begin = 0, end = 0;
-            if (m_fsfile.contiguousRange(&begin, &end) && end >= begin + sectorcount
-                && (scsi_block_size % SD_SECTOR_SIZE) == 0)
-            {
-                // Convert to raw mapping, this avoids some unnecessary
-                // access overhead in SdFat library.
-                m_israw = true;
-                m_blockdev = SD.card();
-                m_bgnsector = begin;
-
-                if (end != begin + sectorcount)
-                {
-                    uint32_t allocsize = end - begin + 1;
-                    azlog("---- NOTE: File ", filename, " has FAT allocated size of ", (int)allocsize, " sectors and file size of ", (int)sectorcount, " sectors");
-                    azlog("---- Due to issue #80 in ZuluSCSI version 1.0.8 and 1.0.9 the allocated size was mistakenly reported to SCSI controller.");
-                    azlog("---- If the drive was formatted using those versions, you may have problems accessing it with newer firmware.");
-                    azlog("---- The old behavior can be restored with setting  [SCSI] UseFATAllocSize = 1 in " CONFIGFILE);
-
-                    if (ini_getbool("SCSI", "UseFATAllocSize", 0, CONFIGFILE))
-                    {
-                        sectorcount = allocsize;
-                    }
-                }
-
-                m_endsector = begin + sectorcount - 1;
-                m_fsfile.close();
-            }
-        }
-    }
-
-    bool isWritable()
-    {
-        return !m_isrom && !m_isreadonly_attr;
-    }
-
-    bool isRom()
-    {
-        return m_isrom;
-    }
-
-    bool isOpen()
-    {
-        if (m_israw)
-            return (m_blockdev != NULL);
-        else if (m_isrom)
-            return (m_romhdr.imagesize > 0);
-        else
-            return m_fsfile.isOpen();
-    }
-
-    bool close()
-    {
-        if (m_israw)
-        {
-            m_blockdev = nullptr;
-            return true;
-        }
-        else if (m_isrom)
-        {
-            m_romhdr.imagesize = 0;
-            return true;
-        }
-        else
-        {
-            return m_fsfile.close();
-        }
-    }
-
-    uint64_t size()
-    {
-        if (m_israw && m_blockdev)
-        {
-            return (uint64_t)(m_endsector - m_bgnsector + 1) * SD_SECTOR_SIZE;
-        }
-        else if (m_isrom)
-        {
-            return m_romhdr.imagesize;
-        }
-        else
-        {
-            return m_fsfile.size();
-        }
-    }
-
-    bool contiguousRange(uint32_t* bgnSector, uint32_t* endSector)
-    {
-        if (m_israw && m_blockdev)
-        {
-            *bgnSector = m_bgnsector;
-            *endSector = m_endsector;
-            return true;
-        }
-        else if (m_isrom)
-        {
-            *bgnSector = 0;
-            *endSector = 0;
-            return true;
-        }
-        else
-        {
-            return m_fsfile.contiguousRange(bgnSector, endSector);
-        }
-    }
-
-    bool seek(uint64_t pos)
-    {
-        if (m_israw)
-        {
-            uint32_t sectornum = pos / SD_SECTOR_SIZE;
-            assert((uint64_t)sectornum * SD_SECTOR_SIZE == pos);
-            m_cursector = m_bgnsector + sectornum;
-            return (m_cursector <= m_endsector);
-        }
-        else if (m_isrom)
-        {
-            uint32_t sectornum = pos / SD_SECTOR_SIZE;
-            assert((uint64_t)sectornum * SD_SECTOR_SIZE == pos);
-            m_cursector = sectornum;
-            return m_cursector * SD_SECTOR_SIZE < m_romhdr.imagesize;
-        }
-        else
-        {
-            return m_fsfile.seek(pos);
-        }
-    }
-
-    int read(void* buf, size_t count)
-    {
-        if (m_israw && m_blockdev)
-        {
-            uint32_t sectorcount = count / SD_SECTOR_SIZE;
-            assert((uint64_t)sectorcount * SD_SECTOR_SIZE == count);
-            if (m_blockdev->readSectors(m_cursector, (uint8_t*)buf, sectorcount))
-            {
-                m_cursector += sectorcount;
-                return count;
-            }
-            else
-            {
-                return -1;
-            }
-        }
-        else if (m_isrom)
-        {
-            uint32_t sectorcount = count / SD_SECTOR_SIZE;
-            assert((uint64_t)sectorcount * SD_SECTOR_SIZE == count);
-            uint32_t start = m_cursector * SD_SECTOR_SIZE + AZPLATFORM_ROMDRIVE_PAGE_SIZE;
-            if (azplatform_read_romdrive((uint8_t*)buf, start, count))
-            {
-                m_cursector += sectorcount;
-                return count;
-            }
-            else
-            {
-                return -1;
-            }
-        }
-        else
-        {
-            return m_fsfile.read(buf, count);
-        }
-    }
-
-    size_t write(const void* buf, size_t count)
-    {
-        if (m_israw && m_blockdev)
-        {
-            uint32_t sectorcount = count / SD_SECTOR_SIZE;
-            assert((uint64_t)sectorcount * SD_SECTOR_SIZE == count);
-            if (m_blockdev->writeSectors(m_cursector, (const uint8_t*)buf, sectorcount))
-            {
-                m_cursector += sectorcount;
-                return count;
-            }
-            else
-            {
-                return 0;
-            }
-        }
-        else if (m_isrom)
-        {
-            azlog("ERROR: attempted to write to ROM drive");
-            return 0;
-        }
-        else  if (m_isreadonly_attr)
-        {
-            azlog("ERROR: attempted to write to a read only image");
-            return 0;
-        }
-        else
-        {
-            return m_fsfile.write(buf, count);
-        }
-    }
-
-    void flush()
-    {
-        if (!m_israw && !m_isrom && !m_isreadonly_attr)
-        {
-            m_fsfile.flush();
-        }
-    }
-
-private:
-    bool m_israw;
-    bool m_isrom;
-    bool m_isreadonly_attr;
-    romdrive_hdr_t m_romhdr;
-    FsFile m_fsfile;
-    SdCard *m_blockdev;
-    uint32_t m_bgnsector;
-    uint32_t m_endsector;
-    uint32_t m_cursector;
-};
-
-struct image_config_t: public S2S_TargetCfg
-{
-    ImageBackingStore file;
-
-    // For CD-ROM drive ejection
-    bool ejected;
-    uint8_t cdrom_events;
-    bool reinsert_on_inquiry;
-
-    // Index of image, for when image on-the-fly switching is used for CD drives
-    int image_index;
-
-    // Right-align vendor / product type strings (for Apple)
-    // Standard SCSI uses left alignment
-    // This field uses -1 for default when field is not set in .ini
-    int rightAlignStrings;
-
-    // Maximum amount of bytes to prefetch
-    int prefetchbytes;
-
-    // Warning about geometry settings
-    bool geometrywarningprinted;
-};
-
 static image_config_t g_DiskImages[S2S_MAX_TARGETS];
 
 void scsiDiskResetImages()
 {
-    memset(g_DiskImages, 0, sizeof(g_DiskImages));
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        g_DiskImages[i].clear();
+    }
 }
 
-// Verify format conformance to SCSI spec:
-// - Empty bytes filled with 0x20 (space)
-// - Only values 0x20 to 0x7E
-// - Left alignment for vendor/product/revision, right alignment for serial.
-static void formatDriveInfoField(char *field, int fieldsize, bool align_right)
+void image_config_t::clear()
 {
-    if (align_right)
-    {
-        // Right align and trim spaces on either side
-        int dst = fieldsize - 1;
-        for (int src = fieldsize - 1; src >= 0; src--)
-        {
-            char c = field[src];
-            if (c < 0x20 || c > 0x7E) c = 0x20;
-            if (c != 0x20 || dst != fieldsize - 1)
-            {
-                field[dst--] = c;
-            }
-        }
-        while (dst >= 0)
-        {
-            field[dst--] = 0x20;
-        }
-    }
-    else
-    {
-        // Left align, preserve spaces in case config tries to manually right-align
-        int dst = 0;
-        for (int src = 0; src < fieldsize; src++)
-        {
-            char c = field[src];
-            if (c < 0x20 || c > 0x7E) c = 0x20;
-            field[dst++] = c;
-        }
-        while (dst < fieldsize)
-        {
-            field[dst++] = 0x20;
-        }
-    }
+    static const image_config_t empty; // Statically zero-initialized
+    *this = empty;
 }
 
-// Set default drive vendor / product info after the image file
-// is loaded and the device type is known.
-static void setDefaultDriveInfo(int target_idx)
+void scsiDiskCloseSDCardImages()
 {
-    image_config_t &img = g_DiskImages[target_idx];
-
-    static const char *driveinfo_fixed[4]     = DRIVEINFO_FIXED;
-    static const char *driveinfo_removable[4] = DRIVEINFO_REMOVABLE;
-    static const char *driveinfo_optical[4]   = DRIVEINFO_OPTICAL;
-    static const char *driveinfo_floppy[4]    = DRIVEINFO_FLOPPY;
-    static const char *driveinfo_magopt[4]    = DRIVEINFO_MAGOPT;
-    static const char *driveinfo_tape[4]      = DRIVEINFO_TAPE;
-
-    static const char *apl_driveinfo_fixed[4]     = APPLE_DRIVEINFO_FIXED;
-    static const char *apl_driveinfo_removable[4] = APPLE_DRIVEINFO_REMOVABLE;
-    static const char *apl_driveinfo_optical[4]   = APPLE_DRIVEINFO_OPTICAL;
-    static const char *apl_driveinfo_floppy[4]    = APPLE_DRIVEINFO_FLOPPY;
-    static const char *apl_driveinfo_magopt[4]    = APPLE_DRIVEINFO_MAGOPT;
-    static const char *apl_driveinfo_tape[4]      = APPLE_DRIVEINFO_TAPE;
-
-    const char **driveinfo = NULL;
-
-    if (img.quirks == S2S_CFG_QUIRKS_APPLE)
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
     {
-        // Use default drive IDs that are recognized by Apple machines
-        switch (img.deviceType)
+        if (!g_DiskImages[i].file.isRom())
         {
-            case S2S_CFG_FIXED:         driveinfo = apl_driveinfo_fixed; break;
-            case S2S_CFG_REMOVEABLE:    driveinfo = apl_driveinfo_removable; break;
-            case S2S_CFG_OPTICAL:       driveinfo = apl_driveinfo_optical; break;
-            case S2S_CFG_FLOPPY_14MB:   driveinfo = apl_driveinfo_floppy; break;
-            case S2S_CFG_MO:            driveinfo = apl_driveinfo_magopt; break;
-            case S2S_CFG_SEQUENTIAL:    driveinfo = apl_driveinfo_tape; break;
-            default:                    driveinfo = apl_driveinfo_fixed; break;
-        }
-    }
-    else
-    {
-        // Generic IDs
-        switch (img.deviceType)
-        {
-            case S2S_CFG_FIXED:         driveinfo = driveinfo_fixed; break;
-            case S2S_CFG_REMOVEABLE:    driveinfo = driveinfo_removable; break;
-            case S2S_CFG_OPTICAL:       driveinfo = driveinfo_optical; break;
-            case S2S_CFG_FLOPPY_14MB:   driveinfo = driveinfo_floppy; break;
-            case S2S_CFG_MO:            driveinfo = driveinfo_magopt; break;
-            case S2S_CFG_SEQUENTIAL:    driveinfo = driveinfo_tape; break;
-            default:                    driveinfo = driveinfo_fixed; break;
-        }
-    }
-
-    if (img.vendor[0] == '\0')
-    {
-        memset(img.vendor, 0, sizeof(img.vendor));
-        strncpy(img.vendor, driveinfo[0], sizeof(img.vendor));
-    }
-
-    if (img.prodId[0] == '\0')
-    {
-        memset(img.prodId, 0, sizeof(img.prodId));
-        strncpy(img.prodId, driveinfo[1], sizeof(img.prodId));
-    }
-
-    if (img.revision[0] == '\0')
-    {
-        memset(img.revision, 0, sizeof(img.revision));
-        strncpy(img.revision, driveinfo[2], sizeof(img.revision));
-    }
-
-    if (img.serial[0] == '\0')
-    {
-        memset(img.serial, 0, sizeof(img.serial));
-        strncpy(img.serial, driveinfo[3], sizeof(img.serial));
-    }
-
-    if (img.serial[0] == '\0')
-    {
-        // Use SD card serial number
-        cid_t sd_cid;
-        uint32_t sd_sn = 0;
-        if (SD.card()->readCID(&sd_cid))
-        {
-            sd_sn = sd_cid.psn();
+            g_DiskImages[i].file.close();
         }
 
-        memset(img.serial, 0, sizeof(img.serial));
-        const char *nibble = "0123456789ABCDEF";
-        img.serial[0] = nibble[(sd_sn >> 28) & 0xF];
-        img.serial[1] = nibble[(sd_sn >> 24) & 0xF];
-        img.serial[2] = nibble[(sd_sn >> 20) & 0xF];
-        img.serial[3] = nibble[(sd_sn >> 16) & 0xF];
-        img.serial[4] = nibble[(sd_sn >> 12) & 0xF];
-        img.serial[5] = nibble[(sd_sn >>  8) & 0xF];
-        img.serial[6] = nibble[(sd_sn >>  4) & 0xF];
-        img.serial[7] = nibble[(sd_sn >>  0) & 0xF];
+        g_DiskImages[i].cuesheetfile.close();
     }
-
-    int rightAlign = img.rightAlignStrings;
-
-    formatDriveInfoField(img.vendor, sizeof(img.vendor), rightAlign);
-    formatDriveInfoField(img.prodId, sizeof(img.prodId), rightAlign);
-    formatDriveInfoField(img.revision, sizeof(img.revision), rightAlign);
-    formatDriveInfoField(img.serial, sizeof(img.serial), true);
 }
 
-bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_id, int scsi_lun, int blocksize, S2S_CFG_TYPE type)
+
+// remove path and extension from filename
+void extractFileName(const char* path, char* output) {
+
+    const char *lastSlash, *lastDot;
+    int fileNameLength;
+
+    lastSlash = strrchr(path, '/');
+    if (!lastSlash) lastSlash = path;
+        else lastSlash++;
+
+    lastDot = strrchr(lastSlash, '.');
+    if (lastDot && (lastDot > lastSlash)) {
+        fileNameLength = lastDot - lastSlash;
+        strncpy(output, lastSlash, fileNameLength);
+        output[fileNameLength] = '\0';
+    } else {
+        strcpy(output, lastSlash);
+    }
+}
+
+void setNameFromImage(image_config_t &img, const char *filename) {
+
+    char image_name[MAX_FILE_PATH];
+
+    extractFileName(filename, image_name);
+    memset(img.vendor, 0, 8);
+    strncpy(img.vendor, image_name, 8);
+    memset(img.prodId, 0, 8);
+    strncpy(img.prodId, image_name+8, 8);
+}
+
+// Load values for target image configuration from given section if they exist.
+// Otherwise keep current settings.
+static void scsiDiskSetImageConfig(uint8_t target_idx)
 {
     image_config_t &img = g_DiskImages[target_idx];
+    scsi_system_settings_t *devSys = g_scsi_settings.getSystem();
+    scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(target_idx);
+    img.scsiId = target_idx;
+    memset(img.vendor, 0, sizeof(img.vendor));
+    memset(img.prodId, 0, sizeof(img.prodId));
+    memset(img.revision, 0, sizeof(img.revision));
+    memset(img.serial, 0, sizeof(img.serial));
+
+    img.deviceType = devCfg->deviceType;
+    img.deviceTypeModifier = devCfg->deviceTypeModifier;
+    img.sectorsPerTrack = devCfg->sectorsPerTrack;
+    img.headsPerCylinder = devCfg->headsPerCylinder;
+    img.quirks = devSys->quirks;
+    img.rightAlignStrings = devCfg->rightAlignStrings;
+    img.name_from_image = devCfg->nameFromImage;
+    img.prefetchbytes = devCfg->prefetchBytes;
+    img.reinsert_on_inquiry = devCfg->reinsertOnInquiry;
+    img.reinsert_after_eject = devCfg->reinsertAfterEject;
+    img.ejectButton = devCfg->ejectButton;
+    img.vendorExtensions = devCfg->vendorExtensions;
+
+#ifdef ENABLE_AUDIO_OUTPUT
+    uint16_t vol = devCfg->vol;
+    // Set volume on both channels
+    audio_set_volume(target_idx, (vol << 8) | vol);
+#endif
+
+    memcpy(img.vendor, devCfg->vendor, sizeof(img.vendor));
+    memcpy(img.prodId, devCfg->prodId, sizeof(img.prodId));
+    memcpy(img.revision, devCfg->revision, sizeof(img.revision));
+    memcpy(img.serial, devCfg->serial, sizeof(img.serial));
+}
+
+bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)
+{
+    image_config_t &img = g_DiskImages[target_idx];
+    img.cuesheetfile.close();
+    img.cdrom_binfile_index = -1;
+    scsiDiskSetImageConfig(target_idx);
     img.file = ImageBackingStore(filename, blocksize);
 
     if (img.file.isOpen())
     {
         img.bytesPerSector = blocksize;
         img.scsiSectors = img.file.size() / blocksize;
-        img.scsiId = scsi_id | S2S_CFG_TARGET_ENABLED;
+        img.scsiId = target_idx | S2S_CFG_TARGET_ENABLED;
         img.sdSectorStart = 0;
-        
-        if (img.scsiSectors == 0)
+
+        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && !img.file.isFolder())
         {
-            azlog("---- Error: image file ", filename, " is empty");
+            logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
             return false;
         }
-
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom())
+        if (img.file.isRom() || type == S2S_CFG_NETWORK || img.file.isFolder())
         {
             // ROM is always contiguous, no need to log
         }
         else if (img.file.contiguousRange(&sector_begin, &sector_end))
         {
-            azlog("---- Image file is contiguous, SD card sectors ", (int)sector_begin, " to ", (int)sector_end);
+#ifdef ZULUSCSI_HARDWARE_CONFIG
+            if (g_hw_config.is_active())
+            {
+                dbgmsg("----  Device spans SD card sectors ", (int)sector_begin, " to ", (int)sector_end);
+            }
+            else
+#endif // ZULUSCSI_HARDWARE_CONFIG
+            {
+                dbgmsg("---- Image file is contiguous, SD card sectors ", (int)sector_begin, " to ", (int)sector_end);
+            }
         }
         else
         {
-            azlog("---- WARNING: file ", filename, " is not contiguous. This will increase read latency.");
+            logmsg("---- WARNING: file ", filename, " is not contiguous. This will increase read latency.");
         }
 
-        if (type == S2S_CFG_OPTICAL)
+        S2S_CFG_TYPE setting_type = (S2S_CFG_TYPE) g_scsi_settings.getDevice(target_idx)->deviceType;
+        if ( setting_type != S2S_CFG_NOT_SET)
         {
-            azlog("---- Configuring as CD-ROM drive based on image name");
+            type = setting_type;
+        }
+
+        if (type == S2S_CFG_FIXED)
+        {
+            logmsg("---- Configuring as disk drive drive");
+            img.deviceType = S2S_CFG_FIXED;
+        }
+        else if (type == S2S_CFG_OPTICAL)
+        {
+            logmsg("---- Configuring as CD-ROM drive");
             img.deviceType = S2S_CFG_OPTICAL;
+            if (g_scsi_settings.getDevice(target_idx)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
+            {
+                logmsg("---- Plextor 0xD8 vendor extension enabled");
+            }
         }
         else if (type == S2S_CFG_FLOPPY_14MB)
         {
-            azlog("---- Configuring as floppy drive based on image name");
+            logmsg("---- Configuring as floppy drive");
             img.deviceType = S2S_CFG_FLOPPY_14MB;
         }
         else if (type == S2S_CFG_MO)
         {
-            azlog("---- Configuring as magneto-optical based on image name");
+            logmsg("---- Configuring as magneto-optical");
             img.deviceType = S2S_CFG_MO;
         }
-        else if (type == S2S_CFG_REMOVEABLE)
+#ifdef ZULUSCSI_NETWORK
+        else if (type == S2S_CFG_NETWORK)
         {
-            azlog("---- Configuring as removable drive based on image name");
-            img.deviceType = S2S_CFG_REMOVEABLE;
+            logmsg("---- Configuring as network based on image name");
+            img.deviceType = S2S_CFG_NETWORK;
+        }
+#endif // ZULUSCSI_NETWORK
+        else if (type == S2S_CFG_REMOVABLE)
+        {
+            logmsg("---- Configuring as removable drive");
+            img.deviceType = S2S_CFG_REMOVABLE;
         }
         else if (type == S2S_CFG_SEQUENTIAL)
         {
-            azlog("---- Configuring as tape drive based on image name");
+            logmsg("---- Configuring as tape drive");
             img.deviceType = S2S_CFG_SEQUENTIAL;
         }
-
-#ifdef AZPLATFORM_CONFIG_HOOK
-        AZPLATFORM_CONFIG_HOOK(&img);
-#endif
-
-        setDefaultDriveInfo(target_idx);
-
-        if (img.prefetchbytes > 0)
+                else if (type == S2S_CFG_ZIP100)
         {
-            azlog("---- Read prefetch enabled: ", (int)img.prefetchbytes, " bytes");
+            logmsg("---- Configuration as Iomega Zip100");
+            img.deviceType = S2S_CFG_ZIP100;
+            if(img.file.size() != ZIP100_DISK_SIZE)
+            {
+                logmsg("---- Zip 100 disk (", (int)img.file.size(), " bytes) is not exactly ", ZIP100_DISK_SIZE, " bytes, may not work correctly");
+            }
+        }
+
+        quirksCheck(&img);
+
+        if (img.name_from_image)
+        {
+            setNameFromImage(img, filename);
+            logmsg("---- Vendor / product id set from image file name");
+        }
+
+        if (type == S2S_CFG_NETWORK)
+        {
+            // prefetch not used, skip emitting log message
+        }
+        else if (img.prefetchbytes > 0)
+        {
+            logmsg("---- Read prefetch enabled: ", (int)img.prefetchbytes, " bytes");
         }
         else
         {
-            azlog("---- Read prefetch disabled");
+            logmsg("---- Read prefetch disabled");
         }
 
+        if (img.deviceType == S2S_CFG_OPTICAL &&
+            strncasecmp(filename + strlen(filename) - 4, ".bin", 4) == 0)
+        {
+            // Check for .cue sheet with single .bin file
+            char cuesheetname[MAX_FILE_PATH + 1] = {0};
+            strncpy(cuesheetname, filename, strlen(filename) - 4);
+            strlcat(cuesheetname, ".cue", sizeof(cuesheetname));
+            img.cuesheetfile = SD.open(cuesheetname, O_RDONLY);
+
+            if (img.cuesheetfile.isOpen())
+            {
+                logmsg("---- Found CD-ROM CUE sheet at ", cuesheetname);
+                if (!cdromValidateCueSheet(img))
+                {
+                    logmsg("---- Failed to parse cue sheet, using as plain binary image");
+                    img.cuesheetfile.close();
+                }
+            }
+            else
+            {
+                logmsg("---- No CUE sheet found at ", cuesheetname, ", using as plain binary image");
+            }
+        }
+        else if (img.deviceType == S2S_CFG_OPTICAL && img.file.isFolder())
+        {
+            // The folder should contain .cue sheet and one or several .bin files
+            char foldername[MAX_FILE_PATH + 1] = {0};
+            char cuesheetname[MAX_FILE_PATH + 1] = {0};
+            img.file.getFoldername(foldername, sizeof(foldername));
+            FsFile folder = SD.open(foldername, O_RDONLY);
+            bool valid = false;
+            img.cuesheetfile.close();
+            while (!valid && img.cuesheetfile.openNext(&folder, O_RDONLY))
+            {
+                img.cuesheetfile.getName(cuesheetname, sizeof(cuesheetname));
+                if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
+                {
+                    valid = cdromValidateCueSheet(img);
+                }
+            }
+
+            if (!valid)
+            {
+                logmsg("No valid .cue sheet found in folder '", foldername, "'");
+                img.cuesheetfile.close();
+            }
+        }
+
+        img.use_prefix = use_prefix;
+        img.file.getFilename(img.current_image, sizeof(img.current_image));
         return true;
     }
-
-    return false;
+    else
+    {
+        logmsg("---- Failed to load image '", filename, "', ignoring");
+        return false;
+    }
 }
 
 static void checkDiskGeometryDivisible(image_config_t &img)
@@ -811,7 +452,7 @@ static void checkDiskGeometryDivisible(image_config_t &img)
         uint32_t sectorsPerHeadTrack = img.sectorsPerTrack * img.headsPerCylinder;
         if (img.scsiSectors % sectorsPerHeadTrack != 0)
         {
-            azlog("WARNING: Host used command ", scsiDev.cdb[0],
+            logmsg("WARNING: Host used command ", scsiDev.cdb[0],
                 " which is affected by drive geometry. Current settings are ",
                 (int)img.sectorsPerTrack, " sectors x ", (int)img.headsPerCylinder, " heads = ",
                 (int)sectorsPerHeadTrack, " but image size of ", (int)img.scsiSectors,
@@ -821,93 +462,516 @@ static void checkDiskGeometryDivisible(image_config_t &img)
     }
 }
 
-// Set target configuration to default values
-static void scsiDiskConfigDefaults(int target_idx)
+bool scsiDiskFilenameValid(const char* name)
 {
-    image_config_t &img = g_DiskImages[target_idx];
-    img.deviceType = S2S_CFG_FIXED;
-    img.deviceTypeModifier = 0;
-    img.sectorsPerTrack = 63;
-    img.headsPerCylinder = 255;
-    img.quirks = S2S_CFG_QUIRKS_NONE;
-    img.prefetchbytes = PREFETCH_BUFFER_SIZE;
-    memset(img.vendor, 0, sizeof(img.vendor));
-    memset(img.prodId, 0, sizeof(img.prodId));
-    memset(img.revision, 0, sizeof(img.revision));
-    memset(img.serial, 0, sizeof(img.serial));
+    // Check file extension
+    const char *extension = strrchr(name, '.');
+    if (extension)
+    {
+        const char *ignore_exts[] = {
+            ".rom_loaded", ".cue", ".txt", ".rtf", ".md", ".nfo", ".pdf", ".doc", 
+	    ".ini", ".mid", ".midi", ".aiff", ".mp3", ".m4a",
+            NULL
+        };
+        const char *archive_exts[] = {
+            ".tar", ".tgz", ".gz", ".bz2", ".tbz2", ".xz", ".zst", ".z",
+            ".zip", ".zipx", ".rar", ".lzh", ".lha", ".lzo", ".lz4", ".arj",
+            ".dmg", ".hqx", ".cpt", ".7z", ".s7z", ".mid", ".wav", ".aiff",
+            NULL
+        };
+
+        for (int i = 0; ignore_exts[i]; i++)
+        {
+            if (strcasecmp(extension, ignore_exts[i]) == 0)
+            {
+                // ignore these without log message
+                return false;
+            }
+        }
+        for (int i = 0; archive_exts[i]; i++)
+        {
+            if (strcasecmp(extension, archive_exts[i]) == 0)
+            {
+                logmsg("-- Ignoring compressed file ", name);
+                return false;
+            }
+        }
+    }
+    // Check first character
+    if (!isalnum(name[0]))
+    {
+        // ignore files that don't start with a letter or a number
+        return false;
+    }
+    return true;
 }
+
+bool scsiDiskFolderContainsCueSheet(FsFile *dir)
+{
+    FsFile file;
+    char filename[MAX_FILE_PATH + 1];
+    while (file.openNext(dir, O_RDONLY))
+    {
+        if (file.getName(filename, sizeof(filename)) &&
+            (strncasecmp(filename + strlen(filename) - 4, ".cue", 4) == 0))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* img, S2S_CFG_TYPE type, const char* type_name)
+{
+    if (SD.exists(dir_name))
+    {
+        if (img->image_directory)
+        {
+            logmsg("-- Already found an image directory, skipping '", dir_name, "'");
+        }
+        else
+        {
+            img->deviceType = type;
+            img->image_directory = true;
+            logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
+        }
+    }
+}
+
 
 // Load values for target configuration from given section if they exist.
 // Otherwise keep current settings.
-static void scsiDiskLoadConfig(int target_idx, const char *section)
+static void scsiDiskSetConfig(int target_idx)
 {
+  
     image_config_t &img = g_DiskImages[target_idx];
-    img.deviceType = ini_getl(section, "Type", img.deviceType, CONFIGFILE);
-    img.deviceTypeModifier = ini_getl(section, "TypeModifier", img.deviceTypeModifier, CONFIGFILE);
-    img.sectorsPerTrack = ini_getl(section, "SectorsPerTrack", img.sectorsPerTrack, CONFIGFILE);
-    img.headsPerCylinder = ini_getl(section, "HeadsPerCylinder", img.headsPerCylinder, CONFIGFILE);
-    img.quirks = ini_getl(section, "Quirks", img.quirks, CONFIGFILE);
-    img.rightAlignStrings = ini_getbool(section, "RightAlignStrings", 0, CONFIGFILE);
-    img.prefetchbytes = ini_getl(section, "PrefetchBytes", img.prefetchbytes, CONFIGFILE);
-    img.reinsert_on_inquiry = ini_getbool(section, "ReinsertCDOnInquiry", 1, CONFIGFILE);
-    
+    img.scsiId = target_idx;
+
+    scsiDiskSetImageConfig(target_idx);
+
+    char section[6] = "SCSI0";
+    section[4] += target_idx;
     char tmp[32];
-    memset(tmp, 0, sizeof(tmp));
-    ini_gets(section, "Vendor", "", tmp, sizeof(tmp), CONFIGFILE);
-    if (tmp[0]) memcpy(img.vendor, tmp, sizeof(img.vendor));
 
-    memset(tmp, 0, sizeof(tmp));
-    ini_gets(section, "Product", "", tmp, sizeof(tmp), CONFIGFILE);
-    if (tmp[0]) memcpy(img.prodId, tmp, sizeof(img.prodId));
+    ini_gets(section, "ImgDir", "", tmp, sizeof(tmp), CONFIGFILE);
+    if (tmp[0])
+    {
+        logmsg("SCSI", target_idx, " using image directory '", tmp, "'");
+        img.image_directory = true;
+    }
+    else
+    {
+        strcpy(tmp, "HD0");
+        tmp[2] += target_idx;
+        scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_FIXED, "disk");
 
-    memset(tmp, 0, sizeof(tmp));
-    ini_gets(section, "Version", "", tmp, sizeof(tmp), CONFIGFILE);
-    if (tmp[0]) memcpy(img.revision, tmp, sizeof(img.revision));
-    
-    memset(tmp, 0, sizeof(tmp));
-    ini_gets(section, "Serial", "", tmp, sizeof(tmp), CONFIGFILE);
-    if (tmp[0]) memcpy(img.serial, tmp, sizeof(img.serial));
+        strcpy(tmp, "CD0");
+        tmp[2] += target_idx;
+        scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_OPTICAL, "optical");
+
+        strcpy(tmp, "RE0");
+        tmp[2] += target_idx;
+        scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_REMOVABLE, "removable");
+
+        strcpy(tmp, "MO0");
+        tmp[2] += target_idx;
+        scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_MO, "magneto-optical");
+
+        strcpy(tmp, "TP0");
+        tmp[2] += target_idx;
+        scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_SEQUENTIAL, "tape");
+
+        strcpy(tmp, "FD0");
+        tmp[2] += target_idx;
+        scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_FLOPPY_14MB, "floppy");
+
+        strcpy(tmp, "ZP0");
+        tmp[2] += target_idx;
+        scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_ZIP100, "Iomega Zip 100");
+
+    }
+    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType);
 }
 
-// Check if image file name is overridden in config
-static bool get_image_name(int target_idx, char *buf, size_t buflen)
+// Compares the prefix of both files and the scsi ID
+// cd3-name.iso and CD3-otherfile.bin matches, zp3.img or cd4-name.iso would not
+static bool compare_prefix(const char* name, const char* compare)
 {
-    image_config_t &img = g_DiskImages[target_idx];
+    if (strlen(name) >= 3 && strlen(compare) >= 3)
+    {
+        if (tolower(name[0]) == tolower(compare[0])
+            && tolower(name[1]) == tolower(compare[1])
+            && tolower(name[2]) == tolower(compare[2])
+        )
+        return true;
+    }
+    return false;
+}
+
+/***********************/
+/* Start/stop commands */
+/***********************/
+static void doCloseTray(image_config_t &img)
+{
+    if (img.ejected)
+    {
+        uint8_t target = img.scsiId & 7;
+        dbgmsg("------ Device close tray on ID ", (int)target);
+        img.ejected = false;
+
+        if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
+        {
+            dbgmsg("------ Posting UNIT ATTENTION after medium change");
+            scsiDev.targets[target].unitAttention = NOT_READY_TO_READY_TRANSITION_MEDIUM_MAY_HAVE_CHANGED;
+        }
+    }
+}
+
+ 
+// Eject and switch image
+static void doPerformEject(image_config_t &img)
+{
+    uint8_t target = img.scsiId & 7;
+    if (!img.ejected)
+    {
+        dbgmsg("------ Device open tray on ID ", (int)target);
+        img.ejected = true;
+        switchNextImage(img); // Switch media for next time
+    }
+    else
+    {
+        doCloseTray(img);
+    }
+}
+
+
+// Finds filename with the lowest lexical order _after_ the given filename in
+// the given folder. If there is no file after the given one, or if there is
+// no current file, this will return the lowest filename encountered.
+static int findNextImageAfter(image_config_t &img,
+        const char* dirname, const char* filename,
+        char* buf, size_t buflen)
+{
+    FsFile dir;
+    if (dirname[0] == '\0')
+    {
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        return 0;
+    }
+    if (!dir.open(dirname))
+    {
+        logmsg("Image directory '", dirname, "' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '", dirname, "', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '", dirname, "' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    char first_name[MAX_FILE_PATH] = {'\0'};
+    char candidate_name[MAX_FILE_PATH] = {'\0'};
+    FsFile file;
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        if (file.isDir() && !scsiDiskFolderContainsCueSheet(&file)) continue;
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '", dirname, "' had invalid file");
+            continue;
+        }
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) {
+            logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
+            continue;
+        }
+
+        if (img.use_prefix && !compare_prefix(filename, buf)) continue;
+
+        // keep track of the first item to allow wrapping
+        // without having to iterate again
+        if (first_name[0] == '\0' || strcasecmp(buf, first_name) < 0)
+        {
+            strncpy(first_name, buf, sizeof(first_name));
+        }
+
+        // discard if no selected name, or if candidate is before (or is) selected
+        // or prefix searching is enabled and file doesn't contain current prefix
+        if (filename[0] == '\0' || strcasecmp(buf, filename) <= 0) continue;
+
+        // if we got this far and the candidate is either 1) not set, or 2) is a
+        // lower item than what has been encountered thus far, it is the best choice
+        if (candidate_name[0] == '\0' || strcasecmp(buf, candidate_name) < 0)
+        {
+            strncpy(candidate_name, buf, sizeof(candidate_name));
+        }
+    }
+
+    if (candidate_name[0] != '\0')
+    {
+        img.image_index++;
+        strncpy(img.current_image, candidate_name, sizeof(img.current_image));
+        strncpy(buf, candidate_name, buflen);
+        return strlen(candidate_name);
+    }
+    else if (first_name[0] != '\0')
+    {
+        img.image_index = 0;
+        strncpy(img.current_image, first_name, sizeof(img.current_image));
+        strncpy(buf, first_name, buflen);
+        return strlen(first_name);
+    }
+    else
+    {
+        logmsg("Image directory '", dirname, "' was empty");
+        img.image_directory = false;
+        return 0;
+    }
+}
+
+int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
+{
+    int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     char section[6] = "SCSI0";
     section[4] = '0' + target_idx;
 
-    char key[5] = "IMG0";
-    key[3] = '0' + img.image_index;
+    // sanity check: is provided buffer is long enough to store a filename?
+    assert(buflen >= MAX_FILE_PATH);
 
-    ini_gets(section, key, "", buf, buflen, CONFIGFILE);
-    return buf[0] != '\0';
+    // find the next filename
+    char nextname[MAX_FILE_PATH];
+    int nextlen;
+
+    if (img.image_directory)
+    {
+        // image directory was found during startup
+        char dirname[MAX_FILE_PATH];
+        char key[] = "ImgDir";
+        int dirlen = ini_gets(section, key, "", dirname, sizeof(dirname), CONFIGFILE);
+        if (!dirlen)
+        {
+            switch (img.deviceType)
+            {
+                case S2S_CFG_FIXED:
+                    strcpy(dirname ,"HD0");
+                    break;
+                case S2S_CFG_OPTICAL:
+                    strcpy(dirname, "CD0");
+                break;
+                case S2S_CFG_REMOVABLE:
+                    strcpy(dirname, "RE0");
+                break;
+                case S2S_CFG_MO:
+                    strcpy(dirname, "MO0");
+                break;
+                case S2S_CFG_SEQUENTIAL:
+                    strcpy(dirname ,"TP0");
+                break;
+                case S2S_CFG_FLOPPY_14MB:
+                    strcpy(dirname, "FD0");
+                break;
+                case S2S_CFG_ZIP100:
+                    strcpy(dirname, "ZP0");
+                break;
+                default:
+                    dbgmsg("No matching device type for default directory found");
+                    return 0;
+            }
+            dirname[2] += target_idx;
+            if (!SD.exists(dirname))
+            {
+                dbgmsg("Default image directory, ", dirname, " does not exist");
+                return 0;
+            }
+        }
+
+        // find the next filename
+        nextlen = findNextImageAfter(img, dirname, img.current_image, nextname, sizeof(nextname));
+
+        if (nextlen == 0)
+        {
+            logmsg("Image directory was empty for ID", target_idx);
+            return 0;
+        }
+        else if (buflen < nextlen + dirlen + 2)
+        {
+            logmsg("Directory '", dirname, "' and file '", nextname, "' exceed allowed length");
+            return 0;
+        }
+        else
+        {
+            // construct a return value
+            strncpy(buf, dirname, buflen);
+            if (buf[strlen(buf) - 1] != '/') strcat(buf, "/");
+            strcat(buf, nextname);
+            return dirlen + nextlen;
+        }
+    }
+    else if (img.use_prefix)
+    {
+        nextlen = findNextImageAfter(img, "/", img.current_image, nextname, sizeof(nextname));
+        if (nextlen == 0)
+        {
+            logmsg("Next file with the same prefix as ", img.current_image," not found for ID", target_idx);
+        }
+        else if (buflen < nextlen + 1)
+        {
+            logmsg("Next file exceeds, '",nextname, "' exceed allowed length");
+        }
+        else
+        {
+            // construct a return value
+            strncpy(buf, nextname, buflen);
+            return nextlen;
+        }
+        img.image_index = -1;
+        return 0;
+    }
+    else
+    {
+        img.image_index++;
+        if (img.image_index > IMAGE_INDEX_MAX || img.image_index < 0)
+        {
+            img.image_index = 0;
+        }
+
+        char key[5] = "IMG0";
+        key[3] = '0' + img.image_index;
+
+        int ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+        if (buf[0] != '\0')
+        {
+            img.deviceType = g_scsi_settings.getDevice(target_idx)->deviceType;
+            return ret;
+        }
+        else if (img.image_index > 0)
+        {
+            // there may be more than one image but we've ran out of new ones
+            // wrap back to the first image
+            img.image_index = -1;
+            return scsiDiskGetNextImageName(img, buf, buflen);
+        }
+        else
+        {
+
+            img.image_index = -1;
+            return 0;
+        }
+    }
 }
 
 void scsiDiskLoadConfig(int target_idx)
 {
-    char section[6] = "SCSI0";
-    section[4] = '0' + target_idx;
-
-    // Set default settings
-    scsiDiskConfigDefaults(target_idx);
-
-    // First load global settings
-    scsiDiskLoadConfig(target_idx, "SCSI");
-
     // Then settings specific to target ID
-    scsiDiskLoadConfig(target_idx, section);
+    scsiDiskSetConfig(target_idx);
 
     // Check if we have image specified by name
     char filename[MAX_FILE_PATH];
-    if (get_image_name(target_idx, filename, sizeof(filename)))
+    image_config_t &img = g_DiskImages[target_idx];
+    img.image_index = IMAGE_INDEX_MAX;
+    if (scsiDiskGetNextImageName(img, filename, sizeof(filename)))
     {
-        image_config_t &img = g_DiskImages[target_idx];
-        int blocksize = (img.deviceType == S2S_CFG_OPTICAL) ? 2048 : 512;
-        azlog("-- Opening ", filename, " for id:", target_idx, ", specified in " CONFIGFILE);
-        scsiDiskOpenHDDImage(target_idx, filename, target_idx, 0, blocksize);
+        // set the default block size now that we know the device type
+        if (g_scsi_settings.getDevice(target_idx)->blockSize == 0)
+        {
+          g_scsi_settings.getDevice(target_idx)->blockSize = img.deviceType == S2S_CFG_OPTICAL ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
+        }
+        int blocksize = getBlockSize(filename, target_idx);
+        logmsg("-- Opening '", filename, "' for id: ", target_idx);
+        scsiDiskOpenHDDImage(target_idx, filename, 0, blocksize, (S2S_CFG_TYPE) img.deviceType, img.use_prefix);
     }
 }
+
+uint32_t getBlockSize(char *filename, uint8_t scsi_id)
+{
+    // Parse block size (HD00_NNNN)
+    uint32_t block_size = g_scsi_settings.getDevice(scsi_id)->blockSize;
+    const char *blksizestr = strchr(filename, '_');
+    if (blksizestr)
+    {
+        int blktmp = strtoul(blksizestr + 1, NULL, 10);
+        if (8 <= blktmp && blktmp <= 64 * 1024)
+        {
+            block_size = blktmp;
+            logmsg("-- Using custom block size, ",(int) block_size," from filename: ", filename);
+        }
+    }
+    return block_size;
+}
+
+uint8_t getEjectButton(uint8_t idx)
+{
+    return g_DiskImages[idx].ejectButton;
+}
+
+void setEjectButton(uint8_t idx, int8_t eject_button)
+{
+    g_DiskImages[idx].ejectButton = eject_button;
+    g_scsi_settings.getDevice(idx)->ejectButton = eject_button;
+}
+
+// Check if we have multiple drive images to cycle when drive is ejected.
+bool switchNextImage(image_config_t &img, const char* next_filename)
+{
+    // Check if we have a next image to load, so that drive is closed next time the host asks.
+    
+    int target_idx = img.scsiId & 7;
+    char filename[MAX_FILE_PATH];
+    if (next_filename == nullptr)
+    {
+        scsiDiskGetNextImageName(img, filename, sizeof(filename));
+    }
+    else
+    {
+        strncpy(filename, next_filename, MAX_FILE_PATH);
+    }
+
+#ifdef ENABLE_AUDIO_OUTPUT
+    // if in progress for this device, terminate audio playback immediately (Annex C)
+    audio_stop(target_idx);
+    // Reset position tracking for the new image
+    audio_get_status_code(target_idx); // trash audio status code
+#endif
+
+    if (filename[0] != '\0')
+    {
+        logmsg("Switching to next image for id ", target_idx, ": ", filename);
+        img.file.close();
+
+        // set default blocksize for CDs
+        int block_size = getBlockSize(filename, target_idx);
+        bool status = scsiDiskOpenHDDImage(target_idx, filename, 0, block_size, (S2S_CFG_TYPE) img.deviceType, img.use_prefix);
+
+        if (status)
+        {
+            if (next_filename != nullptr)
+            {
+                // present the drive as ejected until the host queries it again,
+                // to make sure host properly detects the media change
+                img.ejected = true;
+                img.reinsert_after_eject = true;
+                if (img.deviceType == S2S_CFG_OPTICAL) img.cdrom_events = 2; // New Media
+            }
+            return true;
+        }
+    }
+    else
+    {
+        logmsg("Switch to next image failed because target filename was empty.");
+    }
+
+    return false;
+}
+
 
 bool scsiDiskCheckAnyImagesConfigured()
 {
@@ -922,6 +986,91 @@ bool scsiDiskCheckAnyImagesConfigured()
     return false;
 }
 
+image_config_t &scsiDiskGetImageConfig(int target_idx)
+{
+    assert(target_idx >= 0 && target_idx < S2S_MAX_TARGETS);
+    return g_DiskImages[target_idx];
+}
+
+static void diskEjectAction(uint8_t buttonId)
+{
+    bool found = false;
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        image_config_t &img = g_DiskImages[i];
+        if (img.ejectButton & buttonId)
+        {
+            if (img.deviceType == S2S_CFG_OPTICAL)
+            {
+                found = true;
+                logmsg("Eject button ", (int)buttonId, " pressed, passing to CD drive SCSI", (int)i);
+                cdromPerformEject(img);
+            }
+            else if (img.deviceType == S2S_CFG_ZIP100 
+                    || img.deviceType == S2S_CFG_REMOVABLE 
+                    || img.deviceType == S2S_CFG_FLOPPY_14MB 
+                    || img.deviceType == S2S_CFG_MO
+                    || img.deviceType == S2S_CFG_SEQUENTIAL)
+            {
+                found = true;
+                logmsg("Eject button ", (int)buttonId, " pressed, passing to SCSI device", (int)i);
+                doPerformEject(img);
+            }
+        }
+    }
+
+    if (!found)
+    {
+        logmsg("Eject button ", (int)buttonId, " pressed, but no drives with EjectButton=", (int)buttonId, " setting found!");
+    }
+}
+
+uint8_t diskEjectButtonUpdate(bool immediate)
+{
+    // treat '1' to '0' transitions as eject actions
+    static uint8_t previous = 0x00;
+    uint8_t bitmask = platform_get_buttons() & EJECT_BTN_MASK;
+    uint8_t ejectors = (previous ^ bitmask) & previous;
+    previous = bitmask;
+
+    // defer ejection until the bus is idle
+    static uint8_t deferred = 0x00;
+    if (!immediate)
+    {
+        deferred |= ejectors;
+        return 0;
+    }
+    else
+    {
+        ejectors |= deferred;
+        deferred = 0;
+
+        if (ejectors)
+        {
+            uint8_t mask = 1;
+            for (uint8_t i = 0; i < 8; i++)
+            {
+                if (ejectors & mask) diskEjectAction(ejectors & mask);
+                mask = mask << 1;
+            }
+        }
+        return ejectors;
+    }
+}
+
+bool scsiDiskCheckAnyNetworkDevicesConfigured()
+{
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        if (g_DiskImages[i].file.isOpen() && (g_DiskImages[i].scsiId & S2S_CFG_TARGET_ENABLED) && g_DiskImages[i].deviceType == S2S_CFG_NETWORK)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+
 /*******************************/
 /* Config handling for SCSI2SD */
 /*******************************/
@@ -929,67 +1078,128 @@ bool scsiDiskCheckAnyImagesConfigured()
 extern "C"
 void s2s_configInit(S2S_BoardCfg* config)
 {
+    char tmp[64];
+
     if (SD.exists(CONFIGFILE))
     {
-        azlog("Reading configuration from " CONFIGFILE);
+        logmsg("Reading configuration from " CONFIGFILE);
     }
     else
     {
-        azlog("Config file " CONFIGFILE " not found, using defaults");
+        logmsg("Config file " CONFIGFILE " not found, using defaults");
     }
 
-    azlog("Active configuration:");
+    // Get default values from system preset, if any
+    ini_gets("SCSI", "System", "", tmp, sizeof(tmp), CONFIGFILE);
+    scsi_system_settings_t *sysCfg = g_scsi_settings.initSystem(tmp);
+
+    if (g_scsi_settings.getSystemPreset() != SYS_PRESET_NONE)
+    {
+        logmsg("Active configuration (using system preset \"", g_scsi_settings.getSystemPresetName(), "\"):");
+    }
+    else
+    {
+        logmsg("Active configuration:");
+    }
+
     memset(config, 0, sizeof(S2S_BoardCfg));
     memcpy(config->magic, "BCFG", 4);
     config->flags = 0;
     config->startupDelay = 0;
-    config->selectionDelay = ini_getl("SCSI", "SelectionDelay", 255, CONFIGFILE);
+    config->selectionDelay = sysCfg->selectionDelay;
     config->flags6 = 0;
     config->scsiSpeed = PLATFORM_MAX_SCSI_SPEED;
-
-    int maxSyncSpeed = ini_getl("SCSI", "MaxSyncSpeed", 10, CONFIGFILE);
+    int maxSyncSpeed = sysCfg->maxSyncSpeed;
     if (maxSyncSpeed < 5 && config->scsiSpeed > S2S_CFG_SPEED_ASYNC_50)
         config->scsiSpeed = S2S_CFG_SPEED_ASYNC_50;
     else if (maxSyncSpeed < 10 && config->scsiSpeed > S2S_CFG_SPEED_SYNC_5)
         config->scsiSpeed = S2S_CFG_SPEED_SYNC_5;
-    
-    azlog("-- SelectionDelay: ", (int)config->selectionDelay);
+    else if (maxSyncSpeed < 20 && config->scsiSpeed > S2S_CFG_SPEED_SYNC_10)
+        config->scsiSpeed = S2S_CFG_SPEED_SYNC_10;
 
-    if (ini_getbool("SCSI", "EnableUnitAttention", false, CONFIGFILE))
+    logmsg("-- SelectionDelay = ", (int)config->selectionDelay);
+
+    if (sysCfg->enableUnitAttention)
     {
-        azlog("-- EnableUnitAttention is on");
+        logmsg("-- EnableUnitAttention = Yes");
         config->flags |= S2S_CFG_ENABLE_UNIT_ATTENTION;
     }
-
-    if (ini_getbool("SCSI", "EnableSCSI2", true, CONFIGFILE))
+    else
     {
-        azlog("-- EnableSCSI2 is on");
+        logmsg("-- EnableUnitAttention = No");
+    }
+
+    if (sysCfg->enableSCSI2)
+    {
+        logmsg("-- EnableSCSI2 = Yes");
         config->flags |= S2S_CFG_ENABLE_SCSI2;
     }
-
-    if (ini_getbool("SCSI", "EnableSelLatch", false, CONFIGFILE))
+    else
     {
-        azlog("-- EnableSelLatch is on");
-        config->flags |= S2S_CFG_ENABLE_SEL_LATCH;
+        logmsg("-- EnableSCSI2 = No");
     }
 
-    if (ini_getbool("SCSI", "MapLunsToIDs", false, CONFIGFILE))
+    if (sysCfg->enableSelLatch)
     {
-        azlog("-- MapLunsToIDs is on");
+        logmsg("-- EnableSelLatch = Yes");
+        config->flags |= S2S_CFG_ENABLE_SEL_LATCH;
+    }
+    else
+    {
+        logmsg("-- EnableSelLatch = No");
+    }
+
+    if (sysCfg->mapLunsToIDs)
+    {
+        logmsg("-- MapLunsToIDs = Yes");
         config->flags |= S2S_CFG_MAP_LUNS_TO_IDS;
+    }
+    else
+    {
+        logmsg("-- MapLunsToIDs = No");
     }
 
 #ifdef PLATFORM_HAS_PARITY_CHECK
-    if (ini_getbool("SCSI", "EnableParity", true, CONFIGFILE))
+    if (sysCfg->enableParity)
     {
-        azlog("-- EnableParity is on");
+        logmsg("-- EnableParity = Yes");
         config->flags |= S2S_CFG_ENABLE_PARITY;
     }
     else
     {
-        azlog("-- EnableParity is off");
+        logmsg("-- EnableParity = No");
     }
 #endif
+    memset(tmp, 0, sizeof(tmp));
+    ini_gets("SCSI", "WiFiMACAddress", "", tmp, sizeof(tmp), CONFIGFILE);
+    if (tmp[0])
+    {
+        // convert from "01:23:45:67:89" to { 0x01, 0x23, 0x45, 0x67, 0x89 }
+        int mac[6];
+        if (sscanf(tmp, "%x:%x:%x:%x:%x:%x", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) == 6)
+        {
+            config->wifiMACAddress[0] = mac[0];
+            config->wifiMACAddress[1] = mac[1];
+            config->wifiMACAddress[2] = mac[2];
+            config->wifiMACAddress[3] = mac[3];
+            config->wifiMACAddress[4] = mac[4];
+            config->wifiMACAddress[5] = mac[5];
+        }
+        else
+        {
+            logmsg("Invalid MAC address format: \"", tmp, "\"");
+            memset(config->wifiMACAddress, 0, sizeof(config->wifiMACAddress));
+        }
+    }
+
+    memset(tmp, 0, sizeof(tmp));
+    ini_gets("SCSI", "WiFiSSID", "", tmp, sizeof(tmp), CONFIGFILE);
+    if (tmp[0]) memcpy(config->wifiSSID, tmp, sizeof(config->wifiSSID));
+
+    memset(tmp, 0, sizeof(tmp));
+    ini_gets("SCSI", "WiFiPassword", "", tmp, sizeof(tmp), CONFIGFILE);
+    if (tmp[0]) memcpy(config->wifiPassword, tmp, sizeof(config->wifiPassword));
+
 }
 
 extern "C"
@@ -1121,7 +1331,16 @@ static void doReadCapacity()
 
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-    uint32_t capacity = img.file.size() / bytesPerSector;
+    uint32_t capacity;
+
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK))
+    {
+        capacity = 1;
+    }
+    else
+    {
+        capacity = img.file.size() / bytesPerSector;
+    }
 
     if (!pmi && lba)
     {
@@ -1138,6 +1357,10 @@ static void doReadCapacity()
     {
         uint32_t highestBlock = capacity - 1;
 
+	if (pmi && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD)
+	{
+		highestBlock = 0x00001053;
+	}
         scsiDev.data[0] = highestBlock >> 24;
         scsiDev.data[1] = highestBlock >> 16;
         scsiDev.data[2] = highestBlock >> 8;
@@ -1163,59 +1386,8 @@ static void doReadCapacity()
 /*************************/
 /* TestUnitReady command */
 /*************************/
-
-// Check if we have multiple CD-ROM images to cycle when drive is ejected.
-static bool checkNextCDImage()
-{
-    // Check if we have a next image to load, so that drive is closed next time the host asks.
-    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    img.image_index++;
-    char filename[MAX_FILE_PATH];
-    int target_idx = img.scsiId & 7;
-    if (!get_image_name(target_idx, filename, sizeof(filename)))
-    {
-        img.image_index = 0;
-        get_image_name(target_idx, filename, sizeof(filename));
-    }
-
-    if (filename[0] != '\0')
-    {
-        azlog("Switching to next CD-ROM image for ", target_idx, ": ", filename);
-        image_config_t &img = g_DiskImages[target_idx];
-        img.file.close();
-        bool status = scsiDiskOpenHDDImage(target_idx, filename, target_idx, 0, 2048);
-
-        if (status)
-        {
-            img.ejected = false;
-            img.cdrom_events = 2; // New media
-            return true;
-        }
-    }
-
-    return false;
-}
-
-// Reinsert any ejected CDROMs on reboot
-static void reinsertCDROM(image_config_t &img)
-{
-    if (img.image_index > 0)
-    {
-        // Multiple images for this drive, force restart from first one
-        azdbg("---- Restarting from first CD-ROM image");
-        img.image_index = 9;
-        checkNextCDImage();
-    }
-    else if (img.ejected)
-    {
-        // Reinsert the single image
-        azdbg("---- Closing CD-ROM tray");
-        img.ejected = false;
-        img.cdrom_events = 2; // New media
-    }
-}
-
-static int doTestUnitReady()
+extern "C"
+int doTestUnitReady()
 {
     int ready = 1;
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
@@ -1235,9 +1407,14 @@ static int doTestUnitReady()
         scsiDev.target->sense.asc = MEDIUM_NOT_PRESENT;
         scsiDev.phase = STATUS;
 
-        // We are now reporting to host that the drive is open.
-        // Simulate a "close" for next time the host polls.
-        checkNextCDImage();
+        if (img.reinsert_after_eject)
+        {
+            // We are now reporting to host that the drive is open.
+            // Simulate a "close" for next time the host polls.
+            if (img.deviceType == S2S_CFG_OPTICAL) cdromCloseTray(img);
+            else doCloseTray(img);
+
+        }
     }
     else if (unlikely(!(blockDev.state & DISK_PRESENT)) || img.file.size() < scsiDev.target->liveCfg.bytesPerSector)
     {
@@ -1256,50 +1433,6 @@ static int doTestUnitReady()
         scsiDev.phase = STATUS;
     }
     return ready;
-}
-
-static void doGetEventStatusNotification(bool immed)
-{
-    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-
-    if (!immed)
-    {
-        // Asynchronous notification not supported
-        scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
-        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-        scsiDev.phase = STATUS;
-    }
-    else if (img.cdrom_events)
-    {
-        scsiDev.data[0] = 0;
-        scsiDev.data[1] = 6; // EventDataLength
-        scsiDev.data[2] = 0x04; // Media status events
-        scsiDev.data[3] = 0x04; // Supported events
-        scsiDev.data[4] = img.cdrom_events;
-        scsiDev.data[5] = 0x01; // Power status
-        scsiDev.data[6] = 0; // Start slot
-        scsiDev.data[7] = 0; // End slot
-        scsiDev.dataLen = 8;
-        scsiDev.phase = DATA_IN;
-        img.cdrom_events = 0;
-
-        if (img.ejected)
-        {
-            // We are now reporting to host that the drive is open.
-            // Simulate a "close" for next time the host polls.
-            checkNextCDImage();
-        }
-    }
-    else
-    {
-        scsiDev.data[0] = 0;
-        scsiDev.data[1] = 2; // EventDataLength
-        scsiDev.data[2] = 0x00; // Media status events
-        scsiDev.data[3] = 0x04; // Supported events
-        scsiDev.dataLen = 4;
-        scsiDev.phase = DATA_IN;
-    }
 }
 
 /****************/
@@ -1333,6 +1466,7 @@ static void doSeek(uint32_t lba)
     }
 }
 
+
 /********************************************/
 /* Transfer state for read / write commands */
 /********************************************/
@@ -1362,7 +1496,7 @@ static struct {
 /* Write command */
 /*****************/
 
-static void doWrite(uint32_t lba, uint32_t blocks)
+void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
 {
     if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
         // Floppies are supposed to be slow. Some systems can't handle a floppy
@@ -1374,14 +1508,14 @@ static void doWrite(uint32_t lba, uint32_t blocks)
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
     uint32_t capacity = img.file.size() / bytesPerSector;
 
-    azdbg("------ Write ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+    dbgmsg("------ Write ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
 
     if (unlikely(blockDev.state & DISK_WP) ||
         unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_OPTICAL) ||
         unlikely(!img.file.isWritable()))
 
     {
-        azlog("WARNING: Host attempted write to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        logmsg("WARNING: Host attempted write to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         scsiDev.status = CHECK_CONDITION;
         scsiDev.target->sense.code = ILLEGAL_REQUEST;
         scsiDev.target->sense.asc = WRITE_PROTECTED;
@@ -1389,7 +1523,7 @@ static void doWrite(uint32_t lba, uint32_t blocks)
     }
     else if (unlikely(((uint64_t) lba) + blocks > capacity))
     {
-        azlog("WARNING: Host attempted write at sector ", (int)lba, "+", (int)blocks,
+        logmsg("WARNING: Host attempted write at sector ", (int)lba, "+", (int)blocks,
               ", exceeding image size ", (int)capacity, " sectors (",
               (int)bytesPerSector, "B/sector)");
         scsiDev.status = CHECK_CONDITION;
@@ -1416,7 +1550,7 @@ static void doWrite(uint32_t lba, uint32_t blocks)
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
         if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
         {
-            azlog("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
+            logmsg("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
             scsiDev.status = CHECK_CONDITION;
             scsiDev.target->sense.code = MEDIUM_ERROR;
             scsiDev.target->sense.asc = NO_SEEK_COMPLETE;
@@ -1437,7 +1571,7 @@ void diskDataOut_callback(uint32_t bytes_complete)
         // How many bytes remaining in the transfer?
         uint32_t remain = g_disk_transfer.bytes_scsi - g_disk_transfer.bytes_scsi_started;
         uint32_t len = remain;
-        
+
         // Split read so that it doesn't wrap around buffer edge
         uint32_t bufsize = sizeof(scsiDev.data);
         uint32_t start = (g_disk_transfer.bytes_scsi_started % bufsize);
@@ -1467,7 +1601,7 @@ void diskDataOut_callback(uint32_t bytes_complete)
         if (len == 0)
             return;
 
-        // azdbg("SCSI read ", (int)start, " + ", (int)len);
+        // dbgmsg("SCSI read ", (int)start, " + ", (int)len);
         scsiStartRead(&scsiDev.data[start], len, &g_disk_transfer.parityError);
         g_disk_transfer.bytes_scsi_started += len;
     }
@@ -1491,6 +1625,9 @@ void diskDataOut()
            && scsiDev.phase == DATA_OUT
            && !scsiDev.resetFlag)
     {
+        platform_poll();
+        diskEjectButtonUpdate(false);
+
         // Figure out how many contiguous bytes are available for writing to SD card.
         uint32_t bufsize = sizeof(scsiDev.data);
         uint32_t start = g_disk_transfer.bytes_sd % bufsize;
@@ -1538,7 +1675,7 @@ void diskDataOut()
             }
 
             if (len < min_write_size)
-            {                
+            {
                 len = 0;
             }
         }
@@ -1567,18 +1704,24 @@ void diskDataOut()
             // when buffer space is freed.
             uint8_t *buf = &scsiDev.data[start];
             g_disk_transfer.sd_transfer_start = start;
-            // azdbg("SD write ", (int)start, " + ", (int)len, " ", bytearray(buf, len));
-            azplatform_set_sd_callback(&diskDataOut_callback, buf);
+            // dbgmsg("SD write ", (int)start, " + ", (int)len, " ", bytearray(buf, len));
+            platform_set_sd_callback(&diskDataOut_callback, buf);
             if (img.file.write(buf, len) != len)
             {
-                azlog("SD card write failed: ", SD.sdErrorCode());
+                logmsg("SD card write failed: ", SD.sdErrorCode());
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = MEDIUM_ERROR;
                 scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
                 scsiDev.phase = STATUS;
             }
-            azplatform_set_sd_callback(NULL, NULL);
+            platform_set_sd_callback(NULL, NULL);
             g_disk_transfer.bytes_sd += len;
+
+            // Reset the watchdog while the transfer is progressing.
+            // If the host stops transferring, the watchdog will eventually expire.
+            // This is needed to avoid hitting the watchdog if the host performs
+            // a large transfer compared to its transfer speed.
+            platform_reset_watchdog();
         }
     }
 
@@ -1601,7 +1744,7 @@ void diskDataOut()
 /* Read command */
 /*****************/
 
-static void doRead(uint32_t lba, uint32_t blocks)
+void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
 {
     if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
         // Floppies are supposed to be slow. Some systems can't handle a floppy
@@ -1612,12 +1755,12 @@ static void doRead(uint32_t lba, uint32_t blocks)
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
     uint32_t capacity = img.file.size() / bytesPerSector;
-    
-    azdbg("------ Read ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+    dbgmsg("------ Read ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
 
     if (unlikely(((uint64_t) lba) + blocks > capacity))
     {
-        azlog("WARNING: Host attempted read at sector ", (int)lba, "+", (int)blocks,
+        logmsg("WARNING: Host attempted read at sector ", (int)lba, "+", (int)blocks,
               ", exceeding image size ", (int)capacity, " sectors (",
               (int)bytesPerSector, "B/sector)");
         scsiDev.status = CHECK_CONDITION;
@@ -1648,19 +1791,25 @@ static void doRead(uint32_t lba, uint32_t blocks)
             uint32_t count = sectors_in_prefetch - start_offset;
             if (count > transfer.blocks) count = transfer.blocks;
             scsiStartWrite(g_scsi_prefetch.buffer + start_offset * bytesPerSector, count * bytesPerSector);
-            azdbg("------ Found ", (int)count, " sectors in prefetch cache");
+            dbgmsg("------ Found ", (int)count, " sectors in prefetch cache");
             transfer.currentBlock += count;
         }
 
         if (transfer.currentBlock == transfer.blocks)
         {
+            while (!scsiIsWriteFinished(NULL) && !scsiDev.resetFlag)
+            {
+                platform_poll();
+                diskEjectButtonUpdate(false);
+            }
+
             scsiFinishWrite();
         }
 #endif
 
         if (!img.file.seek((uint64_t)(transfer.lba + transfer.currentBlock) * bytesPerSector))
         {
-            azlog("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
+            logmsg("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
             scsiDev.status = CHECK_CONDITION;
             scsiDev.target->sense.code = MEDIUM_ERROR;
             scsiDev.target->sense.asc = NO_SEEK_COMPLETE;
@@ -1700,7 +1849,7 @@ void diskDataIn_callback(uint32_t bytes_complete)
         scsiStartWrite(g_disk_transfer.buffer + g_disk_transfer.bytes_scsi, len);
         g_disk_transfer.bytes_scsi += len;
     }
-    
+
     // Provide a chance for polling request processing
     scsiIsWriteFinished(NULL);
 }
@@ -1712,26 +1861,29 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
     g_disk_transfer.buffer = buffer;
     g_disk_transfer.bytes_scsi = 0;
     g_disk_transfer.bytes_sd = count;
-    
+
     // Verify that previous write using this buffer has finished
     uint32_t start = millis();
     while (!scsiIsWriteFinished(buffer + count - 1) && !scsiDev.resetFlag)
     {
         if ((uint32_t)(millis() - start) > 5000)
         {
-            azlog("start_dataInTransfer() timeout waiting for previous to finish");
+            logmsg("start_dataInTransfer() timeout waiting for previous to finish");
             scsiDev.resetFlag = 1;
         }
+
+        platform_poll();
+        diskEjectButtonUpdate(false);
     }
     if (scsiDev.resetFlag) return;
 
     // Start transferring from SD card
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    azplatform_set_sd_callback(&diskDataIn_callback, buffer);
+    platform_set_sd_callback(&diskDataIn_callback, buffer);
 
     if (img.file.read(buffer, count) != count)
     {
-        azlog("SD card read failed: ", SD.sdErrorCode());
+        logmsg("SD card read failed: ", SD.sdErrorCode());
         scsiDev.status = CHECK_CONDITION;
         scsiDev.target->sense.code = MEDIUM_ERROR;
         scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
@@ -1739,7 +1891,16 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
     }
 
     diskDataIn_callback(count);
-    azplatform_set_sd_callback(NULL, NULL);
+    platform_set_sd_callback(NULL, NULL);
+
+    platform_poll();
+    diskEjectButtonUpdate(false);
+
+    // Reset the watchdog while the transfer is progressing.
+    // If the host stops transferring, the watchdog will eventually expire.
+    // This is needed to avoid hitting the watchdog if the host performs
+    // a large transfer compared to its transfer speed.
+    platform_reset_watchdog();
 }
 
 static void diskDataIn()
@@ -1748,7 +1909,7 @@ static void diskDataIn()
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
     uint32_t maxblocks = sizeof(scsiDev.data) / bytesPerSector;
     uint32_t maxblocks_half = maxblocks / 2;
-    
+
     // Start transfer in first half of buffer
     // Waits for the previous first half transfer to finish first.
     uint32_t remain = (transfer.blocks - transfer.currentBlock);
@@ -1784,15 +1945,18 @@ static void diskDataIn()
         g_scsi_prefetch.sector = transfer.lba + transfer.blocks;
         g_scsi_prefetch.bytes = 0;
         g_scsi_prefetch.scsiId = scsiDev.target->cfg->scsiId;
-        
+
         if (g_scsi_prefetch.sector + prefetch_sectors > img_sector_count)
         {
             // Don't try to read past image end.
             prefetch_sectors = img_sector_count - g_scsi_prefetch.sector;
         }
 
-        while (!scsiIsWriteFinished(NULL) && prefetch_sectors > 0)
+        while (!scsiIsWriteFinished(NULL) && prefetch_sectors > 0 && !scsiDev.resetFlag)
         {
+            platform_poll();
+            diskEjectButtonUpdate(false);
+
             // Check if prefetch buffer is free
             g_disk_transfer.buffer = g_scsi_prefetch.buffer + g_scsi_prefetch.bytes;
             if (!scsiIsWriteFinished(g_disk_transfer.buffer) ||
@@ -1805,19 +1969,25 @@ static void diskDataIn()
             // is part of a longer linear read.
             g_disk_transfer.bytes_sd = bytesPerSector;
             g_disk_transfer.bytes_scsi = bytesPerSector; // Tell callback not to send to SCSI
-            azplatform_set_sd_callback(&diskDataIn_callback, g_disk_transfer.buffer);
+            platform_set_sd_callback(&diskDataIn_callback, g_disk_transfer.buffer);
             int status = img.file.read(g_disk_transfer.buffer, bytesPerSector);
             if (status <= 0)
             {
-                azlog("Prefetch read failed");
+                logmsg("Prefetch read failed");
                 prefetch_sectors = 0;
                 break;
             }
             g_scsi_prefetch.bytes += status;
-            azplatform_set_sd_callback(NULL, NULL);
+            platform_set_sd_callback(NULL, NULL);
             prefetch_sectors--;
         }
 #endif
+
+        while (!scsiIsWriteFinished(NULL) && !scsiDev.resetFlag)
+        {
+            platform_poll();
+            diskEjectButtonUpdate(false);
+        }
 
         scsiFinishWrite();
     }
@@ -1842,21 +2012,17 @@ int scsiDiskCommand()
         // Enable or disable media access operations.
         //int immed = scsiDev.cdb[1] & 1;
         int start = scsiDev.cdb[4] & 1;
-	    int loadEject = scsiDev.cdb[4] & 2;
-	
-        if (loadEject && img.deviceType == S2S_CFG_OPTICAL)
+        if ((scsiDev.cdb[4] & 2) || img.deviceType == S2S_CFG_ZIP100)
         {
+            // Device load & eject
             if (start)
             {
-                azdbg("------ CDROM close tray");
-                img.ejected = false;
-                img.cdrom_events = 2; // New media
+                doCloseTray(img);
             }
             else
             {
-                azdbg("------ CDROM open tray");
-                img.ejected = true;
-                img.cdrom_events = 3; // Media removal
+                // Eject and switch image
+                doPerformEject(img);
             }
         }
         else if (start)
@@ -1867,20 +2033,7 @@ int scsiDiskCommand()
         {
             scsiDev.target->started = 0;
         }
-    }
-    else if (unlikely(command == 0x00))
-    {
-        // TEST UNIT READY
-        doTestUnitReady();
-    }
-    else if (command == 0x4A)
-    {
-        bool immed = scsiDev.cdb[1] & 1;
-        doGetEventStatusNotification(immed);
-    }
-    else if (unlikely(!doTestUnitReady()))
-    {
-        // Status and sense codes already set by doTestUnitReady
+
     }
     else if (likely(command == 0x08))
     {
@@ -1891,7 +2044,7 @@ int scsiDiskCommand()
             scsiDev.cdb[3];
         uint32_t blocks = scsiDev.cdb[4];
         if (unlikely(blocks == 0)) blocks = 256;
-        doRead(lba, blocks);
+        scsiDiskStartRead(lba, blocks);
     }
     else if (likely(command == 0x28))
     {
@@ -1907,7 +2060,7 @@ int scsiDiskCommand()
             (((uint32_t) scsiDev.cdb[7]) << 8) +
             scsiDev.cdb[8];
 
-        doRead(lba, blocks);
+        scsiDiskStartRead(lba, blocks);
     }
     else if (likely(command == 0x0A))
     {
@@ -1918,7 +2071,7 @@ int scsiDiskCommand()
             scsiDev.cdb[3];
         uint32_t blocks = scsiDev.cdb[4];
         if (unlikely(blocks == 0)) blocks = 256;
-        doWrite(lba, blocks);
+        scsiDiskStartWrite(lba, blocks);
     }
     else if (likely(command == 0x2A) || // WRITE(10)
         unlikely(command == 0x2E)) // WRITE AND VERIFY
@@ -1936,7 +2089,7 @@ int scsiDiskCommand()
             (((uint32_t) scsiDev.cdb[7]) << 8) +
             scsiDev.cdb[8];
 
-        doWrite(lba, blocks);
+        scsiDiskStartWrite(lba, blocks);
     }
     else if (unlikely(command == 0x04))
     {
@@ -2094,13 +2247,14 @@ void scsiDiskPoll()
             checkDiskGeometryDivisible(img);
         }
 
-        // Check for Inquiry command to reinsert CD-ROMs on boot
+        // Check for Inquiry command to close CD-ROM tray on boot
         if (command == 0x12)
         {
             image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-            if (img.deviceType == S2S_CFG_OPTICAL && img.reinsert_on_inquiry)
+            if (img.reinsert_on_inquiry)
             {
-                reinsertCDROM(img);
+                if (img.deviceType == S2S_CFG_OPTICAL) cdromCloseTray(img);
+                else doCloseTray(img);
             }
         }
     }
@@ -2122,13 +2276,13 @@ void scsiDiskReset()
     g_scsi_prefetch.sector = 0;
 #endif
 
-    // Reinsert any ejected CD-ROMs
+    // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
     for (int i = 0; i < S2S_MAX_TARGETS; ++i)
     {
         image_config_t &img = g_DiskImages[i];
         if (img.deviceType == S2S_CFG_OPTICAL)
         {
-            reinsertCDROM(img);
+            cdromReinsertFirstImage(img);
         }
     }
 }

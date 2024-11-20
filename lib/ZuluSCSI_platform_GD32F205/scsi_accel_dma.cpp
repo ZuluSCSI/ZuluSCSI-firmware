@@ -1,5 +1,28 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 #include "scsi_accel_dma.h"
 #include <ZuluSCSI_log.h>
+#include <ZuluSCSI_disk.h>
+#include <scsi2sd.h>
 #include <gd32f20x_timer.h>
 #include <gd32f20x_rcu.h>
 #include <assert.h>
@@ -46,6 +69,20 @@ static bool g_scsi_dma_use_greenpak;
 
 void scsi_accel_timer_dma_init()
 {
+    // TODO: find root cause of of DMA timeout
+    // Temporary fix, setting prefetch prefetch buffer to 4k seems to fix a timing issue
+    // in Timer DMA SCSI phy mode only
+    
+    image_config_t* img;
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        img = &scsiDiskGetImageConfig(i);
+        if (img->prefetchbytes > 4096)
+        {
+            img->prefetchbytes = 4096;
+        }
+    }
+
     g_scsi_dma_state = SCSIDMA_IDLE;
     g_scsi_dma_use_greenpak = false;
     rcu_periph_clock_enable(SCSI_TIMER_RCU);
@@ -273,7 +310,7 @@ static void check_dma_next_buffer()
 // Convert new data from application buffer to DMA buffer
 extern "C" void SCSI_TIMER_DMACHA_IRQ()
 {
-    // azdbg("DMA irq A, counts: ", DMA_CHCNT(SCSI_TIMER_DMA, SCSI_TIMER_DMACHA), " ",
+    // dbgmsg("DMA irq A, counts: ", DMA_CHCNT(SCSI_TIMER_DMA, SCSI_TIMER_DMACHA), " ",
     //             DMA_CHCNT(SCSI_TIMER_DMA, SCSI_TIMER_DMACHB), " ",
     //             TIMER_CNT(SCSI_TIMER));
 
@@ -284,7 +321,7 @@ extern "C" void SCSI_TIMER_DMACHA_IRQ()
     {
         if (intf & full_flag)
         {
-            azlog("ERROR: SCSI DMA overrun: ", intf,
+            logmsg("ERROR: SCSI DMA overrun: ", intf,
                " bytes_app: ", g_scsi_dma.bytes_app,
                " bytes_dma: ", g_scsi_dma.bytes_dma,
                " dma_idx: ", g_scsi_dma.dma_idx,
@@ -311,7 +348,7 @@ extern "C" void SCSI_TIMER_DMACHA_IRQ()
 // Check if enough data is available to continue DMA transfer
 extern "C" void SCSI_TIMER_DMACHB_IRQ()
 {
-    // azdbg("DMA irq B, counts: ", DMA_CHCNT(SCSI_TIMER_DMA, SCSI_TIMER_DMACHA), " ",
+    // dbgmsg("DMA irq B, counts: ", DMA_CHCNT(SCSI_TIMER_DMA, SCSI_TIMER_DMACHA), " ",
     //             DMA_CHCNT(SCSI_TIMER_DMA, SCSI_TIMER_DMACHB), " ",
     //             TIMER_CNT(SCSI_TIMER));
     uint32_t intf = DMA_INTF(SCSI_TIMER_DMA);
@@ -348,6 +385,17 @@ extern "C" void SCSI_TIMER_DMACHB_IRQ()
         }
         else
         {
+            // Wait for final ACK to go low, shouldn't take long.
+            uint32_t start = millis();
+            while (TIMER_CNT(SCSI_TIMER) < 1)
+            {
+                if ((uint32_t)(millis() - start) > 500)
+                {
+                    logmsg("SCSI_TIMER_DMACHB_IRQ: timeout waiting for final ACK");
+                    break;
+                }
+            }
+
             // No more data available
             stop_dma();
         }
@@ -394,7 +442,7 @@ void scsi_accel_dma_startWrite(const uint8_t* data, uint32_t count, volatile int
         }
     }
 
-    // azdbg("Starting DMA write of ", (int)count, " bytes");
+    // dbgmsg("Starting DMA write of ", (int)count, " bytes");
     scsi_dma_gpio_config(true);
     g_scsi_dma_state = SCSIDMA_WRITE;
     g_scsi_dma.app_buf = (uint8_t*)data;
@@ -452,7 +500,7 @@ void scsi_accel_dma_finishWrite(volatile int *resetFlag)
     {
         if ((uint32_t)(millis() - start) > 5000)
         {
-            azlog("scsi_accel_dma_finishWrite() timeout, DMA counts ",
+            logmsg("scsi_accel_dma_finishWrite() timeout, DMA counts ",
                 DMA_CHCNT(SCSI_TIMER_DMA, SCSI_TIMER_DMACHA), " ",
                 DMA_CHCNT(SCSI_TIMER_DMA, SCSI_TIMER_DMACHB), " ",
                 TIMER_CNT(SCSI_TIMER));

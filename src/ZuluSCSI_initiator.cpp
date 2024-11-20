@@ -1,7 +1,26 @@
+/**
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ *
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ *
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
+
 /*
- *  ZuluSCSI
- *  Copyright (c) 2022 Rabbit Hole Computing
- * 
  * Main program for initiator mode.
  */
 
@@ -10,6 +29,7 @@
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_initiator.h"
 #include <ZuluSCSI_platform.h>
+#include <minIni.h>
 #include "SdFat.h"
 
 #include <scsi2sd.h>
@@ -49,6 +69,8 @@ static struct {
     // Bitmap of all drives that have been imaged
     uint32_t drives_imaged;
 
+    uint8_t initiator_id;
+
     // Is imaging a drive in progress, or are we scanning?
     bool imaging;
 
@@ -59,11 +81,19 @@ static struct {
     uint32_t sectorcount_all;
     uint32_t sectors_done;
     uint32_t max_sector_per_transfer;
+    uint32_t bad_sector_count;
+    uint8_t ansi_version;
+    uint8_t max_retry_count;
+    uint8_t device_type;
 
     // Retry information for sector reads.
     // If a large read fails, retry is done sector-by-sector.
     int retrycount;
     uint32_t failposition;
+    bool eject_when_done;
+    bool removable;
+
+    uint32_t removable_count[8];
 
     FsFile target_file;
 } g_initiator_state;
@@ -75,7 +105,21 @@ void scsiInitiatorInit()
 {
     scsiHostPhyReset();
 
-    g_initiator_state.drives_imaged = 0;
+    g_initiator_state.initiator_id = ini_getl("SCSI", "InitiatorID", 7, CONFIGFILE);
+    if (g_initiator_state.initiator_id > 7)
+    {
+        logmsg("InitiatorID set to illegal value in, ", CONFIGFILE, ", defaulting to 7");
+        g_initiator_state.initiator_id = 7;
+    }
+    else
+    {
+        logmsg("InitiatorID set to ID ", g_initiator_state.initiator_id);
+    }
+    g_initiator_state.max_retry_count = ini_getl("SCSI", "InitiatorMaxRetry", 5, CONFIGFILE);
+
+    // treat initiator id as already imaged drive so it gets skipped
+    g_initiator_state.drives_imaged = 1 << g_initiator_state.initiator_id;
+
     g_initiator_state.imaging = false;
     g_initiator_state.target_id = -1;
     g_initiator_state.sectorsize = 0;
@@ -84,6 +128,13 @@ void scsiInitiatorInit()
     g_initiator_state.retrycount = 0;
     g_initiator_state.failposition = 0;
     g_initiator_state.max_sector_per_transfer = 512;
+    g_initiator_state.ansi_version = 0;
+    g_initiator_state.bad_sector_count = 0;
+    g_initiator_state.device_type = SCSI_DEVICE_TYPE_DIRECT_ACCESS;
+    g_initiator_state.removable = false;
+    g_initiator_state.eject_when_done = false;
+    memset(g_initiator_state.removable_count, 0, sizeof(g_initiator_state.removable_count));
+
 }
 
 // Update progress bar LED during transfers
@@ -92,7 +143,7 @@ static void scsiInitiatorUpdateLed()
     // Update status indicator, the led blinks every 5 seconds and is on the longer the more data has been transferred
     const int period = 256;
     int phase = (millis() % period);
-    int duty = g_initiator_state.sectors_done * period / g_initiator_state.sectorcount;
+    int duty = (int64_t)g_initiator_state.sectors_done * period / g_initiator_state.sectorcount;
 
     // Minimum and maximum time to verify that the blink is visible
     if (duty < 50) duty = 50;
@@ -108,9 +159,49 @@ static void scsiInitiatorUpdateLed()
     }
 }
 
+void delay_with_poll(uint32_t ms)
+{
+    uint32_t start = millis();
+    while ((uint32_t)(millis() - start) < ms)
+    {
+        platform_poll();
+        delay(1);
+    }
+}
+
+static int scsiTypeToIniType(int scsi_type, bool removable)
+{
+    int ini_type = -1;
+    switch (scsi_type)
+    {
+        case SCSI_DEVICE_TYPE_DIRECT_ACCESS:
+            ini_type = removable ? S2S_CFG_REMOVABLE : S2S_CFG_FIXED;
+            break;
+        case 1:
+            ini_type = -1; // S2S_CFG_SEQUENTIAL
+            break;
+        case SCSI_DEVICE_TYPE_CD:
+            ini_type = S2S_CFG_OPTICAL;
+            break;
+        case SCSI_DEVICE_TYPE_MO:
+            ini_type = S2S_CFG_MO;
+            break;
+        default:
+            ini_type = -1;
+            break;
+    }
+    return ini_type;
+}
+
 // High level logic of the initiator mode
 void scsiInitiatorMainLoop()
 {
+    if (g_scsiHostPhyReset)
+    {
+        logmsg("Executing BUS RESET after aborted command");
+        scsiHostPhyReset();
+    }
+
     if (!g_initiator_state.imaging)
     {
         // Scan for SCSI drives one at a time
@@ -118,12 +209,14 @@ void scsiInitiatorMainLoop()
         g_initiator_state.sectors_done = 0;
         g_initiator_state.retrycount = 0;
         g_initiator_state.max_sector_per_transfer = 512;
+        g_initiator_state.bad_sector_count = 0;
+        g_initiator_state.eject_when_done = false;
 
         if (!(g_initiator_state.drives_imaged & (1 << g_initiator_state.target_id)))
         {
-            delay(1000);
+            delay_with_poll(1000);
 
-            uint8_t inquiry_data[36];
+            uint8_t inquiry_data[36] = {0};
 
             LED_ON();
             bool startstopok =
@@ -137,63 +230,205 @@ void scsiInitiatorMainLoop()
 
             bool inquiryok = startstopok &&
                 scsiInquiry(g_initiator_state.target_id, inquiry_data);
+
             LED_OFF();
 
+            uint64_t total_bytes = 0;
             if (readcapok)
             {
-                azlog("SCSI id ", g_initiator_state.target_id,
+                logmsg("SCSI ID ", g_initiator_state.target_id,
                     " capacity ", (int)g_initiator_state.sectorcount,
                     " sectors x ", (int)g_initiator_state.sectorsize, " bytes");
 
                 g_initiator_state.sectorcount_all = g_initiator_state.sectorcount;
 
-                uint64_t total_bytes = (uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize;
-                azlog("Drive total size is ", (int)(total_bytes / (1024 * 1024)), " MiB");
+                total_bytes = (uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize;
+                logmsg("Drive total size is ", (int)(total_bytes / (1024 * 1024)), " MiB");
                 if (total_bytes >= 0xFFFFFFFF && SD.fatType() != FAT_TYPE_EXFAT)
                 {
                     // Note: the FAT32 limit is 4 GiB - 1 byte
-                    azlog("Image files equal or larger than 4 GiB are only possible on exFAT filesystem");
-                    azlog("Please reformat the SD card with exFAT format to image this drive fully");
-
-                    g_initiator_state.sectorcount = (uint32_t)0xFFFFFFFF / g_initiator_state.sectorsize;
-                    azlog("Will image first 4 GiB - 1 = ", (int)g_initiator_state.sectorcount, " sectors");
+                    logmsg("Target SCSI ID ", g_initiator_state.target_id, " image size is equal or larger than 4 GiB.");
+                    logmsg("This is larger than the max filesize supported by SD card's filesystem");
+                    logmsg("Please reformat the SD card with exFAT format to image this target");
+                    g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
+                    return;
                 }
             }
             else if (startstopok)
             {
-                azlog("SCSI id ", g_initiator_state.target_id, " responds but ReadCapacity command failed");
-                azlog("Possibly SCSI-1 drive? Attempting to read up to 1 GB.");
+                logmsg("SCSI ID ", g_initiator_state.target_id, " responds but ReadCapacity command failed");
+                logmsg("Possibly SCSI-1 drive? Attempting to read up to 1 GB.");
                 g_initiator_state.sectorsize = 512;
                 g_initiator_state.sectorcount = g_initiator_state.sectorcount_all = 2097152;
                 g_initiator_state.max_sector_per_transfer = 128;
             }
             else
             {
-                azdbg("Failed to connect to SCSI id ", g_initiator_state.target_id);
+#ifndef ZULUSCSI_NETWORK
+                dbgmsg("Failed to connect to SCSI ID ", g_initiator_state.target_id);
+#endif
                 g_initiator_state.sectorsize = 0;
                 g_initiator_state.sectorcount = g_initiator_state.sectorcount_all = 0;
             }
 
-            const char *filename_format = "HD00_imaged.hda";
+            char filename_base[12];
+            strncpy(filename_base, "HD00_imaged", sizeof(filename_base));
+            const char *filename_extension = ".hda";
+
             if (inquiryok)
             {
-                if ((inquiry_data[0] & 0x1F) == 5)
+                char vendor[9], product[17], revision[5];
+                g_initiator_state.device_type=inquiry_data[0] & 0x1f;
+                g_initiator_state.ansi_version = inquiry_data[2] & 0x7;
+                g_initiator_state.removable = !!(inquiry_data[1] & 0x80);
+                g_initiator_state.eject_when_done = g_initiator_state.removable;
+                memcpy(vendor, &inquiry_data[8], 8);
+                vendor[8]=0;
+                memcpy(product, &inquiry_data[16], 16);
+                product[16]=0;
+                memcpy(revision, &inquiry_data[32], 4);
+                revision[4]=0;
+
+                if(g_initiator_state.ansi_version < 0x02)
                 {
-                    filename_format = "CD00_imaged.iso";
+                    // this is a SCSI-1 drive, use READ6 and 256 bytes to be safe.
+                    g_initiator_state.max_sector_per_transfer = 256;
                 }
+                int ini_type = scsiTypeToIniType(g_initiator_state.device_type, g_initiator_state.removable);
+                logmsg("SCSI Version ", (int) g_initiator_state.ansi_version);
+                logmsg("[SCSI", g_initiator_state.target_id,"]");
+                logmsg("  Vendor = \"", vendor,"\"");
+                logmsg("  Product = \"", product,"\"");
+                logmsg("  Version = \"", revision,"\"");
+                if (ini_type == -1)
+                    logmsg("Type = Not Supported, trying direct access");
+                else
+                    logmsg("  Type = ", ini_type);
+
+                if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_CD)
+                {
+                    strncpy(filename_base, "CD00_imaged", sizeof(filename_base));
+                    filename_extension = ".iso";
+                }
+                else if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_MO)
+                {
+                    strncpy(filename_base, "MO00_imaged", sizeof(filename_base));
+                    filename_extension = ".img";
+                }
+                else if (g_initiator_state.device_type != SCSI_DEVICE_TYPE_DIRECT_ACCESS)
+                {
+                    logmsg("Unhandled scsi device type: ", g_initiator_state.device_type, ". Handling it as Direct Access Device.");
+                    g_initiator_state.device_type = SCSI_DEVICE_TYPE_DIRECT_ACCESS;
+                }
+
+                if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_DIRECT_ACCESS && g_initiator_state.removable)
+                {
+                    strncpy(filename_base, "RM00_imaged", sizeof(filename_base));
+                    filename_extension = ".img";
+                }
+            }
+
+            if (g_initiator_state.eject_when_done && g_initiator_state.removable_count[g_initiator_state.target_id] == 0)
+            {
+                g_initiator_state.removable_count[g_initiator_state.target_id] = 1;
             }
 
             if (g_initiator_state.sectorcount > 0)
             {
                 char filename[32] = {0};
-                strncpy(filename, filename_format, sizeof(filename) - 1);
-                filename[2] += g_initiator_state.target_id;
+                filename_base[2] += g_initiator_state.target_id;
+                if (g_initiator_state.eject_when_done)
+                {
+                    auto removable_count = g_initiator_state.removable_count[g_initiator_state.target_id];
+                    snprintf(filename, sizeof(filename), "%s(%lu)%s",filename_base, removable_count, filename_extension);
+                }
+                else
+                {
+                    snprintf(filename, sizeof(filename), "%s%s", filename_base, filename_extension);
+                }
+                static int handling = -1;
+                if (handling == -1)
+                {
+                    handling = ini_getl("SCSI", "InitiatorImageHandling", 0, CONFIGFILE);
+                }
+                // Stop if a file already exists
+                if (handling == 0)
+                {
+                    if (SD.exists(filename))
+                    {
+                        logmsg("File, ", filename, ", already exists, InitiatorImageHandling set to stop if file exists.");
+                        g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
+                        return;
+                    }
+                }
+                // Create a new copy to the file 002-999
+                else if (handling == 1)
+                {
+                    for (uint32_t i = 1; i <= 1000; i++)
+                    {
+                        if (i == 1)
+                        {
+                            if (SD.exists(filename))
+                                continue;
+                            break;
+                        }
+                        else if(i >= 1000)
+                        {
+                            logmsg("Max images created from SCSI ID ", g_initiator_state.target_id, ", skipping image creation");
+                            g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
+                            return;
+                        }
+                        char filename_copy[6] = {0};
+                        if (g_initiator_state.eject_when_done)
+                        {
+                            auto removable_count = g_initiator_state.removable_count[g_initiator_state.target_id];
+                            snprintf(filename, sizeof(filename), "%s(%lu)-%03lu%s", filename_base, removable_count, i, filename_extension);
+                        }
+                        else
+                        {
+                            snprintf(filename, sizeof(filename), "%s-%03lu%s", filename_base, i, filename_extension);
+                        }
+                        snprintf(filename_copy, sizeof(filename_copy), "-%03lu", i);
+                        if (SD.exists(filename))
+                            continue;
+                        break;
+                    }
 
-                SD.remove(filename);
-                g_initiator_state.target_file = SD.open(filename, O_RDWR | O_CREAT | O_TRUNC);
+                }
+                // overwrite file if it exists
+                else if (handling == 2)
+                {
+                    if (SD.exists(filename))
+                    {
+                        logmsg("File, ",filename, " already exists, InitiatorImageHandling set to overwrite file");
+                        SD.remove(filename);
+                    }
+                }
+                // InitiatorImageHandling invalid setting
+                else
+                {
+                    static bool invalid_logged_once = false;
+                    if (!invalid_logged_once)
+                    {
+                        logmsg("InitiatorImageHandling is set to, ", handling, ", which is invalid");
+                        invalid_logged_once = true;
+                    }
+                    return;
+                }
+
+                uint64_t sd_card_free_bytes = (uint64_t)SD.vol()->freeClusterCount() * SD.vol()->bytesPerCluster();
+                if (sd_card_free_bytes < total_bytes)
+                {
+                    logmsg("SD Card only has ", (int)(sd_card_free_bytes / (1024 * 1024)),
+                           " MiB - not enough free space to image SCSI ID ", g_initiator_state.target_id);
+                    g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
+                    return;
+                }
+
+                g_initiator_state.target_file = SD.open(filename, O_WRONLY | O_CREAT | O_TRUNC);
                 if (!g_initiator_state.target_file.isOpen())
                 {
-                    azlog("Failed to open file for writing: ", filename);
+                    logmsg("Failed to open file for writing: ", filename);
                     return;
                 }
 
@@ -201,11 +436,11 @@ void scsiInitiatorMainLoop()
                 {
                     // Only preallocate on exFAT, on FAT32 preallocating can result in false garbage data in the
                     // file if write is interrupted.
-                    azlog("Preallocating image file");
+                    logmsg("Preallocating image file");
                     g_initiator_state.target_file.preAllocate((uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize);
                 }
 
-                azlog("Starting to copy drive data to ", filename);
+                logmsg("Starting to copy drive data to ", filename);
                 g_initiator_state.imaging = true;
             }
         }
@@ -216,16 +451,26 @@ void scsiInitiatorMainLoop()
         if (g_initiator_state.sectors_done >= g_initiator_state.sectorcount)
         {
             scsiStartStopUnit(g_initiator_state.target_id, false);
-            azlog("Finished imaging drive with id ", g_initiator_state.target_id);
+            logmsg("Finished imaging drive with id ", g_initiator_state.target_id);
             LED_OFF();
 
             if (g_initiator_state.sectorcount != g_initiator_state.sectorcount_all)
             {
-                azlog("NOTE: Image size was limited to first 4 GiB due to SD card filesystem limit");
-                azlog("Please reformat the SD card with exFAT format to image this drive fully");
+                logmsg("NOTE: Image size was limited to first 4 GiB due to SD card filesystem limit");
+                logmsg("Please reformat the SD card with exFAT format to image this drive fully");
             }
 
-            g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
+            if(g_initiator_state.bad_sector_count != 0)
+            {
+                logmsg("NOTE: There were ",  (int) g_initiator_state.bad_sector_count, " bad sectors that could not be read off this drive.");
+            }
+
+            if (!g_initiator_state.eject_when_done)
+            {
+                logmsg("Marking SCSI ID, ", g_initiator_state.target_id, ", as imaged, wont ask it again.");
+                g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
+            }
+
             g_initiator_state.imaging = false;
             g_initiator_state.target_file.close();
             return;
@@ -249,29 +494,31 @@ void scsiInitiatorMainLoop()
 
         if (!status)
         {
-            azlog("Failed to transfer ", numtoread, " sectors starting at ", (int)g_initiator_state.sectors_done);
+            logmsg("Failed to transfer ", numtoread, " sectors starting at ", (int)g_initiator_state.sectors_done);
 
-            if (g_initiator_state.retrycount < 5)
+            if (g_initiator_state.retrycount < g_initiator_state.max_retry_count)
             {
-                azlog("Retrying.. ", g_initiator_state.retrycount, "/5");
-                delay(200);
-                scsiHostPhyReset();
-                delay(200);
+                logmsg("Retrying.. ", g_initiator_state.retrycount + 1, "/", (int) g_initiator_state.max_retry_count);
+                delay_with_poll(200);
+                // This reset causes some drives to hang and seems to have no effect if left off.
+                // scsiHostPhyReset();
+                delay_with_poll(200);
 
                 g_initiator_state.retrycount++;
                 g_initiator_state.target_file.seek((uint64_t)g_initiator_state.sectors_done * g_initiator_state.sectorsize);
 
                 if (g_initiator_state.retrycount > 1 && numtoread > 1)
                 {
-                    azlog("Multiple failures, retrying sector-by-sector");
+                    logmsg("Multiple failures, retrying sector-by-sector");
                     g_initiator_state.failposition = g_initiator_state.sectors_done + numtoread;
                 }
             }
             else
             {
-                azlog("Retry limit exceeded, skipping one sector");
+                logmsg("Retry limit exceeded, skipping one sector");
                 g_initiator_state.retrycount = 0;
                 g_initiator_state.sectors_done++;
+                g_initiator_state.bad_sector_count++;
                 g_initiator_state.target_file.seek((uint64_t)g_initiator_state.sectors_done * g_initiator_state.sectorsize);
             }
         }
@@ -282,9 +529,10 @@ void scsiInitiatorMainLoop()
             g_initiator_state.target_file.flush();
 
             int speed_kbps = numtoread * g_initiator_state.sectorsize / (millis() - time_start);
-            azlog("SCSI read succeeded, sectors done: ",
+            logmsg("SCSI read succeeded, sectors done: ",
                   (int)g_initiator_state.sectors_done, " / ", (int)g_initiator_state.sectorcount,
-                  " speed ", speed_kbps, " kB/s");
+                  " speed ", speed_kbps, " kB/s - ", 
+                  (int)(100 * (int64_t)g_initiator_state.sectors_done / g_initiator_state.sectorcount), "%");
         }
     }
 }
@@ -299,9 +547,12 @@ int scsiInitiatorRunCommand(int target_id,
                             const uint8_t *bufOut, size_t bufOutLen,
                             bool returnDataPhase)
 {
-    if (!scsiHostPhySelect(target_id))
+
+    if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
     {
-        azdbg("------ Target ", target_id, " did not respond");
+#ifndef ZULUSCSI_NETWORK
+        dbgmsg("------ Target ", target_id, " did not respond");
+#endif
         scsiHostPhyRelease();
         return -1;
     }
@@ -310,6 +561,8 @@ int scsiInitiatorRunCommand(int target_id,
     int status = -1;
     while ((phase = (SCSI_PHASE)scsiHostPhyGetPhase()) != BUS_FREE)
     {
+        platform_poll();
+
         if (phase == MESSAGE_IN)
         {
             uint8_t dummy = 0;
@@ -329,14 +582,14 @@ int scsiInitiatorRunCommand(int target_id,
             if (returnDataPhase) return 0;
             if (bufInLen == 0)
             {
-                azlog("DATA_IN phase but no data to receive!");
+                logmsg("DATA_IN phase but no data to receive!");
                 status = -3;
                 break;
             }
 
             if (scsiHostRead(bufIn, bufInLen) == 0)
             {
-                azlog("scsiHostRead failed, tried to read ", (int)bufInLen, " bytes");
+                logmsg("scsiHostRead failed, tried to read ", (int)bufInLen, " bytes");
                 status = -2;
                 break;
             }
@@ -346,14 +599,14 @@ int scsiInitiatorRunCommand(int target_id,
             if (returnDataPhase) return 0;
             if (bufOutLen == 0)
             {
-                azlog("DATA_OUT phase but no data to send!");
+                logmsg("DATA_OUT phase but no data to send!");
                 status = -3;
                 break;
             }
 
             if (scsiHostWrite(bufOut, bufOutLen) < bufOutLen)
             {
-                azlog("scsiHostWrite failed, was writing ", bytearray(bufOut, bufOutLen));
+                logmsg("scsiHostWrite failed, was writing ", bytearray(bufOut, bufOutLen));
                 status = -2;
                 break;
             }
@@ -363,7 +616,9 @@ int scsiInitiatorRunCommand(int target_id,
             uint8_t tmp = -1;
             scsiHostRead(&tmp, 1);
             status = tmp;
-            azdbg("------ STATUS: ", tmp);
+#ifndef ZULUSCSI_NETWORK
+            dbgmsg("------ STATUS: ", tmp);
+#endif
         }
     }
 
@@ -380,14 +635,14 @@ bool scsiInitiatorReadCapacity(int target_id, uint32_t *sectorcount, uint32_t *s
                                          command, sizeof(command),
                                          response, sizeof(response),
                                          NULL, 0);
-    
+
     if (status == 0)
     {
         *sectorcount = ((uint32_t)response[0] << 24)
                     | ((uint32_t)response[1] << 16)
                     | ((uint32_t)response[2] <<  8)
                     | ((uint32_t)response[3] <<  0);
-        
+
         *sectorcount += 1; // SCSI reports last sector address
 
         *sectorsize = ((uint32_t)response[4] << 24)
@@ -401,7 +656,7 @@ bool scsiInitiatorReadCapacity(int target_id, uint32_t *sectorcount, uint32_t *s
     {
         uint8_t sense_key;
         scsiRequestSense(target_id, &sense_key);
-        azlog("READ CAPACITY on target ", target_id, " failed, sense key ", sense_key);
+        logmsg("READ CAPACITY on target ", target_id, " failed, sense key ", sense_key);
         return false;
     }
     else
@@ -409,7 +664,7 @@ bool scsiInitiatorReadCapacity(int target_id, uint32_t *sectorcount, uint32_t *s
         *sectorcount = *sectorsize = 0;
         return false;
     }
-} 
+}
 
 // Execute REQUEST SENSE command to get more information about error status
 bool scsiRequestSense(int target_id, uint8_t *sense_key)
@@ -422,19 +677,32 @@ bool scsiRequestSense(int target_id, uint8_t *sense_key)
                                          response, sizeof(response),
                                          NULL, 0);
 
-    azdbg("RequestSense response: ", bytearray(response, 18));
+    dbgmsg("RequestSense response: ", bytearray(response, 18));
 
-    *sense_key = response[2];
+    *sense_key = response[2] % 0xF;
     return status == 0;
 }
 
 // Execute UNIT START STOP command to load/unload media
 bool scsiStartStopUnit(int target_id, bool start)
 {
-    uint8_t command[6] = {0x1B, 0, 0, 0, 0, 0};
+    uint8_t command[6] = {0x1B, 0x1, 0, 0, 0, 0};
     uint8_t response[4] = {0};
 
-    if (start) command[4] |= 1;
+    if (start)
+    {
+        command[4] |= 1; // Start
+        command[1] = 0;  // Immediate
+    }
+    else // stop
+    {
+        if(g_initiator_state.eject_when_done)
+        {
+            logmsg("Ejecting media on SCSI ID: ", target_id);
+            g_initiator_state.removable_count[g_initiator_state.target_id]++;
+            command[4] = 0b00000010; // eject(6), stop(7).
+        }
+    }
 
     int status = scsiInitiatorRunCommand(target_id,
                                          command, sizeof(command),
@@ -445,7 +713,7 @@ bool scsiStartStopUnit(int target_id, bool start)
     {
         uint8_t sense_key;
         scsiRequestSense(target_id, &sense_key);
-        azlog("START STOP UNIT on target ", target_id, " failed, sense key ", sense_key);
+        dbgmsg("START STOP UNIT on target ", target_id, " failed, sense key ", sense_key);
     }
 
     return status == 0;
@@ -490,18 +758,18 @@ bool scsiTestUnitReady(int target_id)
             if (sense_key == 6)
             {
                 uint8_t inquiry[36];
-                azlog("Target ", target_id, " reports UNIT_ATTENTION, running INQUIRY");
+                dbgmsg("Target ", target_id, " reports UNIT_ATTENTION, running INQUIRY");
                 scsiInquiry(target_id, inquiry);
             }
             else if (sense_key == 2)
             {
-                azlog("Target ", target_id, " reports NOT_READY, running STARTSTOPUNIT");
+                dbgmsg("Target ", target_id, " reports NOT_READY, running STARTSTOPUNIT");
                 scsiStartStopUnit(target_id, true);
             }
         }
         else
         {
-            azlog("Target ", target_id, " TEST UNIT READY response: ", status);
+            dbgmsg("Target ", target_id, " TEST UNIT READY response: ", status);
         }
     }
 
@@ -514,7 +782,7 @@ static struct {
     uint32_t bytes_sd_scheduled; // Number of bytes scheduled for transfer on SD card side
     uint32_t bytes_scsi; // Number of bytes that have been scheduled for transfer on SCSI side
     uint32_t bytes_scsi_done; // Number of bytes that have been transferred on SCSI side
-    
+
     uint32_t bytes_per_sector;
     bool all_ok;
 } g_initiator_transfer;
@@ -553,7 +821,7 @@ static void initiatorReadSDCallback(uint32_t bytes_complete)
         uint32_t sd_ready_cnt = g_initiator_transfer.bytes_sd + bytes_complete;
         if (g_initiator_transfer.bytes_scsi_done + len > sd_ready_cnt + bufsize)
             len = sd_ready_cnt + bufsize - g_initiator_transfer.bytes_scsi_done;
-        
+
         if (sd_ready_cnt == g_initiator_transfer.bytes_sd_scheduled &&
             g_initiator_transfer.bytes_sd_scheduled + bytesPerSector <= g_initiator_transfer.bytes_scsi_done)
         {
@@ -571,10 +839,10 @@ static void initiatorReadSDCallback(uint32_t bytes_complete)
         if (len == 0)
             return;
 
-        // azdbg("SCSI read ", (int)start, " + ", (int)len, ", sd ready cnt ", (int)sd_ready_cnt, " ", (int)bytes_complete, ", scsi done ", (int)g_initiator_transfer.bytes_scsi_done);
+        // dbgmsg("SCSI read ", (int)start, " + ", (int)len, ", sd ready cnt ", (int)sd_ready_cnt, " ", (int)bytes_complete, ", scsi done ", (int)g_initiator_transfer.bytes_scsi_done);
         if (scsiHostRead(&scsiDev.data[start], len) != len)
         {
-            azlog("Read failed at byte ", (int)g_initiator_transfer.bytes_scsi_done);
+            logmsg("Read failed at byte ", (int)g_initiator_transfer.bytes_scsi_done);
             g_initiator_transfer.all_ok = false;
         }
         g_initiator_transfer.bytes_scsi_done += len;
@@ -595,20 +863,20 @@ static void scsiInitiatorWriteDataToSd(FsFile &file, bool use_callback)
 
     // Start writing to SD card and simultaneously reading more from SCSI bus
     uint8_t *buf = &scsiDev.data[start];
-    // azdbg("SD write ", (int)start, " + ", (int)len);
+    // dbgmsg("SD write ", (int)start, " + ", (int)len);
 
     if (use_callback)
     {
-        azplatform_set_sd_callback(&initiatorReadSDCallback, buf);
+        platform_set_sd_callback(&initiatorReadSDCallback, buf);
     }
 
     g_initiator_transfer.bytes_sd_scheduled = g_initiator_transfer.bytes_sd + len;
     if (file.write(buf, len) != len)
     {
-        azlog("scsiInitiatorReadDataToFile: SD card write failed");
+        logmsg("scsiInitiatorReadDataToFile: SD card write failed");
         g_initiator_transfer.all_ok = false;
     }
-    azplatform_set_sd_callback(NULL, NULL);
+    platform_set_sd_callback(NULL, NULL);
     g_initiator_transfer.bytes_sd += len;
 }
 
@@ -617,7 +885,9 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
 {
     int status = -1;
 
-    if (start_sector < 0xFFFFFF && sectorcount <= 256)
+    // Read6 command supports 21 bit LBA - max of 0x1FFFFF
+    // ref: https://www.seagate.com/files/staticfiles/support/docs/manual/Interface%20manuals/100293068j.pdf pg 134
+    if (g_initiator_state.ansi_version < 0x02 || (start_sector < 0x1FFFFF && sectorcount <= 256))
     {
         // Use READ6 command for compatibility with old SCSI1 drives
         uint8_t command[6] = {0x08,
@@ -652,7 +922,7 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
         uint8_t sense_key;
         scsiRequestSense(target_id, &sense_key);
 
-        azlog("scsiInitiatorReadDataToFile: READ failed: ", status, " sense key ", sense_key);
+        logmsg("scsiInitiatorReadDataToFile: READ failed: ", status, " sense key ", sense_key);
         scsiHostPhyRelease();
         return false;
     }
@@ -668,6 +938,8 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
 
     while (true)
     {
+        platform_poll();
+
         phase = (SCSI_PHASE)scsiHostPhyGetPhase();
         if (phase != DATA_IN && phase != BUS_BUSY)
         {
@@ -690,18 +962,21 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
     // Write any remaining buffered data
     while (g_initiator_transfer.bytes_sd < g_initiator_transfer.bytes_scsi_done)
     {
+        platform_poll();
         scsiInitiatorWriteDataToSd(file, false);
     }
 
     if (g_initiator_transfer.bytes_sd != g_initiator_transfer.bytes_scsi)
     {
-        azlog("SCSI read from sector ", (int)start_sector, " was incomplete: expected ",
+        logmsg("SCSI read from sector ", (int)start_sector, " was incomplete: expected ",
              (int)g_initiator_transfer.bytes_scsi, " got ", (int)g_initiator_transfer.bytes_sd, " bytes");
         g_initiator_transfer.all_ok = false;
     }
 
     while ((phase = (SCSI_PHASE)scsiHostPhyGetPhase()) != BUS_FREE)
     {
+        platform_poll();
+
         if (phase == MESSAGE_IN)
         {
             uint8_t dummy = 0;
@@ -717,7 +992,7 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
             uint8_t tmp = 0;
             scsiHostRead(&tmp, 1);
             status = tmp;
-            azdbg("------ STATUS: ", tmp);
+            dbgmsg("------ STATUS: ", tmp);
         }
     }
 

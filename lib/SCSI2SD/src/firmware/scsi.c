@@ -1,4 +1,7 @@
 //	Copyright (C) 2014 Michael McMaster <michael@codesrc.com>
+//	Copyright (c) 2023 joshua stein <jcs@jcs.org>
+//	Copyright (c) 2023 Andrea Ottaviani <andrea.ottaviani.69@gmail.com>
+//	Copyright (C) 2024 Rabbit Hole Computing LLC
 //
 //	This file is part of SCSI2SD.
 //
@@ -15,6 +18,7 @@
 //	You should have received a copy of the GNU General Public License
 //	along with SCSI2SD.  If not, see <http://www.gnu.org/licenses/>.
 
+
 #include "scsi.h"
 #include "scsiPhy.h"
 #include "config.h"
@@ -24,14 +28,15 @@
 #include "led.h"
 #include "mode.h"
 #include "scsi2sd_time.h"
+#include "timings.h"
 #include "bsp.h"
 #include "cdrom.h"
-//#include "debug.h"
+#include "network.h"
 #include "tape.h"
 #include "mo.h"
 #include "vendor.h"
-
 #include <string.h>
+#include "toolbox.h"
 
 // Global SCSI device state.
 ScsiDevice scsiDev S2S_DMA_ALIGN;
@@ -69,7 +74,7 @@ void enter_BusFree()
 
 	// Wait for the initiator to cease driving signals
 	// Bus settle delay + bus clear delay = 1200ns
-    // Just waiting the clear delay is sufficient.
+	// Just waiting the clear delay is sufficient.
 	s2s_delay_ns(800);
 
 	s2s_ledOff();
@@ -139,12 +144,23 @@ void process_Status()
 {
 	scsiEnterPhase(STATUS);
 
+	if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD)
+	{
+		s2s_delay_ms(1);
+	}
+
 	uint8_t message;
 
 	uint8_t control = scsiDev.cdb[scsiDev.cdbLen - 1];
 
 	if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_OMTI)
 	{
+		// All commands have a control byte, except 0xC0
+		if (scsiDev.cdb[0] == 0xC0)
+		{
+			control = 0;
+		}
+
 		// OMTI non-standard LINK control
 		if (control & 0x01)
 		{
@@ -278,7 +294,7 @@ static void process_DataOut()
 	}
 }
 
-static const uint8_t CmdGroupBytes[8] = {6, 10, 10, 6, 6, 12, 6, 6};
+static const uint8_t CmdGroupBytes[8] = {6, 10, 10, 6, 16, 12, 6, 6};
 static void process_Command()
 {
 	int group;
@@ -290,9 +306,12 @@ static void process_Command()
 	memset(scsiDev.cdb + 6, 0, sizeof(scsiDev.cdb) - 6);
 	int parityError = 0;
 	scsiRead(scsiDev.cdb, 6, &parityError);
+	command = scsiDev.cdb[0];
 
 	group = scsiDev.cdb[0] >> 5;
 	scsiDev.cdbLen = CmdGroupBytes[group];
+	scsiVendorCommandSetLen(scsiDev.cdb[0], &scsiDev.cdbLen);
+	
 	if (parityError &&
 		(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
 	{
@@ -303,7 +322,7 @@ static void process_Command()
 	{
 		scsiRead(scsiDev.cdb + 6, scsiDev.cdbLen - 6, &parityError);
 	}
-	command = scsiDev.cdb[0];
+
 
 	// Prefer LUN's set by IDENTIFY messages for newer hosts.
 	if (scsiDev.lun < 0)
@@ -347,6 +366,23 @@ static void process_Command()
 		memset(scsiDev.cdb, 0xff, sizeof(scsiDev.cdb));
 		return;
 	}
+	// X68000 and strange "0x00 0xXX .. .. .. .." command
+	else if ((command == 0x00) && likely(scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_X68000))
+	{
+		if (scsiDev.cdb[1] == 0x28)
+		{
+			scsiDev.target->sense.code = NO_SENSE;
+			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+			enter_Status(CHECK_CONDITION);
+			return;
+		} 	else if (scsiDev.cdb[1] == 0x03)
+		{
+			scsiDev.target->sense.code = NO_SENSE;
+			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+			enter_Status(GOOD);
+			return;
+		}
+	}
 	else if (parityError &&
 		(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
 	{
@@ -376,18 +412,121 @@ static void process_Command()
 		{
 			// Completely non-standard
 			allocLength = 4;
-			if (scsiDev.target->sense.code == NO_SENSE)
-				scsiDev.data[0] = 0;
-			else if (scsiDev.target->sense.code == ILLEGAL_REQUEST)
-				scsiDev.data[0] = 0x20; // Illegal command
-			else if (scsiDev.target->sense.code == NOT_READY)
-				scsiDev.data[0] = 0x04; // Drive not ready
-			else
-				scsiDev.data[0] = 0x11;  // Uncorrectable data error
+
+			switch (scsiDev.target->sense.code)
+			{
+				case NO_SENSE:
+					scsiDev.data[0] = 0;
+					break;
+				case MEDIUM_ERROR:
+					switch (scsiDev.target->sense.asc)
+					{
+						case NO_SEEK_COMPLETE:
+							scsiDev.data[0] = 0x15; // Seek Error
+							break;
+						case WRITE_ERROR_AUTO_REALLOCATION_FAILED:
+							scsiDev.data[0] = 0x03; // Write fault
+							break;
+						default:
+						case UNRECOVERED_READ_ERROR:
+							scsiDev.data[0] = 0x11; // Uncorrectable read error
+							break;
+					}
+					break;
+				case ILLEGAL_REQUEST:
+					switch (scsiDev.target->sense.asc)
+					{
+						case LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE:
+							scsiDev.data[0] = 0x14; // Target sector not found
+							break;
+						case WRITE_PROTECTED:
+							scsiDev.data[0] = 0x03; // Write fault
+							break;
+						default:
+							scsiDev.data[0] = 0x20; // Invalid command
+							break;
+					}
+					break;
+				case NOT_READY:
+					switch (scsiDev.target->sense.asc)
+					{
+						default:
+						case MEDIUM_NOT_PRESENT:
+							scsiDev.data[0] = 0x04; // Drive not ready
+							break;
+						case LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED:
+							scsiDev.data[0] = 0x1A; // Format Error
+							break;
+					}
+					break;
+				default:
+					scsiDev.data[0] = 0x11;  // Uncorrectable data error
+					break;
+			}
 
 			scsiDev.data[1] = (scsiDev.cdb[1] & 0x20) | ((transfer.lba >> 16) & 0x1F);
 			scsiDev.data[2] = transfer.lba >> 8;
 			scsiDev.data[3] = transfer.lba;
+		}
+		else if (cfg->quirks == S2S_CFG_QUIRKS_OMTI)
+		{
+			// The response is completely non-standard.
+			if (likely(allocLength > 12))
+				allocLength = 12;
+			else if (unlikely(allocLength < 4))
+				allocLength = 4;
+			if (cfg->deviceType != S2S_CFG_SEQUENTIAL)
+				allocLength = 4;
+			memset(scsiDev.data, 0, allocLength);
+			if (scsiDev.target->sense.code == NO_SENSE)
+			{
+				// Nothing to report.
+			}
+			else if (scsiDev.target->sense.code == UNIT_ATTENTION &&
+				cfg->deviceType == S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.data[0] = 0x10; // Tape exception
+			}
+			else if (scsiDev.target->sense.code == ILLEGAL_REQUEST)
+			{
+				if (scsiDev.target->sense.asc == LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE)
+				{
+					if (cfg->deviceType == S2S_CFG_SEQUENTIAL)
+						scsiDev.data[0] = 0x10; // Tape exception
+					else
+						scsiDev.data[0] = 0x21; // Illegal Parameters
+				}
+				else if (scsiDev.target->sense.asc == INVALID_COMMAND_OPERATION_CODE)
+				{
+					scsiDev.data[0] = 0x20; // Invalid Command
+				}
+			}
+			else if (scsiDev.target->sense.code == NOT_READY)
+			{
+				scsiDev.data[0] = 0x04; // Drive not ready
+			}
+			else if (scsiDev.target->sense.code == BLANK_CHECK)
+			{
+				scsiDev.data[0] = 0x10; // Tape exception
+			}
+			else
+			{
+				scsiDev.data[0] = 0x11; // Uncorrectable data error
+			}
+			scsiDev.data[1] = (scsiDev.cdb[1] & 0x60) | ((transfer.lba >> 16) & 0x1F);
+			scsiDev.data[2] = transfer.lba >> 8;
+			scsiDev.data[3] = transfer.lba;
+			if (cfg->deviceType == S2S_CFG_SEQUENTIAL)
+			{
+				// For the tape drive there are 8 extra sense bytes.
+				if (scsiDev.target->sense.code == BLANK_CHECK)
+					scsiDev.data[11] = 0x88; // End of data recorded on the tape
+				else if (scsiDev.target->sense.code == UNIT_ATTENTION)
+					scsiDev.data[5] = 0x81; // Power On Reset occurred
+				else if (scsiDev.target->sense.code == ILLEGAL_REQUEST &&
+					 scsiDev.target->sense.asc == LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE)
+					scsiDev.data[4] = 0x81; // File Mark detected
+			}
 		}
 		else
 		{
@@ -408,6 +547,12 @@ static void process_Command()
 			scsiDev.data[7] = 10; // additional length
 			scsiDev.data[12] = scsiDev.target->sense.asc >> 8;
 			scsiDev.data[13] = scsiDev.target->sense.asc;
+			if ((scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD))
+			{
+				/* EWSD seems not to want something behind additional length. (8 + 0x0e = 22) */
+				allocLength=22;
+				scsiDev.data[7] = 0x0e;
+			}
 		}
 
 		// Silently truncate results. SCSI-2 spec 8.2.14.
@@ -422,8 +567,15 @@ static void process_Command()
 	// on receiving the unit attention response on boot, thus
 	// triggering another unit attention condition.
 	else if (scsiDev.target->unitAttention &&
-		(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION))
+		scsiDev.target->unitAttentionStop == 0 &&
+		((scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) ||
+		(scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD)))
 	{
+		/* EWSD requires unitAttention to be sent only once. */
+		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD)
+		{
+			scsiDev.target->unitAttentionStop = 1;
+		}
 		scsiDev.target->sense.code = UNIT_ATTENTION;
 		scsiDev.target->sense.asc = scsiDev.target->unitAttention;
 
@@ -433,7 +585,7 @@ static void process_Command()
 
 		enter_Status(CHECK_CONDITION);
 	}
-	else if (scsiDev.lun)
+	else if (scsiDev.lun && (command < 0xD0))
 	{
 		scsiDev.target->sense.code = ILLEGAL_REQUEST;
 		scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_SUPPORTED;
@@ -448,10 +600,20 @@ static void process_Command()
 	{
 		enter_Status(CONFLICT);
 	}
+	// Handle Toolbox commands, overriding other vendor commands if enabled
+	else if (scsiToolboxEnabled() && scsiToolboxCommand())
+	{
+		// already handled
+	}
 	// Handle odd device types first that may override basic read and
 	// write commands. Will fall-through to generic disk handling.
+	// Some device specific vendor commands are located here instead
+	// of in scsiVendorCommand()
 	else if (((cfg->deviceType == S2S_CFG_OPTICAL) && scsiCDRomCommand()) ||
 		((cfg->deviceType == S2S_CFG_SEQUENTIAL) && scsiTapeCommand()) ||
+#ifdef ZULUSCSI_NETWORK
+		((cfg->deviceType == S2S_CFG_NETWORK && scsiNetworkCommand())) ||
+#endif // ZULUSCSI_NETWORK
 		((cfg->deviceType == S2S_CFG_MO) && scsiMOCommand()))
 	{
 		// Already handled.
@@ -474,16 +636,29 @@ static void process_Command()
 	{
 		scsiWriteBuffer();
 	}
-	else if (command == 0x0f &&
-		scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_XEBEC)
-	{
-		scsiWriteSectorBuffer();
-	}
 	else if (command == 0x3C)
 	{
 		scsiReadBuffer();
 	}
-	else if (!scsiModeCommand() && !scsiVendorCommand())
+	else if (scsiModeCommand())
+	{
+		// handled
+	}
+	else if (scsiVendorCommand())
+	{
+		// handled
+	}
+	else if (unlikely(command == 0x00))
+    {
+        // TEST UNIT READY
+        doTestUnitReady();
+    }
+    else if (unlikely(!doTestUnitReady()))
+    {
+		// This should be last as it can override other commands 
+        // Status and sense codes already set by doTestUnitReady
+    }
+	else
 	{
 		scsiDev.target->sense.code = ILLEGAL_REQUEST;
 		scsiDev.target->sense.asc = INVALID_COMMAND_OPERATION_CODE;
@@ -584,8 +759,16 @@ static void scsiReset()
 
 	for (int i = 0; i < S2S_MAX_TARGETS; ++i)
 	{
-		scsiDev.targets[i].syncOffset = 0;
-		scsiDev.targets[i].syncPeriod = 0;
+		if (g_force_sync > 0)
+		{
+			scsiDev.targets[i].syncPeriod = g_force_sync;
+			scsiDev.targets[i].syncOffset = g_force_offset;
+		}
+		else
+		{
+			scsiDev.targets[i].syncOffset = 0;
+			scsiDev.targets[i].syncPeriod = 0;
+		}
 	}
 	scsiDev.minSyncPeriod = 0;
 
@@ -802,7 +985,7 @@ static void process_MessageOut()
 	}
 	else if (scsiDev.msgOut == 0x05)
 	{
-		// Initiate Detected Error
+		// Initiator Detected Error
 		// Ignore for now
 	}
 	else if (scsiDev.msgOut == 0x0F)
@@ -818,7 +1001,7 @@ static void process_MessageOut()
 	}
 	else if (scsiDev.msgOut == MSG_REJECT)
 	{
-		// Message Reject
+		// Message Rejected
 		// Oh well.
 
 		if (wasNeedSyncNegotiationAck)
@@ -872,7 +1055,7 @@ static void process_MessageOut()
 	{
 		int i;
 
-		// Extended message.
+		// Extended message. These include speed negotiation
 		int msgLen = scsiReadByte();
 		if (msgLen == 0) msgLen = 256;
 		uint8_t extmsg[256];
@@ -898,8 +1081,8 @@ static void process_MessageOut()
 			int oldPeriod = scsiDev.target->syncPeriod;
 			int oldOffset = scsiDev.target->syncOffset;
 
-			int transferPeriod = extmsg[1];
-			int offset = extmsg[2];
+			int transferPeriod = extmsg[1];	//This is actually 1/4 of the duration of transfer speed in ns
+			int offset = extmsg[2];	//Req/Ack offset
 
 			if ((
 					(transferPeriod > 0) &&
@@ -926,34 +1109,37 @@ static void process_MessageOut()
 				// data corruption while reading data. We can count the
 				// ACK's correctly, but can't save the data to a register
 				// before it changes. (ie. transferPeriod == 12)
-				if ((scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_TURBO) &&
-					(transferPeriod <= 16))
+				//****TODO Try to get higher speeds
+				//The Adaptec AHA2940-UW seems to support 10, 13.4, 16 and 20 MHz
+				//The speeds above correspond to syncPeriod values of 25, 18, 15 and 12 (maybe, the last 3 are truncated)
+				//We will set the syncPeriod and syncOffset to the fastest we 
+				//can support if the initiator requests a faster speed
+				if (scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_SYNC_20 || scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_NoLimit)
 				{
-					scsiDev.target->syncPeriod = 16; // 15.6MB/s
+					if (transferPeriod <= g_max_sync_20_period)
+						scsiDev.target->syncPeriod = g_max_sync_20_period;
+					else 
+						scsiDev.target->syncPeriod = transferPeriod;	
 				}
-				else if (scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_TURBO)
+				else if (scsiDev.boardCfg.scsiSpeed >= S2S_CFG_SPEED_SYNC_10)
 				{
-					scsiDev.target->syncPeriod = transferPeriod;
+					if (transferPeriod <= g_max_sync_10_period)
+						scsiDev.target->syncPeriod = g_max_sync_10_period;
+					else
+						scsiDev.target->syncPeriod = transferPeriod;
 				}
-				else if (transferPeriod <= 25 &&
-					((scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_NoLimit) ||
-						(scsiDev.boardCfg.scsiSpeed >= S2S_CFG_SPEED_SYNC_10)))
+				else if (scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_SYNC_5)
 				{
-					scsiDev.target->syncPeriod = 25; // 100ns, 10MB/s
-
-				} else if (transferPeriod < 50 &&
-					((scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_NoLimit) ||
-						(scsiDev.boardCfg.scsiSpeed >= S2S_CFG_SPEED_SYNC_10)))
-				{
-					scsiDev.target->syncPeriod = transferPeriod;
-				} else if (transferPeriod >= 50)
-				{
-					scsiDev.target->syncPeriod = transferPeriod;
-				} else {
-					scsiDev.target->syncPeriod = 50;
+					if (transferPeriod <= g_max_sync_5_period)
+						scsiDev.target->syncPeriod = g_max_sync_5_period;
+					else
+						scsiDev.target->syncPeriod = transferPeriod;
 				}
 			}
 
+			//Reply back with negotiation speed (if different from previous one)
+			//Reply should be the same as request (if we support it) or slower if we don't
+			//Slower in this context means a higher syncPeriod or lower syncOffset 
 			if (transferPeriod != oldPeriod ||
 				scsiDev.target->syncPeriod != oldPeriod ||
 				offset != oldOffset ||
@@ -1153,7 +1339,13 @@ void scsiInit()
 		scsiDev.targets[i].reserverId = -1;
 		if (firstInit)
 		{
-			scsiDev.targets[i].unitAttention = POWER_ON_RESET;
+			if ((cfg->deviceType == S2S_CFG_MO) && (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD))
+			{
+				scsiDev.targets[i].unitAttention = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			} else
+			{
+				scsiDev.targets[i].unitAttention = POWER_ON_RESET;
+			}
 		}
 		else
 		{
@@ -1162,8 +1354,16 @@ void scsiInit()
 		scsiDev.targets[i].sense.code = NO_SENSE;
 		scsiDev.targets[i].sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
 
-		scsiDev.targets[i].syncOffset = 0;
-		scsiDev.targets[i].syncPeriod = 0;
+		if (g_force_sync > 0)
+		{
+			scsiDev.targets[i].syncPeriod = g_force_sync;
+			scsiDev.targets[i].syncOffset = g_force_offset;
+		}
+		else
+		{
+			scsiDev.targets[i].syncOffset = 0;
+			scsiDev.targets[i].syncPeriod = 0;
+		}
 
 		// Always "start" the device. Many systems (eg. Apple System 7)
 		// won't respond properly to
@@ -1280,4 +1480,3 @@ int scsiReconnect()
 	return reconnected;
 }
 */
-

@@ -1,3 +1,24 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 // Driver and interface for accessing SD card in SPI mode
 // Used on ZuluSCSI v1.0.
 
@@ -121,7 +142,7 @@ public:
         }
         else if (m_stream_callback)
         {
-            azdbg("Stream buffer mismatch: ", (uint32_t)buf, " vs. ", (uint32_t)(m_stream_buffer + m_stream_count));
+            dbgmsg("Stream buffer mismatch: ", (uint32_t)buf, " vs. ", (uint32_t)(m_stream_buffer + m_stream_count));
         }
 
         // Use DMA to stream dummy TX data and store RX data
@@ -143,7 +164,7 @@ public:
         {
             if (millis() - start > 500)
             {
-                azlog("ERROR: SPI DMA receive of ", (int)count, " bytes timeouted");
+                logmsg("ERROR: SPI DMA receive of ", (int)count, " bytes timeouted");
                 return 1;
             }
 
@@ -156,7 +177,7 @@ public:
 
         if (DMA_INTF(DMA0) & DMA_FLAG_ADD(DMA_FLAG_ERR, SD_SPI_RX_DMA_CHANNEL))
         {
-            azlog("ERROR: SPI DMA receive set DMA_FLAG_ERR");
+            logmsg("ERROR: SPI DMA receive set DMA_FLAG_ERR");
         }
 
         SPI_CTL1(SD_SPI) &= ~(SPI_CTL1_DMAREN | SPI_CTL1_DMATEN);
@@ -181,7 +202,7 @@ public:
         }
         else if (m_stream_callback)
         {
-            azdbg("Stream buffer mismatch: ", (uint32_t)buf, " vs. ", (uint32_t)(m_stream_buffer + m_stream_count));
+            dbgmsg("Stream buffer mismatch: ", (uint32_t)buf, " vs. ", (uint32_t)(m_stream_buffer + m_stream_count));
         }
 
         // Use DMA to stream TX data
@@ -198,7 +219,7 @@ public:
         {
             if (millis() - start > 500)
             {
-                azlog("ERROR: SPI DMA transmit of ", (int)count, " bytes timeouted");
+                logmsg("ERROR: SPI DMA transmit of ", (int)count, " bytes timeouted");
                 return;
             }
 
@@ -211,7 +232,7 @@ public:
 
         if (DMA_INTF(DMA0) & DMA_FLAG_ADD(DMA_FLAG_ERR, SD_SPI_TX_DMA_CHANNEL))
         {
-            azlog("ERROR: SPI DMA transmit set DMA_FLAG_ERR");
+            logmsg("ERROR: SPI DMA transmit set DMA_FLAG_ERR");
         }
 
         wait_idle();
@@ -258,7 +279,7 @@ void sdCsWrite(SdCsPin_t pin, bool level)
 GD32SPIDriver g_sd_spi_port;
 SdSpiConfig g_sd_spi_config(0, DEDICATED_SPI, SD_SCK_MHZ(30), &g_sd_spi_port);
 
-void azplatform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
+void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
 {
     g_sd_spi_port.set_sd_callback(func, buffer);    
 }

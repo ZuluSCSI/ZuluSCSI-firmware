@@ -1,12 +1,33 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 // Simple bootloader that loads new firmware from SD card.
 
 #include <ZuluSCSI_platform.h>
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_log.h"
-#include <SdFat.h>
 #include <string.h>
+#include <SdFat.h>
 
-#ifdef AZPLATFORM_BOOTLOADER_SIZE
+#ifdef PLATFORM_BOOTLOADER_SIZE
 
 extern SdFs SD;
 extern FsFile g_logfile;
@@ -27,7 +48,7 @@ bool find_firmware_image(FsFile &file, char name[MAX_FILE_PATH + 1])
             strncasecmp(name + namelen - 3, "bin", 3) == 0)
         {
             root.close();
-            azlog("Found firmware file: ", name);
+            logmsg("Found firmware file: ", name);
             return true;
         }
 
@@ -38,24 +59,26 @@ bool find_firmware_image(FsFile &file, char name[MAX_FILE_PATH + 1])
     return false;
 }
 
+#ifndef PLATFORM_FLASH_SECTOR_ERASE
 bool program_firmware(FsFile &file)
 {
-    uint32_t fwsize = file.size() - AZPLATFORM_BOOTLOADER_SIZE;
-    uint32_t num_pages = (fwsize + AZPLATFORM_FLASH_PAGE_SIZE - 1) / AZPLATFORM_FLASH_PAGE_SIZE;
+    uint32_t filesize = file.size();
+    uint32_t fwsize = filesize - PLATFORM_BOOTLOADER_SIZE;
+    uint32_t num_pages = (fwsize + PLATFORM_FLASH_PAGE_SIZE - 1) / PLATFORM_FLASH_PAGE_SIZE;
 
     // Make sure the buffer is aligned to word boundary
-    static uint32_t buffer32[AZPLATFORM_FLASH_PAGE_SIZE / 4];
+    static uint32_t buffer32[PLATFORM_FLASH_PAGE_SIZE / 4];
     uint8_t *buffer = (uint8_t*)buffer32;
 
-    if (fwsize > AZPLATFORM_FLASH_TOTAL_SIZE)
+    if (filesize > PLATFORM_FLASH_TOTAL_SIZE)
     {
-        azlog("Firmware too large: ", (int)fwsize, " flash size ", (int)AZPLATFORM_FLASH_TOTAL_SIZE);
+        logmsg("Firmware too large: ", (int)filesize, " flash size ", (int)PLATFORM_FLASH_TOTAL_SIZE);
         return false;
     }
 
-    if (!file.seek(AZPLATFORM_BOOTLOADER_SIZE))
+    if (!file.seek(PLATFORM_BOOTLOADER_SIZE))
     {
-        azlog("Seek failed");
+        logmsg("Seek failed");
         return false;
     }
 
@@ -66,21 +89,37 @@ bool program_firmware(FsFile &file)
         else
             LED_OFF();
         
-        if (file.read(buffer, AZPLATFORM_FLASH_PAGE_SIZE) <= 0)
+        if (file.read(buffer, PLATFORM_FLASH_PAGE_SIZE) <= 0)
         {
-            azlog("Firmware file read failed on page ", i);
+            logmsg("Firmware file read failed on page ", i);
             return false;
         }
 
-        if (!azplatform_rewrite_flash_page(AZPLATFORM_BOOTLOADER_SIZE + i * AZPLATFORM_FLASH_PAGE_SIZE, buffer))
+        if (!platform_rewrite_flash_page(PLATFORM_BOOTLOADER_SIZE + i * PLATFORM_FLASH_PAGE_SIZE, buffer))
         {
-            azlog("Flash programming failed on page ", i);
+            logmsg("Flash programming failed on page ", i);
             return false;
         }
     }
 
     return true;
 }
+#else // PLATFORM_FLASH_SECTOR_ERASE
+bool program_firmware(FsFile &file)
+{
+    if (!platform_firmware_erase(file))
+    {
+        return false;
+    }
+    if (!platform_firmware_program(file))
+    {
+        return false;
+    }
+    return true;
+    
+}
+
+#endif // PLATFORM_FLASH_SECTOR_ERASE
 
 static bool mountSDCard()
 {
@@ -103,10 +142,10 @@ static bool mountSDCard()
 extern "C"
 int bootloader_main(void)
 {
-    azplatform_init();
-    g_azlog_debug = true;
+    platform_init();
+    g_log_debug = true;
 
-    azlog("Bootloader version: " __DATE__ " " __TIME__ " " PLATFORM_NAME);
+    logmsg("Bootloader version: " __DATE__ " " __TIME__ " " PLATFORM_NAME);
 
     if (mountSDCard() || mountSDCard())
     {
@@ -116,28 +155,28 @@ int bootloader_main(void)
         {
             if (program_firmware(fwfile))
             {
-                azlog("Firmware update successful!");
+                logmsg("Firmware update successful!");
                 fwfile.close();
                 if (!SD.remove(name))
                 {
-                    azlog("Failed to remove firmware file");
+                    logmsg("Failed to remove firmware file");
                 }
             }
             else
             {
-                azlog("Firmware update failed!");
-                azplatform_emergency_log_save();
+                logmsg("Firmware update failed!");
+                platform_emergency_log_save();
             }
             
         }
     }
     else
     {
-        azlog("Bootloader SD card init failed");
+        logmsg("Bootloader SD card init failed");
     }
 
-    azlog("Bootloader continuing to main firmware");
-    azplatform_boot_to_main_firmware();
+    logmsg("Bootloader continuing to main firmware");
+    platform_boot_to_main_firmware();
 
     return 0;
 }

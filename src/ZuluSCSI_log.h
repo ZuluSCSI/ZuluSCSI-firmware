@@ -1,37 +1,64 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022-2024 Rabbit Hole Computing™
+ * Copyright (c) 2023 joshua stein <jcs@jcs.org>
+ * Copyright (c) 2024 Eric Helgeson <erichelgeson@gmail.com>
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 // Helpers for log messages.
 
 #pragma once
 
 #include <stdint.h>
 #include <stddef.h>
+#include <scsiPhy.h>
 
 // Get total number of bytes that have been written to log
-uint32_t azlog_get_buffer_len();
+uint32_t log_get_buffer_len();
 
 // Get log as a string.
 // If startpos is given, continues log reading from previous position and updates the position.
-const char *azlog_get_buffer(uint32_t *startpos);
+// If available is given, number of bytes available is written there.
+const char *log_get_buffer(uint32_t *startpos, uint32_t *available = nullptr);
 
 // Whether to enable debug messages
-extern bool g_azlog_debug;
+extern "C" bool g_log_debug;
+extern "C" bool g_log_ignore_busy_free;
+extern "C" uint8_t g_scsi_log_mask;
 
 // Firmware version string
-extern const char *g_azlog_firmwareversion;
+extern const char *g_log_firmwareversion;
 
 // Log string
-void azlog_raw(const char *str);
+void log_raw(const char *str);
 
 // Log byte as hex
-void azlog_raw(uint8_t value);
+void log_raw(uint8_t value);
 
 // Log integer as hex
-void azlog_raw(uint32_t value);
+void log_raw(uint32_t value);
 
 // Log integer as hex
-void azlog_raw(uint64_t value);
+void log_raw(uint64_t value);
 
 // Log integer as decimal
-void azlog_raw(int value);
+void log_raw(int value);
 
 // Log array of bytes
 struct bytearray {
@@ -39,41 +66,72 @@ struct bytearray {
     const uint8_t *data;
     size_t len;
 };
-void azlog_raw(bytearray array);
+void log_raw(bytearray array);
 
-inline void azlog_raw()
+inline void log_raw()
 {
     // End of template recursion
 }
+
 
 extern "C" unsigned long millis();
 
 // Variadic template for printing multiple items
 template<typename T, typename T2, typename... Rest>
-inline void azlog_raw(T first, T2 second, Rest... rest)
+inline void log_raw(T first, T2 second, Rest... rest)
 {
-    azlog_raw(first);
-    azlog_raw(second);
-    azlog_raw(rest...);
+    log_raw(first);
+    log_raw(second);
+    log_raw(rest...);
 }
 
 // Format a complete log message
 template<typename... Params>
-inline void azlog(Params... params)
+inline void logmsg(Params... params)
 {
-    azlog_raw("[", (int)millis(), "ms] ");
-    azlog_raw(params...);
-    azlog_raw("\n");
+    log_raw("[", (int)millis(), "ms] ");
+    log_raw(params...);
+    log_raw("\r\n");
 }
 
 // Format a complete debug message
 template<typename... Params>
-inline void azdbg(Params... params)
+inline void dbgmsg(Params... params)
 {
-    if (g_azlog_debug)
+    if (g_log_debug)
     {
-        azlog_raw("[", (int)millis(), "ms] DBG ");
-        azlog_raw(params...);
-        azlog_raw("\n");
+        // Check if log mask is not the default value, the selection was a success, and the selected ID was not match, then skip logging
+        if ( g_scsi_log_mask != 0xFF
+            && (SCSI_STS_SELECTION_SUCCEEDED & *SCSI_STS_SELECTED)
+            && (0 == (g_scsi_log_mask & (1 << (*SCSI_STS_SELECTED & 7))))
+           )
+        {
+            return;
+        }
+        log_raw("[", (int)millis(), "ms] DBG ");
+        log_raw(params...);
+        log_raw("\r\n");
     }
 }
+
+#ifdef NETWORK_DEBUG_LOGGING
+#ifdef __cplusplus
+extern "C" {
+#endif
+// Log long hex string
+void logmsg_buf(const unsigned char *buf, unsigned long size);
+
+// Log long hex string
+void dbgmsg_buf(const unsigned char *buf, unsigned long size);
+
+// Log formatted string
+void logmsg_f(const char *format, ...);
+
+// Log formatted string
+void dbgmsg_f(const char *format, ...);
+
+
+#ifdef __cplusplus
+}
+#endif
+#endif

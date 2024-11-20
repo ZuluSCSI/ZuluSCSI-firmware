@@ -1,3 +1,26 @@
+/** 
+ * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * This file is licensed under the GPL version 3 or any later version.  
+ * It is derived from scsiPhy.c in SCSI2SD V6.
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 // Implements the low level interface to SCSI bus
 // Partially derived from scsiPhy.c from SCSI2SD-V6
 
@@ -10,6 +33,7 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_config.h"
+#include "ZuluSCSI_settings.h"
 #include <minIni.h>
 
 #include <scsi2sd.h>
@@ -62,7 +86,7 @@ volatile uint8_t g_scsi_ctrl_bsy;
 
 static void scsi_bsy_deassert_interrupt()
 {
-    if (SCSI_IN(SEL) && !SCSI_IN(BSY))
+    if (!SCSI_IN(BSY) && ((g_moved_select_in && SCSI_IN(ODE_SEL)) || (!g_moved_select_in && SCSI_IN(SEL))))
     {
         uint8_t sel_bits = SCSI_IN_DATA();
         int sel_id = -1;
@@ -102,7 +126,12 @@ extern "C" bool scsiStatusSEL()
         SCSI_OUT(BSY, 1);
     }
 
+    if (g_moved_select_in)
+    {
+        return SCSI_IN(ODE_SEL);
+    }
     return SCSI_IN(SEL);
+     
 }
 
 /************************/
@@ -117,7 +146,7 @@ static void scsi_rst_assert_interrupt()
 
     if (rst1 && rst2)
     {
-        azdbg("BUS RESET");
+        dbgmsg("BUS RESET");
         scsiDev.resetFlag = 1;
     }
 }
@@ -126,10 +155,8 @@ static void selectPhyMode()
 {
     int oldmode = g_scsi_phy_mode;
 
-    int default_mode = PHY_MODE_BEST_AVAILABLE;
-
     // Read overriding setting from configuration file
-    int wanted_mode = ini_getl("SCSI", "PhyMode", default_mode, CONFIGFILE);
+    int wanted_mode = g_scsi_settings.getSystem()->phyMode;
 
     // Default: software GPIO bitbang, available on all revisions
     g_scsi_phy_mode = PHY_MODE_PIO;
@@ -164,7 +191,7 @@ static void selectPhyMode()
 
     if (g_scsi_phy_mode != oldmode)
     {
-        azlog("SCSI PHY operating mode: ", g_scsi_phy_mode_names[g_scsi_phy_mode]);
+        logmsg("SCSI PHY operating mode: ", g_scsi_phy_mode_names[g_scsi_phy_mode]);
     }
 }
 
@@ -353,7 +380,7 @@ extern "C" void scsiStartWrite(const uint8_t* data, uint32_t count)
     }
     else
     {
-        azlog("Unknown SCSI PHY mode: ", (int)g_scsi_phy_mode);
+        logmsg("Unknown SCSI PHY mode: ", (int)g_scsi_phy_mode);
     }
 }
 
@@ -424,8 +451,17 @@ static bool isPollingWriteFinished(const uint8_t *data)
 extern "C" bool scsiIsWriteFinished(const uint8_t *data)
 {
     // Check if there is still a polling transfer in progress
-    if (!isPollingWriteFinished(data) && !check_sd_read_done())
+    if (!isPollingWriteFinished(data))
     {
+        if (check_sd_read_done())
+        {
+            // Current SD card transfer is finished so return early
+            // to start a new transfer before doing SCSI data transfer.
+            // This is faster because the SD transfer can run on background,
+            // but PIO mode SCSI transfer cannot.
+            return false;
+        }
+
         // Process the transfer piece-by-piece while waiting
         // for SD card to react.
         int max_count = g_scsi_writereq.count / 8;
@@ -550,12 +586,14 @@ void SCSI_RST_IRQ (void)
         scsi_bsy_deassert_interrupt();
     }
 
-    if (exti_interrupt_flag_get(SCSI_SEL_EXTI))
+    if ((g_moved_select_in && exti_interrupt_flag_get(SCSI_ODE_SEL_EXTI)) ||
+        (!g_moved_select_in && exti_interrupt_flag_get(SCSI_SEL_EXTI))
+       )
     {
         // Check BSY line status when SEL goes active.
         // This is needed to handle SCSI-1 hosts that use the single initiator mode.
         // The host will just assert the SEL directly, without asserting BSY first.
-        exti_interrupt_flag_clear(SCSI_SEL_EXTI);
+        exti_interrupt_flag_clear(g_moved_select_in ? SCSI_ODE_SEL_EXTI : SCSI_SEL_EXTI);
         scsi_bsy_deassert_interrupt();
     }
 }
@@ -591,10 +629,20 @@ static void init_irqs()
     NVIC_EnableIRQ(SCSI_BSY_IRQn);
 
     // Falling edge of SEL pin
-    gpio_exti_source_select(SCSI_SEL_EXTI_SOURCE_PORT, SCSI_SEL_EXTI_SOURCE_PIN);
-    exti_init(SCSI_SEL_EXTI, EXTI_INTERRUPT, EXTI_TRIG_FALLING);
-    NVIC_SetPriority(SCSI_SEL_IRQn, 1);
-    NVIC_EnableIRQ(SCSI_SEL_IRQn);
+    if (g_moved_select_in)
+    {
+        gpio_exti_source_select(SCSI_ODE_SEL_EXTI_SOURCE_PORT, SCSI_ODE_SEL_EXTI_SOURCE_PIN);
+        exti_init(SCSI_ODE_SEL_EXTI, EXTI_INTERRUPT, EXTI_TRIG_FALLING);
+        NVIC_SetPriority(SCSI_ODE_SEL_IRQn, 1);
+        NVIC_EnableIRQ(SCSI_ODE_SEL_IRQn);
+    }
+    else 
+    {
+        gpio_exti_source_select(SCSI_SEL_EXTI_SOURCE_PORT, SCSI_SEL_EXTI_SOURCE_PIN);
+        exti_init(SCSI_SEL_EXTI, EXTI_INTERRUPT, EXTI_TRIG_FALLING);
+        NVIC_SetPriority(SCSI_SEL_IRQn, 1);
+        NVIC_EnableIRQ(SCSI_SEL_IRQn);
+    }
 }
 
 

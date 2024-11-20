@@ -1,3 +1,24 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 // GPIO definitions for ZuluSCSI v1.0
 
 #pragma once
@@ -72,6 +93,16 @@
 #define SCSI_SEL_IRQ EXTI10_15_IRQHandler
 #define SCSI_SEL_IRQn EXTI10_15_IRQn
 
+// Unused place holders for compiling
+#define SCSI_ODE_SEL_PORT   SCSI_SEL_PORT
+#define SCSI_ODE_SEL_PIN    SCSI_SEL_PIN
+#define SCSI_ODE_SEL_EXTI   SCSI_SEL_EXTI
+#define SCSI_ODE_SEL_EXTI_SOURCE_PORT SCSI_SEL_EXTI_SOURCE_PORT
+#define SCSI_ODE_SEL_EXTI_SOURCE_PIN SCSI_SEL_EXTI_SOURCE_PIN
+#define SCSI_ODE_SEL_IRQ SCSI_SEL_IRQ
+#define SCSI_ODE_SEL_IRQn SCSI_SEL_IRQn
+
+
 // BSY pin uses EXTI interrupt
 #define SCSI_BSY_PORT GPIOB
 #define SCSI_BSY_PIN  GPIO_PIN_10
@@ -117,3 +148,11 @@
 #define LED_PINS     (LED_I_PIN | LED_E_PIN)
 #define LED_ON()     gpio_bit_reset(LED_PORT, LED_PINS)
 #define LED_OFF()    gpio_bit_set(LED_PORT, LED_PINS)
+
+// Ejection buttons are available on expansion header J303.
+// PE5 = channel 1, PE6 = channel 2
+// Connect button between GPIO and GND pin.
+#define EJECT_1_PORT    GPIOE
+#define EJECT_1_PIN     GPIO_PIN_5
+#define EJECT_2_PORT    GPIOE
+#define EJECT_2_PIN     GPIO_PIN_6

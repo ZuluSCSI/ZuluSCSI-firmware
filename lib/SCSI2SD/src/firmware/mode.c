@@ -1,7 +1,8 @@
 //	Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
 //  Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
 //  Copyright (C) 2019 Landon Rodgers <g.landon.rodgers@gmail.com>
-//
+//	Copyright (C) 2024 Rabbit Hole Computing LLC
+//	Copyright (C) 2024 jokker <jokker@gmail.com>
 //	This file is part of SCSI2SD.
 //
 //	SCSI2SD is free software: you can redistribute it and/or modify
@@ -21,6 +22,8 @@
 #include "mode.h"
 #include "disk.h"
 #include "inquiry.h"
+#include "ZuluSCSI_mode.h"
+#include "toolbox.h"
 
 #include <string.h>
 
@@ -241,8 +244,30 @@ static const uint8_t SequentialDeviceConfigPage[] =
 static const uint8_t AppleVendorPage[] =
 {
 0x30, // Page code
-23, // Page length
-'A','P','P','L','E',' ','C','O','M','P','U','T','E','R',',',' ','I','N','C',' ',' ',' ',0x00
+0x16, // Page length
+'A','P','P','L','E',' ','C','O','M','P','U','T','E','R',',',' ','I','N','C',' ',' ',' '
+};
+
+static const uint8_t ToolboxVendorPage[] =
+{
+0x31, // Page code
+42,   // Page length
+'Z','u','l','u','S','C','S','I',' ','i','s',' ','G','P','L','v','3',' ','F','T','W',
+' ','R','a','b','b','i','t','H','o','l','e','C','o','m','p','u','t','i','n','g',0x00
+};
+
+static const uint8_t IomegaZip100VendorPage[] =
+{
+	0x2f, // Page Code
+	4, // Page Length
+	0x5c, 0xf, 0xff, 0xf
+};
+
+static const uint8_t IomegaZip250VendorPage[] =
+{
+	0x2f, // Page Code
+	4, // Page Length
+	0x5c, 0xf, 0x3c, 0xf
 };
 
 static void pageIn(int pc, int dataIdx, const uint8_t* pageData, int pageLen)
@@ -271,7 +296,8 @@ static void doModeSense(
 	switch (scsiDev.target->cfg->deviceType)
 	{
 	case S2S_CFG_FIXED:
-	case S2S_CFG_REMOVEABLE:
+	case S2S_CFG_REMOVABLE:
+	case S2S_CFG_ZIP100:
 		mediumType = 0; // We should support various floppy types here!
 		// Contains cache bits (0) and a Write-Protect bit.
 		deviceSpecificParam =
@@ -287,9 +313,18 @@ static void doModeSense(
 		break;
 
 	case S2S_CFG_OPTICAL:
-		mediumType = 0x02; // 120mm CDROM, data only.
-		deviceSpecificParam = 0;
-		density = 0x01; // User data only, 2048bytes per sector.
+		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_APPLE)
+		{
+			mediumType = 0x00;
+			deviceSpecificParam = 0;
+			density = 0x00;
+		}
+		else
+		{
+			mediumType = 0x02; // 120mm CDROM, data only.
+			deviceSpecificParam = 0;
+			density = 0x01; // User data only, 2048bytes per sector.
+		}
 		break;
 
 	case S2S_CFG_SEQUENTIAL:
@@ -393,7 +428,8 @@ static void doModeSense(
 		}
 	}
 
-	if (pageCode == 0x03 || pageCode == 0x3F)
+	if ((pageCode == 0x03 || pageCode == 0x3F) &&
+		(scsiDev.target->cfg->deviceType != S2S_CFG_OPTICAL))
 	{
 		pageFound = 1;
 		pageIn(pc, idx, FormatDevicePage, sizeof(FormatDevicePage));
@@ -418,7 +454,8 @@ static void doModeSense(
 		idx += sizeof(FormatDevicePage);
 	}
 
-	if (pageCode == 0x04 || pageCode == 0x3F)
+	if ((pageCode == 0x04 || pageCode == 0x3F) &&
+		(scsiDev.target->cfg->deviceType != S2S_CFG_OPTICAL))
 	{
 		pageFound = 1;
 		if ((scsiDev.compatMode >= COMPAT_SCSI2))
@@ -496,6 +533,18 @@ static void doModeSense(
 		idx += sizeof(ControlModePage);
 	}
 
+	idx += modeSenseCDDevicePage(pc, idx, pageCode, &pageFound);
+	idx += modeSenseCDAudioControlPage(pc, idx, pageCode, &pageFound);
+
+	
+	if ((scsiDev.target->cfg->deviceType == S2S_CFG_ZIP100) &&
+		(pageCode == 0x2f || pageCode == 0x3f))
+	{
+		pageFound = 1;
+		pageIn(pc, idx, IomegaZip100VendorPage, sizeof(IomegaZip100VendorPage));
+		idx += sizeof(IomegaZip100VendorPage);
+	}
+
 	if ((scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL) &&
 		(pageCode == 0x10 || pageCode == 0x3F))
 	{
@@ -508,15 +557,21 @@ static void doModeSense(
 		idx += sizeof(SequentialDeviceConfigPage);
 	}
 
-	if ((
-			(scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_APPLE) ||
-			(idx + sizeof(AppleVendorPage) <= allocLength)
-		) &&
+	idx += modeSenseCDCapabilitiesPage(pc, idx, pageCode, &pageFound);
+
+	if ((scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_APPLE) &&
 		(pageCode == 0x30 || pageCode == 0x3F))
 	{
 		pageFound = 1;
 		pageIn(pc, idx, AppleVendorPage, sizeof(AppleVendorPage));
 		idx += sizeof(AppleVendorPage);
+	}
+
+	if (scsiToolboxEnabled() && (pageCode == 0x31 || pageCode == 0x3F))
+	{
+		pageFound = 1;
+		pageIn(pc, idx, ToolboxVendorPage, sizeof(ToolboxVendorPage));
+		idx += sizeof(ToolboxVendorPage);
 	}
 
 	if (pageCode == 0x38) // Don't send unless requested
@@ -617,10 +672,16 @@ static void doModeSelect(void)
 
 		while (idx < scsiDev.dataLen)
 		{
+			// Change from SCSI2SD: if code page is 0x0 (vendor-specific) it
+			// will not follow the normal page mode format and cannot be
+			// parsed, but isn't necessarily an error. Instead, just treat it
+			// as an 'end of data' field and allow normal command completion.
+			int pageCode = scsiDev.data[idx] & 0x3F;
+			if (pageCode == 0) goto out;
+
 			int pageLen = scsiDev.data[idx + 1];
 			if (idx + 2 + pageLen > scsiDev.dataLen) goto bad;
 
-			int pageCode = scsiDev.data[idx] & 0x3F;
 			switch (pageCode)
 			{
 			case 0x03: // Format Device Page
@@ -644,6 +705,11 @@ static void doModeSelect(void)
 				{
 					s2s_configSave(scsiDev.target->targetId, bytesPerSector);
 				}
+			}
+			break;
+			case 0x0E: // CD audio control page
+			{
+				if (!modeSelectCDAudioControlPage(pageLen, idx)) goto bad;
 			}
 			break;
 			//default:

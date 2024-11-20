@@ -1,3 +1,24 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 // Driver and interface for accessing SD card in SDIO mode
 // Used on ZuluSCSI v1.1.
 
@@ -23,9 +44,10 @@ static uint32_t g_sdio_sector_count;
 static bool logSDError(int line)
 {
     g_sdio_error_line = line;
-    azlog("SDIO SD card error on line ", line, ", error code ", (int)g_sdio_error);
+    logmsg("SDIO SD card error on line ", line, ", error code ", (int)g_sdio_error);
     return false;
 }
+
 
 bool SdioCard::begin(SdioConfig sdioConfig)
 {
@@ -37,7 +59,7 @@ bool SdioCard::begin(SdioConfig sdioConfig)
     if (g_sdio_error != SD_OK)
     {
         // Don't spam the log when main program polls for card insertion.
-        azdbg("sd_init() failed: ", (int)g_sdio_error);
+        dbgmsg("sd_init() failed: ", (int)g_sdio_error);
         return false;
     }
 
@@ -89,6 +111,19 @@ bool SdioCard::readCSD(csd_t* csd)
     return true;
 }
 
+bool SdioCard::readSDS(sds_t* sds)
+{
+    uint32_t raw_sds[64/4];
+    if (!checkReturnOk(sd_sdstatus_get(raw_sds)))
+        return false;
+    // SdFat expects the data in big endian format.
+    for (int i = 0; i < 16; i++)
+    {
+        ((uint8_t*)sds)[i] = (raw_sds[i / 4] >> (24 - (i % 4) * 8)) & 0xFF;
+    }
+    return true;
+}
+
 bool SdioCard::readOCR(uint32_t* ocr)
 {
     // SDIO mode does not have CMD58, but main program uses this to
@@ -98,19 +133,19 @@ bool SdioCard::readOCR(uint32_t* ocr)
 
 bool SdioCard::readData(uint8_t* dst)
 {
-    azlog("SdioCard::readData() called but not implemented!");
+    // logmsg("SdioCard::readData() called but not implemented!");
     return false;
 }
 
 bool SdioCard::readStart(uint32_t sector)
 {
-    azlog("SdioCard::readStart() called but not implemented!");
+    // logmsg("SdioCard::readStart() called but not implemented!");
     return false;
 }
 
 bool SdioCard::readStop()
 {
-    azlog("SdioCard::readStop() called but not implemented!");
+    // logmsg("SdioCard::readStop() called but not implemented!");
     return false;
 }
 
@@ -147,7 +182,7 @@ bool SdioCard::stopTransmission(bool blocking)
         }
         if (isBusy())
         {
-            azlog("SdioCard::stopTransmission() timeout");
+            logmsg("SdioCard::stopTransmission() timeout");
             return false;
         }
         else
@@ -178,19 +213,19 @@ uint8_t SdioCard::type() const
 
 bool SdioCard::writeData(const uint8_t* src)
 {
-    azlog("SdioCard::writeData() called but not implemented!");
+    // logmsg("SdioCard::writeData() called but not implemented!");
     return false;
 }
 
 bool SdioCard::writeStart(uint32_t sector)
 {
-    azlog("SdioCard::writeStart() called but not implemented!");
+    // logmsg("SdioCard::writeStart() called but not implemented!");
     return false;
 }
 
 bool SdioCard::writeStop()
 {
-    azlog("SdioCard::writeStop() called but not implemented!");
+    // logmsg("SdioCard::writeStop() called but not implemented!");
     return false;
 }
 
@@ -200,12 +235,12 @@ bool SdioCard::erase(uint32_t firstSector, uint32_t lastSector)
 }
 
 bool SdioCard::cardCMD6(uint32_t arg, uint8_t* status) {
-    azlog("SdioCard::cardCMD6() not implemented");
+    // logmsg("SdioCard::cardCMD6() not implemented");
     return false;
 }
 
 bool SdioCard::readSCR(scr_t* scr) {
-    azlog("SdioCard::readSCR() not implemented");
+    // logmsg("SdioCard::readSCR() not implemented");
     return false;
 }
 
@@ -216,7 +251,7 @@ static const uint8_t *m_stream_buffer;
 static uint32_t m_stream_count;
 static uint32_t m_stream_count_start;
 
-void azplatform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
+void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
 {
     m_stream_callback = func;
     m_stream_buffer = buffer;
@@ -245,7 +280,7 @@ static sdio_callback_t get_stream_callback(const uint8_t *buf, uint32_t count, c
         }
         else
         {
-            azdbg("SD card ", accesstype, "(", (int)sector,
+            dbgmsg("SD card ", accesstype, "(", (int)sector,
                   ") slow transfer, buffer", (uint32_t)buf, " vs. ", (uint32_t)(m_stream_buffer + m_stream_count));
             return NULL;
         }
@@ -282,7 +317,7 @@ bool SdioCard::readSectors(uint32_t sector, uint8_t* dst, size_t n)
         {
             if (!readSector(sector + i, dst + i * 512))
             {
-                azlog("End of drive read failed at ", sector, " + ", i);
+                logmsg("End of drive read failed at ", sector, " + ", i);
                 return false;
             }
         }
@@ -297,6 +332,8 @@ bool SdioCard::readSectors(uint32_t sector, uint8_t* dst, size_t n)
 // This is used to optimize the timing of data transfers on SCSI bus.
 bool check_sd_read_done()
 {
+    if (!m_stream_callback) return false;
+
     return (DMA_CHCTL(DMA1, DMA_CH3) & DMA_CHXCTL_CHEN)
         && (DMA_INTF(DMA1) & DMA_FLAG_ADD(DMA_FLAG_FTF, DMA_CH3));
 }

@@ -1,3 +1,24 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 /* Synchronous mode SCSI implementation.
  *
  * In synchronous mode, the handshake mechanism is not used. Instead
@@ -135,7 +156,7 @@ void scsi_accel_sync_recv(uint8_t *data, uint32_t count, int* parityError, volat
             {
                 // We are in a pinch here: without ACK pulses coming, the EXMC and DMA peripherals
                 // are locked up. The only way out is a whole system reset.
-                azlog("SCSI Synchronous read timeout: resetting system");
+                logmsg("SCSI Synchronous read timeout: resetting system");
                 NVIC_SystemReset();
             }
         }
@@ -450,7 +471,7 @@ void scsi_accel_sync_send(const uint8_t* data, uint32_t count, volatile int *res
     }
     else
     {
-        azdbg("No optimized routine for syncOffset=", syncOffset, " syndPeriod=", syncPeriod, ", using fallback");
+        dbgmsg("No optimized routine for syncOffset=", syncOffset, " syndPeriod=", syncPeriod, ", using fallback");
         while (count-- > 0)
         {
             while (TIMER_CNT(SCSI_SYNC_TIMER) > count + syncOffset && !*resetFlag);
@@ -468,7 +489,7 @@ void scsi_accel_sync_send(const uint8_t* data, uint32_t count, volatile int *res
 
     if (*resetFlag)
     {
-        azdbg("Bus reset during sync transfer, total ", (int)count,
+        dbgmsg("Bus reset during sync transfer, total ", (int)count,
               " bytes, remaining ACK count ", (int)TIMER_CNT(SCSI_SYNC_TIMER));
     }
 

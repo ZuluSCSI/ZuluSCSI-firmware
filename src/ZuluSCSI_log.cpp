@@ -1,9 +1,38 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022-2024 Rabbit Hole Computing™
+ * Copyright (c) 2023 joshua stein <jcs@jcs.org>
+ * Copyright (c) 2024 Eric Helgeson <erichelgeson@gmail.com>
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
+
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_platform.h"
+#include <stdio.h>
+#include <stdarg.h>
 
-const char *g_azlog_firmwareversion = ZULU_FW_VERSION " " __DATE__ " " __TIME__;
-bool g_azlog_debug = true;
+const char *g_log_firmwareversion = ZULU_FW_VERSION " " __DATE__ " " __TIME__;
+
+bool g_log_debug = false;
+bool g_log_ignore_busy_free = false;
+uint8_t g_scsi_log_mask = 0xFF;
 
 // This memory buffer can be read by debugger and is also saved to zululog.txt
 #define LOGBUFMASK (LOGBUFSIZE - 1)
@@ -14,7 +43,7 @@ uint32_t g_log_magic;
 char g_logbuffer[LOGBUFSIZE + 1];
 uint32_t g_logpos;
 
-void azlog_raw(const char *str)
+void log_raw(const char *str)
 {
     // Keep log from reboot / bootloader if magic matches expected value
     if (g_log_magic != 0xAA55AA55)
@@ -33,11 +62,11 @@ void azlog_raw(const char *str)
     // Keep buffer null-terminated
     g_logbuffer[g_logpos & LOGBUFMASK] = '\0';
 
-    azplatform_log(str);
+    platform_log(str);
 }
 
 // Log byte as hex
-void azlog_raw(uint8_t value)
+void log_raw(uint8_t value)
 {
     const char *nibble = "0123456789ABCDEF";
     char hexbuf[5] = {
@@ -45,11 +74,11 @@ void azlog_raw(uint8_t value)
         nibble[(value >>  4) & 0xF], nibble[(value >>  0) & 0xF],
         0
     };
-    azlog_raw(hexbuf);
+    log_raw(hexbuf);
 }
 
 // Log integer as hex
-void azlog_raw(uint32_t value)
+void log_raw(uint32_t value)
 {
     const char *nibble = "0123456789ABCDEF";
     char hexbuf[11] = {
@@ -60,11 +89,11 @@ void azlog_raw(uint32_t value)
         nibble[(value >>  4) & 0xF], nibble[(value >>  0) & 0xF],
         0
     };
-    azlog_raw(hexbuf);
+    log_raw(hexbuf);
 }
 
 // Log integer as hex
-void azlog_raw(uint64_t value)
+void log_raw(uint64_t value)
 {
     const char *nibble = "0123456789ABCDEF";
     char hexbuf[19] = {
@@ -79,11 +108,11 @@ void azlog_raw(uint64_t value)
         nibble[(value >>  4) & 0xF], nibble[(value >>  0) & 0xF],
         0
     };
-    azlog_raw(hexbuf);
+    log_raw(hexbuf);
 }
 
 // Log integer as decimal
-void azlog_raw(int value)
+void log_raw(int value)
 {
     char decbuf[16] = {0};
     char *p = &decbuf[14];
@@ -99,29 +128,29 @@ void azlog_raw(int value)
         *--p = '-';
     }
 
-    azlog_raw(p);
+    log_raw(p);
 }
 
-void azlog_raw(bytearray array)
+void log_raw(bytearray array)
 {
     for (size_t i = 0; i < array.len; i++)
     {
-        azlog_raw(array.data[i]);
-        azlog_raw(" ");
+        log_raw(array.data[i]);
+        log_raw(" ");
         if (i > 32)
         {
-            azlog_raw("... (total ", (int)array.len, ")");
+            log_raw("... (total ", (int)array.len, ")");
             break;
         }
     }
 }
 
-uint32_t azlog_get_buffer_len()
+uint32_t log_get_buffer_len()
 {
     return g_logpos;
 }
 
-const char *azlog_get_buffer(uint32_t *startpos)
+const char *log_get_buffer(uint32_t *startpos, uint32_t *available)
 {
     uint32_t default_pos = 0;
     if (startpos == NULL)
@@ -130,28 +159,118 @@ const char *azlog_get_buffer(uint32_t *startpos)
     }
 
     // Check oldest data available in buffer
-    uint32_t margin = 16;
-    if (g_logpos + margin > LOGBUFSIZE)
+    uint32_t lag = (g_logpos - *startpos);
+    if (lag >= LOGBUFSIZE)
     {
-        uint32_t oldest = g_logpos + margin - LOGBUFSIZE;
-        if (*startpos < oldest)
+        // If we lose data, skip 512 bytes forward to give us time to transmit
+        // pending data before new log messages arrive. Also skip to next line
+        // break to keep formatting consistent.
+        uint32_t oldest = g_logpos - LOGBUFSIZE + 512;
+        while (oldest < g_logpos)
         {
-            *startpos = oldest;
+            char c = g_logbuffer[oldest & LOGBUFMASK];
+            if (c == '\r' || c == '\n') break;
+            oldest++;
         }
+
+        if (oldest > g_logpos)
+        {
+            oldest = g_logpos;
+        }
+
+        *startpos = oldest;
     }
 
     const char *result = &g_logbuffer[*startpos & LOGBUFMASK];
+
+    // Calculate number of bytes available
+    uint32_t len;
     if ((g_logpos & LOGBUFMASK) >= (*startpos & LOGBUFMASK))
     {
-        // Ok, everything has been read now
-        *startpos = g_logpos;
+        // Can read directly to g_logpos
+        len = g_logpos - *startpos;
     }
     else
     {
         // Buffer wraps, read to end of buffer now and start from beginning on next call.
-        *startpos = g_logpos & (~LOGBUFMASK);
+        len = LOGBUFSIZE - (*startpos & LOGBUFMASK);
     }
+
+    if (available) { *available = len; }
+    *startpos += len;
 
     return result;
 }
+
+
+#ifdef NETWORK_DEBUG_LOGGING
+// TODO write directly global log buffer to save some memory
+static char shared_log_buf[1500 * 3];
+
+// core method for variadic printf like logging
+static void log_va(bool debug, const char *format, va_list ap)
+{
+    vsnprintf(shared_log_buf, sizeof(shared_log_buf), format, ap);
+    if (debug)
+    {
+        dbgmsg(shared_log_buf);
+    }
+    else
+    {
+        logmsg(shared_log_buf);
+    }
+}
+
+void logmsg_f(const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    log_va(false, format, ap);
+    va_end(ap);
+}
+
+void dbgmsg_f(const char *format, ...)
+{
+    if (!g_log_debug)
+        return;
+    va_list ap;
+    va_start(ap, format);
+    log_va(true, format, ap);
+    va_end(ap);
+}
+
+// core method for logging a data buffer into a hex string
+void log_hex_buf(const unsigned char *buf, unsigned long size, bool debug)
+{
+    static char hex[] = "0123456789abcdef";
+    int o = 0;
+
+    for (int j = 0; j < size; j++) {
+        if (o + 3 >= sizeof(shared_log_buf))
+            break;
+
+        if (j != 0)
+            shared_log_buf[o++] = ' ';
+        shared_log_buf[o++] = hex[(buf[j] >> 4) & 0xf];
+        shared_log_buf[o++] = hex[buf[j] & 0xf];
+        shared_log_buf[o] = 0;
+    }
+    if (debug)
+        dbgmsg(shared_log_buf);
+    else
+        logmsg(shared_log_buf);
+}
+
+void logmsg_buf(const unsigned char *buf, unsigned long size)
+{
+    log_hex_buf(buf, size, false);
+}
+
+void dbgmsg_buf(const unsigned char *buf, unsigned long size)
+{
+    if (!g_log_debug)
+        return;
+    log_hex_buf(buf, size, true);
+}
+#endif // NETWORK_DEBUG_LOGGING
 

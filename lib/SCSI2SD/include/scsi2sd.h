@@ -1,4 +1,5 @@
 //	Copyright (C) 2014 Michael McMaster <michael@codesrc.com>
+//	Copyright (c) 2023 joshua stein <jcs@jcs.org>
 //
 //	This file is part of SCSI2SD.
 //
@@ -14,6 +15,8 @@
 //
 //	You should have received a copy of the GNU General Public License
 //	along with SCSI2SD.  If not, see <http://www.gnu.org/licenses/>.
+
+
 #ifndef scsi2sd_h
 #define scsi2sd_h
 
@@ -68,12 +71,15 @@ typedef enum
 
 typedef enum
 {
-	S2S_CFG_FIXED,
-	S2S_CFG_REMOVEABLE,
-	S2S_CFG_OPTICAL,
-	S2S_CFG_FLOPPY_14MB,
-	S2S_CFG_MO,
-	S2S_CFG_SEQUENTIAL
+	S2S_CFG_FIXED = 0,
+	S2S_CFG_REMOVABLE = 1,
+	S2S_CFG_OPTICAL = 2,
+	S2S_CFG_FLOPPY_14MB = 3,
+	S2S_CFG_MO = 4,
+	S2S_CFG_SEQUENTIAL = 5,
+	S2S_CFG_NETWORK = 6,
+	S2S_CFG_ZIP100 = 7,
+	S2S_CFG_NOT_SET = 255
 
 } S2S_CFG_TYPE;
 
@@ -83,7 +89,9 @@ typedef enum
 	S2S_CFG_QUIRKS_APPLE = 1,
 	S2S_CFG_QUIRKS_OMTI = 2,
 	S2S_CFG_QUIRKS_XEBEC = 4,
-	S2S_CFG_QUIRKS_VMS = 8
+	S2S_CFG_QUIRKS_VMS = 8,
+	S2S_CFG_QUIRKS_X68000 = 16,
+	S2S_CFG_QUIRKS_EWSD = 32
 } S2S_CFG_QUIRKS;
 
 typedef enum
@@ -94,7 +102,7 @@ typedef enum
 	S2S_CFG_SPEED_ASYNC_50,
 	S2S_CFG_SPEED_SYNC_5,
 	S2S_CFG_SPEED_SYNC_10,
-	S2S_CFG_SPEED_TURBO
+	S2S_CFG_SPEED_SYNC_20
 } S2S_CFG_SPEED;
 
 typedef struct __attribute__((packed))
@@ -126,7 +134,10 @@ typedef struct __attribute__((packed))
 
 	uint16_t quirks; // S2S_CFG_QUIRKS
 
-	uint8_t reserved[64]; // Pad out to 128 bytes for main section.
+	// bit flags vendor extention for specific device types
+	uint32_t vendorExtensions;
+
+	uint8_t reserved[60]; // Pad out to 128 bytes for main section.
 } S2S_TargetCfg;
 
 typedef struct __attribute__((packed))
@@ -139,7 +150,11 @@ typedef struct __attribute__((packed))
 
 	uint8_t scsiSpeed;
 
-	uint8_t reserved[119]; // Pad out to 128 bytes
+	char wifiMACAddress[6];
+	char wifiSSID[32];
+	char wifiPassword[63];
+
+	uint8_t reserved[18]; // Pad out to 128 bytes
 } S2S_BoardCfg;
 
 typedef enum

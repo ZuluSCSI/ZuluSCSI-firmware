@@ -102,6 +102,7 @@ typedef struct
 	ScsiSense sense;
 
 	uint16_t unitAttention; // Set to the sense qualifier key to be returned.
+	uint8_t unitAttentionStop; // Indicates if unit attention has to be stopped.
 
 	// Only let the reserved initiator talk to us.
 	// A 3rd party may be sending the RESERVE/RELEASE commands
@@ -145,7 +146,7 @@ typedef struct
 	int savedDataPtr; // Index into data, initially 0.
 	int dataLen;
 
-	uint8_t cdb[12]; // command descriptor block
+	uint8_t cdb[16]; // command descriptor block
 	uint8_t cdbLen; // 6, 10, or 12 byte message.
 	int8_t lun; // Target lun, set by IDENTIFY message.
 	uint8_t discPriv; // Disconnect priviledge.
@@ -181,6 +182,12 @@ typedef struct
 	uint32_t hostSpeedKBs;
 	int hostSpeedMeasured;
 } ScsiDevice;
+
+typedef enum
+{
+	VENDOR_EXTENSION_OPTICAL_PLEXTOR = 1 << 0,
+} VENDOR_EXTENSION_OPTICAL;
+
 
 extern ScsiDevice scsiDev;
 

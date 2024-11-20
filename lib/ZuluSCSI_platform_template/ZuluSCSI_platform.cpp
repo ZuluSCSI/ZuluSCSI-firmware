@@ -1,3 +1,24 @@
+/** 
+ * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * 
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
+ * 
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version. 
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details. 
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
@@ -7,27 +28,34 @@
 
 extern "C" {
 
-const char *g_azplatform_name = PLATFORM_NAME;
+const char *g_platform_name = PLATFORM_NAME;
 
 /***************/
 /* GPIO init   */
 /***************/
 
-void azplatform_init()
+void platform_init()
 {
     /* Initialize SCSI and SD card pins to required modes.
      * SCSI pins should be inactive / input at this point.
      */
 }
 
-void azplatform_late_init()
+void platform_late_init()
 {
     /* This function can usually be left empty.
      * It can be used for initialization code that should not run in bootloader.
      */
 }
 
-void azplatform_disable_led(void)
+void platform_post_sd_card_init()
+{
+    /* This function can usually be left empty.
+     * It can be used for initialization code that should be run after the SD card is ready
+     */
+}
+
+void platform_disable_led(void)
 {
     /* This function disables the LED on the ZuluSCSI board
     *  Generally by switching the pin from output to input.
@@ -42,14 +70,28 @@ void azplatform_disable_led(void)
 // This function is called for every log message.
 // It can e.g. write the log to serial port in real time.
 // It can also be left empty to use only the debug log file on SD card.
-void azplatform_log(const char *s)
+void platform_log(const char *s)
 {
 }
 
 // This function can be used to periodically reset watchdog timer for crash handling.
 // It can also be left empty if the platform does not use a watchdog timer.
-void azplatform_reset_watchdog()
+void platform_reset_watchdog()
 {
+}
+
+// Poll function that is called every few milliseconds.
+// Can be left empty or used for platform-specific processing.
+void platform_poll()
+{
+
+}
+
+// Called periodically to get the state of any buttons installed on the platform.
+// If none are installed the below function is fine.
+uint8_t platform_get_buttons()
+{
+    return 0;
 }
 
 /**********************************************/
@@ -105,7 +147,7 @@ const uint32_t g_scsi_out_byte_to_bop[256] =
  */
 SdSpiConfig g_sd_spi_config(0, DEDICATED_SPI, SD_SCK_MHZ(25));
 
-void azplatform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
+void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
 {
     /* This function can be left empty.
      * If the platform supports DMA for SD card transfers, this function
