@@ -29,7 +29,7 @@
 
 // Use variables for version number
 #define FW_VER_NUM      "24.12.09"
-#define FW_VER_SUFFIX   "dev"
+#define FW_VER_SUFFIX   "v1.1plus-hotfix-release"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
 #define STRINGFY(STR) #STR
