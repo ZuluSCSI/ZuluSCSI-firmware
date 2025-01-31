@@ -22,6 +22,8 @@
 #include "ZuluSCSI_platform.h"
 #include "gd32f4xx_sdio.h"
 #include "gd32f4xx_fmc.h"
+#include "gd32f4xx_fwdgt.h"
+#include "gd32_sdio_sdcard.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "usb_hs.h"
@@ -31,6 +33,7 @@
 #include <scsi.h>
 #include <assert.h>
 #include "usb_serial.h"
+#include <ZuluSCSI_settings.h>
 
 extern bool g_rawdrive_active;
 
@@ -38,6 +41,7 @@ extern "C" {
 
 const char *g_platform_name = PLATFORM_NAME;
 static bool g_enable_apple_quirks = false;
+static bool g_led_blinking = false;
 
 /*************************/
 /* Timing functions      */
@@ -300,10 +304,45 @@ void platform_late_init()
 
 void platform_post_sd_card_init() {}
 
+void platform_write_led(bool state)
+{
+    if (g_led_blinking) return;
+
+    if (g_scsi_settings.getSystem()->invertStatusLed)
+        state = !state;
+
+    if (state)
+        gpio_bit_reset(LED_PORT, LED_PINS);
+    else
+        gpio_bit_set(LED_PORT, LED_PINS);
+}
+
+void platform_set_blink_status(bool status)
+{
+    g_led_blinking = status;
+}
+
+void platform_write_led_override(bool state)
+{
+    if (g_scsi_settings.getSystem()->invertStatusLed)
+        state = !state;
+
+    if (state)
+        gpio_bit_reset(LED_PORT, LED_PINS);
+    else
+        gpio_bit_set(LED_PORT, LED_PINS);
+}
+
+
 void platform_disable_led(void)
 {   
     gpio_mode_set(LED_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, LED_PINS);
     logmsg("Disabling status LED");
+}
+
+uint8_t platform_no_sd_card_on_init_error_code()
+{
+    return 0x80 | SD_CMD_RESP_TIMEOUT;
 }
 
 /*****************************************/
@@ -509,6 +548,14 @@ void platform_reset_watchdog()
     // It gives us opportunity to collect better debug info than the
     // full hardware reset that would be caused by hardware watchdog.
     g_watchdog_timeout = WATCHDOG_CRASH_TIMEOUT;
+}
+
+void platform_reset_mcu()
+{
+    // reset in 2 sec ( 1 / (32KHz / 32) * 2000 == 2sec)
+    fwdgt_config(2000, FWDGT_PSC_DIV32);
+    fwdgt_enable();
+
 }
 
 // Poll function that is called every few milliseconds.

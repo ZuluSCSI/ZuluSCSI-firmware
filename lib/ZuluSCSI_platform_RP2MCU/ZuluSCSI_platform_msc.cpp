@@ -22,36 +22,97 @@
 /* platform specific MSC routines */
 #ifdef PLATFORM_MASS_STORAGE
 
-#include <SdFat.h>
 #include <device/usbd.h>
 #include <hardware/gpio.h>
+
 #include "ZuluSCSI_platform.h"
+#include "ZuluSCSI_disk.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_msc.h"
+#include "ZuluSCSI_msc_initiator.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
 #include <class/msc/msc.h>
 #include <class/msc/msc_device.h>
 
+#include <pico/mutex.h>
+extern mutex_t __usb_mutex;
 
 #if CFG_TUD_MSC_EP_BUFSIZE < SD_SECTOR_SIZE
   #error "CFG_TUD_MSC_EP_BUFSIZE is too small! It needs to be at least 512 (SD_SECTOR_SIZE)"
 #endif
 
+#define DIGITAL_PIN_CYW43_OFFSET 64
+
 // external global SD variable
 extern SdFs SD;
-static bool unitReady = false;
+
+// external images configuration
+extern image_config_t g_DiskImages[S2S_MAX_TARGETS];
+
+static bool g_msc_lock; // To block re-entrant calls
+static bool g_msc_usb_mutex_held;
+
+/* globals */
+static struct {
+  uint8_t lun_unitReady[S2S_MAX_TARGETS];
+  image_config_t * lun_config[S2S_MAX_TARGETS];
+  uint8_t lun_count = 0;
+  uint8_t unitReady = 0;
+  uint8_t SDMode = 1;
+} g_MSC;
+
+void platform_msc_lock_set(bool block)
+{
+  if (block)
+  {
+    if (g_msc_lock)
+    {
+      logmsg("Re-entrant MSC lock!");
+      assert(false);
+    }
+    
+    g_msc_usb_mutex_held = mutex_try_enter(&__usb_mutex, NULL); // Blocks USB IRQ if not already blocked
+    g_msc_lock = true; // Blocks platform USB polling
+  }
+  else
+  {
+    if (!g_msc_lock)
+    {
+      logmsg("MSC lock released when not held!");
+      assert(false);
+    }
+
+    g_msc_lock = false;
+
+    if (g_msc_usb_mutex_held)
+    {
+      g_msc_usb_mutex_held = false;
+      mutex_exit(&__usb_mutex);
+    }
+  }
+}
+
+bool platform_msc_lock_get()
+{
+  return g_msc_lock;
+}
+
+struct MSCScopedLock {
+public:
+  MSCScopedLock() {  platform_msc_lock_set(true); }
+  ~MSCScopedLock() { platform_msc_lock_set(false); }
+};
 
 /* return true if USB presence detected / eligble to enter CR mode */
 bool platform_sense_msc() {
 
-#ifdef ZULUSCSI_PICO_2
-  if (!gpio_get(GPIO_USB_POWER))
-    return false;
-#elif defined(ZULUSCSI_PICO)
+#if defined(ZULUSCSI_PICO) || defined(ZULUSCSI_PICO_2)
   // check if we're USB powered, if not, exit immediately
   // pin on the wireless module, see https://github.com/earlephilhower/arduino-pico/discussions/835
-  if (rp2040.isPicoW() && !digitalRead(34))
+  // Update: from the above discussion the offset 32 has been changed to 64 to access CYW43 GPIO pins
+  // since the addition of the RP2350 chips, now stored in the DIGITAL_PIN_CYW43_OFFSET define
+  if (rp2040.isPicoW() && !digitalRead(DIGITAL_PIN_CYW43_OFFSET + 2))
     return false;
 
   if (!rp2040.isPicoW() && !digitalRead(24))
@@ -82,22 +143,77 @@ bool platform_sense_msc() {
   return tud_connected();
 }
 
-/* return true if we should remain in card reader mode and perform periodic tasks */
+/* perform periodic tasks, return true if we should remain in card reader mode */
 bool platform_run_msc() {
-  return unitReady;
+  return g_MSC.unitReady;
+}
+
+/* load the setting if we present images or not */
+void platform_set_msc_image_mode(bool image_mode) {
+  g_MSC.SDMode = !image_mode;
+}
+
+/* return true if the image type makes sense as a mass-storage device */
+bool msc_image_eligble(uint8_t t) {
+  switch (t) {
+    case S2S_CFG_FIXED:
+    case S2S_CFG_REMOVABLE:
+    case S2S_CFG_MO: /* not actually sure about this and zip */
+    case S2S_CFG_ZIP100:
+      return true;
+
+    case S2S_CFG_OPTICAL: /* will not contain a MBR */
+    case S2S_CFG_FLOPPY_14MB: /* will not contain a MBR */ 
+    case S2S_CFG_SEQUENTIAL: /* tape drive */
+    case S2S_CFG_NETWORK: /* always empty */
+    case S2S_CFG_NOT_SET:
+    default:
+      return false;
+  } 
 }
 
 /* perform MSC class preinit tasks */
 void platform_enter_msc() {
   dbgmsg("USB MSC buffer size: ", CFG_TUD_MSC_EP_BUFSIZE);
+  g_MSC.lun_count = 0;
+    
+  if (!g_MSC.SDMode) {
+    logmsg("Presenting configured images as USB storage devices");
+    for (int i = 0; i < S2S_MAX_TARGETS; i++) {
+      if (msc_image_eligble(g_DiskImages[i].deviceType) && g_DiskImages[i].file.isOpen()) {
+          logmsg("USB LUN ", (int)g_MSC.lun_count," => ",g_DiskImages[i].current_image);
+
+          // anything but linux probably won't deal gracefully with nonstandard or odd sector sizes, present a warning
+          if (g_DiskImages[i].bytesPerSector != 512 && g_DiskImages[i].bytesPerSector != 4096) {
+              logmsg("Warning: USB LUN ",(int)g_MSC.lun_count," uses a sector size of ",g_DiskImages[i].bytesPerSector,". Not all OS can deal with this!");
+          }
+
+          g_MSC.lun_config[g_MSC.lun_count] = &g_DiskImages[i];
+          g_MSC.lun_unitReady[g_MSC.lun_count] = 1;       
+          g_MSC.lun_count ++;  
+      }
+    }
+
+    if (g_MSC.lun_count == 0) {
+      logmsg("No images to present, falling back to SD card!");
+      g_MSC.SDMode = 1;
+    } else 
+      logmsg("Total USB LUN ", (int)g_MSC.lun_count);
+  }
+
+  if (g_MSC.SDMode) {
+    logmsg("Presenting SD card as USB storage device");
+    g_MSC.lun_count = 1;
+    g_MSC.lun_unitReady[0] = 1;
+  }
+
   // MSC is ready for read/write
-  // we don't need any prep, but the var is requried as the MSC callbacks are always active
-  unitReady = true;
+  g_MSC.unitReady = g_MSC.lun_count;
 }
 
 /* perform any cleanup tasks for the MSC-specific functionality */
 void platform_exit_msc() {
-  unitReady = false;
+   g_MSC.unitReady = 0;
 }
 
 /* TinyUSB mass storage callbacks follow */
@@ -110,6 +226,9 @@ void __USBInstallMassStorage() { }
 extern "C" void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
                         uint8_t product_id[16], uint8_t product_rev[4]) {
 
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_inquiry_cb(lun, vendor_id, product_id, product_rev);
+
   const char vid[] = "ZuluSCSI";
   const char pid[] = PLATFORM_PID; 
   const char rev[] = "1.0";
@@ -121,8 +240,12 @@ extern "C" void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
 
 // max LUN supported
 // we only have the one SD card
-extern "C" uint8_t tud_msc_get_maxlun_cb(void) {
-  return 1; // number of LUNs supported
+extern "C" uint8_t tud_msc_get_maxlun_cb(void)
+{
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_get_maxlun_cb();
+
+  return g_MSC.lun_count; // number of LUNs supported
 }
 
 // return writable status
@@ -130,22 +253,29 @@ extern "C" uint8_t tud_msc_get_maxlun_cb(void) {
 // otherwise this is not actually needed
 extern "C" bool tud_msc_is_writable_cb (uint8_t lun)
 {
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_is_writable_cb(lun);
+  if (g_MSC.SDMode) return g_MSC.unitReady;
+  
   (void) lun;
-  return unitReady;
+  return g_MSC.unitReady && g_MSC.lun_unitReady[lun] && g_MSC.lun_config[lun]->file.isWritable();
 }
 
 // see https://www.seagate.com/files/staticfiles/support/docs/manual/Interface%20manuals/100293068j.pdf pg 221
 extern "C" bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start, bool load_eject)
 {
-  (void) lun;
-  (void) power_condition;
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_start_stop_cb(lun, power_condition, start, load_eject);
 
   if (load_eject)  {
     if (start) {
       // load disk storage
       // do nothing as we started "loaded"
     } else {
-      unitReady = false;
+      g_MSC.lun_unitReady[lun] = false;
+
+      if (g_MSC.unitReady) // no more active LUNs -> global not ready flag
+        g_MSC.unitReady --;
     }
   }
 
@@ -153,25 +283,37 @@ extern "C" bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool
 }
 
 // return true if we are ready to service reads/writes
-extern "C" bool tud_msc_test_unit_ready_cb(uint8_t lun) {
-  (void) lun;
+extern "C" bool tud_msc_test_unit_ready_cb(uint8_t lun)
+{
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_test_unit_ready_cb(lun);
 
-  return unitReady;
+  return g_MSC.unitReady && g_MSC.lun_unitReady[lun];
 }
 
 // return size in blocks and block size
 extern "C" void tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count,
-                         uint16_t *block_size) {
-  (void) lun;
+                         uint16_t *block_size)
+{
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_capacity_cb(lun, block_count, block_size);
 
-  *block_count = unitReady ? (SD.card()->sectorCount()) : 0;
-  *block_size = SD_SECTOR_SIZE;
+  if (g_MSC.SDMode) {
+    *block_count = g_MSC.unitReady ? (SD.card()->sectorCount()) : 0;
+    *block_size = SD_SECTOR_SIZE;
+  } else { // present the bytesPerSector of file, though it remains to be seen if host will like this
+    *block_count = (g_MSC.unitReady && g_MSC.lun_unitReady[lun]) ? (g_MSC.lun_config[lun]->file.size() / g_MSC.lun_config[lun]->bytesPerSector) : 0;
+    *block_size = g_MSC.lun_config[lun]->bytesPerSector;
+  }
 }
 
 // Callback invoked when received an SCSI command not in built-in list (below) which have their own callbacks
 // - READ_CAPACITY10, READ_FORMAT_CAPACITY, INQUIRY, MODE_SENSE6, REQUEST_SENSE, READ10 and WRITE10
 extern "C" int32_t tud_msc_scsi_cb(uint8_t lun, const uint8_t scsi_cmd[16], void *buffer,
-                        uint16_t bufsize) {
+                        uint16_t bufsize)
+{
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_scsi_cb(lun, scsi_cmd, buffer, bufsize);
 
   const void *response = NULL;
   uint16_t resplen = 0;
@@ -209,9 +351,21 @@ extern "C" int32_t tud_msc_scsi_cb(uint8_t lun, const uint8_t scsi_cmd[16], void
 extern "C" int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, 
                             void* buffer, uint32_t bufsize)
 {
-  (void) lun;
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_read10_cb(lun, lba, offset, buffer, bufsize);
 
-  bool rc = SD.card()->readSectors(lba, (uint8_t*) buffer, bufsize/SD_SECTOR_SIZE);
+  bool rc = 0;
+
+  if (g_MSC.SDMode) {
+    rc = SD.card()->readSectors(lba, (uint8_t*) buffer, bufsize/SD_SECTOR_SIZE);
+  } else {
+    if (g_MSC.lun_unitReady[lun]) {
+      g_MSC.lun_config[lun]->file.seek(lba * g_MSC.lun_config[lun]->bytesPerSector);
+      rc = g_MSC.lun_config[lun]->file.read(buffer, bufsize);
+    } else {
+      logmsg("Attempted read to non-ready LUN ",lun);
+    }
+  }
 
   // only blink fast on reads; writes will override this
   if (MSC_LEDMode == LED_SOLIDON)
@@ -223,10 +377,23 @@ extern "C" int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
 // Callback invoked when receive WRITE10 command.
 // Process data in buffer to disk's storage and return number of written bytes (must be multiple of block size)
 extern "C" int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
-                           uint8_t *buffer, uint32_t bufsize) {
-  (void) lun;
+                           uint8_t *buffer, uint32_t bufsize)
+{
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_read10_cb(lun, lba, offset, buffer, bufsize);
 
-  bool rc = SD.card()->writeSectors(lba, buffer, bufsize/SD_SECTOR_SIZE);
+  bool rc = 0;
+
+  if (g_MSC.SDMode) {
+    rc = SD.card()->writeSectors(lba, buffer, bufsize/SD_SECTOR_SIZE); 
+  } else {
+    if (g_MSC.lun_unitReady[lun]) {
+      g_MSC.lun_config[lun]->file.seek(lba * g_MSC.lun_config[lun]->bytesPerSector);
+      rc = g_MSC.lun_config[lun]->file.write(buffer, bufsize);
+    } else {
+      logmsg("Attempted write to non-ready LUN ",lun);
+    }
+  }
 
   // always slow blink
   MSC_LEDMode = LED_BLINK_SLOW;
@@ -236,8 +403,10 @@ extern "C" int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset
 
 // Callback invoked when WRITE10 command is completed (status received and accepted by host).
 // used to flush any pending cache to storage
-extern "C" void tud_msc_write10_complete_cb(uint8_t lun) {
-  (void) lun;
+extern "C" void tud_msc_write10_complete_cb(uint8_t lun)
+{
+  MSCScopedLock lock;
+  if (g_msc_initiator) return init_msc_write10_complete_cb(lun);
 }
 
 #endif

@@ -50,6 +50,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <zip_parser.h>
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI_log.h"
@@ -57,6 +58,7 @@
 #include "ZuluSCSI_settings.h"
 #include "ZuluSCSI_disk.h"
 #include "ZuluSCSI_initiator.h"
+#include "ZuluSCSI_msc_initiator.h"
 #include "ZuluSCSI_msc.h"
 #include "ROMDrive.h"
 
@@ -64,7 +66,7 @@ SdFs SD;
 FsFile g_logfile;
 bool g_rawdrive_active;
 static bool g_romdrive_active;
-static bool g_sdcard_present;
+bool g_sdcard_present;
 
 #ifndef SD_SPEED_CLASS_WARN_BELOW
 #define SD_SPEED_CLASS_WARN_BELOW 10
@@ -79,19 +81,57 @@ static bool g_sdcard_present;
 #define BLINK_DIRECT_MODE      4
 #define BLINK_ERROR_NO_SD_CARD 5
 
-void blinkStatus(int count)
-{
-  uint8_t blink_delay = 250;
-  if (count == BLINK_DIRECT_MODE)
-    blink_delay = 100;
+static uint16_t blink_count = 0;
+static uint32_t blink_start = 0;
+static uint32_t blink_delay = 0;
+static uint32_t blink_end_delay= 0;
 
-  for (int i = 0; i < count; i++)
-  {
-    LED_ON();
-    delay(blink_delay);
-    LED_OFF();
-    delay(blink_delay);
-  }
+bool blink_poll()
+{
+    bool is_blinking = true;
+
+    if (blink_count == 0)
+    {
+        is_blinking = false;
+    }
+    else if (blink_count == 1 && ((uint32_t)(millis() - blink_start)) > blink_end_delay )
+    {
+        LED_OFF_OVERRIDE();
+        blink_count = 0;
+        is_blinking = false;
+    }
+    else if (blink_count > 1 && ((uint32_t)(millis() - blink_start)) > blink_delay)
+    {
+        if (1 & blink_count)
+            LED_ON_OVERRIDE();
+        else
+            LED_OFF_OVERRIDE();
+        blink_count--;
+        blink_start = millis();
+    }
+
+    if (!is_blinking)
+        platform_set_blink_status(false);
+    return is_blinking;
+}
+
+void blink_cancel()
+{
+    blink_count = 0;
+    platform_set_blink_status(false);
+}
+
+void blinkStatus(uint8_t times, uint32_t delay = 500, uint32_t end_delay = 1250)
+{
+    if (!blink_poll() && blink_count == 0)
+    {
+        blink_start = millis();
+        blink_count = 2 * times + 1;
+        blink_delay = delay / 2;
+        blink_end_delay =  end_delay;
+        platform_set_blink_status(true);
+        LED_OFF_OVERRIDE();
+    }
 }
 
 extern "C" void s2s_ledOn()
@@ -771,9 +811,7 @@ static void reinitSCSI()
       {
         logmsg("---- Using device preset: ", g_scsi_settings.getDevicePresetName(scsiId));
       }
-      blinkStatus(BLINK_STATUS_OK);
     }
-    delay(250);
     blinkStatus(BLINK_DIRECT_MODE);
   }
   else
@@ -783,13 +821,7 @@ static void reinitSCSI()
     findHDDImages();
 
     // Error if there are 0 image files
-    if (scsiDiskCheckAnyImagesConfigured())
-    {
-      // Ok, there is an image, turn LED on for the time it takes to perform init
-      LED_ON();
-      delay(100);
-    }
-    else
+    if (!scsiDiskCheckAnyImagesConfigured())
     {
   #ifdef RAW_FALLBACK_ENABLE
       logmsg("No images found, enabling RAW fallback partition");
@@ -816,16 +848,134 @@ static void reinitSCSI()
 #endif // ZULUSCSI_NETWORK
 
 }
+
+// Update firmware by unzipping the firmware package
+static void firmware_update()
+{
+  const char firmware_prefix[] = FIRMWARE_PREFIX;
+  FsFile root = SD.open("/");
+  FsFile file;
+  char name[MAX_FILE_PATH + 1];
+  while (1)
+  {
+    if (!file.openNext(&root, O_RDONLY))
+    {
+      file.close();
+      root.close();
+      return;
+    }
+    if (file.isDir())
+      continue;
+
+    file.getName(name, sizeof(name));
+    if (strlen(name) + 1 < sizeof(firmware_prefix))
+      continue;
+    if ( strncasecmp(firmware_prefix, name, sizeof(firmware_prefix) -1) == 0)
+    {
+      break;
+    }
+  }
+
+  logmsg("Found firmware package ", name);
+
+  zipparser::Parser parser = zipparser::Parser(FIRMWARE_NAME_PREFIX, sizeof(FIRMWARE_NAME_PREFIX) - 1);
+  uint8_t buf[512];
+  int32_t parsed_length;
+  int bytes_read = 0;
+  while ((bytes_read = file.read(buf, sizeof(buf))) > 0)
+  {
+    parsed_length = parser.Parse(buf, bytes_read);
+    if (parsed_length == sizeof(buf))
+       continue;
+    if (parsed_length >= 0)
+    {
+      if (!parser.FoundMatch())
+      {
+        parser.Reset();
+        file.seekSet(file.position() - (sizeof(buf) - parsed_length) + parser.GetCompressedSize());
+      }
+      else
+      {
+        // seek to start of compressed data in matching file
+        file.seekSet(file.position() - (sizeof(buf) - parsed_length));
+        break;
+      }
+    }
+    if (parsed_length < 0)
+    {
+      file.close();
+      root.close();
+      return;
+    }
+  }
+
+
+  if (parser.FoundMatch())
+  {
+
+    logmsg("Unzipping matching firmware with prefix: ", FIRMWARE_NAME_PREFIX);
+    FsFile target_firmware;
+    target_firmware.open(&root, "ZuluSCSI.bin", O_BINARY | O_WRONLY | O_CREAT | O_TRUNC);
+    uint32_t position = 0;
+    while ((bytes_read = file.read(buf, sizeof(buf))) > 0)
+    {
+      if (bytes_read > parser.GetCompressedSize() - position)
+        bytes_read =  parser.GetCompressedSize() - position;
+      target_firmware.write(buf, bytes_read);
+      position += bytes_read;
+      if (position >= parser.GetCompressedSize())
+      {
+        break;
+      }
+    }
+    // zip file has a central directory at the end of the file,
+    // so the compressed data should never hit the end of the file
+    // so bytes read should always be greater than 0 for a valid datastream
+    if (bytes_read > 0)
+    {
+      target_firmware.close();
+      file.close();
+      root.remove(name);
+      root.close();
+      logmsg("Update extracted from package, rebooting MCU");
+      platform_reset_mcu();
+    }
+    else
+    {
+      target_firmware.close();
+      logmsg("Error reading firmware package file");
+      root.remove("ZuluSCSI.bin");
+    }
+  }
+  else
+    logmsg("Updater did not find matching file in package: ", name);
+  file.close();
+  root.close();
+}
+
+
 // Place all the setup code that requires the SD card to be initialized here
 // Which is pretty much everything after platform_init and and platform_late_init
-static void zuluscsi_setup_sd_card()
+static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 {
-
   g_sdcard_present = mountSDCard();
 
   if(!g_sdcard_present)
   {
-    logmsg("SD card init failed, sdErrorCode: ", (int)SD.sdErrorCode(),
+    if (SD.sdErrorCode() == platform_no_sd_card_on_init_error_code())
+    {
+  #ifdef PLATFORM_HAS_INITIATOR_MODE
+      if (platform_is_initiator_mode_enabled())
+      {
+        logmsg("No SD card detected, imaging to SD card not possible");
+      }
+      else
+  #endif
+      {
+        logmsg("No SD card detected, please check SD card slot to make sure it is in correctly");
+      }
+    }
+    dbgmsg("SD card init failed, sdErrorCode: ", (int)SD.sdErrorCode(),
            " sdErrorData: ", (int)SD.sdErrorData());
 
     if (romDriveCheckPresent())
@@ -841,14 +991,25 @@ static void zuluscsi_setup_sd_card()
     do
     {
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
-      delay(1000);
       platform_reset_watchdog();
       g_sdcard_present = mountSDCard();
-    } while (!g_sdcard_present);
-    logmsg("SD card init succeeded after retry");
+    } while (!g_sdcard_present && wait_for_card);
+    blink_cancel();
+    LED_OFF();
+
+    if (g_sdcard_present)
+    {
+      logmsg("SD card init succeeded after retry");
+    }
+    else
+    {
+      logmsg("Continuing without SD card");
+    }
   }
-  
-  static const char sg_default[] = "Default"; 
+
+  firmware_update();
+
+  static const char sg_default[] = "Default";
   if (g_sdcard_present)
   {
     char speed_grade_str[10];
@@ -914,20 +1075,25 @@ static void zuluscsi_setup_sd_card()
     }
   }
 
-  // Counterpart for the LED_ON in reinitSCSI().
-  LED_OFF();
+  blinkStatus(BLINK_STATUS_OK);
 }
 
 extern "C" void zuluscsi_setup(void)
 {
   platform_init();
   platform_late_init();
-  zuluscsi_setup_sd_card();
+
+  bool is_initiator = false;
+#ifdef PLATFORM_HAS_INITIATOR_MODE
+  is_initiator = platform_is_initiator_mode_enabled();
+#endif
+
+  zuluscsi_setup_sd_card(!is_initiator);
 
 #ifdef PLATFORM_MASS_STORAGE
   static bool check_mass_storage = true;
-  if ((check_mass_storage && g_scsi_settings.getSystem()->enableUSBMassStorage)
-      || platform_rebooted_into_mass_storage())
+  if (((check_mass_storage && g_scsi_settings.getSystem()->enableUSBMassStorage)
+      || platform_rebooted_into_mass_storage()) && !is_initiator)
   {
     check_mass_storage = false;
 
@@ -949,16 +1115,22 @@ extern "C" void zuluscsi_main_loop(void)
   static uint32_t sd_card_check_time = 0;
   static uint32_t last_request_time = 0;
 
+  bool is_initiator = false;
+#ifdef PLATFORM_HAS_INITIATOR_MODE
+  is_initiator = platform_is_initiator_mode_enabled();
+#endif
+
   platform_reset_watchdog();
   platform_poll();
   diskEjectButtonUpdate(true);
+  blink_poll();
 
 #ifdef ZULUSCSI_NETWORK
   platform_network_poll();
 #endif // ZULUSCSI_NETWORK
 
 #ifdef PLATFORM_HAS_INITIATOR_MODE
-  if (platform_is_initiator_mode_enabled())
+  if (is_initiator)
   {
     scsiInitiatorMainLoop();
     save_logfile();
@@ -987,7 +1159,7 @@ extern "C" void zuluscsi_main_loop(void)
   {
     // Check SD card status for hotplug
     if (scsiDev.phase == BUS_FREE &&
-        (uint32_t)(millis() - sd_card_check_time) > 5000)
+        (uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INTERVAL)
     {
       sd_card_check_time = millis();
       uint32_t ocr;
@@ -1002,8 +1174,11 @@ extern "C" void zuluscsi_main_loop(void)
     }
   }
 
-  if (!g_sdcard_present)
+  if (!g_sdcard_present && (uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INTERVAL
+      && !g_msc_initiator)
   {
+    sd_card_check_time = millis();
+
     // Try to remount SD card
     do
     {
@@ -1011,19 +1186,20 @@ extern "C" void zuluscsi_main_loop(void)
 
       if (g_sdcard_present)
       {
+        blink_cancel();
+        LED_OFF();
         logmsg("SD card reinit succeeded");
         print_sd_info();
-
         reinitSCSI();
         init_logfile();
+        blinkStatus(BLINK_STATUS_OK);
       }
       else if (!g_romdrive_active)
       {
         blinkStatus(BLINK_ERROR_NO_SD_CARD);
-        delay(1000);
         platform_reset_watchdog();
         platform_poll();
       }
-    } while (!g_sdcard_present && !g_romdrive_active);
+    } while (!g_sdcard_present && !g_romdrive_active && !is_initiator);
   }
 }

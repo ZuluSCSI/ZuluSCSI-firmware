@@ -28,6 +28,8 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_initiator.h"
+#include "ZuluSCSI_msc_initiator.h"
+#include "ZuluSCSI_msc.h"
 #include <ZuluSCSI_platform.h>
 #include <minIni.h>
 #include "SdFat.h"
@@ -60,6 +62,9 @@ bool scsiInitiatorReadCapacity(int target_id, uint32_t *sectorcount, uint32_t *s
 }
 
 #else
+
+// From ZuluSCSI.cpp
+extern bool g_sdcard_present;
 
 /*************************************
  * High level initiator mode logic   *
@@ -137,6 +142,11 @@ void scsiInitiatorInit()
 
 }
 
+int scsiInitiatorGetOwnID()
+{
+    return g_initiator_state.initiator_id;
+}
+
 // Update progress bar LED during transfers
 static void scsiInitiatorUpdateLed()
 {
@@ -200,6 +210,31 @@ void scsiInitiatorMainLoop()
     {
         logmsg("Executing BUS RESET after aborted command");
         scsiHostPhyReset();
+    }
+
+#ifdef PLATFORM_MASS_STORAGE
+    if (g_msc_initiator)
+    {
+        poll_msc_initiator();
+        platform_run_msc();
+        return;
+    }
+    else
+    {
+        if (!g_sdcard_present || ini_getbool("SCSI", "InitiatorMSC", false, CONFIGFILE))
+        {
+            logmsg("Entering USB MSC initiator mode");
+            platform_enter_msc();
+            setup_msc_initiator();
+            return;
+        }
+    }
+#endif
+
+    if (!g_sdcard_present)
+    {
+        // Wait for SD card
+        return;
     }
 
     if (!g_initiator_state.imaging)
@@ -656,7 +691,7 @@ bool scsiInitiatorReadCapacity(int target_id, uint32_t *sectorcount, uint32_t *s
     {
         uint8_t sense_key;
         scsiRequestSense(target_id, &sense_key);
-        logmsg("READ CAPACITY on target ", target_id, " failed, sense key ", sense_key);
+        scsiLogInitiatorCommandFailure("READ CAPACITY", target_id, status, sense_key);
         return false;
     }
     else
@@ -713,7 +748,7 @@ bool scsiStartStopUnit(int target_id, bool start)
     {
         uint8_t sense_key;
         scsiRequestSense(target_id, &sense_key);
-        dbgmsg("START STOP UNIT on target ", target_id, " failed, sense key ", sense_key);
+        scsiLogInitiatorCommandFailure("START STOP UNIT", target_id, status, sense_key);
     }
 
     return status == 0;
@@ -755,13 +790,13 @@ bool scsiTestUnitReady(int target_id)
             uint8_t sense_key;
             scsiRequestSense(target_id, &sense_key);
 
-            if (sense_key == 6)
+            if (sense_key == UNIT_ATTENTION)
             {
                 uint8_t inquiry[36];
                 dbgmsg("Target ", target_id, " reports UNIT_ATTENTION, running INQUIRY");
                 scsiInquiry(target_id, inquiry);
             }
-            else if (sense_key == 2)
+            else if (sense_key == NOT_READY)
             {
                 dbgmsg("Target ", target_id, " reports NOT_READY, running STARTSTOPUNIT");
                 scsiStartStopUnit(target_id, true);
@@ -922,7 +957,7 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
         uint8_t sense_key;
         scsiRequestSense(target_id, &sense_key);
 
-        logmsg("scsiInitiatorReadDataToFile: READ failed: ", status, " sense key ", sense_key);
+        scsiLogInitiatorCommandFailure("scsiInitiatorReadDataToFile command phase", target_id, status, sense_key);
         scsiHostPhyRelease();
         return false;
     }
@@ -998,7 +1033,36 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
 
     scsiHostPhyRelease();
 
-    return status == 0 && g_initiator_transfer.all_ok;
+    if (!g_initiator_transfer.all_ok)
+    {
+        dbgmsg("scsiInitiatorReadDataToFile: Incomplete transfer");
+        return false;
+    }
+    else if (status == 2)
+    {
+        uint8_t sense_key;
+        scsiRequestSense(target_id, &sense_key);
+
+        if (sense_key == RECOVERED_ERROR)
+        {
+            dbgmsg("scsiInitiatorReadDataToFile: RECOVERED_ERROR at ", (int)start_sector);
+            return true;
+        }
+        else if (sense_key == UNIT_ATTENTION)
+        {
+            dbgmsg("scsiInitiatorReadDataToFile: UNIT_ATTENTION");
+            return true;
+        }
+        else
+        {
+            scsiLogInitiatorCommandFailure("scsiInitiatorReadDataToFile data phase", target_id, status, sense_key);
+            return false;
+        }
+    }
+    else
+    {
+        return status == 0;
+    }
 }
 
 

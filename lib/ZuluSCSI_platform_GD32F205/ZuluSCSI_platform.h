@@ -84,11 +84,28 @@ void platform_late_init();
 // Initialization after the SD Card has been found
 void platform_post_sd_card_init();
 
+// Set the status LED only if it is not in a blinking routine
+void platform_write_led(bool state);
+#define LED_ON()  platform_write_led(true)
+#define LED_OFF() platform_write_led(false)
+// Used by the blinking routine
+void platform_set_blink_status(bool status);
+// LED override will set the status LED regardless of the blinking routine
+void platform_write_led_override(bool state);
+#define LED_ON_OVERRIDE()  platform_write_led_override(true)
+#define LED_OFF_OVERRIDE()  platform_write_led_override(false)
+
 // Disable the status LED
 void platform_disable_led(void);
 
+// Specific error code tied to the MCU when the SD card is not detected
+uint8_t platform_no_sd_card_on_init_error_code();
+
 // Setup soft watchdog
 void platform_reset_watchdog();
+
+// Reset MCU after a certain amount of time
+void platform_reset_mcu();
 
 // Poll function that is called every few milliseconds.
 // The SD card is free to access during this time, and pauses up to

@@ -31,10 +31,19 @@ bool platform_sense_msc();
 /* perform MSC-specific init tasks */
 void platform_enter_msc();
 
+/* set to present images as storage rather than SD */
+void platform_set_msc_image_mode(bool image_mode);
+
 /* return true if we should remain in card reader mode. called in a loop. */
 bool platform_run_msc();
 
 /* perform any cleanup tasks for the MSC-specific functionality */
 void platform_exit_msc();
+
+/* Block re-entrant msc poll calls.
+   This avoids starting another command handler while first one is running.
+   */
+void platform_msc_lock_set(bool block);
+bool platform_msc_lock_get();
 
 #endif

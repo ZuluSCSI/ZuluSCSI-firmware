@@ -22,6 +22,7 @@
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI_log.h"
 #include <SdFat.h>
+#include <sdio.h>
 #include <scsi.h>
 #include <assert.h>
 #include <hardware/gpio.h>
@@ -37,6 +38,7 @@
 #include <hardware/sync.h>
 #include "scsi_accel_target.h"
 #include "custom_timings.h"
+#include <ZuluSCSI_settings.h>
 
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
 # include <SerialUSB.h>
@@ -51,6 +53,10 @@ extern "C" {
 }
 #endif // ZULUSCSI_NETWORK
 
+#ifdef PLATFORM_MASS_STORAGE
+#include "ZuluSCSI_platform_msc.h"
+#endif
+
 #ifdef ENABLE_AUDIO_OUTPUT
 #  include "audio.h"
 #endif // ENABLE_AUDIO_OUTPUT
@@ -63,6 +69,7 @@ const char *g_platform_name = PLATFORM_NAME;
 static bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
+static bool g_led_blinking = false;
 /***************/
 /* GPIO init   */
 /***************/
@@ -133,7 +140,7 @@ zuluscsi_speed_grade_t platform_string_to_speed_grade(const char *speed_grade_st
 #ifdef ENABLE_AUDIO_OUTPUT
     logmsg("Audio output enabled, reclocking isn't possible");
     return SPEED_GRADE_DEFAULT;
-#endif;
+#endif
 
     if (strcasecmp(speed_grade_str, sg_default) == 0)
       grade = SPEED_GRADE_DEFAULT;
@@ -282,9 +289,24 @@ void platform_init()
 
     }
 # else
-    g_scsi_initiator = SETUP_TRUE == read_setup_ack_pin();
+    pin_setup_state_t dip_state = read_setup_ack_pin();
+    if (dip_state == SETUP_UNDETERMINED)
+    {
+        // This path is used for the few early RP2040 boards assembled with
+        // Diodes Incorporated 74LVT245B, which has higher bus hold
+        // current.
+        working_dip = false;
+        g_scsi_initiator = !gpio_get(DIP_INITIATOR); // Read fallback value
+    }
+    else
+    {
+        g_scsi_initiator = (SETUP_TRUE == dip_state);
+        termination = !gpio_get(DIP_TERM);
+    }
+
+    // dbglog DIP switch works in any case, as it does not have bus hold.
     dbglog = !gpio_get(DIP_DBGLOG);
-    termination = !gpio_get(DIP_TERM);
+    g_log_debug = dbglog;
 # endif
 #else
     delay(10);
@@ -318,9 +340,13 @@ void platform_init()
     else
     {
         logmsg("SCSI termination is determined by the DIP switch labeled \"TERM\"");
+
+#if defined(ZULUSCSI_PICO) || defined(ZULUSCSI_PICO_2)
         logmsg("Debug logging can only be enabled via INI file \"DEBUG=1\" under [SCSI] in zuluscsi.ini");
         logmsg("-- DEBUG DIP switch setting is ignored on ZuluSCSI Pico FS Rev. 2023b and 2023c boards");
         g_log_debug = false;
+#endif
+
     }
 #else
     g_log_debug = false;
@@ -487,11 +513,38 @@ bool platform_is_initiator_mode_enabled()
     return g_scsi_initiator;
 }
 
+void platform_write_led(bool state)
+{
+    if (g_led_blinking) return;
+
+    if (g_scsi_settings.getSystem()->invertStatusLed)
+        state = !state;
+    gpio_put(LED_PIN, state);
+}
+
+void platform_set_blink_status(bool status)
+{
+    g_led_blinking = status;
+}
+
+void platform_write_led_override(bool state)
+{
+    if (g_scsi_settings.getSystem()->invertStatusLed)
+        state = !state;
+    gpio_put(LED_PIN, state);
+
+}
+
 void platform_disable_led(void)
 {
     //        pin      function       pup   pdown  out    state fast
     gpio_conf(LED_PIN, GPIO_FUNC_SIO, false,false, false, false, false);
     logmsg("Disabling status LED");
+}
+
+uint8_t platform_no_sd_card_on_init_error_code()
+{
+    return SDIO_ERR_RESPONSE_TIMEOUT;
 }
 
 /*****************************************/
@@ -608,6 +661,11 @@ static void usb_log_poll()
 {
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
     static uint32_t logpos = 0;
+
+#ifdef PLATFORM_MASS_STORAGE
+    if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
+#endif
+
     if (Serial.availableForWrite())
     {
         // Retrieve pointer to log start and determine number of bytes available.
@@ -632,6 +690,11 @@ static void usb_log_poll()
 static void usb_input_poll()
 {
     #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+
+#ifdef PLATFORM_MASS_STORAGE
+    if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
+#endif
+
     // Caputure reboot key sequence
     static bool mass_storage_reboot_keyed = false;
     static bool basic_reboot_keyed = false;
@@ -861,6 +924,11 @@ void platform_poll()
 #ifdef ENABLE_AUDIO_OUTPUT
     audio_poll();
 #endif // ENABLE_AUDIO_OUTPUT
+}
+
+void platform_reset_mcu()
+{
+    watchdog_reboot(0, 0, 2000);
 }
 
 uint8_t platform_get_buttons()
