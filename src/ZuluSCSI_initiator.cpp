@@ -702,7 +702,7 @@ bool scsiInitiatorReadCapacity(int target_id, uint32_t *sectorcount, uint32_t *s
 }
 
 // Execute REQUEST SENSE command to get more information about error status
-bool scsiRequestSense(int target_id, uint8_t *sense_key)
+bool scsiRequestSense(int target_id, uint8_t *sense_key, uint8_t *sense_asc, uint8_t *sense_ascq)
 {
     uint8_t command[6] = {0x03, 0, 0, 0, 18, 0};
     uint8_t response[18] = {0};
@@ -714,7 +714,9 @@ bool scsiRequestSense(int target_id, uint8_t *sense_key)
 
     dbgmsg("RequestSense response: ", bytearray(response, 18));
 
-    *sense_key = response[2] % 0xF;
+    if (sense_key) *sense_key = response[2] & 0xF;
+    if (sense_asc) *sense_asc = response[12];
+    if (sense_ascq) *sense_ascq = response[13];
     return status == 0;
 }
 
@@ -746,9 +748,84 @@ bool scsiStartStopUnit(int target_id, bool start)
 
     if (status == 2)
     {
-        uint8_t sense_key;
-        scsiRequestSense(target_id, &sense_key);
+        uint8_t sense_key, sense_asc, sense_ascq;
+        scsiRequestSense(target_id, &sense_key, &sense_asc, &sense_ascq);
         scsiLogInitiatorCommandFailure("START STOP UNIT", target_id, status, sense_key);
+
+        if (sense_asc == 0x04 && sense_ascq == 0x08)
+        {
+            logmsg("--- Attempting to recover from CD-ROM Logical Unit Not Ready ASC = 0x04 ASCQ = 0x08");
+
+            delay(1000);
+
+            // Stop
+            uint8_t command_stop[6] = {0x1B, 0x1, 0, 0, 0, 0};
+            uint8_t response_stop[4] = {0};
+            status = scsiInitiatorRunCommand(target_id,
+                                         command_stop, sizeof(command_stop),
+                                         response_stop, sizeof(response_stop),
+                                         NULL, 0);
+
+            if (status == 2)
+            {
+                scsiRequestSense(target_id, &sense_key, &sense_asc, &sense_ascq);
+            }
+
+            delay(1000);
+
+            // Start
+            status = scsiInitiatorRunCommand(target_id,
+                                         command, sizeof(command),
+                                         response, sizeof(response),
+                                         NULL, 0);
+
+            if (status == 2)
+            {
+                scsiRequestSense(target_id, &sense_key, &sense_asc, &sense_ascq);
+            }
+
+
+            delay(1000);
+
+
+            // READ TOC
+            uint8_t cmd2[10] = {0x43, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x40};
+            uint8_t rsp2[4];
+            scsiInitiatorRunCommand(target_id, cmd2, sizeof(cmd2), rsp2, sizeof(rsp2), NULL, 0);
+
+            delay(1000);
+
+            scsiRequestSense(target_id, &sense_key);
+
+            delay(1000);
+
+            // READ TOC (last session)
+            uint8_t cmd3[10] = {0x43, 0x00, 0x00, 0x00, 0x00, 0x00, (uint8_t)(rsp2[2] & 0x7f), 0x00, 0x0c, 0x40};
+            uint8_t rsp3[12];
+            scsiInitiatorRunCommand(target_id, cmd3, sizeof(cmd3), rsp3, sizeof(rsp3), NULL, 0);
+
+            delay(1000);
+
+            scsiRequestSense(target_id, &sense_key);
+
+            delay(1000);
+
+            // Retry start stop
+
+            int status = scsiInitiatorRunCommand(target_id,
+                                         command, sizeof(command),
+                                         response, sizeof(response),
+                                         NULL, 0);
+
+            if (status == 0)
+            {
+                return true;
+            }
+
+            delay(1000);
+
+            scsiRequestSense(target_id, &sense_key);
+        }
     }
 
     return status == 0;
