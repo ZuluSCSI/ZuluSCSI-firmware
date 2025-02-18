@@ -615,6 +615,12 @@ int scsiInitiatorRunCommand(int target_id,
         {
             uint8_t dummy = 0;
             scsiHostRead(&dummy, 1);
+
+            if (dummy == 0)
+            {
+                dbgmsg("--- Got message COMMAND COMPLETE");
+                break;
+            }
         }
         else if (phase == MESSAGE_OUT)
         {
@@ -671,6 +677,27 @@ int scsiInitiatorRunCommand(int target_id,
     }
 
     scsiHostPhyRelease();
+
+    sleep_us(5000);
+
+    int maxwait = 20;
+    while (SCSI_IN(BSY) && maxwait-- > 0)
+    {
+        dbgmsg("--- Weird, target is still holding BSY");
+
+        SCSI_OUT(BSY, 1);
+
+        dbgmsg("--- Phase is ", (int)scsiHostPhyGetPhase(), ", poking ACK");
+
+        sleep_us(1000);
+        SCSI_OUT(ACK, 1);
+        sleep_us(100);
+        SCSI_OUT(ACK, 0);
+        sleep_us(1000);
+
+        SCSI_OUT(BSY, 0);
+        sleep_us(5000);
+    }
 
     return status;
 }
@@ -1048,6 +1075,12 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
         {
             uint8_t dummy = 0;
             scsiHostRead(&dummy, 1);
+
+            if (dummy == 0)
+            {
+                dbgmsg("--- Got message COMMAND COMPLETE");
+                break;
+            }
         }
         else if (phase == MESSAGE_OUT)
         {
@@ -1064,6 +1097,27 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
     }
 
     scsiHostPhyRelease();
+
+    sleep_us(5000);
+
+    int maxwait = 20;
+    while (SCSI_IN(BSY) && maxwait-- > 0)
+    {
+        dbgmsg("--- Weird, target is still holding BSY");
+
+        SCSI_OUT(BSY, 1);
+
+        dbgmsg("--- Phase is ", (int)scsiHostPhyGetPhase(), ", poking ACK");
+
+        sleep_us(1000);
+        SCSI_OUT(ACK, 1);
+        sleep_us(100);
+        SCSI_OUT(ACK, 0);
+        sleep_us(1000);
+
+        SCSI_OUT(BSY, 0);
+        sleep_us(5000);
+    }
 
     if (!g_initiator_transfer.all_ok)
     {
