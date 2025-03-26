@@ -267,11 +267,17 @@ void platform_init()
     /* First configure the pins that affect external buffer directions.
      * RP2040 defaults to pulldowns, while these pins have external pull-ups.
      */
-    //        pin             function       pup   pdown  out    state fast
-    gpio_conf(SCSI_DATA_DIR,  GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_RST,   GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_BSY,   GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_SEL,   GPIO_FUNC_SIO, false,false, true,  true, true);
+#ifdef SCSI_DATA_DIR_ACTIVE_HIGH
+    bool data_dir_state = false;
+#else
+    bool data_dir_state = true;
+#endif
+
+    //        pin             function       pup   pdown  out   state           fast
+    gpio_conf(SCSI_DATA_DIR,  GPIO_FUNC_SIO, false,false, true, data_dir_state, true);
+    gpio_conf(SCSI_OUT_RST,   GPIO_FUNC_SIO, false,false, true, true,           true);
+    gpio_conf(SCSI_OUT_BSY,   GPIO_FUNC_SIO, false,false, true, true,           true);
+    gpio_conf(SCSI_OUT_SEL,   GPIO_FUNC_SIO, false,false, true, true,           true);
 
     /* Check dip switch settings */
 #ifdef HAS_DIP_SWITCHES
@@ -363,10 +369,16 @@ void platform_init()
     logmsg ("SCSI termination is handled by a hardware jumper");
 #endif  // HAS_DIP_SWITCHES
 
-        logmsg("===========================================================");
-        logmsg(" Powered by Raspberry Pi");
-        logmsg("            Raspberry Pi is a trademark of Raspberry Pi Ltd");
-        logmsg("===========================================================");
+    /* Note: the below notice and attribution is required to be preserved and displayed by
+     * copies of this software, in accordance to section 7b of GPLv3 license.
+     */
+    logmsg("==============================================================================");
+    logmsg(" Powered by Raspberry Pi");
+    logmsg("            Raspberry Pi is a trademark of Raspberry Pi Ltd");
+    logmsg("");
+    logmsg(" ZuluSCSI Raspberry Pi platform support is developed by Rabbit Hole Computing");
+    logmsg(" and provided to you under GNU General Public License version 3.");
+    logmsg("==============================================================================");
 
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
@@ -841,7 +853,7 @@ static void adc_poll()
         adc_init();
         adc_set_temp_sensor_enabled(true);
         adc_set_clkdiv(65535); // Lowest samplerate, about 2 kHz
-#ifdef ZULUSCSI_BLASTER
+#if defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
         adc_select_input(8);
 #else
         adc_select_input(4);

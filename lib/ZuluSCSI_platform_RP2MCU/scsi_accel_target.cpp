@@ -22,12 +22,15 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
+#ifndef RP2MCU_SCSI_ACCEL_WIDE
+
 /* Data flow in SCSI acceleration:
 *
 * 1. Application provides a buffer of bytes to send.
-* 2. Code in this module adds parity bit to the bytes and packs two bytes into 32 bit words.
-* 3. DMA controller copies the words to PIO peripheral FIFO.
-* 4. PIO peripheral handles low-level SCSI handshake and writes bytes and parity to GPIO.
+* 2. DMA controller copies the bytes to PIO peripheral FIFO.
+* 3. PIO generates memory addresses for parity lookup
+* 4. DMA copies the words with parity to second PIO state machine
+* 5. PIO peripheral handles low-level SCSI handshake and writes bytes and parity to GPIO.
 */
 
 #include "ZuluSCSI_platform.h"
@@ -1332,3 +1335,5 @@ bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod)
 
     return true;
 }
+
+#endif /* ifndef RP2MCU_SCSI_ACCEL_WIDE */

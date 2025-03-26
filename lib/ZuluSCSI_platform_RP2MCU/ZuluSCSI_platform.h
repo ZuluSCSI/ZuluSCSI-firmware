@@ -41,6 +41,9 @@
 #elif defined(ZULUSCSI_BLASTER)
 // RP2350B variant, using mcu chip directly
 #include "ZuluSCSI_platform_gpio_Blaster.h"
+#elif defined(ZULUSCSI_WIDE)
+// RP2350B variant, support for 16-bit SCSI bus
+#include "ZuluSCSI_platform_gpio_Wide.h"
 #else
 // Normal RP2040 variant, using RP2040 chip directly
 #include "ZuluSCSI_platform_gpio_RP2040.h"
