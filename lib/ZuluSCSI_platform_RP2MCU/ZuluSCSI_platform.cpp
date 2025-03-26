@@ -1116,6 +1116,8 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
 
 #endif // PLATFORM_HAS_ROM_DRIVE
 
+#ifndef RP2MCU_USE_CPU_PARITY
+
 /**********************************************/
 /* Mapping from data bytes to GPIO BOP values */
 /**********************************************/
@@ -1221,6 +1223,8 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 };
 
 #undef X
+
+#endif
 
 } /* extern "C" */
 
