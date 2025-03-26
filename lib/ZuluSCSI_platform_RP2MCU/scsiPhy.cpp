@@ -172,7 +172,9 @@ extern "C" void scsiPhyReset(void)
     g_scsi_sts_selection = 0;
     g_scsi_ctrl_bsy = 0;
 
+#ifndef RP2MCU_DISABLE_SCSI_ACCEL
     scsi_accel_rp2040_init();
+#endif
 
     // Enable BSY, RST and SEL interrupts
     // Note: RP2040 library currently supports only one callback,
@@ -222,6 +224,7 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
         g_scsi_phase = (SCSI_PHASE)phase;
         scsiLogPhaseChange(phase);
 
+#ifndef RP2MCU_DISABLE_SCSI_ACCEL
         // Select between synchronous vs. asynchronous SCSI writes
         bool syncstatus = false;
         if (scsiDev.target->syncOffset > 0 && (g_scsi_phase == DATA_IN || g_scsi_phase == DATA_OUT))
@@ -239,6 +242,7 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
             scsiDev.resetFlag = 1;
             return 0;
         }
+#endif
 
         if (phase < 0)
         {
@@ -351,17 +355,28 @@ extern "C" void scsiWrite(const uint8_t* data, uint32_t count)
 extern "C" void scsiStartWrite(const uint8_t* data, uint32_t count)
 {
     scsiLogDataIn(data, count);
+#ifdef RP2MCU_DISABLE_SCSI_ACCEL
+    for (uint32_t i = 0; i < count; i++) scsiWriteOneByte(data[i]);
+#else
     scsi_accel_rp2040_startWrite(data, count, &scsiDev.resetFlag);
+#endif
 }
 
 extern "C" bool scsiIsWriteFinished(const uint8_t *data)
 {
+#ifdef RP2MCU_DISABLE_SCSI_ACCEL
+    return true;
+#else
     return scsi_accel_rp2040_isWriteFinished(data);
+#endif
 }
 
 extern "C" void scsiFinishWrite()
 {
+#ifdef RP2MCU_DISABLE_SCSI_ACCEL
+#else
     scsi_accel_rp2040_finishWrite(&scsiDev.resetFlag);
+#endif
 }
 
 /*********************/
@@ -406,17 +421,29 @@ extern "C" void scsiRead(uint8_t* data, uint32_t count, int* parityError)
 extern "C" void scsiStartRead(uint8_t* data, uint32_t count, int *parityError)
 {
     if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY)) { parityError = NULL; }
+
+#ifdef RP2MCU_DISABLE_SCSI_ACCEL
+    for (uint32_t i = 0; i < count; i++) data[i] = scsiReadOneByte(parityError);
+#else
     scsi_accel_rp2040_startRead(data, count, parityError, &scsiDev.resetFlag);
+#endif
 }
 
 extern "C" void scsiFinishRead(uint8_t* data, uint32_t count, int *parityError)
 {
+#ifdef RP2MCU_DISABLE_SCSI_ACCEL
+#else
     if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY)) { parityError = NULL; }
     scsi_accel_rp2040_finishRead(data, count, parityError, &scsiDev.resetFlag);
+#endif
     scsiLogDataOut(data, count);
 }
 
 extern "C" bool scsiIsReadFinished(const uint8_t *data)
 {
+#ifdef RP2MCU_DISABLE_SCSI_ACCEL
+    return true;
+#else
     return scsi_accel_rp2040_isReadFinished(data);
+#endif
 }
