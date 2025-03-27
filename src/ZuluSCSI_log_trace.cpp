@@ -217,6 +217,7 @@ void scsiLogPhaseChange(int new_phase)
     static int old_scsi_id = 0;
     static int old_phase = BUS_FREE;
     static int old_sync_period = 0;
+    static int old_buswidth = 0;
 
     if (new_phase != old_phase)
     {
@@ -262,9 +263,20 @@ void scsiLogPhaseChange(int new_phase)
             }
         }
 
+        if (old_phase >= 0 &&
+            scsiDev.target != NULL &&
+            old_scsi_id == scsiDev.target->targetId &&
+            old_buswidth != scsiDev.target->busWidth)
+        {
+            int width = scsiDev.target->busWidth;
+            logmsg("SCSI ID ", (int)scsiDev.target->targetId,
+                   " negotiated bus width ", width, " (", (int)(8 << width), " bits)");
+        }
+
         printNewPhase(new_phase);
         old_phase = new_phase;
         old_sync_period = scsiDev.target->syncPeriod;
+        old_buswidth = scsiDev.target->busWidth;
         old_scsi_id = scsiDev.target->targetId;
     }
 }

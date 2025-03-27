@@ -1462,6 +1462,14 @@ void s2s_configInit(S2S_BoardCfg* config)
         logmsg("-- EnableParity = No");
     }
 #endif
+
+#if defined(PLATFORM_MAX_BUS_WIDTH) && PLATFORM_MAX_BUS_WIDTH > 0
+    uint8_t busWidth = sysCfg->maxBusWidth;
+    if (busWidth > PLATFORM_MAX_BUS_WIDTH) busWidth = PLATFORM_MAX_BUS_WIDTH;
+    logmsg("-- Bus width = ", (int)busWidth, " (", (int)(8 << busWidth), " bits)");
+    config->busWidth = busWidth;
+#endif
+
     memset(tmp, 0, sizeof(tmp));
     ini_gets("SCSI", "WiFiMACAddress", "", tmp, sizeof(tmp), CONFIGFILE);
     if (tmp[0])
