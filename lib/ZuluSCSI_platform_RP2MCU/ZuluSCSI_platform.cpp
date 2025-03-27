@@ -458,6 +458,18 @@ void platform_late_init()
     gpio_conf(SCSI_IO_DB7,    GPIO_FUNC_SIO, true, false, false, true, true);
     gpio_conf(SCSI_IO_DBP,    GPIO_FUNC_SIO, true, false, false, true, true);
 
+#ifdef SCSI_IO_DB8
+    gpio_conf(SCSI_IO_DB8,    GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB9,    GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB10,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB11,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB12,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB13,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB14,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB15,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DBP1,   GPIO_FUNC_SIO, true, false, false, true, true);
+#endif
+
     if (!g_scsi_initiator)
     {
         // Act as SCSI device / target

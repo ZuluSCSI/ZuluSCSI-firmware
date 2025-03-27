@@ -201,9 +201,9 @@ static inline void scsi_generate_parity_2x16bit(uint32_t w, uint32_t *dest)
 static inline bool scsi_check_parity_16bit(uint32_t w)
 {
     // Calculate parity bit in parallel for the 2 bytes in the word
-    uint32_t w2 = (w << 4) ^ w;
-    uint32_t w3 = (w2 << 2) ^ w2;
-    uint32_t w4 = (w3 << 1) ^ w3;
+    uint32_t w2 = (w >> 4) ^ w;
+    uint32_t w3 = (w2 >> 2) ^ w2;
+    uint32_t w4 = (w3 >> 1) ^ w3;
 
     // Distribute the parity bits to same places as they are in the word
     uint32_t p2 = ((uint64_t)(w & 0x30000) * 0x810000) >> 32;

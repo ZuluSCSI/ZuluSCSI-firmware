@@ -197,6 +197,11 @@ extern "C" void scsiPhyReset(void)
 /* SCSI bus phase logic */
 /************************/
 
+static bool useWideMode()
+{
+    return (scsiDev.target->busWidth == 1) && (g_scsi_phase == DATA_IN || g_scsi_phase == DATA_OUT);
+}
+
 extern "C" void scsiEnterPhase(int phase)
 {
     int delay = scsiEnterPhaseImmediate(phase);
@@ -232,11 +237,11 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
         bool syncstatus = false;
         if (scsiDev.target->syncOffset > 0 && (g_scsi_phase == DATA_IN || g_scsi_phase == DATA_OUT))
         {
-            syncstatus = scsi_accel_rp2040_setSyncMode(scsiDev.target->syncOffset, scsiDev.target->syncPeriod);
+            syncstatus = scsi_accel_rp2040_setSyncMode(scsiDev.target->syncOffset, scsiDev.target->syncPeriod, useWideMode());
         }
         else
         {
-            syncstatus = scsi_accel_rp2040_setSyncMode(0, 0);
+            syncstatus = scsi_accel_rp2040_setSyncMode(0, 0, useWideMode());
         }
 
         if (!syncstatus)
@@ -330,9 +335,9 @@ void scsiEnterBusFree(void)
     } \
   }
 
-// Write one byte to SCSI host using the handshake mechanism
+// Write one byte or halfword to SCSI host using the handshake mechanism
 // This is suitable for both asynchronous and synchronous communication.
-static inline void scsiWriteOneByte(uint8_t value)
+static inline void scsiWriteOneByte(uint16_t value)
 {
     SCSI_OUT_DATA(value);
     delay_100ns(); // DB setup time before REQ
@@ -359,7 +364,25 @@ extern "C" void scsiStartWrite(const uint8_t* data, uint32_t count)
 {
     scsiLogDataIn(data, count);
 #ifdef RP2MCU_DISABLE_SCSI_ACCEL
-    for (uint32_t i = 0; i < count; i++) scsiWriteOneByte(data[i]);
+    if (useWideMode())
+    {
+        // 16-bit bus width
+        uint32_t i = 0;
+        while (i < count)
+        {
+            uint16_t w = data[i++];
+            if (i < count) w |= (uint16_t)data[i++] << 8;
+            scsiWriteOneByte(w);
+        }
+    }
+    else
+    {
+        // 8-bit bus width
+        for (uint32_t i = 0; i < count; i++)
+        {
+            scsiWriteOneByte(data[i]);
+        }
+    }
 #else
     scsi_accel_rp2040_startWrite(data, count, &scsiDev.resetFlag);
 #endif
@@ -386,8 +409,8 @@ extern "C" void scsiFinishWrite()
 /* Receive from host */
 /*********************/
 
-// Read one byte from SCSI host using the handshake mechanism.
-static inline uint8_t scsiReadOneByte(int* parityError)
+// Read one byte or halfword from SCSI host using the handshake mechanism.
+static inline uint16_t scsiReadOneByte(int* parityError)
 {
     SCSI_OUT(REQ, 1);
     SCSI_WAIT_ACTIVE(ACK);
@@ -396,13 +419,25 @@ static inline uint8_t scsiReadOneByte(int* parityError)
     SCSI_OUT(REQ, 0);
     SCSI_WAIT_INACTIVE(ACK);
 
-    if (parityError && !scsi_check_parity(r))
+    bool parity;
+#if PLATFORM_MAX_BUS_WIDTH > 0
+    if (useWideMode())
+    {
+        parity = scsi_check_parity_16bit(r);
+    }
+    else
+#endif
+    {
+        parity = scsi_check_parity(r);
+    }
+
+    if (parityError && !parity)
     {
         logmsg("Parity error in scsiReadOneByte(): ", (uint32_t)r);
         *parityError = 1;
     }
 
-    return (uint8_t)r;
+    return (uint16_t)r;
 }
 
 extern "C" uint8_t scsiReadByte(void)
@@ -426,7 +461,25 @@ extern "C" void scsiStartRead(uint8_t* data, uint32_t count, int *parityError)
     if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY)) { parityError = NULL; }
 
 #ifdef RP2MCU_DISABLE_SCSI_ACCEL
-    for (uint32_t i = 0; i < count; i++) data[i] = scsiReadOneByte(parityError);
+    if (useWideMode())
+    {
+        // 16-bit bus width
+        uint32_t i = 0;
+        while (i < count)
+        {
+            uint16_t w = scsiReadOneByte(parityError);
+            data[i++] = w & 0xFF;
+            if (i < count) data[i++] = w >> 8;
+        }
+    }
+    else
+    {
+        // 8-bit bus width
+        for (uint32_t i = 0; i < count; i++)
+        {
+            data[i] = scsiReadOneByte(parityError);
+        }
+    }
 #else
     scsi_accel_rp2040_startRead(data, count, parityError, &scsiDev.resetFlag);
 #endif

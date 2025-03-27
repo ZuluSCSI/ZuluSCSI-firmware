@@ -507,7 +507,7 @@ void scsi_accel_rp2040_finishWrite(volatile int *resetFlag)
 static void swap_dma_readbuf()
 {
     uint32_t bytes_awaiting_processing = g_scsi_dma.dma_iobuf_words[g_scsi_dma.dma_active_iobuf];
-    if (g_scsi_dma.wide) bytes_awaiting_processing /= 2;
+    if (g_scsi_dma.wide) bytes_awaiting_processing *= 2;
 
     int idx = (g_scsi_dma.dma_active_iobuf + 1) % SCSI_DMA_IOBUF_COUNT;
     assert(g_scsi_dma.dma_iobuf_words[idx] == 0); // New io buffer should be empty before usage
@@ -1156,9 +1156,10 @@ void scsi_accel_rp2040_init()
 }
 
 
-bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod)
+bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod, bool wide)
 {
-    return false;
+    g_scsi_dma.wide = wide;
+    return true;
 }
 
 
