@@ -125,47 +125,29 @@
 #define DIP_DBGLOG      SWO_PIN
 #define DIP_TERM        SCSI_OUT_REQ
 
-#define RP2MCU_USE_CPU_PARITY
-
-// Generate parity for bytes. This is only used for slow control & command transfers.
-// Returns the GPIO value without SCSI_IO_SHIFT.
-static inline uint32_t scsi_generate_parity(uint8_t w)
-{
-    uint32_t w2 = (w << 4) ^ w;
-    uint32_t w3 = (w2 << 2) ^ w2;
-    uint32_t w4 = (w3 << 1) ^ w3;
-
-    return (w ^ 0xFF) | ((w4 & 0x80) << 9);
-}
-
 // Parity generation lookup table would be too large for 16-bit bus.
 // Instead use CPU-based generation, which is fast enough on RP2350
 // thanks to the extended instruction set of Cortex-M33.
-static inline uint32_t scsi_generate_parity_2x16bit(uint32_t w, uint32_t *high)
+#define RP2MCU_USE_CPU_PARITY
+
+// Generate parity for bytes or halfwords.
+// This is only used for slow control & command transfers.
+// Returns the GPIO value without SCSI_IO_SHIFT.
+static inline uint32_t scsi_generate_parity(uint16_t w)
 {
-    // Calculate parity bit in parallel for the 4 bytes in the word
     uint32_t w2 = (w << 4) ^ w;
     uint32_t w3 = (w2 << 2) ^ w2;
     uint32_t w4 = (w3 << 1) ^ w3;
-    uint32_t w5 = w4 & 0x80808080;
 
-    // Collect the DBP (low byte) and DBP1 (high byte) parity bits
-    uint32_t w6 = ((uint64_t)w5 * 0x02040000) >> 32;
-    uint32_t w7 = w6 & 0x00030003;
-
-    // Create 18-bit output data word for the upper 2 bytes
-    if (high) *high = (w7 >> 16) | (w >> 16);
-
-    // Return 18-bit output data word for the lower 2 bytes
-    return (w7 & 0xFFFF) | (w & 0xFFFF);
+    return (w ^ 0xFFFF) | ((w4 & 0x80) << 9) | ((w4 & 0x8000) << 2);
 }
 
 // Check parity of a 8-bit received word.
-// Argument is the 18-bit word read from IO pins
+// Argument is the 18-bit word read from IO pins, inverted
 // Returns true if parity is valid.
 static inline bool scsi_check_parity(uint32_t w)
 {
-    // Calculate parity bit in parallel for the 2 bytes in the word
+    // Calculate parity bit
     uint32_t w2 = (w >> 4) ^ w;
     uint32_t w3 = (w2 >> 2) ^ w2;
     uint32_t w4 = (w3 >> 1) ^ w3;
@@ -177,8 +159,44 @@ static inline bool scsi_check_parity(uint32_t w)
     return ((w4 ^ p2) & 0x0001);
 }
 
+// Generate parity and GPIO words for 4 bytes.
+// Writes 4 GPIO words to dest.
+// Only 18 bottom bits of the output word are significant.
+static inline void scsi_generate_parity_4x8bit(uint32_t w, uint32_t *dest)
+{
+    // Calculate parity bit in parallel for the 4 bytes in the word
+    uint32_t w2 = (w >> 4) ^ w;
+    uint32_t w3 = (w2 >> 2) ^ w2;
+    uint32_t w4 = (w3 >> 1) ^ w3;
+    uint32_t w5 = w4 & 0xFFFF0000;
+
+    dest[0] = (0xFFFEFFFF ^ ((w >>  0) & 0xFF)) | (w4 << 16);
+    dest[1] = (0xFFFEFFFF ^ ((w >>  8) & 0xFF)) | (w4 <<  8);
+    dest[2] = (0xFFFEFFFF ^ ((w >> 16) & 0xFF)) | (w5 <<  0);
+    dest[3] = (0xFFFEFFFF ^ ((w >> 24) & 0xFF)) | (w5 >>  8);
+}
+
+// Generate parity and GPIO words for 2 halfwords.
+// Writes 4 GPIO words to dest.
+// Only 18 bottom bits of the output word are significant.
+static inline void scsi_generate_parity_2x16bit(uint32_t w, uint32_t *dest)
+{
+    // Calculate parity bit in parallel for the 4 bytes in the word
+    uint32_t w2 = (w << 4) ^ w;
+    uint32_t w3 = (w2 << 2) ^ w2;
+    uint32_t w4 = (w3 << 1) ^ w3;
+    uint32_t w5 = w4 & 0x80808080;
+
+    // Collect the DBP (low byte) and DBP1 (high byte) parity bits next to each other
+    uint32_t w6 = ((uint64_t)w5 * 0x02040000) >> 32;
+
+    uint32_t wn = ~w; // SCSI uses active-low signals
+    dest[0] = (wn & 0xFFFF) | ((w6 & 0x0003) << 16);
+    dest[1] = (wn >> 16)    | (w6 & 0x00030000);
+}
+
 // Check parity of a 16-bit received word.
-// Argument is the 18-bit word read from IO pins
+// Argument is the 18-bit word read from IO pins, inverted
 // Returns true if parity is valid.
 static inline bool scsi_check_parity_16bit(uint32_t w)
 {
@@ -190,8 +208,8 @@ static inline bool scsi_check_parity_16bit(uint32_t w)
     // Distribute the parity bits to same places as they are in the word
     uint32_t p2 = ((uint64_t)(w & 0x30000) * 0x810000) >> 32;
 
-    // Compare parity bit states
-    return ((w4 ^ p2) & 0x0101) == 0;
+    // Compare parity bit states (SCSI has odd parity, so they should differ)
+    return ((w4 ^ p2) & 0x0101) == 0x0101;
 }
 
 // Below are GPIO access definitions that are used from scsiPhy.cpp.
