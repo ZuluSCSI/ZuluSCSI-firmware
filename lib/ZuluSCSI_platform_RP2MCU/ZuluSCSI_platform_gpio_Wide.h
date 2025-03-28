@@ -161,42 +161,6 @@ static inline bool scsi_check_parity(uint32_t w)
     return ((w4 ^ p2) & 0x0001);
 }
 
-// Generate parity and GPIO words for 4 bytes.
-// Writes 4 GPIO words to dest.
-// Only 18 bottom bits of the output word are significant.
-static inline void scsi_generate_parity_4x8bit(uint32_t w, uint32_t *dest)
-{
-    // Calculate parity bit in parallel for the 4 bytes in the word
-    uint32_t w2 = (w >> 4) ^ w;
-    uint32_t w3 = (w2 >> 2) ^ w2;
-    uint32_t w4 = (w3 >> 1) ^ w3;
-    uint32_t w5 = w4 & 0xFFFF0000;
-
-    dest[0] = (0xFFFEFFFF ^ ((w >>  0) & 0xFF)) | (w4 << 16);
-    dest[1] = (0xFFFEFFFF ^ ((w >>  8) & 0xFF)) | (w4 <<  8);
-    dest[2] = (0xFFFEFFFF ^ ((w >> 16) & 0xFF)) | (w5 <<  0);
-    dest[3] = (0xFFFEFFFF ^ ((w >> 24) & 0xFF)) | (w5 >>  8);
-}
-
-// Generate parity and GPIO words for 2 halfwords.
-// Writes 4 GPIO words to dest.
-// Only 18 bottom bits of the output word are significant.
-static inline void scsi_generate_parity_2x16bit(uint32_t w, uint32_t *dest)
-{
-    // Calculate parity bit in parallel for the 4 bytes in the word
-    uint32_t w2 = (w << 4) ^ w;
-    uint32_t w3 = (w2 << 2) ^ w2;
-    uint32_t w4 = (w3 << 1) ^ w3;
-    uint32_t w5 = w4 & 0x80808080;
-
-    // Collect the DBP (low byte) and DBP1 (high byte) parity bits next to each other
-    uint32_t w6 = ((uint64_t)w5 * 0x02040000) >> 32;
-
-    uint32_t wn = ~w; // SCSI uses active-low signals
-    dest[0] = (wn & 0xFFFF) | ((w6 & 0x0003) << 16);
-    dest[1] = (wn >> 16)    | (w6 & 0x00030000);
-}
-
 // Check parity of a 16-bit received word.
 // Argument is the 18-bit word read from IO pins, inverted
 // Returns true if parity is valid.

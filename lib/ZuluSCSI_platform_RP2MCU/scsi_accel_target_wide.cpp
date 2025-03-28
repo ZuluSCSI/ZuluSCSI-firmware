@@ -178,6 +178,178 @@ static bool check_write_app_buffer_done()
     return g_scsi_dma.dma_bytes >= g_scsi_dma.app_bytes;
 }
 
+
+// Generate parity and GPIO words in 8-bit bus mode.
+// Reads count bytes from src and writes count words to dest.
+// Only DBP and bits 0-7 of the output word are significant.
+// Returns pointer to one past the last word written to dest.
+static uint32_t *scsi_generate_parity_8bit(uint8_t *src, uint32_t count, uint32_t *dest)
+{
+    // This loop executes while count >= 8.
+    // It handles parity for 8 bytes at a time, producing 8 output words.
+    // It is hand-optimized equivalent of the "while (count >= 4)" loop below.
+    // Interleaving the two words eliminates result use latency.
+    // The routine has 26 instructions per 8 input bytes
+    // From measurements this takes approx 14 µs per 512 bytes at 150 MHz
+    // This gives 1.2 clock cycles per instruction, and throughput of 34 MB/s.
+    asm(R"(
+        1:
+            ldr r0, [%0], #4        // Load first source word (4 bytes)
+            subs %1, %1, #8         // count -= 8
+            eor r1, r0, r0, lsr #4  //      Start calculating parity for first source word
+            bmi 2f                  // End of data (count < 0)
+            eor r1, r1, r1, lsr #2  //      First word parity
+            ldr r2, [%0], #4        // Load second source word
+            eor r1, r1, r1, lsr #1  //      First word parity
+            eor r3, r2, r2, lsr #4  //          Second word parity
+            pkhbt r5, r0, r1, lsl #16 //    Data from bottom of r0, parity from bottom of r1, dest0 => r5
+            eor r3, r3, r3, lsr #2  //          Second word parity
+            str r5, [%2], #4        //      Store dest[0]
+            lsr r5, r5, #8          //      Second byte and its parity to r5
+            eor r3, r3, r3, lsr #1  //          Second word parity
+            str r5, [%2], #4        //      Store dest[1]
+            pkhtb r5, r1, r0, asr #16 //    Data from top of r0, parity from top of r1, dest2 => r5
+            str r5, [%2], #4        //      Store dest[2]
+            lsr r5, r5, #8          //      Fourth byte and its parity to r5
+            pkhbt r4, r2, r3, lsl #16 //        Data from bottom of r2, parity from bottom of r3, dest4 => r4
+            str r5, [%2], #4        //      Store dest[3]
+            lsr r5, r4, #8          //          Second byte and its parity to r5
+            str r4, [%2], #4        //      Store dest[4]
+            pkhtb r4, r3, r2, asr #16 //    Data from top of r2, parity from top of r3, dest6 => r4
+            str r5, [%2], #4        //      Store dest[5]
+            lsr r5, r4, #8          //          Fourth byte and its parity to r5
+            str r4, [%2], #4        //      Store dest[6]
+            str r5, [%2], #4        //      Store dest[7]
+            b 1b                    // Continue loop
+
+        2:
+            sub %0, %0, #4      // Fix up src pointer at end of loop
+            add %1, %1, #8      // Fix up count back to >= 0
+    )" : "+r"(src), "+r"(count), "+r"(dest)
+       : : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "memory");
+
+
+    // Usually we have a multiple of 8 bytes
+    if (__builtin_expect(count > 0, 0))
+    {
+        while (count >= 4)
+        {
+            // Calculate parity bit in parallel for the 4 bytes in the word
+            uint32_t w = *(uint32_t*)src;
+            uint32_t w2 = (w >> 4) ^ w;
+            uint32_t w3 = (w2 >> 2) ^ w2;
+            uint32_t w4 = (w3 >> 1) ^ w3;
+            uint32_t w5 = w4 & 0xFFFF0000;
+
+            dest[0] = ((w >>  0) & 0xFF) | (w4 << 16);
+            dest[1] = ((w >>  8) & 0xFF) | (w4 <<  8);
+            dest[2] = ((w >> 16) & 0xFF) | (w5 <<  0);
+            dest[3] = ((w >> 24) & 0xFF) | (w5 >>  8);
+
+            src += 4;
+            count -= 4;
+            dest += 4;
+        }
+
+        while (count > 0)
+        {
+            // We invert the bits in hardware but normal SCSI_OUT does not.
+            *dest++ = scsi_generate_parity(*src++) ^ 0xFFFF;
+            count -= 1;
+        }
+    }
+
+    return dest;
+}
+
+// Generate parity and GPIO words in 16-bit bus mode.
+// Reads count bytes from src and writes count/2 words to dest.
+// Only 18 bottom bits of the output word are significant.
+// Returns pointer to one past the last word written to dest.
+static uint32_t *scsi_generate_parity_16bit(uint8_t *src, uint32_t count, uint32_t *dest)
+{
+    // This loop executes while count >= 8.
+    // It handles parity for 8 bytes at a time, producing 4 output words.
+    // It is hand-optimized equivalent of the "while (count >= 4)" loop below.
+    // Interleaving the two words eliminates result use latency.
+    // The routine has 20 instructions per 8 input bytes
+    // From measurements this takes approx 23 µs per 1024 bytes at 150 MHz
+    // This gives 1.2 clock cycles per instruction, and throughput of 44 MB/s.
+    asm(R"(
+            ldm %[src]!, {r0, r2}    // Load source words
+            subs %[cnt], %[cnt], #7  // Make sure count goes <= 0 when there is less than 8 left
+            mov r4, #0x02040000      // Load multiplication constant for bit shuffling
+            ble 2f                   // Skip loop if count is too low
+
+        1:
+            eor r1, r0, r0, lsl #4  //      Start calculating parity for first source word
+            eor r3, r2, r2, lsl #4  //          Second word parity
+            eor r1, r1, r1, lsl #2  //      First word parity
+            eor r3, r3, r3, lsl #2  //          Second word parity
+            eor r1, r1, r1, lsl #1  //      First word parity
+            and r1, r1, #0x80808080 //      First word parity bit masking (w5 => r1)
+            umull r5, r1, r4, r1    //      Bit shuffle (w6 => r1), r5 dummy
+            eor r3, r3, r3, lsl #1  //          Second word parity
+            pkhbt r5, r0, r1, lsl #16 //    Data from bottom of r0, parity from bottom of r1, dest0 => r5
+            pkhtb r6, r1, r0, asr #16 //    Data from top of r0, parity from top of r1, dest1 => r6
+            and r3, r3, #0x80808080 //          Second word parity bit masking (w5 => r3)
+            stm %[dst]!, {r5, r6}   //      Store 1st, 2nd output word
+            umull r6, r3, r4, r3    //          Bit shuffle (w6 => r3), r6 dummy
+            ldr r0, [%[src]], #4      // Load next source word 1
+            pkhbt r5, r2, r3, lsl #16 //        Data from bottom of r2, parity from bottom of r3, dest2 => r5
+            pkhtb r6, r3, r2, asr #16 //        Data from top of r2, parity from top of r3, dest3 => r6
+            ldr r2, [%[src]], #4      // Load next source word 2
+            subs %[cnt], %[cnt], #8   // count -= 8
+            stm %[dst]!, {r5, r6}     //        Store 3rd, 4th output word
+            bgt 1b                    // Continue loop while count > 0
+
+        2:
+            add %[cnt], %[cnt], #7      // Fix up count at end of loop
+            sub %[src], %[src], #8      // Fix up src (we already loaded 2 words)
+    )" : [src] "+r"(src), [cnt] "+r"(count), [dst] "+r"(dest)
+       : : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "memory");
+
+    // Usually we have a multiple of 8 bytes
+    if (__builtin_expect(count > 0, 0))
+    {
+        while (count >= 4)
+        {
+            // Calculate parity bit in parallel for the 4 bytes in the word
+            uint32_t w = *(uint32_t*)src;
+            uint32_t w2 = (w << 4) ^ w;
+            uint32_t w3 = (w2 << 2) ^ w2;
+            uint32_t w4 = (w3 << 1) ^ w3;
+            uint32_t w5 = w4 & 0x80808080;
+
+            // Collect the DBP (low byte) and DBP1 (high byte) parity bits next to each other
+            uint32_t w6 = ((uint64_t)w5 * 0x02040000) >> 32;
+
+            dest[0] = (w & 0xFFFF) | ((w6 & 0x0003) << 16);
+            dest[1] = (w >> 16)    | (w6 & 0x00030000);
+
+            src += 4;
+            dest += 2;
+            count -= 4;
+        }
+
+        while (count >= 2)
+        {
+            // We invert the bits in hardware but normal SCSI_OUT does not.
+            *dest++ = scsi_generate_parity(*(uint16_t*)src) ^ 0xFFFF;
+            src += 2;
+            count -= 2;
+        }
+
+        if (count > 0)
+        {
+            *dest++ = scsi_generate_parity(*src++) ^ 0xFFFF;
+            count -= 1;
+        }
+    }
+
+    return dest;
+}
+
 // Convert data bytes to GPIO words ready for DMA
 static void fill_dma_writebuf()
 {
@@ -185,6 +357,7 @@ static void fill_dma_writebuf()
     int idx = (g_scsi_dma.dma_active_iobuf + 1) % SCSI_DMA_IOBUF_COUNT;
     uint32_t words_in_buf = g_scsi_dma.dma_iobuf_words[idx];
     uint32_t space_available = SCSI_DMA_IOBUF_SIZE - words_in_buf;
+    if (g_scsi_dma.wide) space_available *= 2;
     uint32_t bytes_to_send = g_scsi_dma.app_bytes - g_scsi_dma.dma_bytes;
 
     if (space_available > 0 && bytes_to_send > 0)
@@ -201,46 +374,11 @@ static void fill_dma_writebuf()
 
         if (g_scsi_dma.wide)
         {
-            // Send 16-bit halfwords over DBP0-DBP15
-            while (bytes_to_send >= 4)
-            {
-                uint32_t w = *(uint32_t*)src;
-                scsi_generate_parity_2x16bit(w, dest);
-                src += 4;
-                dest += 2;
-                bytes_to_send -= 4;
-            }
-
-            while (bytes_to_send >= 2)
-            {
-                *dest++ = scsi_generate_parity(*(uint16_t*)src);
-                src += 2;
-                bytes_to_send -= 2;
-            }
-
-            if (bytes_to_send > 0)
-            {
-                *dest++ = scsi_generate_parity(*src++);
-                bytes_to_send -= 1;
-            }
+            dest = scsi_generate_parity_16bit(src, bytes_to_send, dest);
         }
         else
         {
-            // Send 8-bit bytes over DBP0-DBP7
-            while (bytes_to_send >= 4)
-            {
-                uint32_t w = *(uint32_t*)src;
-                scsi_generate_parity_4x8bit(w, dest);
-                src += 4;
-                dest += 4;
-                bytes_to_send -= 4;
-            }
-
-            while (bytes_to_send > 0)
-            {
-                *dest++ = scsi_generate_parity(*src++);
-                bytes_to_send -= 1;
-            }
+            dest = scsi_generate_parity_8bit(src, bytes_to_send, dest);
         }
 
         g_scsi_dma.dma_iobuf_words[idx] = dest - &g_scsi_dma_iobuf[idx][0];
@@ -249,34 +387,37 @@ static void fill_dma_writebuf()
 
 static void start_dma_write()
 {
-    // Process new data from application buffer, if space and data is available.
-    if (!check_write_app_buffer_done())
+    // Get the buffer that should be ready for transmission
+    int idx = (g_scsi_dma.dma_active_iobuf + 1) % SCSI_DMA_IOBUF_COUNT;
+    uint32_t words = g_scsi_dma.dma_iobuf_words[idx];
+
+    if (words < SCSI_DMA_IOBUF_SIZE)
     {
-        fill_dma_writebuf();
+        // Process new data from application buffer, if space and data is available.
+        if (!check_write_app_buffer_done())
+        {
+            fill_dma_writebuf();
+        }
+
+        words = g_scsi_dma.dma_iobuf_words[idx];
     }
 
-    // Swap DMA transmit buffers
+    // Swap DMA transmit buffers and mark previous one empty
     g_scsi_dma.dma_iobuf_words[g_scsi_dma.dma_active_iobuf] = 0;
-    int idx = (g_scsi_dma.dma_active_iobuf + 1) % SCSI_DMA_IOBUF_COUNT;
     g_scsi_dma.dma_active_iobuf = idx;
 
     // Check if we are all done.
     // From SCSIDMA_WRITE_DONE state we can either go to IDLE in stopWrite()
     // or back to WRITE in startWrite().
-    if (g_scsi_dma.dma_iobuf_words[idx] == 0)
+    if (words == 0)
     {
         g_scsi_dma_state = SCSIDMA_WRITE_DONE;
         return;
     }
 
     // Start DMA from current buffer to PIO
-    dma_channel_configure(SCSI_DMA_CH_A,
-        &g_scsi_dma.dmacfg_write_chA,
-        &SCSI_DMA_PIO->txf[SCSI_DATA_SM],
-        g_scsi_dma_iobuf[idx],
-        g_scsi_dma.dma_iobuf_words[idx],
-        true
-    );
+    dma_channel_set_read_addr(SCSI_DMA_CH_A, g_scsi_dma_iobuf[idx], false);
+    dma_channel_set_trans_count(SCSI_DMA_CH_A, words, true);
 }
 
 void scsi_accel_rp2040_startWrite(const uint8_t* data, uint32_t count, volatile int *resetFlag)
@@ -385,6 +526,14 @@ void scsi_accel_rp2040_startWrite(const uint8_t* data, uint32_t count, volatile 
             pio_sm_set_enabled(SCSI_DMA_PIO, SCSI_SYNC_SM, true);
             pio_sm_set_enabled(SCSI_DMA_PIO, SCSI_DATA_SM, true);
         }
+
+        dma_channel_configure(SCSI_DMA_CH_A,
+            &g_scsi_dma.dmacfg_write_chA,
+            &SCSI_DMA_PIO->txf[SCSI_DATA_SM],
+            NULL, // Configured later
+            0,
+            false
+        );
 
         dma_channel_set_irq0_enabled(SCSI_DMA_CH_A, true);
     }
@@ -528,6 +677,7 @@ static void swap_dma_readbuf()
 }
 
 // Process previously filled io buffer and copy data to application buffer.
+__attribute__((optimize("O3")))
 static void process_dma_readbuf()
 {
     // Supports only IOBUF_COUNT = 2 for now
@@ -542,9 +692,20 @@ static void process_dma_readbuf()
     {
         // Read 16 bits per IO word
         uint32_t parity = 0xFFFFFFFF;
+        while (src + 4 < end)
+        {
+            for (int unroll = 0; unroll < 4; unroll++)
+            {
+                uint32_t word = *src++;
+                *(uint16_t*)dst = (uint16_t)word;
+                dst += 2;
+                parity ^= word;
+            }
+        }
+
         while (src < end)
         {
-            uint32_t word = ~(*src++);
+            uint32_t word = *src++;
             *(uint16_t*)dst = (uint16_t)word;
             dst += 2;
             parity ^= word;
@@ -560,9 +721,19 @@ static void process_dma_readbuf()
     {
         // Read 8 bits per IO word
         uint32_t parity = 0xFFFFFFFF;
+        while (src + 4 < end)
+        {
+            for (int unroll = 0; unroll < 4; unroll++)
+            {
+                uint32_t word = *src++;
+                *dst++ = (uint8_t)word;
+                parity ^= word;
+            }
+        }
+
         while (src < end)
         {
-            uint32_t word = ~(*src++);
+            uint32_t word = *src++;
             *dst++ = (uint8_t)word;
             parity ^= word;
         }
@@ -723,7 +894,6 @@ void scsi_accel_rp2040_startRead(uint8_t *data, uint32_t count, int *parityError
     if (must_reconfig_gpio)
     {
         pio_sm_init(SCSI_DMA_PIO, SCSI_DATA_SM, g_scsi_dma.pio_offset_read, &g_scsi_dma.pio_cfg_read);
-        scsidma_config_gpio();
 
         // For synchronous mode, the REQ pin is driven by SCSI_SYNC_SM, so disable it in SCSI_DATA_SM
         if (g_scsi_dma.syncOffset > 0)
@@ -755,6 +925,7 @@ void scsi_accel_rp2040_startRead(uint8_t *data, uint32_t count, int *parityError
                 0, false);
         }
 
+        scsidma_config_gpio();
         dma_channel_set_irq0_enabled(SCSI_DMA_CH_A, true);
     }
 
@@ -943,6 +1114,7 @@ static int pio_add_scsi_sync_write_program()
 /* Initialization functions common to read/write       */
 /*******************************************************/
 
+__attribute__((optimize("O3")))
 static void scsi_dma_irq()
 {
 #ifndef ENABLE_AUDIO_OUTPUT_SPDIF
@@ -979,15 +1151,36 @@ static void scsi_dma_irq()
     }
 }
 
-static void scsidma_set_data_gpio_func(uint32_t func)
+static void scsidma_set_data_gpio_func(uint32_t func, bool invert_data, bool wide)
 {
-    for (int i = SCSI_IO_DB0; i <= SCSI_IO_DB15; i++)
+    uint32_t invert = 0;
+
+    // Invert input and output data in hardware to speed things up.
+    if (invert_data) invert |= (1 << 16) | (1 << 12);
+
+    for (int i = SCSI_IO_DB0; i <= SCSI_IO_DB7; i++)
     {
-        iobank0_hw->io[i].ctrl  = func;
+        iobank0_hw->io[i].ctrl  = func | invert;
     }
     iobank0_hw->io[SCSI_IO_DBP].ctrl  = func;
-    iobank0_hw->io[SCSI_IO_DBP1].ctrl = func;
 
+    // In 8-bit mode we don't drive the upper bits
+    if (wide)
+    {
+        for (int i = SCSI_IO_DB8; i <= SCSI_IO_DB15; i++)
+        {
+            iobank0_hw->io[i].ctrl  = func | invert;
+        }
+        iobank0_hw->io[SCSI_IO_DBP1].ctrl = func;
+    }
+    else
+    {
+        for (int i = SCSI_IO_DB8; i <= SCSI_IO_DB15; i++)
+        {
+            iobank0_hw->io[i].ctrl  = GPIO_FUNC_SIO | invert;
+        }
+        iobank0_hw->io[SCSI_IO_DBP1].ctrl = GPIO_FUNC_SIO;
+    }
 }
 
 // Select GPIO from PIO peripheral or from software controlled SIO
@@ -995,7 +1188,7 @@ static void scsidma_config_gpio()
 {
     if (g_scsi_dma_state == SCSIDMA_IDLE)
     {
-        scsidma_set_data_gpio_func(GPIO_FUNC_SIO);
+        scsidma_set_data_gpio_func(GPIO_FUNC_SIO, false, false);
         iobank0_hw->io[SCSI_OUT_REQ].ctrl = GPIO_FUNC_SIO;
     }
     else if (g_scsi_dma_state == SCSIDMA_WRITE)
@@ -1007,7 +1200,7 @@ static void scsidma_config_gpio()
         pio_sm_set_consecutive_pindirs(SCSI_DMA_PIO, SCSI_DATA_SM, SCSI_IO_DBP1, 1, true);
         pio_sm_set_consecutive_pindirs(SCSI_DMA_PIO, SCSI_DATA_SM, SCSI_OUT_REQ, 1, true);
 
-        scsidma_set_data_gpio_func(GPIO_FUNC_PIO0);
+        scsidma_set_data_gpio_func(GPIO_FUNC_PIO0, true, g_scsi_dma.wide);
         iobank0_hw->io[SCSI_OUT_REQ].ctrl = GPIO_FUNC_PIO0;
     }
     else if (g_scsi_dma_state == SCSIDMA_READ)
@@ -1032,7 +1225,7 @@ static void scsidma_config_gpio()
             pio_sm_set_consecutive_pindirs(SCSI_DMA_PIO, SCSI_SYNC_SM, SCSI_OUT_REQ, 1, true);
         }
 
-        scsidma_set_data_gpio_func(GPIO_FUNC_SIO);
+        scsidma_set_data_gpio_func(GPIO_FUNC_PIO0, true, g_scsi_dma.wide);
         iobank0_hw->io[SCSI_OUT_REQ].ctrl = GPIO_FUNC_PIO0;
     }
 }
