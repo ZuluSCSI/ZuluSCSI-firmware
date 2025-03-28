@@ -97,6 +97,8 @@
 #define SD_SPI_MISO  SDIO_D0
 #define SD_SPI_CS    SDIO_D3
 
+#define FAST_IO_DRIVE_STRENGTH GPIO_DRIVE_STRENGTH_12MA
+
 #ifndef ENABLE_AUDIO_OUTPUT_SPDIF
     // IO expander I2C
     #define GPIO_I2C_SDA 30

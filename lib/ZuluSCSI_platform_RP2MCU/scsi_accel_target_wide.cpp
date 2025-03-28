@@ -1108,7 +1108,7 @@ void scsi_accel_rp2040_init()
     // Synchronous SCSI data writer
     g_scsi_dma.pio_offset_sync_write = pio_add_scsi_sync_write_program();
     g_scsi_dma.pio_cfg_sync_write = scsi_sync_write_program_get_default_config(g_scsi_dma.pio_offset_sync_write);
-    sm_config_set_out_pins(&g_scsi_dma.pio_cfg_sync_write, SCSI_IO_DB0, 9);
+    sm_config_set_out_pins(&g_scsi_dma.pio_cfg_sync_write, SCSI_IO_DB0, 18);
     sm_config_set_sideset_pins(&g_scsi_dma.pio_cfg_sync_write, SCSI_OUT_REQ);
 
     // Create DMA channel configurations so they can be applied quickly later
@@ -1159,6 +1159,136 @@ void scsi_accel_rp2040_init()
 bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod, bool wide)
 {
     g_scsi_dma.wide = wide;
+
+    if (g_scsi_dma_state != SCSIDMA_IDLE)
+    {
+        logmsg("ERROR: SCSI DMA was in state ", (int)g_scsi_dma_state, " when changing sync mode, forcing bus reset");
+        scsi_accel_log_state();
+        return false;
+    }
+
+    if (syncOffset != g_scsi_dma.syncOffset || syncPeriod != g_scsi_dma.syncPeriod)
+    {
+        g_scsi_dma.syncOffset = syncOffset;
+        g_scsi_dma.syncPeriod = syncPeriod;
+
+        if (syncOffset > 0)
+        {
+            // Set up offset amount to PIO state machine configs.
+            // The RX fifo of scsi_sync_write has 4 slots.
+            // We can preload it with 0-3 items and set the autopush threshold 1, 2, 4 ... 32
+            // to act as a divider. This allows offsets 1 to 128 bytes.
+            // SCSI2SD code currently only uses offsets up to 15.
+            if (syncOffset <= 4)
+            {
+                g_scsi_dma.syncOffsetDivider = 1;
+                g_scsi_dma.syncOffsetPreload = 5 - syncOffset;
+            }
+            else if (syncOffset <= 8)
+            {
+                g_scsi_dma.syncOffsetDivider = 2;
+                g_scsi_dma.syncOffsetPreload = 5 - syncOffset / 2;
+            }
+            else if (syncOffset <= 16)
+            {
+                g_scsi_dma.syncOffsetDivider = 4;
+                g_scsi_dma.syncOffsetPreload = 5 - syncOffset / 4;
+            }
+            else
+            {
+                g_scsi_dma.syncOffsetDivider = 4;
+                g_scsi_dma.syncOffsetPreload = 0;
+            }
+
+            // To properly detect when all bytes have been ACKed,
+            // we need at least one vacant slot in the FIFO.
+            if (g_scsi_dma.syncOffsetPreload > 3)
+                g_scsi_dma.syncOffsetPreload = 3;
+
+            sm_config_set_out_shift(&g_scsi_dma.pio_cfg_sync_write_pacer, true, true, g_scsi_dma.syncOffsetDivider);
+            sm_config_set_in_shift(&g_scsi_dma.pio_cfg_sync_write, true, true, g_scsi_dma.syncOffsetDivider);
+
+            // Set up the timing parameters to PIO program
+            // The scsi_sync_write PIO program consists of three instructions.
+            // The delays are in clock cycles, each taking 6.66 ns. (@150 MHz)
+            // delay0: Delay from data write to REQ assertion (data setup)
+            // delay1: Delay from REQ assert to REQ deassert (req pulse width)
+            // delay2: Delay from REQ deassert to data write (negation period)
+            // see timings.c for delay periods in clock cycles
+            int delay0, delay1, delay2;
+
+            // setup timings for sync_read_pacer
+            // total period = rdelay0 + redelay1
+            // rdelay0: wait for transfer period (total_period +  rtotal_period_adjust - rdelay1)
+            // rdelay1: req assert period
+            int rdelay1;
+
+            uint32_t up_rounder = g_zuluscsi_timings->scsi.clk_period_ps / 2 + 1;
+            uint32_t delay_in_ps = (syncPeriod * 4) * 1000;
+            // This is the period in clock cycles rounded up
+            int totalPeriod = (delay_in_ps + up_rounder) / g_zuluscsi_timings->scsi.clk_period_ps;
+            int rtotalPeriod = totalPeriod;
+            if (syncPeriod < 25)
+            {
+                // Fast-20 SCSI timing: 15 ns assertion period
+                // The hardware rise and fall time require some extra delay,
+                // These delays are in addition to the 1 cycle that the PIO takes to execute the instruction
+                totalPeriod += g_zuluscsi_timings->scsi_20.total_period_adjust;
+                delay0 = g_zuluscsi_timings->scsi_20.delay0; //Data setup time, should be min 11.5ns according to the spec for FAST-20
+                delay1 = g_zuluscsi_timings->scsi_20.delay1; //pulse width, should be min 15ns according to the spec for FAST-20
+                delay2 = totalPeriod - delay0 - delay1 - 3;  //Data hold time, should be min 16.5ns according to the spec for FAST-20
+                if (delay2 < 0) delay2 = 0;
+                if (delay2 > 15) delay2 = 15;
+                rdelay1 = g_zuluscsi_timings->scsi_20.rdelay1;
+                rtotalPeriod += g_zuluscsi_timings->scsi_20.rtotal_period_adjust;
+            }
+            else if (syncPeriod < 50 )
+            {
+                // Fast-10 SCSI timing: 30 ns assertion period, 25 ns skew delay
+                // The hardware rise and fall time require some extra delay,
+                totalPeriod += g_zuluscsi_timings->scsi_10.total_period_adjust;
+                delay0 = g_zuluscsi_timings->scsi_10.delay0; // 4;
+                delay1 = g_zuluscsi_timings->scsi_10.delay1; // 6;
+                delay2 = totalPeriod - delay0 - delay1 - 3;
+                if (delay2 < 0) delay2 = 0;
+                if (delay2 > 15) delay2 = 15;
+                rdelay1 = g_zuluscsi_timings->scsi_10.rdelay1;
+                rtotalPeriod += g_zuluscsi_timings->scsi_10.rtotal_period_adjust;
+            }
+            else
+            {
+                // Slow SCSI timing: 90 ns assertion period, 55 ns skew delay
+                // Delay2 must be at least 2 to keep negation period well above the 90 ns minimum
+                totalPeriod += g_zuluscsi_timings->scsi_5.total_period_adjust;
+                delay0 = g_zuluscsi_timings->scsi_5.delay0;
+                delay1 = g_zuluscsi_timings->scsi_5.delay1;
+                delay2 = totalPeriod - delay0 - delay1 - 3;
+                if (delay2 < 2) delay2 = 2;
+                if (delay2 > 15) delay2 = 15;
+                rdelay1 = g_zuluscsi_timings->scsi_5.rdelay1;
+                rtotalPeriod += g_zuluscsi_timings->scsi_5.rtotal_period_adjust;
+            }
+
+            // Patch the delay values into the instructions in scsi_sync_write.
+            // The code in scsi_accel.pio must have delay set to 0 for this to work correctly.
+            uint16_t instr0 = scsi_sync_write_program_instructions[0] | pio_encode_delay(delay0);
+            uint16_t instr1 = scsi_sync_write_program_instructions[1] | pio_encode_delay(delay1);
+            uint16_t instr2 = scsi_sync_write_program_instructions[2] | pio_encode_delay(delay2);
+            SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_write + 0] = instr0;
+            SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_write + 1] = instr1;
+            SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_write + 2] = instr2;
+
+            // And similar patching for scsi_sync_read_pacer
+            int rdelay0 = rtotalPeriod - rdelay1 - 2;
+            if (rdelay0 > 15) rdelay0 = 15;
+            if (rdelay0 < 0) rdelay0 = 0;
+            uint16_t rinstr0 = scsi_sync_read_pacer_program_instructions[0] | pio_encode_delay(rdelay0);
+            uint16_t rinstr1 = (scsi_sync_read_pacer_program_instructions[1] + g_scsi_dma.pio_offset_sync_read_pacer) | pio_encode_delay(rdelay1);
+            SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_read_pacer + 0] = rinstr0;
+            SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_read_pacer + 1] = rinstr1;
+        }
+    }
+
     return true;
 }
 

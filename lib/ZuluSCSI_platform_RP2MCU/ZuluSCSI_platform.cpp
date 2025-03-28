@@ -99,6 +99,10 @@ static void gpio_conf(uint gpio, gpio_function_t fn, bool pullup, bool pulldown,
     if (fast_slew)
     {
         pads_bank0_hw->io[gpio] |= PADS_BANK0_GPIO0_SLEWFAST_BITS;
+
+#ifdef FAST_IO_DRIVE_STRENGTH
+        gpio_set_drive_strength(gpio, FAST_IO_DRIVE_STRENGTH);
+#endif
     }
 }
 
