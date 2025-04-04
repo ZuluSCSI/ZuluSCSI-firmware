@@ -356,6 +356,15 @@ void audio_setup() {
 
     dma_channel_claim(SOUND_DMA_CHA);
 	dma_channel_claim(SOUND_DMA_CHB);
+
+#ifdef AUDIO_DMA_IRQ_NUM
+    irq_set_exclusive_handler(AUDIO_DMA_IRQ_NUM, audio_dma_irq);
+    irq_set_enabled(AUDIO_DMA_IRQ_NUM, true);
+    irq_clear(AUDIO_DMA_IRQ_NUM);
+# if AUDIO_DMA_IRQ_NUM != DMA_IRQ_0
+#  error Legacy code does not currently support irq != 0
+# endif
+#endif
 }
 
 void audio_poll() {

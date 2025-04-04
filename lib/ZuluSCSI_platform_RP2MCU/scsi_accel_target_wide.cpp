@@ -40,10 +40,6 @@
 * 4. PIO peripheral handles low-level SCSI handshake and writes bytes and parity to GPIO.
 */
 
-#ifdef ENABLE_AUDIO_OUTPUT_SPDIF
-#include "audio_spdif.h"
-#endif // ENABLE_AUDIO_OUTPUT_SPDIF
-
 #include "scsi_accel_target_RP2350_wide.pio.h"
 
 // SCSI bus write acceleration uses 2 PIO state machines:
@@ -80,6 +76,12 @@ static struct {
 
     uint8_t *next_app_buf; // Next buffer from application after current one finishes
     uint32_t next_app_bytes; // Bytes in next buffer
+
+    bool irq_setup_done;
+
+    // Spin lock for locking access to state variables that are accessed by
+    // IRQ (which may be running on core1)
+    spin_lock_t *spin_lock;
 
     // DMA IO buffer management
     // One buffer is active in DMA, another one is processed by CPU.
@@ -425,7 +427,7 @@ void scsi_accel_rp2040_startWrite(const uint8_t* data, uint32_t count, volatile 
     // Any read requests should be matched with a stopRead()
     assert(g_scsi_dma_state != SCSIDMA_READ && g_scsi_dma_state != SCSIDMA_READ_DONE);
 
-    uint32_t saved_irq = save_and_disable_interrupts();
+    uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
     if (g_scsi_dma_state == SCSIDMA_WRITE)
     {
         if (!g_scsi_dma.next_app_buf && data == g_scsi_dma.app_buf + g_scsi_dma.app_bytes)
@@ -448,7 +450,7 @@ void scsi_accel_rp2040_startWrite(const uint8_t* data, uint32_t count, volatile 
             count = 0;
         }
     }
-    restore_interrupts(saved_irq);
+    spin_unlock(g_scsi_dma.spin_lock, saved_irq);
 
     // Check if the request was combined
     if (count == 0) return;
@@ -535,7 +537,7 @@ void scsi_accel_rp2040_startWrite(const uint8_t* data, uint32_t count, volatile 
             false
         );
 
-        dma_channel_set_irq0_enabled(SCSI_DMA_CH_A, true);
+        dma_irqn_set_channel_enabled(SCSI_DMA_IRQ_IDX, SCSI_DMA_CH_A, true);
     }
 
     start_dma_write();
@@ -554,7 +556,7 @@ bool scsi_accel_rp2040_isWriteFinished(const uint8_t* data)
 
     // Check if this data item is still in queue.
     bool finished = true;
-    uint32_t saved_irq = save_and_disable_interrupts();
+    uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
     if (data >= g_scsi_dma.app_buf + g_scsi_dma.dma_bytes &&
         data < g_scsi_dma.app_buf + g_scsi_dma.app_bytes)
     {
@@ -565,7 +567,7 @@ bool scsi_accel_rp2040_isWriteFinished(const uint8_t* data)
     {
         finished = false; // In queued transfer
     }
-    restore_interrupts(saved_irq);
+    spin_unlock(g_scsi_dma.spin_lock, saved_irq);
 
     return finished;
 }
@@ -617,7 +619,7 @@ static void scsi_accel_rp2040_stopWrite(volatile int *resetFlag)
 
     dma_channel_abort(SCSI_DMA_CH_A);
     dma_channel_abort(SCSI_DMA_CH_B);
-    dma_channel_set_irq0_enabled(SCSI_DMA_CH_A, false);
+    dma_irqn_set_channel_enabled(SCSI_DMA_IRQ_IDX, SCSI_DMA_CH_A, false);
     g_scsi_dma_state = SCSIDMA_IDLE;
     SCSI_RELEASE_DATA_REQ();
     scsidma_config_gpio();
@@ -841,7 +843,7 @@ void scsi_accel_rp2040_startRead(uint8_t *data, uint32_t count, int *parityError
     // Any write requests should be matched with a stopWrite()
     assert(g_scsi_dma_state != SCSIDMA_WRITE && g_scsi_dma_state != SCSIDMA_WRITE_DONE);
 
-    uint32_t saved_irq = save_and_disable_interrupts();
+    uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
     if (g_scsi_dma_state == SCSIDMA_READ)
     {
         if (!g_scsi_dma.next_app_buf && data == g_scsi_dma.app_buf + g_scsi_dma.app_bytes)
@@ -864,7 +866,7 @@ void scsi_accel_rp2040_startRead(uint8_t *data, uint32_t count, int *parityError
             count = 0;
         }
     }
-    restore_interrupts(saved_irq);
+    spin_unlock(g_scsi_dma.spin_lock, saved_irq);
 
     // Check if the request was combined
     if (count == 0) return;
@@ -926,7 +928,7 @@ void scsi_accel_rp2040_startRead(uint8_t *data, uint32_t count, int *parityError
         }
 
         scsidma_config_gpio();
-        dma_channel_set_irq0_enabled(SCSI_DMA_CH_A, true);
+        dma_irqn_set_channel_enabled(SCSI_DMA_IRQ_IDX, SCSI_DMA_CH_A, true);
     }
 
     start_dma_read();
@@ -945,7 +947,7 @@ bool scsi_accel_rp2040_isReadFinished(const uint8_t* data)
 
     // Check if this data item is still in queue.
     bool finished = true;
-    uint32_t saved_irq = save_and_disable_interrupts();
+    uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
     if (data >= g_scsi_dma.app_buf + g_scsi_dma.dma_bytes &&
         data < g_scsi_dma.app_buf + g_scsi_dma.app_bytes)
     {
@@ -956,7 +958,7 @@ bool scsi_accel_rp2040_isReadFinished(const uint8_t* data)
     {
         finished = false; // In queued transfer
     }
-    restore_interrupts(saved_irq);
+    spin_unlock(g_scsi_dma.spin_lock, saved_irq);
 
     return finished;
 }
@@ -965,7 +967,7 @@ static void scsi_accel_rp2040_stopRead()
 {
     dma_channel_abort(SCSI_DMA_CH_A);
     dma_channel_abort(SCSI_DMA_CH_B);
-    dma_channel_set_irq0_enabled(SCSI_DMA_CH_A, false);
+    dma_irqn_set_channel_enabled(SCSI_DMA_IRQ_IDX, SCSI_DMA_CH_A, false);
     g_scsi_dma_state = SCSIDMA_IDLE;
     SCSI_RELEASE_DATA_REQ();
     scsidma_config_gpio();
@@ -1117,18 +1119,8 @@ static int pio_add_scsi_sync_write_program()
 __attribute__((optimize("O3")))
 static void scsi_dma_irq()
 {
-#ifndef ENABLE_AUDIO_OUTPUT_SPDIF
-    dma_hw->ints0 = (1 << SCSI_DMA_CH_A);
-#else
-    // see audio_spdif.h for whats going on here
-    if (dma_hw->intr & (1 << SCSI_DMA_CH_A)) {
-        dma_hw->ints0 = (1 << SCSI_DMA_CH_A);
-    } else {
-        audio_dma_irq();
-        return;
-    }
-#endif
-
+    uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
+    dma_irqn_acknowledge_channel(SCSI_DMA_IRQ_IDX, SCSI_DMA_CH_A);
     scsidma_state_t state = g_scsi_dma_state;
     if (state == SCSIDMA_WRITE)
     {
@@ -1149,6 +1141,7 @@ static void scsi_dma_irq()
         // Process filled DMA buffer
         process_dma_readbuf();
     }
+    spin_unlock(g_scsi_dma.spin_lock, saved_irq);
 }
 
 static void scsidma_set_data_gpio_func(uint32_t func, bool invert_data, bool wide)
@@ -1230,6 +1223,15 @@ static void scsidma_config_gpio()
     }
 }
 
+static void setup_scsi_dma_irq()
+{
+    // Interrupts are used for data buffer swapping and parity generation.
+    // It can run on core0 or core1.
+    irq_set_exclusive_handler(SCSI_DMA_IRQ_NUM, scsi_dma_irq);
+    irq_set_enabled(SCSI_DMA_IRQ_NUM, true);
+    g_scsi_dma.irq_setup_done = true;
+}
+
 void scsi_accel_rp2040_init()
 {
     g_scsi_dma_state = SCSIDMA_IDLE;
@@ -1238,6 +1240,7 @@ void scsi_accel_rp2040_init()
     static bool first_init = true;
     if (first_init)
     {
+        g_scsi_dma.spin_lock = spin_lock_init(spin_lock_claim_unused(true));
         g_scsi_dma.pio_removed_async_write = true;
         g_scsi_dma.pio_removed_sync_write_pacer = true;
         g_scsi_dma.pio_removed_sync_write = true;
@@ -1343,9 +1346,17 @@ void scsi_accel_rp2040_init()
     channel_config_set_dreq(&cfg, pio_get_dreq(SCSI_DMA_PIO, SCSI_DATA_SM, true));
     g_scsi_dma.dmacfg_read_chB = cfg;
 
-    // Interrupts are used for data buffer swapping
-    irq_set_exclusive_handler(DMA_IRQ_0, scsi_dma_irq);
-    irq_set_enabled(DMA_IRQ_0, true);
+#ifdef RP2MCU_CPU_PARITY_CORE1
+    multicore_fifo_push_blocking((uintptr_t) &setup_scsi_dma_irq);
+    sleep_ms(1);
+    if (!g_scsi_dma.irq_setup_done)
+    {
+        logmsg("ERROR: Failed to setup core1 SCSI DMA IRQ, falling back to core 0!");
+        setup_scsi_dma_irq();
+    }
+#else
+    setup_scsi_dma_irq();
+#endif
 }
 
 

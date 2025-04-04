@@ -101,6 +101,7 @@
 
 #ifndef ENABLE_AUDIO_OUTPUT_SPDIF
     // IO expander I2C
+    #define GPIO_I2C_INTR 29
     #define GPIO_I2C_SDA 30
     #define GPIO_I2C_SCL 31
 #else
@@ -108,15 +109,18 @@
     #define AUDIO_SPI      spi1
     #define GPIO_EXP_SPARE 30
     #define GPIO_EXP_AUDIO 31
+    #define AUDIO_DMA_IRQ_NUM DMA_IRQ_2
 #endif
 
 #ifdef ENABLE_AUDIO_OUTPUT_I2S
     #define GPIO_I2S_BCLK 45
     #define GPIO_I2S_WS   46
     #define GPIO_I2S_DOUT 47
-    #define I2S_DMA_IRQ_NUM DMA_IRQ_2
+    #define I2S_DMA_IRQ_NUM DMA_IRQ_0
 #endif
 
+#define SCSI_DMA_IRQ_IDX 3
+#define SCSI_DMA_IRQ_NUM DMA_IRQ_3
 
 // Other pins
 #define SWO_PIN 32
@@ -131,6 +135,7 @@
 // Instead use CPU-based generation, which is fast enough on RP2350
 // thanks to the extended instruction set of Cortex-M33.
 #define RP2MCU_USE_CPU_PARITY
+#define RP2MCU_CPU_PARITY_CORE1
 
 // Generate parity for bytes or halfwords.
 // This is only used for slow control & command transfers.
