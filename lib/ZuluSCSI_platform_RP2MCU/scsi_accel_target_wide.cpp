@@ -70,18 +70,17 @@
 static uint32_t g_scsi_dma_iobuf[SCSI_DMA_IOBUF_COUNT][SCSI_DMA_IOBUF_SIZE];
 
 static struct {
+    // Spin lock for locking access to the app_buf .. next_app_bytes
+    // variables that are accessed by IRQ (which may be running on core1)
+    spin_lock_t *spin_lock;
+
     uint8_t *app_buf; // Buffer provided by application
     uint32_t app_bytes; // Bytes available in application buffer
     uint32_t dma_bytes; // Bytes that have been copied to/from DMA io buffer so far
-
     uint8_t *next_app_buf; // Next buffer from application after current one finishes
     uint32_t next_app_bytes; // Bytes in next buffer
 
     bool irq_setup_done;
-
-    // Spin lock for locking access to state variables that are accessed by
-    // IRQ (which may be running on core1)
-    spin_lock_t *spin_lock;
 
     // DMA IO buffer management
     // One buffer is active in DMA, another one is processed by CPU.
@@ -165,6 +164,7 @@ void scsi_accel_log_state()
 // Check if data buffer from application has been fully processed.
 // If there is a next one, swap it.
 // If all is done, return true.
+// Assumption: g_scsi_dma.spin_lock is held
 static bool check_write_app_buffer_done()
 {
     if (g_scsi_dma.app_bytes <= g_scsi_dma.dma_bytes)
@@ -176,8 +176,9 @@ static bool check_write_app_buffer_done()
         g_scsi_dma.next_app_buf = 0;
         g_scsi_dma.next_app_bytes = 0;
     }
+    bool result = (g_scsi_dma.dma_bytes >= g_scsi_dma.app_bytes);
 
-    return g_scsi_dma.dma_bytes >= g_scsi_dma.app_bytes;
+    return result;
 }
 
 
@@ -355,6 +356,8 @@ static uint32_t *scsi_generate_parity_16bit(uint8_t *src, uint32_t count, uint32
 // Convert data bytes to GPIO words ready for DMA
 static void fill_dma_writebuf()
 {
+    uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
+
     // Supports only IOBUF_COUNT = 2 for now
     int idx = (g_scsi_dma.dma_active_iobuf + 1) % SCSI_DMA_IOBUF_COUNT;
     uint32_t words_in_buf = g_scsi_dma.dma_iobuf_words[idx];
@@ -372,7 +375,7 @@ static void fill_dma_writebuf()
         uint32_t *dest = &g_scsi_dma_iobuf[idx][words_in_buf];
         uint8_t *src = &g_scsi_dma.app_buf[g_scsi_dma.dma_bytes];
 
-        g_scsi_dma.dma_bytes += bytes_to_send;
+        spin_unlock(g_scsi_dma.spin_lock, saved_irq); // Unlock during long operation
 
         if (g_scsi_dma.wide)
         {
@@ -383,11 +386,18 @@ static void fill_dma_writebuf()
             dest = scsi_generate_parity_8bit(src, bytes_to_send, dest);
         }
 
+        saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
+
+        g_scsi_dma.dma_bytes += bytes_to_send; // Application can now reuse the buffer
         g_scsi_dma.dma_iobuf_words[idx] = dest - &g_scsi_dma_iobuf[idx][0];
     }
+
+    spin_unlock(g_scsi_dma.spin_lock, saved_irq);
 }
 
-static void start_dma_write()
+static void scsi_accel_rp2040_stopWrite(volatile int *resetFlag);
+
+static bool start_dma_write()
 {
     // Get the buffer that should be ready for transmission
     int idx = (g_scsi_dma.dma_active_iobuf + 1) % SCSI_DMA_IOBUF_COUNT;
@@ -395,8 +405,23 @@ static void start_dma_write()
 
     if (words < SCSI_DMA_IOBUF_SIZE)
     {
+        uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
+
         // Process new data from application buffer, if space and data is available.
-        if (!check_write_app_buffer_done())
+        // This must be inside a lock to prevent race condition with startWrite().
+        bool buffer_done = check_write_app_buffer_done();
+
+        // Check if we are all done.
+        // From SCSIDMA_WRITE_DONE state we can either go to IDLE in stopWrite()
+        // or back to WRITE in startWrite().
+        if (buffer_done && words == 0)
+        {
+            g_scsi_dma_state = SCSIDMA_WRITE_DONE;
+
+        }
+        spin_unlock(g_scsi_dma.spin_lock, saved_irq);
+
+        if (!buffer_done)
         {
             fill_dma_writebuf();
         }
@@ -408,18 +433,16 @@ static void start_dma_write()
     g_scsi_dma.dma_iobuf_words[g_scsi_dma.dma_active_iobuf] = 0;
     g_scsi_dma.dma_active_iobuf = idx;
 
-    // Check if we are all done.
-    // From SCSIDMA_WRITE_DONE state we can either go to IDLE in stopWrite()
-    // or back to WRITE in startWrite().
     if (words == 0)
     {
-        g_scsi_dma_state = SCSIDMA_WRITE_DONE;
-        return;
+        return false;
     }
 
     // Start DMA from current buffer to PIO
     dma_channel_set_read_addr(SCSI_DMA_CH_A, g_scsi_dma_iobuf[idx], false);
     dma_channel_set_trans_count(SCSI_DMA_CH_A, words, true);
+
+    return true;
 }
 
 void scsi_accel_rp2040_startWrite(const uint8_t* data, uint32_t count, volatile int *resetFlag)
@@ -540,7 +563,9 @@ void scsi_accel_rp2040_startWrite(const uint8_t* data, uint32_t count, volatile 
         dma_irqn_set_channel_enabled(SCSI_DMA_IRQ_IDX, SCSI_DMA_CH_A, true);
     }
 
-    start_dma_write();
+    // Trigger IRQ so that it will start the write.
+    // This way the parity processing can occur on second core
+    dma_hw->irq_ctrl[SCSI_DMA_IRQ_IDX].intf = (1 << SCSI_DMA_CH_A);
 }
 
 bool scsi_accel_rp2040_isWriteFinished(const uint8_t* data)
@@ -749,19 +774,9 @@ static void process_dma_readbuf()
 
     g_scsi_dma.dma_iobuf_words[idx] = 0;
     g_scsi_dma.dma_bytes = dst - g_scsi_dma.app_buf;
-
-    if (g_scsi_dma.app_bytes <= g_scsi_dma.dma_bytes)
-    {
-        // Application provided buffer is full, swap it
-        g_scsi_dma.dma_bytes = 0;
-        g_scsi_dma.app_buf = g_scsi_dma.next_app_buf;
-        g_scsi_dma.app_bytes = g_scsi_dma.next_app_bytes;
-        g_scsi_dma.next_app_buf = 0;
-        g_scsi_dma.next_app_bytes = 0;
-    }
 }
 
-static void start_dma_read()
+static bool start_dma_read()
 {
     pio_sm_set_enabled(SCSI_DMA_PIO, SCSI_DATA_SM, false);
     pio_sm_clear_fifos(SCSI_DMA_PIO, SCSI_DATA_SM);
@@ -774,8 +789,7 @@ static void start_dma_read()
     uint32_t words_to_rx = g_scsi_dma.dma_iobuf_words[g_scsi_dma.dma_active_iobuf];
     if (words_to_rx == 0)
     {
-        g_scsi_dma_state = SCSIDMA_READ_DONE;
-        return;
+        return false;
     }
 
     if (g_scsi_dma.syncOffset == 0)
@@ -836,6 +850,8 @@ static void start_dma_read()
         // Start sending REQ pulses
         pio_sm_set_enabled(SCSI_DMA_PIO, SCSI_SYNC_SM, true);
     }
+
+    return true;
 }
 
 void scsi_accel_rp2040_startRead(uint8_t *data, uint32_t count, int *parityError, volatile int *resetFlag)
@@ -1119,15 +1135,16 @@ static int pio_add_scsi_sync_write_program()
 __attribute__((optimize("O3")))
 static void scsi_dma_irq()
 {
-    uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
+    dma_hw->irq_ctrl[SCSI_DMA_IRQ_IDX].intf = 0;
     dma_irqn_acknowledge_channel(SCSI_DMA_IRQ_IDX, SCSI_DMA_CH_A);
+
     scsidma_state_t state = g_scsi_dma_state;
     if (state == SCSIDMA_WRITE)
     {
         // Start writing from next buffer, if any, or set state to SCSIDMA_WRITE_DONE
-        start_dma_write();
+        bool started = start_dma_write();
 
-        if (g_scsi_dma_state != SCSIDMA_WRITE_DONE)
+        if (started)
         {
             // Prefill next DMA buffer
             fill_dma_writebuf();
@@ -1135,13 +1152,39 @@ static void scsi_dma_irq()
     }
     else if (state == SCSIDMA_READ)
     {
-        // Start reading into next buffer, if any, or set state to SCSIDMA_READ_DONE
-        start_dma_read();
+        uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
+        // Start reading into next buffer, if any
+        bool started = start_dma_read();
+        spin_unlock(g_scsi_dma.spin_lock, saved_irq);
 
         // Process filled DMA buffer
+        // Lock is released during this because it takes some time
         process_dma_readbuf();
+
+        saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
+        if (g_scsi_dma.app_bytes <= g_scsi_dma.dma_bytes)
+        {
+            // Application provided buffer is full, swap it
+            g_scsi_dma.dma_bytes = 0;
+            g_scsi_dma.app_buf = g_scsi_dma.next_app_buf;
+            g_scsi_dma.app_bytes = g_scsi_dma.next_app_bytes;
+            g_scsi_dma.next_app_buf = 0;
+            g_scsi_dma.next_app_bytes = 0;
+
+            if (g_scsi_dma.app_bytes == 0)
+            {
+                // Set state to DONE only after readbuf processing is done
+                g_scsi_dma_state = SCSIDMA_READ_DONE;
+            }
+        }
+
+        if (!started && g_scsi_dma_state != SCSIDMA_READ_DONE)
+        {
+            // We got new request in middle of readbuf processing
+            start_dma_read();
+        }
+        spin_unlock(g_scsi_dma.spin_lock, saved_irq);
     }
-    spin_unlock(g_scsi_dma.spin_lock, saved_irq);
 }
 
 static void scsidma_set_data_gpio_func(uint32_t func, bool invert_data, bool wide)
