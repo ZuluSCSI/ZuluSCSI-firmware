@@ -247,6 +247,15 @@ static pin_setup_state_t read_setup_ack_pin()
 }
 #endif
 
+// Allows execution on Core1 via function pointers. Each function can take
+// no parameters and should return nothing, operating via side-effects only.
+static void core1_handler() {
+    while (1) {
+        void (*function)() = (void (*)()) multicore_fifo_pop_blocking();
+        (*function)();
+    }
+}
+
 void platform_init()
 {
     // Make sure second core is stopped
@@ -516,6 +525,9 @@ void platform_late_init()
         logmsg("Audio Output timings not found");
     }
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
+
+    dbgmsg("Starting Core1 dispatcher");
+    multicore_launch_core1(core1_handler);
 
 // This should turn on the LED for Pico 1/2 W devices early in the init process
 // It should help indicate to the user that interface is working and the board is ready for DaynaPORT

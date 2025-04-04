@@ -305,15 +305,6 @@ static void snd_process_b() {
     }
 }
 
-// Allows execution on Core1 via function pointers. Each function can take
-// no parameters and should return nothing, operating via side-effects only.
-static void core1_handler() {
-    while (1) {
-        void (*function)() = (void (*)()) multicore_fifo_pop_blocking();
-        (*function)();
-    }
-}
-
 /* ------------------------------------------------------------------------ */
 /* ---------- VISIBLE FUNCTIONS ------------------------------------------- */
 /* ------------------------------------------------------------------------ */
@@ -365,9 +356,6 @@ void audio_setup() {
 
     dma_channel_claim(SOUND_DMA_CHA);
 	dma_channel_claim(SOUND_DMA_CHB);
-
-    logmsg("Starting Core1 for audio");
-    multicore_launch_core1(core1_handler);
 }
 
 void audio_poll() {
