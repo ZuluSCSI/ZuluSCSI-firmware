@@ -250,7 +250,7 @@ void scsiLogPhaseChange(int new_phase)
 
             if (syncper > 0)
             {
-                int mbyte_per_s = (1000 + syncper * 2) / (syncper * 4);
+                int mbyte_per_s = (1000 + syncper * 2) / (syncper * 4) * (1 << scsiDev.target->busWidth);
                 logmsg("SCSI ID ", (int)scsiDev.target->targetId,
                     " negotiated synchronous mode ", mbyte_per_s, " MB/s ",
                     "(period 4x", syncper, " ns, offset ", syncoff, " bytes)");
