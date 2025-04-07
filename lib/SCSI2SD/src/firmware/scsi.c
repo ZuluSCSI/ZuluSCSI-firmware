@@ -1049,7 +1049,7 @@ static void process_MessageOut()
 		}
 
 		scsiDev.lun = scsiDev.msgOut & 0x7;
-		scsiDev.discPriv = 
+		scsiDev.discPriv =
 			((scsiDev.msgOut & 0x40) && (scsiDev.initiatorId >= 0))
 				? 1 : 0;
 	}
@@ -1080,6 +1080,7 @@ static void process_MessageOut()
 
 		if (extmsg[0] == 3 && msgLen == 2) // Wide Data Request
 		{
+#if PLATFORM_MAX_BUS_WIDTH > 0
 			// Negotiate down to 8bit
 			scsiEnterPhase(MESSAGE_IN);
 			static const uint8_t WDTR[] = {0x01, 0x02, 0x03, 0x00};
@@ -1088,6 +1089,9 @@ static void process_MessageOut()
 			// SDTR becomes invalidated.
 			scsiDev.target->syncOffset = 0;
 			scsiDev.target->syncPeriod = 0;
+#else
+			messageReject();
+#endif
 		}
 		else if (extmsg[0] == 1 && msgLen == 3) // Synchronous data request
 		{

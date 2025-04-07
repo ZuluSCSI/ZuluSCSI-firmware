@@ -98,6 +98,7 @@ static const uint8_t IomegaVendorInquiry[] =
 
 void s2s_scsiInquiry()
 {
+	uint8_t lun = scsiDev.cdb[1] >> 5;
 	uint8_t evpd = scsiDev.cdb[1] & 1; // enable vital product data.
 	uint8_t pageCode = scsiDev.cdb[2];
 	uint32_t allocationLength = scsiDev.cdb[4];
@@ -231,7 +232,7 @@ void s2s_scsiInquiry()
 	}
 
 	// Set the first byte to indicate LUN presence.
-	if (scsiDev.lun) // We only support lun 0
+	if (lun) // We only support lun 0
 	{
 		scsiDev.data[0] = 0x7F;
 	}
