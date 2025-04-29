@@ -84,6 +84,28 @@ static bool g_led_blinking = false;
 
 static void usb_log_poll();
 
+static void gpio_logger_callback(unsigned alarm_num)
+{
+    static uint32_t gpio_state;
+
+#ifdef ZULUSCSI_BLASTER
+    uint32_t new_state = sio_hw->gpio_in & 0x0FFFF0C0;
+#else
+    uint32_t new_state = sio_hw->gpio_in & 0x3D023FFF;
+#endif
+    if (new_state != gpio_state)
+    {
+        log_raw("{");
+        log_raw((int)millis());
+        log_raw("ms GPIO ");
+        log_raw(new_state);
+        log_raw("}\n");
+        gpio_state = new_state;
+    }
+
+    hardware_alarm_set_target(alarm_num, delayed_by_ms(get_absolute_time(), 1));
+}
+
 /***************/
 /* GPIO init   */
 /***************/
@@ -355,6 +377,9 @@ void platform_init()
 #endif  // HAS_DIP_SWITCHES
 
 
+    g_log_debug = true;
+    logmsg("Test build, debug log forced on");
+
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
     uint8_t response_jedec[4] = {0};
@@ -549,6 +574,10 @@ void platform_late_init()
     Serial.begin();
 #endif
     scsi_accel_rp2040_init();
+
+    hardware_alarm_claim(2);
+    hardware_alarm_set_callback(2, &gpio_logger_callback);
+    hardware_alarm_set_target(2, delayed_by_ms(get_absolute_time(), 1));
 }
 
 void platform_post_sd_card_init() {}

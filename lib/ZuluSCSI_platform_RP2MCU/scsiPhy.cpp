@@ -38,6 +38,9 @@ extern "C" {
 #include <scsi2sd_time.h>
 }
 
+static SCSI_PHASE g_scsi_phase;
+
+
 /***********************/
 /* SCSI status signals */
 /***********************/
@@ -77,6 +80,8 @@ void scsi_bsy_deassert_interrupt()
                 }
             }
         }
+
+        dbgmsg("SELECT ", sel_bits, " ", sio_hw->gpio_in);
 
         if (sel_id >= 0)
         {
@@ -138,7 +143,7 @@ static void scsi_rst_assert_interrupt()
 
     if (rst1 && rst2)
     {
-        dbgmsg("BUS RESET");
+        dbgmsg("BUS RESET, ", sio_hw->gpio_in, " ", (int)g_scsi_phase);
         scsiDev.resetFlag = 1;
     }
 }
@@ -192,7 +197,6 @@ extern "C" void scsiPhyReset(void)
 /* SCSI bus phase logic */
 /************************/
 
-static SCSI_PHASE g_scsi_phase;
 
 extern "C" void scsiEnterPhase(int phase)
 {
@@ -208,6 +212,8 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
 {
     if (phase != g_scsi_phase)
     {
+        dbgmsg("PHASE ", phase, " ", sio_hw->gpio_in);
+
         // ANSI INCITS 362-2002 SPI-3 10.7.1:
         // Phase changes are not allowed while REQ or ACK is asserted.
         while (likely(!scsiDev.resetFlag) && SCSI_IN(ACK)) {}
@@ -342,6 +348,7 @@ static inline void scsiWriteOneByte(uint8_t value)
 
 extern "C" void scsiWriteByte(uint8_t value)
 {
+    dbgmsg("WR ", value);
     scsiLogDataIn(&value, 1);
     scsiWriteOneByte(value);
 }
@@ -392,6 +399,8 @@ static inline uint8_t scsiReadOneByte(int* parityError)
     uint16_t r = SCSI_IN_DATA();
     SCSI_OUT(REQ, 0);
     SCSI_WAIT_INACTIVE(ACK);
+
+    dbgmsg("RD ", (uint8_t)r);
 
     if (parityError && r != (g_scsi_parity_lookup[r & 0xFF] ^ (SCSI_IO_DATA_MASK >> SCSI_IO_SHIFT)))
     {

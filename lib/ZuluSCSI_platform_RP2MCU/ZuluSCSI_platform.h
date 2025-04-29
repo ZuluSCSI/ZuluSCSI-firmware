@@ -46,6 +46,9 @@
 #include "ZuluSCSI_platform_gpio_RP2040.h"
 #endif
 
+// FIXME: For debugging
+#define RP2MCU_DISABLE_SCSI_ACCEL 1
+
 #include "scsiHostPhy.h"
 
 
