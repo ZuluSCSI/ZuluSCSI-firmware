@@ -66,6 +66,8 @@ void scsi_bsy_deassert_interrupt()
 {
     if (SCSI_IN(SEL) && !SCSI_IN(BSY))
     {
+        g_scsi_phase = BUS_BUSY;
+
         // Check if any of the targets we simulate is selected
         uint8_t sel_bits = SCSI_IN_DATA();
         int sel_id = -1;
@@ -176,6 +178,8 @@ extern "C" void scsiPhyReset(void)
     SCSI_RELEASE_OUTPUTS();
     g_scsi_sts_selection = 0;
     g_scsi_ctrl_bsy = 0;
+    g_scsi_phase = BUS_FREE;
+
 
 #ifndef RP2MCU_DISABLE_SCSI_ACCEL
     scsi_accel_rp2040_init();
