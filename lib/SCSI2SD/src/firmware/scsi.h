@@ -81,7 +81,7 @@ typedef enum
 #endif
 
 #ifndef SCSI2SD_BUFFER_SIZE
-#define SCSI2SD_BUFFER_SIZE (MAX_SECTOR_SIZE * 8)
+#define SCSI2SD_BUFFER_SIZE (MAX_SECTOR_SIZE * 4)
 #endif
 
 // Shadow parameters, possibly not saved to flash yet.

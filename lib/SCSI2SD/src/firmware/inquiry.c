@@ -279,6 +279,17 @@ uint32_t s2s_getStandardInquiry(
 		out[size] = TOOLBOX_API;
 		size += 1;
 	}
+
+	if (maxlen == 5)
+	{
+		// Test code to mimic DALS-3540
+		out[0] = 0x00;
+		out[1] = 0x00;
+		out[2] = 0x02;
+		out[3] = 0x02;
+		out[4] = 0x9F;
+	}
+
 	return size;
 }
 

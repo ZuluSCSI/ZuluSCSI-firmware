@@ -77,6 +77,8 @@ extern "C" bool scsiStatusBSY()
     return SCSI_IN(BSY);
 }
 
+extern "C" void log_gpio();
+
 /************************/
 /* SCSI selection logic */
 /************************/
@@ -113,6 +115,8 @@ static void scsi_bsy_deassert_interrupt()
         // Also required for some early Mac Plus roms
         scsiDev.selFlag = *SCSI_STS_SELECTED;
     }
+
+    log_gpio();
 }
 
 extern "C" bool scsiStatusSEL()
@@ -161,33 +165,33 @@ static void selectPhyMode()
     // Default: software GPIO bitbang, available on all revisions
     g_scsi_phy_mode = PHY_MODE_PIO;
     
-    // Timer based DMA bitbang, available on V1.1, 2.8 MB/s
-#ifdef SCSI_ACCEL_DMA_AVAILABLE
-    if (wanted_mode == PHY_MODE_BEST_AVAILABLE || wanted_mode == PHY_MODE_DMA_TIMER)
-    {
-        g_scsi_phy_mode = PHY_MODE_DMA_TIMER;
-    }
-#endif
+//     // Timer based DMA bitbang, available on V1.1, 2.8 MB/s
+// #ifdef SCSI_ACCEL_DMA_AVAILABLE
+//     if (wanted_mode == PHY_MODE_BEST_AVAILABLE || wanted_mode == PHY_MODE_DMA_TIMER)
+//     {
+//         g_scsi_phy_mode = PHY_MODE_DMA_TIMER;
+//     }
+// #endif
 
-    // GreenPAK with software write, available on V1.1 with extra chip, 3.5 MB/s
-    if (wanted_mode == PHY_MODE_BEST_AVAILABLE || wanted_mode == PHY_MODE_GREENPAK_PIO)
-    {
-        if (greenpak_is_ready())
-        {
-            g_scsi_phy_mode = PHY_MODE_GREENPAK_PIO;
-        }
-    }
+//     // GreenPAK with software write, available on V1.1 with extra chip, 3.5 MB/s
+//     if (wanted_mode == PHY_MODE_BEST_AVAILABLE || wanted_mode == PHY_MODE_GREENPAK_PIO)
+//     {
+//         if (greenpak_is_ready())
+//         {
+//             g_scsi_phy_mode = PHY_MODE_GREENPAK_PIO;
+//         }
+//     }
 
-    // GreenPAK with DMA write, available on V1.1 with extra chip
-#ifdef SCSI_ACCEL_DMA_AVAILABLE
-    if (wanted_mode == PHY_MODE_BEST_AVAILABLE || wanted_mode == PHY_MODE_GREENPAK_DMA)
-    {
-        if (greenpak_is_ready())
-        {
-            g_scsi_phy_mode = PHY_MODE_GREENPAK_DMA;
-        }
-    }
-#endif
+//     // GreenPAK with DMA write, available on V1.1 with extra chip
+// #ifdef SCSI_ACCEL_DMA_AVAILABLE
+//     if (wanted_mode == PHY_MODE_BEST_AVAILABLE || wanted_mode == PHY_MODE_GREENPAK_DMA)
+//     {
+//         if (greenpak_is_ready())
+//         {
+//             g_scsi_phy_mode = PHY_MODE_GREENPAK_DMA;
+//         }
+//     }
+// #endif
 
     if (g_scsi_phy_mode != oldmode)
     {
@@ -281,6 +285,8 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
                 delayNs += 100000;
             }
 
+            log_gpio();
+
             return delayNs;
         }
     }
@@ -299,6 +305,8 @@ void scsiEnterBusFree(void)
     scsiDev.cdbLen = 0;
     
     SCSI_RELEASE_OUTPUTS();
+
+    log_gpio();
 }
 
 /********************/
@@ -323,10 +331,14 @@ static inline void scsiWriteOneByte(uint8_t value)
 {
     SCSI_OUT_DATA(value);
     delay_100ns(); // DB setup time before REQ
+    log_gpio();
     SCSI_OUT(REQ, 1);
     SCSI_WAIT_ACTIVE(ACK);
-    SCSI_RELEASE_DATA_REQ(); // Release data and REQ
+    log_gpio();
+    SCSI_OUT(REQ, 0);
     SCSI_WAIT_INACTIVE(ACK);
+    SCSI_RELEASE_DATA_REQ(); // Release data and REQ
+    log_gpio();
 }
 
 extern "C" void scsiWriteByte(uint8_t value)
@@ -392,7 +404,7 @@ static void processPollingWrite(uint32_t count)
     const uint8_t *data = g_scsi_writereq.data;
     uint32_t count_words = count / 4;
 
-    if (g_scsi_writereq.use_sync_mode)
+    /*if (g_scsi_writereq.use_sync_mode)
     {
         // Synchronous mode transfer
         scsi_accel_sync_send(data, count, &scsiDev.resetFlag);
@@ -410,7 +422,7 @@ static void processPollingWrite(uint32_t count)
             scsi_accel_asm_send((const uint32_t*)data, count_words, &scsiDev.resetFlag);
         }
     }
-    else
+    else*/
     {
         // Use simple loop for unaligned transfers
         for (uint32_t i = 0; i < count; i++)
@@ -512,12 +524,15 @@ extern "C" void scsiFinishWrite()
 
 static inline uint8_t scsiReadOneByte(void)
 {
+    log_gpio();
     SCSI_OUT(REQ, 1);
     SCSI_WAIT_ACTIVE(ACK);
     delay_100ns();
     uint8_t r = SCSI_IN_DATA();
+    log_gpio();
     SCSI_OUT(REQ, 0);
     SCSI_WAIT_INACTIVE(ACK);
+    log_gpio();
 
     return r;
 }
@@ -538,6 +553,7 @@ extern "C" void scsiRead(uint8_t* data, uint32_t count, int* parityError)
 
     SysTick_Handle_PreEmptively();
 
+    /*
     if (g_scsi_phase == DATA_OUT && scsiDev.target->syncOffset > 0)
     {
         // Synchronous data transfer
@@ -554,6 +570,7 @@ extern "C" void scsiRead(uint8_t* data, uint32_t count, int* parityError)
         scsi_accel_asm_recv((uint32_t*)data, count_words, &scsiDev.resetFlag);
     }
     else
+    */
     {
         // Use a simple loop for short and unaligned transfers
         for (uint32_t i = 0; i < count; i++)

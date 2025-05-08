@@ -87,9 +87,31 @@ void delay_ns(unsigned long ns)
     while ((uint32_t)(DWT->CYCCNT - CNT_start) < cycles);
 }
 
+extern "C" void log_gpio()
+{
+    static uint64_t prev_gpio_state;
+
+    __disable_irq();
+    uint64_t gpio_state =
+        ((uint64_t)GPIO_ISTAT(GPIOA) << 0) |
+        ((uint64_t)GPIO_ISTAT(GPIOB) << 16) |
+        ((uint64_t)GPIO_ISTAT(GPIOD) << 32) |
+        ((uint64_t)GPIO_ISTAT(GPIOE) << 48);
+    gpio_state &= 0xFFF0FF53F40300FFULL;
+
+    if (gpio_state != prev_gpio_state)
+    {
+        logmsg(gpio_state);
+        prev_gpio_state = gpio_state;
+    }
+    __enable_irq();
+}
+
 void SysTick_Handler_inner(uint32_t *sp)
 {
     g_millisecond_counter++;
+
+    log_gpio();
 
     if (g_watchdog_timeout > 0)
     {
@@ -101,6 +123,12 @@ void SysTick_Handler_inner(uint32_t *sp)
             if (!scsiDev.resetFlag)
             {
                 logmsg("WATCHDOG TIMEOUT at PC ", sp[6], " LR ", sp[5], " attempting bus reset");
+                logmsg("scsiDev.phase ", (int)scsiDev.phase);
+                logmsg("GPIOA: ", GPIO_ISTAT(GPIOA));
+                logmsg("GPIOB: ", GPIO_ISTAT(GPIOB));
+                logmsg("GPIOC: ", GPIO_ISTAT(GPIOC));
+                logmsg("GPIOD: ", GPIO_ISTAT(GPIOD));
+                logmsg("GPIOE: ", GPIO_ISTAT(GPIOE));
                 scsiDev.resetFlag = 1;
             }
 
@@ -447,6 +475,8 @@ void platform_late_init()
     #endif // ZULUSCSI_V1_0_mini
 #endif // PLATFORM_VERSION_1_1_PLUS
     
+    g_log_debug = true;
+    logmsg("Test build, debug messages forced on");
 }
 
 void platform_post_sd_card_init()
