@@ -131,6 +131,9 @@
 #define DIP_DBGLOG      SWO_PIN
 #define DIP_TERM        SCSI_OUT_REQ
 
+// Ejection button
+#define GPIO_EJECT_BTN 44
+
 // Parity generation lookup table would be too large for 16-bit bus.
 // Instead use CPU-based generation, which is fast enough on RP2350
 // thanks to the extended instruction set of Cortex-M33.

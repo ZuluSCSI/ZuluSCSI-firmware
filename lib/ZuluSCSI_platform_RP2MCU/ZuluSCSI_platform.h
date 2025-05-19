@@ -198,6 +198,9 @@ static inline bool scsi_check_parity(uint32_t w)
 
 #endif
 
+// Returns true if the board has a physical eject button 
+bool platform_has_phy_eject_button();
+
 #ifdef __cplusplus
 }
 
