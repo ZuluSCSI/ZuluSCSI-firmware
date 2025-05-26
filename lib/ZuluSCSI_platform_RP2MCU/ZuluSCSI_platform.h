@@ -189,11 +189,11 @@ static inline uint32_t scsi_generate_parity(uint8_t w)
 }
 
 // Check parity of a byte.
-// Argument is the GPIO value without SCSI_IO_SHIFT.
+// Argument is the return value from SCSI_IN_DATA().
 // Return true if parity is valid.
 static inline bool scsi_check_parity(uint32_t w)
 {
-    return g_scsi_parity_check_lookup[w & 0x1FF] & 0x100;
+    return g_scsi_parity_check_lookup[(w ^ 0x1FF) & 0x1FF] & 0x100;
 }
 
 #endif

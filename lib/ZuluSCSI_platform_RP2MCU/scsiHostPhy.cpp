@@ -207,7 +207,7 @@ static inline void scsiHostWriteOneByte(uint8_t value)
 static inline uint8_t scsiHostReadOneByte(int* parityError)
 {
     SCSIHOST_WAIT_ACTIVE(REQ);
-    uint16_t r = SCSI_IN_DATA();
+    uint32_t r = SCSI_IN_DATA();
     SCSI_OUT(ACK, 1);
     SCSIHOST_WAIT_INACTIVE(REQ);
     SCSI_OUT(ACK, 0);
