@@ -288,6 +288,18 @@ void platform_init()
     gpio_conf(DIP_INITIATOR,  GPIO_FUNC_SIO, false, false, false, false, false);
     gpio_conf(DIP_DBGLOG,     GPIO_FUNC_SIO, false, false, false, false, false);
     gpio_conf(DIP_TERM,       GPIO_FUNC_SIO, false, false, false, false, false);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    /* RP2350-E9 errata workaround for excessive input pin leakage */
+    gpio_set_input_enabled(DIP_INITIATOR, false);
+    gpio_set_input_enabled(DIP_DBGLOG, false);
+    gpio_set_input_enabled(DIP_TERM, false);
+    delay(10);
+    gpio_set_input_enabled(DIP_INITIATOR, true);
+    gpio_set_input_enabled(DIP_DBGLOG, true);
+    gpio_set_input_enabled(DIP_TERM, true);
+#endif
+
     delay(10); // 10 ms delay to let pull-ups do their work
     bool working_dip = true;
     bool dbglog = false;
