@@ -160,7 +160,9 @@
                        (1 << SCSI_OUT_RST) | \
                        (1 << SCSI_OUT_BSY) | \
                        (1 << SCSI_OUT_REQ) | \
-                       (1 << SCSI_OUT_SEL)
+                       (1 << SCSI_OUT_SEL) | \
+                       (1 << SCSI_OUT_ACK) | \
+                       (1 << SCSI_OUT_ATN)
 
 // Read SCSI data bus
 #define SCSI_IN_DATA() \

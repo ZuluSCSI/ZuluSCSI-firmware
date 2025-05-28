@@ -66,7 +66,6 @@ void scsiHostPhyReset(void)
 // Returns true if the target answers to selection request.
 bool scsiHostPhySelect(int target_id, uint8_t initiator_id)
 {
-    SCSI_RELEASE_OUTPUTS();
 
     // We can't write individual data bus bits, so use a bit modified
     // arbitration scheme. We always yield to any other initiator on
@@ -119,6 +118,10 @@ bool scsiHostPhySelect(int target_id, uint8_t initiator_id)
     return true;
 }
 
+void scsiHostPhySetATN(bool atn)
+{
+    SCSI_OUT(ATN, atn);
+}
 // Read the current communication phase as signaled by the target
 int scsiHostPhyGetPhase()
 {

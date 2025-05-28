@@ -694,6 +694,88 @@ int scsiInitiatorRunCommand(int target_id,
     return status;
 }
 
+int scsiInitiatorMessage(int target_id,
+    const uint8_t *msgOut, size_t msgOutLen,
+    uint8_t *msgIn, size_t msgInBufSize, size_t *msgInLen,
+    uint32_t timeout)
+{
+    uint8_t command[6] = {0x00, 0, 0, 0, 0, 0};
+
+    scsiHostPhySetATN(true);
+
+    if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
+    {
+        dbgmsg("------ Target ", target_id, " did not respond");
+        scsiHostPhyRelease();
+        return -1;
+    }
+
+    size_t dummy;
+    if (!msgInLen) msgInLen = &dummy;
+    *msgInLen = 0;
+
+    size_t msgOutSent = 0;
+
+    SCSI_PHASE phase;
+    int status = -1;
+    uint32_t start = millis();
+    while ((phase = (SCSI_PHASE)scsiHostPhyGetPhase()) != BUS_FREE)
+    {
+        // If explicit timeout is specified, prevent watchdog from triggering too early.
+        if ((uint32_t)(millis() - start) < timeout)
+        {
+            platform_reset_watchdog();
+        }
+
+        platform_poll();
+
+        if (phase == MESSAGE_IN)
+        {
+            uint8_t msg = 0;
+            scsiHostRead(&msg, 1);
+
+            if (*msgInLen < msgInBufSize)
+            {
+                msgIn[*msgInLen] = msg;
+                *msgInLen += 1;
+            }
+
+            if (status != -1 && msg == MSG_COMMAND_COMPLETE)
+            {
+                break;
+            }
+        }
+        else if (phase == MESSAGE_OUT)
+        {
+            if (msgOutSent < msgOutLen)
+            {
+                scsiHostWrite(&msgOut[msgOutSent++], 1);
+                if (msgOutSent >= msgOutLen)
+                {
+                    // End of MESSAGE_OUT phase
+                    // Note that target may switch to MESSAGE_IN earlier than this
+                    scsiHostPhySetATN(false);
+                }
+            }
+        }
+        else if (phase == COMMAND)
+        {
+            scsiHostWrite(command, sizeof(command));
+        }
+        else if (phase == STATUS)
+        {
+            uint8_t tmp = -1;
+            scsiHostRead(&tmp, 1);
+            status = tmp;
+            dbgmsg("------ STATUS: ", tmp);
+        }
+    }
+
+    scsiHostWaitBusFree();
+
+    return status;
+}
+
 bool scsiInitiatorTestSupportsRead10(int target_id, uint32_t sectorsize)
 {
     if (ini_haskey("SCSI", "InitiatorUseRead10", CONFIGFILE))

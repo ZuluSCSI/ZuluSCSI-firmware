@@ -46,6 +46,12 @@ int scsiInitiatorRunCommand(int target_id,
                             bool returnDataPhase = false,
                             uint32_t timeout = 30000);
 
+// Run TestUnitReady command and exchange messages
+int scsiInitiatorMessage(int target_id,
+                         const uint8_t *msgOut, size_t msgOutLen,
+                         uint8_t *msgIn, size_t msgInBufSize, size_t *msgInLen,
+                         uint32_t timeout = 30000);
+
 // Detect support of read10 commands.
 // Returns true if supported.
 // Return value can be overridden by .ini file, in which case test is not done.

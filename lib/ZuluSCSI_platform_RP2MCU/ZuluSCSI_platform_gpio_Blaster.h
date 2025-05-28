@@ -179,7 +179,9 @@
     sio_hw->gpio_set = (1 << SCSI_OUT_IO) | \
                        (1 << SCSI_OUT_CD) | \
                        (1 << SCSI_OUT_MSG) | \
-                       (1 << SCSI_OUT_REQ), \
+                       (1 << SCSI_OUT_REQ) | \
+                       (1 << SCSI_OUT_ACK) | \
+                       (1 << SCSI_OUT_ATN), \
     sio_hw->gpio_hi_set =   (1 << (SCSI_OUT_RST - 32)) | \
                             (1 << (SCSI_OUT_BSY - 32)) | \
                             (1 << (SCSI_OUT_SEL - 32))
