@@ -491,6 +491,9 @@ void platform_late_init()
     gpio_conf(SCSI_IO_DBP1,   GPIO_FUNC_SIO, true, false, false, true, true);
 #endif
 
+    dbgmsg("Starting Core1 dispatcher");
+    multicore_launch_core1(core1_handler);
+
     if (!g_scsi_initiator)
     {
         // Act as SCSI device / target
@@ -570,9 +573,6 @@ void platform_late_init()
         logmsg("Audio Output timings not found");
     }
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
-
-    dbgmsg("Starting Core1 dispatcher");
-    multicore_launch_core1(core1_handler);
 
 // This should turn on the LED for Pico 1/2 W devices early in the init process
 // It should help indicate to the user that interface is working and the board is ready for DaynaPORT
