@@ -84,7 +84,7 @@ static void scsi_accel_host_config_gpio()
     }
 }
 
-uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, volatile int *resetFlag)
+uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, int busWidth, volatile int *resetFlag)
 {
     // Currently this method just reads from the PIO RX fifo directly in software loop.
     // The SD card access is parallelized using DMA, so there is limited benefit from using DMA here.
@@ -99,7 +99,16 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, vo
 
     // Set the number of bytes to read, must be divisible by 2.
     assert((count & 1) == 0);
-    pio_sm_put(SCSI_PIO, SCSI_SM, count - 1);
+    if (busWidth == 0)
+    {
+        // 8-bit bus
+        pio_sm_put(SCSI_PIO, SCSI_SM, count - 1);
+    }
+    else
+    {
+        // 16-bit bus
+        pio_sm_put(SCSI_PIO, SCSI_SM, count / 2 - 1);
+    }
 
     // Read results from PIO RX FIFO
     uint8_t *dst = buf;
@@ -154,24 +163,49 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, vo
             }
         }
 
-        while (available > 0)
+        if (busWidth == 0)
         {
-            available--;
-            uint32_t word = pio_sm_get(SCSI_PIO, SCSI_SM);
-            paritycheck ^= word;
-            word = ~word;
+            // 8-bit bus
+            // For normal ZuluSCSI, there are two bytes per PIO word.
+            // For wide ZuluSCSI, there is one byte per PIO word.
+
+            while (available > 0)
+            {
+                available--;
+                uint32_t word = pio_sm_get(SCSI_PIO, SCSI_SM);
+                paritycheck ^= word;
+                word = ~word;
 
 #ifdef ZULUSCSI_WIDE
-            *dst++ = word & 0xFF;
+                *dst++ = word & 0xFF;
 #else
-            *dst++ = word & 0xFF;
-            *dst++ = word >> 16;
+                *dst++ = word & 0xFF;
+                *dst++ = word >> 16;
 #endif
+            }
+        }
+        else
+        {
+            // 16-bit bus
+            while (available > 0)
+            {
+                available--;
+                uint32_t word = pio_sm_get(SCSI_PIO, SCSI_SM);
+                paritycheck ^= word;
+                word = ~word;
+
+                *dst++ = word & 0xFF;
+                *dst++ = (word >> 8) & 0xFF;
+            }
         }
     }
 
 #ifdef ZULUSCSI_WIDE
-    bool parity_ok = scsi_check_parity(paritycheck);
+    bool parity_ok;
+    if (busWidth == 0)
+        parity_ok = scsi_check_parity(paritycheck);
+    else
+        parity_ok = scsi_check_parity_16bit(paritycheck);
 #else
     bool parity_ok = scsi_check_parity(paritycheck & 0xFFFF) && scsi_check_parity(paritycheck >> 16);
 #endif

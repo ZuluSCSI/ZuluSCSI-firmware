@@ -72,6 +72,13 @@ bool scsiInquiry(int target_id, uint8_t inquiry_data[36]);
 // Execute TEST UNIT READY command and handle unit attention state
 bool scsiTestUnitReady(int target_id);
 
+// Reset bus configuration to default (async 8-bit)
+bool scsiInitiatorResetBusConfig(int target_id);
+
+// Enable/disable wide bus mode and test communication
+// Reverts to 8-bit on failure
+bool scsiInitiatorSetBusWidth(int target_id, int busWidth);
+
 // Read a block of data from SCSI device and write to file on SD card
 class FsFile;
 bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t sectorcount, uint32_t sectorsize,

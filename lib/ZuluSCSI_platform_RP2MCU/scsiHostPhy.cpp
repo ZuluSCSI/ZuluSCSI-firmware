@@ -32,6 +32,7 @@ extern "C" {
 }
 
 volatile int g_scsiHostPhyReset;
+int g_scsiHostBusWidth;
 
 #ifndef PLATFORM_HAS_INITIATOR_MODE
 
@@ -66,6 +67,8 @@ void scsiHostPhyReset(void)
 // Returns true if the target answers to selection request.
 bool scsiHostPhySelect(int target_id, uint8_t initiator_id)
 {
+    // Command phase always happens in 8-bit mode
+    scsiHostSetBusWidth(0);
 
     // We can't write individual data bus bits, so use a bit modified
     // arbitration scheme. We always yield to any other initiator on
@@ -122,6 +125,16 @@ void scsiHostPhySetATN(bool atn)
 {
     SCSI_OUT(ATN, atn);
 }
+
+void scsiHostSetBusWidth(int busWidth)
+{
+#ifdef ZULUSCSI_WIDE
+    g_scsiHostBusWidth = busWidth;
+#else
+    assert(busWidth == 0);
+#endif
+}
+
 // Read the current communication phase as signaled by the target
 int scsiHostPhyGetPhase()
 {
@@ -224,6 +237,37 @@ static inline uint8_t scsiHostReadOneByte(int* parityError)
     return (uint8_t)r;
 }
 
+#ifdef ZULUSCSI_WIDE
+static inline void scsiHostWriteOneWord(uint16_t value)
+{
+    SCSIHOST_WAIT_ACTIVE(REQ);
+    SCSI_OUT_DATA(value);
+    delay_100ns(); // DB setup time before ACK
+    SCSI_OUT(ACK, 1);
+    SCSIHOST_WAIT_INACTIVE(REQ);
+    SCSI_RELEASE_DATA_REQ();
+    SCSI_OUT(ACK, 0);
+}
+
+// Read one byte from SCSI target using the handshake mechanism.
+static inline uint16_t scsiHostReadOneWord(int* parityError)
+{
+    SCSIHOST_WAIT_ACTIVE(REQ);
+    uint32_t r = SCSI_IN_DATA();
+    SCSI_OUT(ACK, 1);
+    SCSIHOST_WAIT_INACTIVE(REQ);
+    SCSI_OUT(ACK, 0);
+
+    if (parityError && !scsi_check_parity_16bit(r))
+    {
+        logmsg("Parity error in scsiHostReadOneWord(): ", (uint32_t)r);
+        *parityError = 1;
+    }
+
+    return (uint16_t)r;
+}
+#endif
+
 uint32_t scsiHostWrite(const uint8_t *data, uint32_t count)
 {
     scsiLogDataOut(data, count);
@@ -243,7 +287,23 @@ uint32_t scsiHostWrite(const uint8_t *data, uint32_t count)
             }
         }
 
-        scsiHostWriteOneByte(data[i]);
+        if (g_scsiHostBusWidth == 0)
+        {
+            scsiHostWriteOneByte(data[i]);
+        }
+#ifdef ZULUSCSI_WIDE
+        else if (g_scsiHostBusWidth == 1)
+        {
+            uint16_t word = data[i++];
+            if (i < count) word |= (uint16_t)data[i] << 8;
+            scsiHostWriteOneWord(word);
+        }
+#endif
+        else
+        {
+            logmsg("Invalid bus width ", g_scsiHostBusWidth);
+            return 0;
+        }
     }
 
     return count;
@@ -260,7 +320,7 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
     if ((count & 1) == 0 && ((uint32_t)data & 1) == 0)
     {
         // Even number of bytes, use accelerated routine
-        count = scsi_accel_host_read(data, count, &parityError, &g_scsiHostPhyReset);
+        count = scsi_accel_host_read(data, count, &parityError, g_scsiHostBusWidth, &g_scsiHostPhyReset);
     }
     else
     {
@@ -289,7 +349,23 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
                 break;
             }
 
-            data[i] = scsiHostReadOneByte(&parityError);
+            if (g_scsiHostBusWidth == 0)
+            {
+                data[i] = scsiHostReadOneByte(&parityError);
+            }
+#ifdef ZULUSCSI_WIDE
+            else if (g_scsiHostBusWidth == 1)
+            {
+                uint16_t word = scsiHostReadOneWord(&parityError);
+                data[i++] = word & 0xFF;
+                if (i < count) data[i] = word >> 8;
+            }
+#endif
+            else
+            {
+                logmsg("Invalid bus width ", g_scsiHostBusWidth);
+                return 0;
+            }
         }
     }
 
