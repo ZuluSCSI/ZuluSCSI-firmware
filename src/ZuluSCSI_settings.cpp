@@ -48,6 +48,7 @@ const char * const speed_grade_strings[] =
     "A",
     "B",
     "C",
+    "WifiRM2"
 };
 
 // Helper function for case-insensitive string compare
@@ -367,7 +368,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     else if (strequals(systemPresetName[SYS_PRESET_MPC3000], presetName))
     {
         m_sysPreset = SYS_PRESET_MPC3000;
-        cfgSys.initPreDelay = 600;
+        cfgSys.initPreDelay = 700;
     }
     else if (strequals(systemPresetName[SYS_PRESET_MEGASTE], presetName))
     {
@@ -556,4 +557,19 @@ zuluscsi_speed_grade_t ZuluSCSISettings::stringToSpeedGrade(const char *speed_gr
 const char *ZuluSCSISettings::getSpeedGradeString()
 {
     return speed_grade_strings[m_sys.speedGrade];
+}
+
+
+const bool ZuluSCSISettings::isEjectButtonSet()
+{
+    bool is_set = false;
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        if (m_dev[i].ejectButton != 0)
+        {
+            is_set = true;
+            break;
+        }
+    }
+    return is_set;
 }

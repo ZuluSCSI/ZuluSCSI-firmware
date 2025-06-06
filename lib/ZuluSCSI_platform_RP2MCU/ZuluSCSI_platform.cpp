@@ -40,6 +40,11 @@
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
 
+#ifdef SD_USE_RP2350_SDIO
+#include <sdio_rp2350.h>
+#else
+#include <sdio.h>
+#endif
 
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
 # include <SerialUSB.h>
@@ -52,6 +57,9 @@
 extern "C" {
 #  include <pico/cyw43_arch.h>
 }
+#  ifdef ZULUSCSI_RM2
+#    include <pico/cyw43_driver.h>
+#  endif
 #endif // ZULUSCSI_NETWORK
 
 #ifdef PLATFORM_MASS_STORAGE
@@ -171,7 +179,9 @@ bool platform_reclock(zuluscsi_speed_grade_t speed_grade)
 #endif
             logmsg("Initial Clock set to ", (int) platform_sys_clock_in_hz(), "Hz");
             logmsg("Reclocking the MCU to ",(int) g_zuluscsi_timings->clk_hz, "Hz");
+#ifndef SD_USE_RP2350_SDIO
             logmsg("Setting the SDIO clock to ", (int)((g_zuluscsi_timings->clk_hz / g_zuluscsi_timings->sdio.clk_div_pio + (5 * MHZ / 10)) / MHZ) , "MHz");
+#endif
             usb_log_poll();
             reclock();
             logmsg("After reclocking, system reports clock set to ", (int) platform_sys_clock_in_hz(), "Hz");
@@ -344,6 +354,10 @@ void platform_init()
     logmsg ("SCSI termination is handled by a hardware jumper");
 #endif  // HAS_DIP_SWITCHES
 
+        logmsg("===========================================================");
+        logmsg(" Powered by Raspberry Pi");
+        logmsg("            Raspberry Pi is a trademark of Raspberry Pi Ltd");
+        logmsg("===========================================================");
 
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
@@ -393,7 +407,9 @@ void platform_late_init()
 #if defined(HAS_DIP_SWITCHES) && defined(PLATFORM_HAS_INITIATOR_MODE)
     if (g_scsi_initiator == true)
     {
-        logmsg("SCSI initiator mode selected by DIP switch, expecting SCSI disks on the bus");
+        logmsg("***************************************************************************");
+        logmsg("        SCSI initiator mode enabled, expecting SCSI disks on the bus       ");
+        logmsg("***************************************************************************");
     }
     else
     {
@@ -452,14 +468,44 @@ void platform_late_init()
         gpio_conf(SCSI_IN_ATN,    GPIO_FUNC_SIO, true, false, false, true, false);
         gpio_conf(SCSI_IN_RST,    GPIO_FUNC_SIO, true, false, false, true, false);
 
-#ifdef ENABLE_AUDIO_OUTPUT_I2S
+#ifdef ZULUSCSI_RM2
+    uint rm2_pins[CYW43_PIN_INDEX_WL_COUNT] = {0};
+    rm2_pins[CYW43_PIN_INDEX_WL_REG_ON] = GPIO_RM2_ON;
+    rm2_pins[CYW43_PIN_INDEX_WL_DATA_OUT] = GPIO_RM2_DATA;
+    rm2_pins[CYW43_PIN_INDEX_WL_DATA_IN] = GPIO_RM2_DATA;
+    rm2_pins[CYW43_PIN_INDEX_WL_HOST_WAKE] = GPIO_RM2_DATA;
+    rm2_pins[CYW43_PIN_INDEX_WL_CLOCK] = GPIO_RM2_CLK;
+    rm2_pins[CYW43_PIN_INDEX_WL_CS] = GPIO_RM2_CS;
+    assert(PICO_OK == cyw43_set_pins_wl(rm2_pins));
+    if (platform_reclock(SPEED_GRADE_WIFI_RM2))
+    {
+        // The iface check turns on the LED on the RM2 early in the init process
+        // Should tell the user that the RM2 is working
+        if(platform_network_iface_check())
+        {
+            logmsg("RM2 found");
+        }
+        else
+        {
+# ifdef ZULUSCSI_BLASTER
+            logmsg("RM2 not found, upclocking");
+            platform_reclock(SPEED_GRADE_AUDIO_I2S);
+# else
+            logmsg("RM2 not found");
+# endif
+        }
+    }
+    else
+    {
+        logmsg("WiFi RM2 timings not found");
+    }
+#elif defined(ENABLE_AUDIO_OUTPUT_I2S)
     logmsg("I2S audio to expansion header enabled");
     if (!platform_reclock(SPEED_GRADE_AUDIO_I2S))
     {
         logmsg("Audio output timings not found");
     }
-#endif
-#ifdef ENABLE_AUDIO_OUTPUT_SPDIF
+#elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
     logmsg("S/PDIF audio to expansion header enabled");
     if (platform_reclock(SPEED_GRADE_AUDIO_SPDIF))
     {
@@ -470,6 +516,13 @@ void platform_late_init()
         logmsg("Audio Output timings not found");
     }
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
+
+// This should turn on the LED for Pico 1/2 W devices early in the init process
+// It should help indicate to the user that interface is working and the board is ready for DaynaPORT
+#if  defined(ZULUSCSI_NETWORK) && ! defined(ZULUSCSI_RM2)
+    platform_network_iface_check();
+#endif
+
 
 #ifdef ENABLE_AUDIO_OUTPUT
         // one-time control setup for DMA channels and second core
@@ -497,6 +550,7 @@ void platform_late_init()
         gpio_conf(SCSI_OUT_ATN,   GPIO_FUNC_SIO, false,false, true,  true, true);
 #endif  // PLATFORM_HAS_INITIATOR_MODE
     }
+
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
     Serial.begin();
 #endif
@@ -645,6 +699,28 @@ void isr_hardfault(void)
 /* Debug logging and watchdog            */
 /*****************************************/
 
+static bool usb_serial_connected()
+{
+#ifdef PIO_FRAMEWORK_ARDUINO_NO_USB
+    return false;
+#endif
+
+    static bool connected;
+    static uint32_t last_check_time;
+
+#ifdef PLATFORM_MASS_STORAGE
+    if (platform_msc_lock_get()) return connected; // Avoid re-entrant USB events
+#endif
+
+    if (last_check_time == 0 || (uint32_t)(millis() - last_check_time) > 50)
+    {
+        connected = bool(Serial);
+        last_check_time = millis();
+    }
+
+    return connected;
+}
+
 // Send log data to USB UART if USB is connected.
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.
@@ -658,6 +734,8 @@ static void usb_log_poll()
 {
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
     static uint32_t logpos = 0;
+
+    if (!usb_serial_connected()) return;
 
 #ifdef PLATFORM_MASS_STORAGE
     if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
@@ -686,7 +764,9 @@ static void usb_log_poll()
 // Grab input from USB Serial terminal
 static void usb_input_poll()
 {
-    #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+
+    if (!usb_serial_connected()) return;
 
 #ifdef PLATFORM_MASS_STORAGE
     if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
@@ -962,7 +1042,10 @@ uint8_t platform_get_buttons()
     return buttons_debounced;
 }
 
-
+bool platform_has_phy_eject_button()
+{
+    return false;
+}
 
 /************************************/
 /* ROM drive in extra flash space   */
@@ -1140,3 +1223,20 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 #undef X
 
 } /* extern "C" */
+
+
+#ifdef SD_USE_SDIO
+// These functions are not used for SDIO mode but are needed to avoid build error.
+void sdCsInit(SdCsPin_t pin) {}
+void sdCsWrite(SdCsPin_t pin, bool level) {}
+
+// SDIO configuration for main program
+SdioConfig g_sd_sdio_config(DMA_SDIO);
+
+#ifdef SD_USE_RP2350_SDIO
+void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
+{
+    rp2350_sdio_sdfat_set_callback(func, buffer);
+}
+#endif
+#endif
