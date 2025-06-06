@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -32,7 +32,7 @@
 #include <SdFat.h>
 #include <scsi.h>
 #include <assert.h>
-#include <audio.h>
+#include <audio_i2s.h>
 #include <ZuluSCSI_audio.h>
 #include <ZuluSCSI_settings.h>
 
@@ -827,6 +827,11 @@ uint8_t platform_get_buttons()
 #endif
 
     return buttons_debounced;
+}
+
+bool platform_has_phy_eject_button()
+{
+    return g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2;
 }
 
 /***********************/

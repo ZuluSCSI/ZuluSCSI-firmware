@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -24,6 +24,10 @@
 // the PIO peripheral. The high-level commands are in sd_card_sdio.cpp.
 
 #pragma once
+
+#include <ZuluSCSI_platform.h>
+#if defined(SD_USE_SDIO) && !defined(SD_USE_RP2350_SDIO)
+
 #include <stdint.h>
 
 enum sdio_status_t {
@@ -74,3 +78,5 @@ sdio_status_t receive_status_register(uint8_t* sds);
 
 // (Re)initialize the SDIO interface
 void rp2040_sdio_init(int clock_divider = 1);
+
+#endif

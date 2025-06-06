@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2024 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2024-2025 Rabbit Hole Computing™
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
  *
@@ -22,10 +22,9 @@
 
 #define CUSTOM_TIMINGS_FILE "zuluscsi_timings.ini"
 
-extern "C"
-{
-    #include "timings_RP2MCU.h"
-}
+
+#include "timings_RP2MCU.h"
+
 
 class CustomTimings
 {

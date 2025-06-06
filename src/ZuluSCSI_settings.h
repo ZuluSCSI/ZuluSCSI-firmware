@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2023 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2023-2025 Rabbit Hole Computing™
  * Copyright (c) 2023 Eric Helgeson
  * 
  * This file is licensed under the GPL version 3 or any later version.  
@@ -20,10 +20,27 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 #pragma once
+
+// must be in the same order as speed_grade_strings[]  in ZuluSCSI_settings.cpp
+typedef enum
+{
+    SPEED_GRADE_DEFAULT = 0,
+    SPEED_GRADE_MAX,
+    SPEED_GRADE_CUSTOM,
+    SPEED_GRADE_AUDIO_SPDIF,
+    SPEED_GRADE_AUDIO_I2S,
+    SPEED_GRADE_A,
+    SPEED_GRADE_B,
+    SPEED_GRADE_C,
+    SPEED_GRADE_WIFI_RM2
+} zuluscsi_speed_grade_t;
+
 #ifdef __cplusplus
 
 #include <stdint.h>
+#include <stddef.h>
 #include <scsi2sd.h>
+
 
 // Index 8 is the system defaults
 // Index 0-7 represent device settings
@@ -65,11 +82,14 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
     bool enableParity;
     bool useFATAllocSize;
     bool enableCDAudio;
+    uint8_t maxVolume;
     bool enableUSBMassStorage;
     uint16_t usbMassStorageWaitPeriod;
     bool usbMassStoragePresentImages;
     
     bool invertStatusLed;
+
+    uint8_t speedGrade; // memory allocation for zuluscsi_speed_grade_t enum
 
 } scsi_system_settings_t;
 
@@ -91,6 +111,8 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     uint8_t deviceType;
     uint8_t deviceTypeModifier;
     uint8_t ejectButton;
+    uint32_t ejectBlinkTimes;
+    uint32_t ejectBlinkPeriod;
     bool nameFromImage;
     bool rightAlignStrings;
     bool reinsertOnInquiry;
@@ -136,6 +158,14 @@ public:
     // return the device preset name
     const char* getDevicePresetName(uint8_t scsiId);
 
+    // convert string to speed grade
+    zuluscsi_speed_grade_t stringToSpeedGrade(const char *speed_grade_str, size_t length);
+
+    const char* getSpeedGradeString();
+
+    // see if any SCSI devices have an eject button set
+    const bool isEjectButtonSet();
+
 protected:
     // Set default drive vendor / product info after the image file
     // is loaded and the device type is known.
@@ -148,15 +178,17 @@ protected:
     scsi_system_preset_t m_sysPreset;
     // The last preset is for the device specific under [SCSI] in the CONFIGFILE
     // The rest are for corresponding SCSI Ids e.g. [SCSI0] in the CONFIGFILE.
-    scsi_device_preset_t m_devPreset[8];
+    scsi_device_preset_t m_devPreset[S2S_MAX_TARGETS];
 
     // These are setting for host compatibility
     scsi_system_settings_t m_sys;
 
     // The last dev will be copied over the other dev scsi Id for device defaults.
     // It is set during when the system settings are initialized
-    scsi_device_settings_t m_dev[9];
+    scsi_device_settings_t m_dev[S2S_MAX_TARGETS+1];
 } ;
+
+
 
 extern ZuluSCSISettings g_scsi_settings;
 #endif // __cplusplus

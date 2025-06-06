@@ -60,6 +60,7 @@ static struct {
   uint8_t lun_count = 0;
   uint8_t unitReady = 0;
   uint8_t SDMode = 1;
+  uint8_t lun_count_prev_response = 0;
 } g_MSC;
 
 void platform_msc_lock_set(bool block)
@@ -209,6 +210,18 @@ void platform_enter_msc() {
 
   // MSC is ready for read/write
   g_MSC.unitReady = g_MSC.lun_count;
+
+  if (g_MSC.lun_count_prev_response != 0 &&
+      g_MSC.lun_count != g_MSC.lun_count_prev_response)
+  {
+    // Host has already queried us for the number of LUNs, but
+    // our response has now changed. We need to re-enumerate to
+    // update it.
+    g_MSC.lun_count_prev_response = 0;
+    tud_disconnect();
+    delay(250);
+    tud_connect();
+  }
 }
 
 /* perform any cleanup tasks for the MSC-specific functionality */
@@ -231,7 +244,7 @@ extern "C" void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
 
   const char vid[] = "ZuluSCSI";
   const char pid[] = PLATFORM_PID; 
-  const char rev[] = "1.0";
+  const char rev[] = PLATFORM_REVISION;
 
   memcpy(vendor_id, vid, tu_min32(strlen(vid), 8));
   memcpy(product_id, pid, tu_min32(strlen(pid), 16));
@@ -243,9 +256,25 @@ extern "C" void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
 extern "C" uint8_t tud_msc_get_maxlun_cb(void)
 {
   MSCScopedLock lock;
-  if (g_msc_initiator) return init_msc_get_maxlun_cb();
+  uint8_t result;
 
-  return g_MSC.lun_count; // number of LUNs supported
+  if (g_msc_initiator)
+  {
+    result = init_msc_get_maxlun_cb();
+  }
+  else if (g_MSC.lun_count != 0)
+  {
+    result = g_MSC.lun_count; // number of LUNs supported
+  }
+  else
+  {
+    // Returning 0 makes TU_VERIFY(maxlun); fail in tinyusb/src/class/msc/msc_device.c:378
+    // This stalls the endpoint and causes an unnecessary enumeration delay on Windows.
+    result = 1;
+  }
+
+  g_MSC.lun_count_prev_response = result;
+  return result;
 }
 
 // return writable status
@@ -380,7 +409,7 @@ extern "C" int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset
                            uint8_t *buffer, uint32_t bufsize)
 {
   MSCScopedLock lock;
-  if (g_msc_initiator) return init_msc_read10_cb(lun, lba, offset, buffer, bufsize);
+  if (g_msc_initiator) return init_msc_write10_cb(lun, lba, offset, buffer, bufsize);
 
   bool rc = 0;
 

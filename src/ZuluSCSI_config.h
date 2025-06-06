@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * Portions copyright (c) 2023 joshua stein <jcs@jcs.org>
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
@@ -24,17 +24,15 @@
 // Other settings can be set by ini file at runtime.
 
 #pragma once
-
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "25.01.26"
-#define FW_VER_SUFFIX   "devel"
+#define FW_VER_NUM      "25.06.01"
+#define FW_VER_SUFFIX   "release"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
 #define STRINGFY(STR) #STR
 #define FIRMWARE_NAME_PREFIX DEF_STRINGFY(BUILD_ENV)
-
 #define ZULU_FW_VERSION FW_VER_NUM "-" FW_VER_SUFFIX
 #define INQUIRY_NAME  PLATFORM_NAME " v" ZULU_FW_VERSION
 #define TOOLBOX_API 0
@@ -133,25 +131,8 @@
 #define ZIP100_DISK_SIZE    100663296 // bytes
 #define ZIP250_DISK_SIZE    250640384 // bytes
 
+#define TAPE_DEFAULT_NAME  "tape.000"
+
 // Settings for rebooting
 #define REBOOT_INTO_MASS_STORAGE_MAGIC_NUM 0x5eeded
 
-// Reclocking return status
-typedef enum
-{
-    ZULUSCSI_RECLOCK_SUCCESS,
-    ZULUSCSI_RECLOCK_CUSTOM,
-    ZULUSCSI_RECLOCK_NOT_SUPPORTED,
-    ZULUSCSI_RECLOCK_FAILED
-} zuluscsi_reclock_status_t;
-
-typedef enum
-{
-    SPEED_GRADE_DEFAULT,
-    SPEED_GRADE_MAX,
-    SPEED_GRADE_CUSTOM,
-    SPEED_GRADE_A,
-    SPEED_GRADE_B,
-    SPEED_GRADE_C,
-    SPEED_GRADE_AUDIO,
-} zuluscsi_speed_grade_t;

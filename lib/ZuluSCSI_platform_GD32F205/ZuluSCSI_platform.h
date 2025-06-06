@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -122,11 +122,8 @@ uint8_t platform_get_buttons();
 // Return system clock in Hz
 uint32_t platform_sys_clock_in_hz();
 
-// Attempt to reclock the MCU - unsupported
-inline zuluscsi_reclock_status_t platform_reclock(zuluscsi_speed_grade_t speed_grade){return ZULUSCSI_RECLOCK_NOT_SUPPORTED;}
-
-// match string to speed grade - unsupported
-inline zuluscsi_speed_grade_t platform_string_to_speed_grade(const char *speed_grade_str, size_t length){return SPEED_GRADE_DEFAULT;}
+// Return whether device supports reclocking the MCU
+inline bool platform_reclock_supported(){return false;}
 
 // Returns true if reboot was for mass storage - unsupported
 inline bool platform_rebooted_into_mass_storage() {return false;}
@@ -151,6 +148,9 @@ void SysTick_Handle_PreEmptively();
 #define PLATFORM_FLASH_PAGE_SIZE 2048
 bool platform_rewrite_flash_page(uint32_t offset, uint8_t buffer[PLATFORM_FLASH_PAGE_SIZE]);
 void platform_boot_to_main_firmware();
+
+// True if the board has a physical eject button
+bool platform_has_phy_eject_button();
 
 // Configuration customizations based on DIP switch settings
 // When DIPSW1 is on, Apple quirks are enabled by default.

@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -212,7 +212,7 @@ static inline uint8_t scsiHostReadOneByte(int* parityError)
     SCSIHOST_WAIT_INACTIVE(REQ);
     SCSI_OUT(ACK, 0);
 
-    if (parityError && r != (g_scsi_parity_lookup[r & 0xFF] ^ SCSI_IO_DATA_MASK))
+    if (parityError && r != (g_scsi_parity_lookup[r & 0xFF] ^ (SCSI_IO_DATA_MASK >> SCSI_IO_SHIFT)))
     {
         logmsg("Parity error in scsiReadOneByte(): ", (uint32_t)r);
         *parityError = 1;
@@ -305,6 +305,57 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
 
         return count;
     }
+}
+
+// Release bus signals and expect the target to do the same.
+// Cycles ACK in case target still holds BSY and REQ.
+void scsiHostWaitBusFree()
+{
+    SCSI_RELEASE_OUTPUTS();
+
+    sleep_us(2);
+
+    // Wait for the target to release BSY signal.
+    // If the target is expecting more data, transfer dummy bytes.
+    // This happens for some reason with READ6 command on IBM H3171-S2.
+    uint32_t start = millis();
+    int extra_bytes = 0;
+    while (SCSI_IN(BSY))
+    {
+        platform_poll();
+
+        if (SCSI_IN(REQ))
+        {
+            // Target is expecting something more
+            // Transfer dummy bytes
+             SCSI_OUT(BSY, 1);
+             sleep_us(1);
+
+             while (SCSI_IN(REQ))
+             {
+                scsiHostReadOneByte(nullptr);
+                extra_bytes++;
+                sleep_us(1);
+             }
+
+             SCSI_OUT(BSY, 0);
+             sleep_us(1);
+        }
+
+        if ((uint32_t)(millis() - start) > 10000)
+        {
+            logmsg("Target is holding BSY for unexpectedly long, running reset.");
+            scsiHostPhyReset();
+            break;
+        }
+    }
+
+    if (extra_bytes > 0)
+    {
+        dbgmsg("---- Target requested ", extra_bytes, " extra bytes after command complete");
+    }
+
+    scsiHostPhyRelease();
 }
 
 // Release all bus signals

@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  *
@@ -74,7 +74,10 @@ static struct {
     // Bitmap of all drives that have been imaged
     uint32_t drives_imaged;
 
+    // Configuration from .ini
     uint8_t initiator_id;
+    uint8_t max_retry_count;
+    bool use_read10; // Always use read10 commands
 
     // Is imaging a drive in progress, or are we scanning?
     bool imaging;
@@ -88,7 +91,6 @@ static struct {
     uint32_t max_sector_per_transfer;
     uint32_t bad_sector_count;
     uint8_t ansi_version;
-    uint8_t max_retry_count;
     uint8_t device_type;
 
     // Retry information for sector reads.
@@ -121,6 +123,7 @@ void scsiInitiatorInit()
         logmsg("InitiatorID set to ID ", g_initiator_state.initiator_id);
     }
     g_initiator_state.max_retry_count = ini_getl("SCSI", "InitiatorMaxRetry", 5, CONFIGFILE);
+    g_initiator_state.use_read10 = ini_getbool("SCSI", "InitiatorUseRead10", false, CONFIGFILE);
 
     // treat initiator id as already imaged drive so it gets skipped
     g_initiator_state.drives_imaged = 1 << g_initiator_state.initiator_id;
@@ -241,11 +244,18 @@ void scsiInitiatorMainLoop()
     {
         // Scan for SCSI drives one at a time
         g_initiator_state.target_id = (g_initiator_state.target_id + 1) % 8;
+        g_initiator_state.sectorsize = 0;
+        g_initiator_state.sectorcount = 0;
         g_initiator_state.sectors_done = 0;
         g_initiator_state.retrycount = 0;
+        g_initiator_state.failposition = 0;
         g_initiator_state.max_sector_per_transfer = 512;
+        g_initiator_state.ansi_version = 0;
         g_initiator_state.bad_sector_count = 0;
+        g_initiator_state.device_type = SCSI_DEVICE_TYPE_DIRECT_ACCESS;
+        g_initiator_state.removable = false;
         g_initiator_state.eject_when_done = false;
+        g_initiator_state.use_read10 = false;
 
         if (!(g_initiator_state.drives_imaged & (1 << g_initiator_state.target_id)))
         {
@@ -324,11 +334,13 @@ void scsiInitiatorMainLoop()
                 memcpy(revision, &inquiry_data[32], 4);
                 revision[4]=0;
 
-                if(g_initiator_state.ansi_version < 0x02)
+                g_initiator_state.use_read10 = scsiInitiatorTestSupportsRead10(g_initiator_state.target_id, g_initiator_state.sectorsize);
+                if(!g_initiator_state.use_read10)
                 {
-                    // this is a SCSI-1 drive, use READ6 and 256 bytes to be safe.
+                    // READ6 command can transfer up to 256 sectors
                     g_initiator_state.max_sector_per_transfer = 256;
                 }
+
                 int ini_type = scsiTypeToIniType(g_initiator_state.device_type, g_initiator_state.removable);
                 logmsg("SCSI Version ", (int) g_initiator_state.ansi_version);
                 logmsg("[SCSI", g_initiator_state.target_id,"]");
@@ -580,7 +592,7 @@ int scsiInitiatorRunCommand(int target_id,
                             const uint8_t *command, size_t cmdLen,
                             uint8_t *bufIn, size_t bufInLen,
                             const uint8_t *bufOut, size_t bufOutLen,
-                            bool returnDataPhase)
+                            bool returnDataPhase, uint32_t timeout)
 {
 
     if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
@@ -594,14 +606,26 @@ int scsiInitiatorRunCommand(int target_id,
 
     SCSI_PHASE phase;
     int status = -1;
+    uint32_t start = millis();
     while ((phase = (SCSI_PHASE)scsiHostPhyGetPhase()) != BUS_FREE)
     {
+        // If explicit timeout is specified, prevent watchdog from triggering too early.
+        if ((uint32_t)(millis() - start) < timeout)
+        {
+            platform_reset_watchdog();
+        }
+
         platform_poll();
 
         if (phase == MESSAGE_IN)
         {
-            uint8_t dummy = 0;
-            scsiHostRead(&dummy, 1);
+            uint8_t msg = 0;
+            scsiHostRead(&msg, 1);
+
+            if (msg == MSG_COMMAND_COMPLETE)
+            {
+                break;
+            }
         }
         else if (phase == MESSAGE_OUT)
         {
@@ -622,9 +646,10 @@ int scsiInitiatorRunCommand(int target_id,
                 break;
             }
 
-            if (scsiHostRead(bufIn, bufInLen) == 0)
+            uint32_t readCount = scsiHostRead(bufIn, bufInLen);
+            if (readCount != bufInLen)
             {
-                logmsg("scsiHostRead failed, tried to read ", (int)bufInLen, " bytes");
+                logmsg("scsiHostRead failed, tried to read ", (int)bufInLen, " bytes, got ", (int)readCount);
                 status = -2;
                 break;
             }
@@ -639,9 +664,10 @@ int scsiInitiatorRunCommand(int target_id,
                 break;
             }
 
-            if (scsiHostWrite(bufOut, bufOutLen) < bufOutLen)
+            uint32_t writeCount = scsiHostWrite(bufOut, bufOutLen);
+            if (writeCount != bufOutLen)
             {
-                logmsg("scsiHostWrite failed, was writing ", bytearray(bufOut, bufOutLen));
+                logmsg("scsiHostWrite failed, was writing ", bytearray(bufOut, bufOutLen), " return value ", (int)writeCount);
                 status = -2;
                 break;
             }
@@ -657,9 +683,32 @@ int scsiInitiatorRunCommand(int target_id,
         }
     }
 
-    scsiHostPhyRelease();
+    scsiHostWaitBusFree();
 
     return status;
+}
+
+bool scsiInitiatorTestSupportsRead10(int target_id, uint32_t sectorsize)
+{
+    if (ini_haskey("SCSI", "InitiatorUseRead10", CONFIGFILE))
+    {
+        return ini_getbool("SCSI", "InitiatorUseRead10", false, CONFIGFILE);
+    }
+
+    uint8_t command[10] = {0x28, 0x00, 0, 0, 0, 0, 0, 0, 1, 0}; // READ10, LBA 0, 1 sector
+    int status = scsiInitiatorRunCommand(target_id, command, sizeof(command),
+        scsiDev.data, sectorsize, NULL, 0);
+
+    if (status == 0)
+    {
+        dbgmsg("Target supports READ10 command");
+        return true;
+    }
+    else
+    {
+        dbgmsg("Target does not support READ10 command");
+        return false;
+    }
 }
 
 bool scsiInitiatorReadCapacity(int target_id, uint32_t *sectorcount, uint32_t *sectorsize)
@@ -702,7 +751,7 @@ bool scsiInitiatorReadCapacity(int target_id, uint32_t *sectorcount, uint32_t *s
 }
 
 // Execute REQUEST SENSE command to get more information about error status
-bool scsiRequestSense(int target_id, uint8_t *sense_key)
+bool scsiRequestSense(int target_id, uint8_t *sense_key, uint8_t *sense_asc, uint8_t *sense_ascq)
 {
     uint8_t command[6] = {0x03, 0, 0, 0, 18, 0};
     uint8_t response[18] = {0};
@@ -712,9 +761,14 @@ bool scsiRequestSense(int target_id, uint8_t *sense_key)
                                          response, sizeof(response),
                                          NULL, 0);
 
-    dbgmsg("RequestSense response: ", bytearray(response, 18));
+    dbgmsg("RequestSense response: ", bytearray(response, 18),
+        " sense_key ", (int)(response[2] & 0xF),
+        " asc ", response[12], " ascq ", response[13]);
 
-    *sense_key = response[2] % 0xF;
+    if (sense_key) *sense_key = response[2] & 0xF;
+    if (sense_asc) *sense_asc = response[12];
+    if (sense_ascq) *sense_ascq = response[13];
+
     return status == 0;
 }
 
@@ -739,16 +793,30 @@ bool scsiStartStopUnit(int target_id, bool start)
         }
     }
 
+    uint32_t timeout = 60000; // Some drives can take long to initialize
     int status = scsiInitiatorRunCommand(target_id,
                                          command, sizeof(command),
                                          response, sizeof(response),
-                                         NULL, 0);
+                                         NULL, 0, false, timeout);
 
     if (status == 2)
     {
         uint8_t sense_key;
         scsiRequestSense(target_id, &sense_key);
         scsiLogInitiatorCommandFailure("START STOP UNIT", target_id, status, sense_key);
+
+        if (sense_key == NOT_READY)
+        {
+            dbgmsg("--- Device reports NOT_READY, running STOP to attempt restart");
+            // Some devices will only leave NOT_READY state after they have been
+            // commanded to stop state first.
+            delay(1000);
+            uint8_t cmd_stop[6] = {0x1B, 0x1, 0, 0, 0, 0};
+            scsiInitiatorRunCommand(target_id,
+                                    cmd_stop, sizeof(cmd_stop),
+                                    response, sizeof(response),
+                                    NULL, 0);
+        }
     }
 
     return status == 0;
@@ -922,9 +990,12 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
 
     // Read6 command supports 21 bit LBA - max of 0x1FFFFF
     // ref: https://www.seagate.com/files/staticfiles/support/docs/manual/Interface%20manuals/100293068j.pdf pg 134
-    if (g_initiator_state.ansi_version < 0x02 || (start_sector < 0x1FFFFF && sectorcount <= 256))
+    bool fits_read6 = (start_sector < 0x1FFFFF && sectorcount <= 256);
+    if (!g_initiator_state.use_read10 && fits_read6)
     {
         // Use READ6 command for compatibility with old SCSI1 drives
+        // Note that even with SCSI1 drives we have no choice but to use READ10 if the drive
+        // size is larger than 1 GB, as the sector number wouldn't fit in the command.
         uint8_t command[6] = {0x08,
             (uint8_t)(start_sector >> 16),
             (uint8_t)(start_sector >> 8),
@@ -1014,8 +1085,13 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
 
         if (phase == MESSAGE_IN)
         {
-            uint8_t dummy = 0;
-            scsiHostRead(&dummy, 1);
+            uint8_t msg = 0;
+            scsiHostRead(&msg, 1);
+
+            if (msg == MSG_COMMAND_COMPLETE)
+            {
+                break;
+            }
         }
         else if (phase == MESSAGE_OUT)
         {
@@ -1031,7 +1107,7 @@ bool scsiInitiatorReadDataToFile(int target_id, uint32_t start_sector, uint32_t 
         }
     }
 
-    scsiHostPhyRelease();
+    scsiHostWaitBusFree();
 
     if (!g_initiator_transfer.all_ok)
     {

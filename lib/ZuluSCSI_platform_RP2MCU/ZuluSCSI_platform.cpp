@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
  *
@@ -40,6 +40,12 @@
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
 
+#ifdef SD_USE_RP2350_SDIO
+#include <sdio_rp2350.h>
+#else
+#include <sdio.h>
+#endif
+
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
 # include <SerialUSB.h>
 # include <class/cdc/cdc_device.h>
@@ -51,15 +57,20 @@
 extern "C" {
 #  include <pico/cyw43_arch.h>
 }
+#  ifdef ZULUSCSI_RM2
+#    include <pico/cyw43_driver.h>
+#  endif
 #endif // ZULUSCSI_NETWORK
 
 #ifdef PLATFORM_MASS_STORAGE
 #include "ZuluSCSI_platform_msc.h"
 #endif
 
-#ifdef ENABLE_AUDIO_OUTPUT
-#  include "audio.h"
-#endif // ENABLE_AUDIO_OUTPUT
+#ifdef ENABLE_AUDIO_OUTPUT_SPDIF
+#  include "audio_spdif.h"
+#elif defined(ENABLE_AUDIO_OUTPUT_I2S)
+#  include "audio_i2s.h"
+#endif // ENABLE_AUDIO_OUTPUT_SPDIF
 
 extern bool g_rawdrive_active;
 
@@ -70,6 +81,9 @@ static bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
+
+static void usb_log_poll();
+
 /***************/
 /* GPIO init   */
 /***************/
@@ -132,69 +146,51 @@ uint32_t platform_sys_clock_in_hz()
     return clock_get_hz(clk_sys);
 }
 
-zuluscsi_speed_grade_t platform_string_to_speed_grade(const char *speed_grade_str, size_t length)
-{
-    static const char sg_default[] = "Default";
-    zuluscsi_speed_grade_t grade;
-
-#ifdef ENABLE_AUDIO_OUTPUT
-    logmsg("Audio output enabled, reclocking isn't possible");
-    return SPEED_GRADE_DEFAULT;
-#endif
-
-    if (strcasecmp(speed_grade_str, sg_default) == 0)
-      grade = SPEED_GRADE_DEFAULT;
-    else if (strcasecmp(speed_grade_str, "TurboMax") == 0)
-      grade = SPEED_GRADE_MAX;
-    else if (strcasecmp(speed_grade_str, "TurboA") == 0)
-      grade = SPEED_GRADE_A;
-    else if (strcasecmp(speed_grade_str, "TurboB") == 0)
-      grade = SPEED_GRADE_B;
-    else if (strcasecmp(speed_grade_str, "TurboC") == 0)
-      grade = SPEED_GRADE_C;
-    else if (strcasecmp(speed_grade_str, "Custom") == 0)
-      grade = SPEED_GRADE_CUSTOM;
-    else
-    {
-      logmsg("Setting \"", speed_grade_str, "\" does not match any know speed grade, using default");
-      grade = SPEED_GRADE_DEFAULT;
-    }
-    return grade;
-}
-
-zuluscsi_reclock_status_t platform_reclock(zuluscsi_speed_grade_t speed_grade)
+bool platform_reclock(zuluscsi_speed_grade_t speed_grade)
 {
     CustomTimings ct;
-    if (speed_grade == SPEED_GRADE_CUSTOM)
+    bool do_reclock = false;
+    if (speed_grade != SPEED_GRADE_DEFAULT)
     {
-        if (ct.use_custom_timings())
+        if (speed_grade == SPEED_GRADE_CUSTOM)
         {
-            logmsg("Custom timings found in \"", CUSTOM_TIMINGS_FILE, "\" overriding reclocking");
-            logmsg("Initial Clock set to ", (int) platform_sys_clock_in_hz(), "Hz");
-            if (ct.set_timings_from_file())
+            if (ct.use_custom_timings())
             {
-                reclock();
-                logmsg("SDIO clock set to ", (int)((g_zuluscsi_timings->clk_hz / g_zuluscsi_timings->sdio.clk_div_pio + (5 * MHZ / 10)) / MHZ) , "MHz");
-                return ZULUSCSI_RECLOCK_CUSTOM;
+
+                logmsg("Using custom timings found in \"", CUSTOM_TIMINGS_FILE, "\" for reclocking");
+                ct.set_timings_from_file();
+                do_reclock = true;
             }
             else
-                return ZULUSCSI_RECLOCK_FAILED;
+            {
+                logmsg("Custom timings file, \"", CUSTOM_TIMINGS_FILE, "\" not found or disabled");
+            }
         }
-        else
-        {
-            logmsg("Custom timings file, \"", CUSTOM_TIMINGS_FILE, "\" not found or disabled");
-            return ZULUSCSI_RECLOCK_FAILED;
-        }
+        else if (set_timings(speed_grade))
+            do_reclock = true;
 
+        if (do_reclock)
+        {
+#ifdef  ENABLE_AUDIO_OUTPUT
+            if (g_zuluscsi_timings->audio.audio_clocked)
+                logmsg("Reclocking with these settings are compatible with CD audio playback");
+            else
+                logmsg("Reclocking with these settings may cause audio playback to be too fast or slow ");
+#endif
+            logmsg("Initial Clock set to ", (int) platform_sys_clock_in_hz(), "Hz");
+            logmsg("Reclocking the MCU to ",(int) g_zuluscsi_timings->clk_hz, "Hz");
+#ifndef SD_USE_RP2350_SDIO
+            logmsg("Setting the SDIO clock to ", (int)((g_zuluscsi_timings->clk_hz / g_zuluscsi_timings->sdio.clk_div_pio + (5 * MHZ / 10)) / MHZ) , "MHz");
+#endif
+            usb_log_poll();
+            reclock();
+            logmsg("After reclocking, system reports clock set to ", (int) platform_sys_clock_in_hz(), "Hz");
+        }
     }
-    else if (set_timings(speed_grade))
-    {
-        logmsg("Initial Clock set to ", (int) platform_sys_clock_in_hz(), "Hz");
-        reclock();
-        logmsg("SDIO clock set to ", (int)((g_zuluscsi_timings->clk_hz / g_zuluscsi_timings->sdio.clk_div_pio + (5 * MHZ / 10)) / MHZ) , "MHz");
-        return ZULUSCSI_RECLOCK_SUCCESS;
-    }
-    return ZULUSCSI_RECLOCK_FAILED;
+    else
+        logmsg("Speed grade is set to default, reclocking skipped");
+
+    return do_reclock;
 }
 
 bool platform_rebooted_into_mass_storage()
@@ -288,7 +284,7 @@ void platform_init()
         termination = !gpio_get(DIP_TERM);
 
     }
-# else
+# elif defined(ZULUSCSI_V2_0)
     pin_setup_state_t dip_state = read_setup_ack_pin();
     if (dip_state == SETUP_UNDETERMINED)
     {
@@ -305,6 +301,11 @@ void platform_init()
     }
 
     // dbglog DIP switch works in any case, as it does not have bus hold.
+    dbglog = !gpio_get(DIP_DBGLOG);
+    g_log_debug = dbglog;
+# else
+    g_scsi_initiator = !gpio_get(DIP_INITIATOR);
+    termination = !gpio_get(DIP_TERM);
     dbglog = !gpio_get(DIP_DBGLOG);
     g_log_debug = dbglog;
 # endif
@@ -353,17 +354,10 @@ void platform_init()
     logmsg ("SCSI termination is handled by a hardware jumper");
 #endif  // HAS_DIP_SWITCHES
 
-#ifdef ENABLE_AUDIO_OUTPUT
-    logmsg("SP/DIF audio to expansion header enabled");
-    if (platform_reclock(SPEED_GRADE_AUDIO) == ZULUSCSI_RECLOCK_SUCCESS)
-    {
-        logmsg("Reclocked for Audio Ouput at ", (int) platform_sys_clock_in_hz(), "Hz");
-    }
-    else
-    {
-        logmsg("Audio Output timings not found");
-    }
-#endif // ENABLE_AUDIO_OUTPUT
+        logmsg("===========================================================");
+        logmsg(" Powered by Raspberry Pi");
+        logmsg("            Raspberry Pi is a trademark of Raspberry Pi Ltd");
+        logmsg("===========================================================");
 
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
@@ -387,7 +381,7 @@ void platform_init()
     // LED pin
     gpio_conf(LED_PIN,        GPIO_FUNC_SIO, false,false, true,  false, false);
 
-#ifndef ENABLE_AUDIO_OUTPUT
+#ifndef ENABLE_AUDIO_OUTPUT_SPDIF
 #ifdef GPIO_I2C_SDA
     // I2C pins
     //        pin             function       pup   pdown  out    state fast
@@ -399,7 +393,7 @@ void platform_init()
     gpio_conf(GPIO_EXP_AUDIO, GPIO_FUNC_SPI, true,false, false,  true, true);
     gpio_conf(GPIO_EXP_SPARE, GPIO_FUNC_SIO, true,false, false,  true, false);
     // configuration of corresponding SPI unit occurs in audio_setup()
-#endif  // ENABLE_AUDIO_OUTPUT
+#endif  // ENABLE_AUDIO_OUTPUT_SPDIF
 
 #ifdef GPIO_USB_POWER
     gpio_conf(GPIO_USB_POWER, GPIO_FUNC_SIO, false, false, false,  false, false);
@@ -413,7 +407,9 @@ void platform_late_init()
 #if defined(HAS_DIP_SWITCHES) && defined(PLATFORM_HAS_INITIATOR_MODE)
     if (g_scsi_initiator == true)
     {
-        logmsg("SCSI initiator mode selected by DIP switch, expecting SCSI disks on the bus");
+        logmsg("***************************************************************************");
+        logmsg("        SCSI initiator mode enabled, expecting SCSI disks on the bus       ");
+        logmsg("***************************************************************************");
     }
     else
     {
@@ -472,15 +468,66 @@ void platform_late_init()
         gpio_conf(SCSI_IN_ATN,    GPIO_FUNC_SIO, true, false, false, true, false);
         gpio_conf(SCSI_IN_RST,    GPIO_FUNC_SIO, true, false, false, true, false);
 
-#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
-    Serial.begin();
+#ifdef ZULUSCSI_RM2
+    uint rm2_pins[CYW43_PIN_INDEX_WL_COUNT] = {0};
+    rm2_pins[CYW43_PIN_INDEX_WL_REG_ON] = GPIO_RM2_ON;
+    rm2_pins[CYW43_PIN_INDEX_WL_DATA_OUT] = GPIO_RM2_DATA;
+    rm2_pins[CYW43_PIN_INDEX_WL_DATA_IN] = GPIO_RM2_DATA;
+    rm2_pins[CYW43_PIN_INDEX_WL_HOST_WAKE] = GPIO_RM2_DATA;
+    rm2_pins[CYW43_PIN_INDEX_WL_CLOCK] = GPIO_RM2_CLK;
+    rm2_pins[CYW43_PIN_INDEX_WL_CS] = GPIO_RM2_CS;
+    assert(PICO_OK == cyw43_set_pins_wl(rm2_pins));
+    if (platform_reclock(SPEED_GRADE_WIFI_RM2))
+    {
+        // The iface check turns on the LED on the RM2 early in the init process
+        // Should tell the user that the RM2 is working
+        if(platform_network_iface_check())
+        {
+            logmsg("RM2 found");
+        }
+        else
+        {
+# ifdef ZULUSCSI_BLASTER
+            logmsg("RM2 not found, upclocking");
+            platform_reclock(SPEED_GRADE_AUDIO_I2S);
+# else
+            logmsg("RM2 not found");
+# endif
+        }
+    }
+    else
+    {
+        logmsg("WiFi RM2 timings not found");
+    }
+#elif defined(ENABLE_AUDIO_OUTPUT_I2S)
+    logmsg("I2S audio to expansion header enabled");
+    if (!platform_reclock(SPEED_GRADE_AUDIO_I2S))
+    {
+        logmsg("Audio output timings not found");
+    }
+#elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    logmsg("S/PDIF audio to expansion header enabled");
+    if (platform_reclock(SPEED_GRADE_AUDIO_SPDIF))
+    {
+        logmsg("Reclocked for Audio Ouput at ", (int) platform_sys_clock_in_hz(), "Hz");
+    }
+    else
+    {
+        logmsg("Audio Output timings not found");
+    }
+#endif // ENABLE_AUDIO_OUTPUT_SPDIF
+
+// This should turn on the LED for Pico 1/2 W devices early in the init process
+// It should help indicate to the user that interface is working and the board is ready for DaynaPORT
+#if  defined(ZULUSCSI_NETWORK) && ! defined(ZULUSCSI_RM2)
+    platform_network_iface_check();
 #endif
 
 
 #ifdef ENABLE_AUDIO_OUTPUT
         // one-time control setup for DMA channels and second core
         audio_setup();
-#endif // ENABLE_AUDIO_OUTPUT
+#endif // ENABLE_AUDIO_OUTPUT_SPDIF
     }
     else
     {
@@ -503,6 +550,10 @@ void platform_late_init()
         gpio_conf(SCSI_OUT_ATN,   GPIO_FUNC_SIO, false,false, true,  true, true);
 #endif  // PLATFORM_HAS_INITIATOR_MODE
     }
+
+#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+    Serial.begin();
+#endif
     scsi_accel_rp2040_init();
 }
 
@@ -648,6 +699,28 @@ void isr_hardfault(void)
 /* Debug logging and watchdog            */
 /*****************************************/
 
+static bool usb_serial_connected()
+{
+#ifdef PIO_FRAMEWORK_ARDUINO_NO_USB
+    return false;
+#endif
+
+    static bool connected;
+    static uint32_t last_check_time;
+
+#ifdef PLATFORM_MASS_STORAGE
+    if (platform_msc_lock_get()) return connected; // Avoid re-entrant USB events
+#endif
+
+    if (last_check_time == 0 || (uint32_t)(millis() - last_check_time) > 50)
+    {
+        connected = bool(Serial);
+        last_check_time = millis();
+    }
+
+    return connected;
+}
+
 // Send log data to USB UART if USB is connected.
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.
@@ -661,6 +734,8 @@ static void usb_log_poll()
 {
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
     static uint32_t logpos = 0;
+
+    if (!usb_serial_connected()) return;
 
 #ifdef PLATFORM_MASS_STORAGE
     if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
@@ -689,7 +764,9 @@ static void usb_log_poll()
 // Grab input from USB Serial terminal
 static void usb_input_poll()
 {
-    #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+
+    if (!usb_serial_connected()) return;
 
 #ifdef PLATFORM_MASS_STORAGE
     if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
@@ -752,13 +829,17 @@ static void adc_poll()
         adc_init();
         adc_set_temp_sensor_enabled(true);
         adc_set_clkdiv(65535); // Lowest samplerate, about 2 kHz
+#ifdef ZULUSCSI_BLASTER
+        adc_select_input(8);
+#else
         adc_select_input(4);
+#endif
         adc_fifo_setup(true, false, 0, false, false);
         adc_run(true);
         initialized = true;
     }
 
-#ifdef ENABLE_AUDIO_OUTPUT
+#ifdef ENABLE_AUDIO_OUTPUT_SPDIF
     /*
     * If ADC sample reads are done, either via direct reading, FIFO, or DMA,
     * at the same time a SPI DMA write begins, it appears that the first
@@ -767,7 +848,7 @@ static void adc_poll()
     * is playing.
     */
    if (audio_is_active()) return;
-#endif  // ENABLE_AUDIO_OUTPUT
+#endif  // ENABLE_AUDIO_OUTPUT_SPDIF
 
     int adc_value_max = 0;
     while (!adc_fifo_is_empty())
@@ -921,9 +1002,9 @@ void platform_poll()
     usb_log_poll();
     adc_poll();
 
-#ifdef ENABLE_AUDIO_OUTPUT
+#if defined(ENABLE_AUDIO_OUTPUT_SPDIF) || defined(ENABLE_AUDIO_OUTPUT_I2S)
     audio_poll();
-#endif // ENABLE_AUDIO_OUTPUT
+#endif // ENABLE_AUDIO_OUTPUT_SPDIF
 }
 
 void platform_reset_mcu()
@@ -935,14 +1016,14 @@ uint8_t platform_get_buttons()
 {
     uint8_t buttons = 0;
 
-#if defined(ENABLE_AUDIO_OUTPUT)
+#if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
     // pulled to VCC via resistor, sinking when pressed
     if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
 #elif defined(GPIO_I2C_SDA)
     // SDA = button 1, SCL = button 2
     if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
     if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
-#endif // defined(ENABLE_AUDIO_OUTPUT)
+#endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
     // Simple debouncing logic: handle button releases after 100 ms delay.
     static uint32_t debounce;
@@ -961,7 +1042,10 @@ uint8_t platform_get_buttons()
     return buttons_debounced;
 }
 
-
+bool platform_has_phy_eject_button()
+{
+    return false;
+}
 
 /************************************/
 /* ROM drive in extra flash space   */
@@ -1043,7 +1127,20 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
  */
 
 #define PARITY(n) ((1 ^ (n) ^ ((n)>>1) ^ ((n)>>2) ^ ((n)>>3) ^ ((n)>>4) ^ ((n)>>5) ^ ((n)>>6) ^ ((n)>>7)) & 1)
-#define X(n) (\
+#ifdef ZULUSCSI_BLASTER
+# define X(n) (\
+    ((n & 0x01) ? 0 : (1 << 0)) | \
+    ((n & 0x02) ? 0 : (1 << 1)) | \
+    ((n & 0x04) ? 0 : (1 << 2)) | \
+    ((n & 0x08) ? 0 : (1 << 3)) | \
+    ((n & 0x10) ? 0 : (1 << 4)) | \
+    ((n & 0x20) ? 0 : (1 << 5)) | \
+    ((n & 0x40) ? 0 : (1 << 6)) | \
+    ((n & 0x80) ? 0 : (1 << 7)) | \
+    (PARITY(n)  ? 0 : (1 << 8)) \
+)
+#else
+# define X(n) (\
     ((n & 0x01) ? 0 : (1 << SCSI_IO_DB0)) | \
     ((n & 0x02) ? 0 : (1 << SCSI_IO_DB1)) | \
     ((n & 0x04) ? 0 : (1 << SCSI_IO_DB2)) | \
@@ -1054,6 +1151,7 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
     ((n & 0x80) ? 0 : (1 << SCSI_IO_DB7)) | \
     (PARITY(n)  ? 0 : (1 << SCSI_IO_DBP)) \
 )
+#endif
 
 const uint16_t g_scsi_parity_lookup[256] __attribute__((aligned(512), section(".scratch_x.parity"))) =
 {
@@ -1125,3 +1223,20 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 #undef X
 
 } /* extern "C" */
+
+
+#ifdef SD_USE_SDIO
+// These functions are not used for SDIO mode but are needed to avoid build error.
+void sdCsInit(SdCsPin_t pin) {}
+void sdCsWrite(SdCsPin_t pin, bool level) {}
+
+// SDIO configuration for main program
+SdioConfig g_sd_sdio_config(DMA_SDIO);
+
+#ifdef SD_USE_RP2350_SDIO
+void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
+{
+    rp2350_sdio_sdfat_set_callback(func, buffer);
+}
+#endif
+#endif

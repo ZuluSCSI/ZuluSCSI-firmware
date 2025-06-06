@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  *
  * This work incorporates work from the following
  *  Copyright (c) 2023 joshua stein <jcs@jcs.org>
@@ -41,9 +41,9 @@
 #include <hardware/sync.h>
 #include <pico/multicore.h>
 
-#ifdef ENABLE_AUDIO_OUTPUT
-#include <audio.h>
-#endif // ENABLE_AUDIO_OUTPUT
+#ifdef ENABLE_AUDIO_OUTPUT_SPDIF
+#include "audio_spdif.h"
+#endif // ENABLE_AUDIO_OUTPUT_SPDIF
 
 #include "scsi_accel_target_RP2MCU.pio.h"
 
@@ -893,10 +893,10 @@ static int pio_add_scsi_sync_write_program()
 
 static void scsi_dma_irq()
 {
-#ifndef ENABLE_AUDIO_OUTPUT
+#ifndef ENABLE_AUDIO_OUTPUT_SPDIF
     dma_hw->ints0 = (1 << SCSI_DMA_CH_A);
 #else
-    // see audio.h for whats going on here
+    // see audio_spdif.h for whats going on here
     if (dma_hw->intr & (1 << SCSI_DMA_CH_A)) {
         dma_hw->ints0 = (1 << SCSI_DMA_CH_A);
     } else {
@@ -941,16 +941,16 @@ static void scsidma_config_gpio()
         pio_sm_set_consecutive_pindirs(SCSI_DMA_PIO, SCSI_DATA_SM, SCSI_IO_DB0, 9, true);
         pio_sm_set_consecutive_pindirs(SCSI_DMA_PIO, SCSI_DATA_SM, SCSI_OUT_REQ, 1, true);
 
-        iobank0_hw->io[SCSI_IO_DB0].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_IO_DB1].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_IO_DB2].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_IO_DB3].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_IO_DB4].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_IO_DB5].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_IO_DB6].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_IO_DB7].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_IO_DBP].ctrl  = GPIO_FUNC_PIO0;
-        iobank0_hw->io[SCSI_OUT_REQ].ctrl = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB0].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB1].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB2].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB3].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB4].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB5].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB6].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB7].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DBP].ctrl  = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_OUT_REQ].ctrl = GPIO_FUNC_PIO0;
     }
     else if (g_scsi_dma_state == SCSIDMA_READ)
     {
@@ -970,16 +970,16 @@ static void scsidma_config_gpio()
             pio_sm_set_consecutive_pindirs(SCSI_DMA_PIO, SCSI_SYNC_SM, SCSI_OUT_REQ, 1, true);
         }
 
-        iobank0_hw->io[SCSI_IO_DB0].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB1].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB2].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB3].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB4].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB5].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB6].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB7].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DBP].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_OUT_REQ].ctrl = GPIO_FUNC_PIO0;
+        io_bank0_hw->io[SCSI_IO_DB0].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_IO_DB1].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_IO_DB2].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_IO_DB3].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_IO_DB4].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_IO_DB5].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_IO_DB6].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_IO_DB7].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_IO_DBP].ctrl  = GPIO_FUNC_SIO;
+        io_bank0_hw->io[SCSI_OUT_REQ].ctrl = GPIO_FUNC_PIO0;
     }
 }
 
@@ -1154,6 +1154,7 @@ void scsi_accel_rp2040_init()
     channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
     channel_config_set_read_increment(&cfg, false);
     channel_config_set_write_increment(&cfg, false);
+    channel_config_set_high_priority(&cfg, true);
     channel_config_set_dreq(&cfg, pio_get_dreq(SCSI_DMA_PIO, SCSI_DATA_SM, false));
     g_scsi_dma.dmacfg_read_chC = cfg;
 
@@ -1230,43 +1231,60 @@ bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod)
             // delay2: Delay from REQ deassert to data write (negation period)
             // see timings.c for delay periods in clock cycles
             int delay0, delay1, delay2;
+
+            // setup timings for sync_read_pacer
+            // total period = rdelay0 + redelay1
+            // rdelay0: wait for transfer period (total_period +  rtotal_period_adjust - rdelay1)
+            // rdelay1: req assert period
+            int rdelay1;
+
             uint32_t up_rounder = g_zuluscsi_timings->scsi.clk_period_ps / 2 + 1;
             uint32_t delay_in_ps = (syncPeriod * 4) * 1000;
-            // This is the delay in clock cycles rounded up
-            int totalDelay = (delay_in_ps + up_rounder) / g_zuluscsi_timings->scsi.clk_period_ps;
-
+            // This is the period in clock cycles rounded up
+            int totalPeriod = (delay_in_ps + up_rounder) / g_zuluscsi_timings->scsi.clk_period_ps;
+            int rtotalPeriod = totalPeriod;
+            int clkdiv = 0;
             if (syncPeriod < 25)
             {
                 // Fast-20 SCSI timing: 15 ns assertion period
                 // The hardware rise and fall time require some extra delay,
                 // These delays are in addition to the 1 cycle that the PIO takes to execute the instruction
-                totalDelay += g_zuluscsi_timings->scsi_20.total_delay_adjust;
+                totalPeriod += g_zuluscsi_timings->scsi_20.total_period_adjust;
                 delay0 = g_zuluscsi_timings->scsi_20.delay0; //Data setup time, should be min 11.5ns according to the spec for FAST-20
                 delay1 = g_zuluscsi_timings->scsi_20.delay1; //pulse width, should be min 15ns according to the spec for FAST-20
-                delay2 = totalDelay - delay0 - delay1 - 3;  //Data hold time, should be min 16.5ns according to the spec for FAST-20
+                delay2 = totalPeriod - delay0 - delay1 - 3;  //Data hold time, should be min 16.5ns from REQ falling edge according to the spec for FAST-20
                 if (delay2 < 0) delay2 = 0;
                 if (delay2 > 15) delay2 = 15;
+                rdelay1 = g_zuluscsi_timings->scsi_20.rdelay1;
+                rtotalPeriod += g_zuluscsi_timings->scsi_20.rtotal_period_adjust;
             }
             else if (syncPeriod < 50 )
             {
                 // Fast-10 SCSI timing: 30 ns assertion period, 25 ns skew delay
                 // The hardware rise and fall time require some extra delay,
-                totalDelay += g_zuluscsi_timings->scsi_10.total_delay_adjust;
+                totalPeriod += g_zuluscsi_timings->scsi_10.total_period_adjust;
                 delay0 = g_zuluscsi_timings->scsi_10.delay0; // 4;
                 delay1 = g_zuluscsi_timings->scsi_10.delay1; // 6;
-                delay2 = totalDelay - delay0 - delay1 - 3;
+                delay2 = totalPeriod - delay0 - delay1 - 3;
                 if (delay2 < 0) delay2 = 0;
                 if (delay2 > 15) delay2 = 15;
+                rdelay1 = g_zuluscsi_timings->scsi_10.rdelay1;
+                rtotalPeriod += g_zuluscsi_timings->scsi_10.rtotal_period_adjust;
             }
             else
             {
                 // Slow SCSI timing: 90 ns assertion period, 55 ns skew delay
-                totalDelay += g_zuluscsi_timings->scsi_5.total_delay_adjust;
+                // Delay2 must be at least 2 to keep negation period well above the 90 ns minimum
+                clkdiv = g_zuluscsi_timings->scsi_5.clkdiv;
+                if (clkdiv > 0) { totalPeriod /= clkdiv; rtotalPeriod /= clkdiv; }
+                totalPeriod += g_zuluscsi_timings->scsi_5.total_period_adjust;
                 delay0 = g_zuluscsi_timings->scsi_5.delay0;
                 delay1 = g_zuluscsi_timings->scsi_5.delay1;
-                delay2 = totalDelay - delay0 - delay1 - 3;
-                if (delay2 < 0) delay2 = 0;
+                delay2 = totalPeriod - delay0 - delay1 - 3;
+                if (delay2 < 2) delay2 = 2;
                 if (delay2 > 15) delay2 = 15;
+                rdelay1 = g_zuluscsi_timings->scsi_5.rdelay1;
+                rtotalPeriod += g_zuluscsi_timings->scsi_5.rtotal_period_adjust;
             }
 
             // Patch the delay values into the instructions in scsi_sync_write.
@@ -1278,14 +1296,37 @@ bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod)
             SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_write + 1] = instr1;
             SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_write + 2] = instr2;
 
+            // The DMA-based parity verification method will start dropping bytes
+            // if total period for read from SCSI bus is less than 13 clock cycles.
+            // Limit it to 14 to be safe.
+#ifdef ZULUSCSI_MCU_RP23XX
+            if (rtotalPeriod < 14) rtotalPeriod = 14;
+#else
+            if (rtotalPeriod < 18) rtotalPeriod = 18; // RP2040 DMA is slightly slower
+#endif
+
             // And similar patching for scsi_sync_read_pacer
-            int rdelay2 = totalDelay - delay1 - 2;
-            if (rdelay2 > 15) rdelay2 = 15;
-            if (rdelay2 < 5) rdelay2 = 5;
-            uint16_t rinstr0 = scsi_sync_read_pacer_program_instructions[0] | pio_encode_delay(rdelay2);
-            uint16_t rinstr1 = (scsi_sync_read_pacer_program_instructions[1] + g_scsi_dma.pio_offset_sync_read_pacer) | pio_encode_delay(delay1);
+            int rdelay0 = rtotalPeriod - rdelay1 - 2;
+            if (rdelay0 > 15) rdelay0 = 15;
+            if (rdelay0 < 0) rdelay0 = 0;
+            uint16_t rinstr0 = scsi_sync_read_pacer_program_instructions[0] | pio_encode_delay(rdelay0);
+            uint16_t rinstr1 = (scsi_sync_read_pacer_program_instructions[1] + g_scsi_dma.pio_offset_sync_read_pacer) | pio_encode_delay(rdelay1);
             SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_read_pacer + 0] = rinstr0;
             SCSI_DMA_PIO->instr_mem[g_scsi_dma.pio_offset_sync_read_pacer + 1] = rinstr1;
+
+            if (clkdiv > 0)
+            {
+                // Add divider to REQ controlling programs in order to satisfy slowest
+                // SCSI-5 timing requirements.
+                sm_config_set_clkdiv_int_frac(&g_scsi_dma.pio_cfg_sync_read_pacer, clkdiv, 0);
+                sm_config_set_clkdiv_int_frac(&g_scsi_dma.pio_cfg_sync_write, clkdiv, 0);
+            }
+            else
+            {
+                // No clock divider
+                sm_config_set_clkdiv_int_frac(&g_scsi_dma.pio_cfg_sync_read_pacer, 1, 0);
+                sm_config_set_clkdiv_int_frac(&g_scsi_dma.pio_cfg_sync_write, 1, 0);
+            }
         }
     }
 

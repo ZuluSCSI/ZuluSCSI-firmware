@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2022-2023 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * Portions - Copyright (C) 2023 Eric Helgeson
  *
  * This file is licensed under the GPL version 3 or any later version. 
@@ -136,7 +136,7 @@ bool ImageBackingStore::_internal_open(const char *filename)
 
     uint32_t sectorcount = m_fsfile.size() / SD_SECTOR_SIZE;
     uint32_t begin = 0, end = 0;
-    if (m_fsfile.contiguousRange(&begin, &end) && end >= begin + sectorcount)
+    if (m_fsfile.contiguousRange(&begin, &end) && end >= begin + sectorcount - 1)
     {
         // Convert to raw mapping, this avoids some unnecessary
         // access overhead in SdFat library.

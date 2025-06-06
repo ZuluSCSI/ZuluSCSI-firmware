@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2024 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2024-2025 Rabbit Hole Computing™
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
  *
@@ -20,9 +20,17 @@
 **/
 #ifndef ZULUSCSI_TIMINGS_RP2MCU_H
 #define ZULUSCSI_TIMINGS_RP2MCU_H
+
+#include <ZuluSCSI_settings.h>
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
-#include <ZuluSCSI_config.h>
+
 
 typedef struct
 {
@@ -47,21 +55,28 @@ typedef struct
         uint32_t clk_period_ps;
     } scsi;
 
-
-    // delay0: Data Setup Time - Delay from data write to REQ assertion
+    // delayX: Writing to SCSI bus signaling delays
+    // delay0: Receive hold time - Delay from data write to REQ assertion
     // delay1  Transmit Assertion time from REQ assert to REQ deassert (req pulse) 
-    // delay2: Negation period - (total_delay - d0 - d1): total_delay spec is the sync value * 4 in ns width)
-    // both values are in clock cycles minus 1 for the pio instruction delay
-    // delay0 spec: Ultra(20):  11.5ns  Fast(10): 23ns  SCSI-1(5): 23ns
-    // delay1 spec: Ultra(20):  16.5ns  Fast(10): 33ns  SCSI-1(5): 53ns 
-    // delay2 spec: Ultra(20):  15ns    Fast(10): 30ns  SCSI-1(5): 80ns 
-    // total_delay_adjust is manual adjustment value, when checked with a scope
+    // delay2: Negation period - (total_period - d0 - d1): total_period spec is the sync value * 4 in ns width)
+    // rdelayX: Reading from the SCSI bus delay adjustments
+    // rtotal_period_adjust: adjustment to total delay for rdelay0 calculation
+    // rdelay0: total_period + rtotal_period_adjust - rdelay1
+    // rdelay1: Transmit Assertion time from REQ assert to REQ deassert
+    // all values are in clock cycles minus 1 for the pio instruction delay
+    // delay0 spec:  Ultra(20):  11.5ns  Fast(10): 25ns  SCSI-1(5): 25ns
+    // delay1 spec:  Ultra(20):  15ns    Fast(10): 30ns  SCSI-1(5): 80ns
+    // delay2 spec:  Ultra(20):  15ns    Fast(10): 30ns  SCSI-1(5): 80ns
+    // rdelay1 spec: Ultra(20):  15ns    Fast(10): 30ns  SCSI-1(5): 80ns
+    // total_period_adjust is manual adjustment value, when checked with a scope
     // Max sync - the minimum sync period ("max" clock rate) that is supported at this clock rate, the number is 1/4 the actual value in ns
     struct
     {
         uint8_t delay0;
         uint8_t delay1;
-        int16_t total_delay_adjust;
+        int8_t rtotal_period_adjust;
+        uint8_t rdelay1;
+        int16_t total_period_adjust;
         uint8_t max_sync;
     } scsi_20;
 
@@ -69,7 +84,9 @@ typedef struct
     {
         uint8_t delay0;
         uint8_t delay1;
-        int16_t total_delay_adjust;
+        int8_t rtotal_period_adjust;
+        uint8_t rdelay1;
+        int16_t total_period_adjust;
         uint8_t max_sync;
     } scsi_10;
 
@@ -77,8 +94,11 @@ typedef struct
     {
         uint8_t delay0;
         uint8_t delay1;
-        int16_t total_delay_adjust;
+        int8_t rtotal_period_adjust;
+        uint8_t rdelay1;
+        int16_t total_period_adjust;
         uint8_t max_sync;
+        uint8_t clkdiv;
     } scsi_5;
 
 
@@ -99,10 +119,27 @@ typedef struct
         uint8_t delay1; // clk_div_pio - delay0 and subtract one for the instruction delay
     } sdio;
 
+    struct
+    {
+        // Divider for 44.1KHz to the nearest integer with a sys clk frequency divided by 2 x 16-bit samples with the pio clock running 2x I2S clock
+        // Example sys clock frequency of 155.25Mhz would be 155.25MHz/ 16 / 2 / 2 / 44.1KHz = 55.006 ~= 55
+        uint8_t clk_div_pio;
+        // True if the clock rate is close enough to support audio playback without much error
+        // Currently this has been decided to be within 0.02% from what the ZuluSCSI plays back compared to 44.1KHz
+        // For the example above of 155.25MHz uses a pio state machine divider of 55
+        // 155.25MHz / 55 / 16 / 2 / 2 = 41.1051KHz so |41.1051KHz - 44.1KHz| / 55.1KHz = 0.011%
+        bool audio_clocked;
+    } audio;
+
 } zuluscsi_timings_t;
 
 extern  zuluscsi_timings_t *g_zuluscsi_timings;
 
 // Sets timings to the speed_grade, returns false on SPEED_GRADE_DEFAULT and SPEED_GRADE_CUSTOM
 bool set_timings(zuluscsi_speed_grade_t speed_grade);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif // ZULUSCSI_TIMINGS_RP2MCU_H

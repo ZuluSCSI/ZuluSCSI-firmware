@@ -1,6 +1,6 @@
 /*
  *  ZuluSCSI™
- *  Copyright (c) 2022-2024 Rabbit Hole Computing™
+ *  Copyright (c) 2022-2025 Rabbit Hole Computing™
  *
  * This project is based on BlueSCSI:
  *
@@ -60,6 +60,7 @@
 #include "ZuluSCSI_initiator.h"
 #include "ZuluSCSI_msc_initiator.h"
 #include "ZuluSCSI_msc.h"
+#include "ZuluSCSI_blink.h"
 #include "ROMDrive.h"
 
 SdFs SD;
@@ -72,77 +73,7 @@ bool g_sdcard_present;
 #define SD_SPEED_CLASS_WARN_BELOW 10
 #endif
 
-/************************************/
-/* Status reporting by blinking led */
-/************************************/
 
-#define BLINK_STATUS_OK 1
-#define BLINK_ERROR_NO_IMAGES  3
-#define BLINK_DIRECT_MODE      4
-#define BLINK_ERROR_NO_SD_CARD 5
-
-static uint16_t blink_count = 0;
-static uint32_t blink_start = 0;
-static uint32_t blink_delay = 0;
-static uint32_t blink_end_delay= 0;
-
-bool blink_poll()
-{
-    bool is_blinking = true;
-
-    if (blink_count == 0)
-    {
-        is_blinking = false;
-    }
-    else if (blink_count == 1 && ((uint32_t)(millis() - blink_start)) > blink_end_delay )
-    {
-        LED_OFF_OVERRIDE();
-        blink_count = 0;
-        is_blinking = false;
-    }
-    else if (blink_count > 1 && ((uint32_t)(millis() - blink_start)) > blink_delay)
-    {
-        if (1 & blink_count)
-            LED_ON_OVERRIDE();
-        else
-            LED_OFF_OVERRIDE();
-        blink_count--;
-        blink_start = millis();
-    }
-
-    if (!is_blinking)
-        platform_set_blink_status(false);
-    return is_blinking;
-}
-
-void blink_cancel()
-{
-    blink_count = 0;
-    platform_set_blink_status(false);
-}
-
-void blinkStatus(uint8_t times, uint32_t delay = 500, uint32_t end_delay = 1250)
-{
-    if (!blink_poll() && blink_count == 0)
-    {
-        blink_start = millis();
-        blink_count = 2 * times + 1;
-        blink_delay = delay / 2;
-        blink_end_delay =  end_delay;
-        platform_set_blink_status(true);
-        LED_OFF_OVERRIDE();
-    }
-}
-
-extern "C" void s2s_ledOn()
-{
-  LED_ON();
-}
-
-extern "C" void s2s_ledOff()
-{
-  LED_OFF();
-}
 
 /**************/
 /* Log saving */
@@ -443,7 +374,7 @@ bool findHDDImages()
     }
 
     char name[MAX_FILE_PATH+1];
-    if(!file.isDir() || scsiDiskFolderContainsCueSheet(&file)) {
+    if(!file.isDir() || scsiDiskFolderContainsCueSheet(&file) || scsiDiskFolderIsTapeFolder(&file)) {
       file.getName(name, MAX_FILE_PATH+1);
       file.close();
 
@@ -657,7 +588,7 @@ bool findHDDImages()
     // If there is a removable device
     if (eject_btn_set == 1)
       logmsg("Eject set to device with ID: ", last_removable_device);
-    else if (eject_btn_set == 0)
+    else if (eject_btn_set == 0 && !platform_has_phy_eject_button())
     {
       logmsg("Found 1 removable device, to set an eject button see EjectButton in the '", CONFIGFILE,"', or the http://zuluscsi.com/manual");
     }
@@ -682,7 +613,10 @@ bool findHDDImages()
     }
     else
     {
-      logmsg("Multiple removable devices, to set an eject button see EjectButton in the '", CONFIGFILE,"', or the http://zuluscsi.com/manual");
+      if (platform_has_phy_eject_button())
+        logmsg("Other removable devices found, to set an eject button for different SCSI IDs see EjectButton in the '", CONFIGFILE,"', or the http://zuluscsi.com/manual");
+      else
+        logmsg("Multiple removable devices, to set an eject button see EjectButton in the '", CONFIGFILE,"', or the http://zuluscsi.com/manual");
     }
   }
   return foundImage;
@@ -718,6 +652,16 @@ static bool mountSDCard()
   // Check for the common case, FAT filesystem as first partition
   if (SD.begin(SD_CONFIG))
   {
+#if defined(HAS_SDIO_CLASS) && HAS_SDIO_CLASS
+    int speed = ((SdioCard*)SD.card())->kHzSdClk();
+    if (speed > 0)
+    {
+      logmsg("SD card communication speed: ",
+        (int)((speed + 500) / 1000), " MHz, ",
+        (int)((speed + 1000) / 2000), " MB/s");
+    }
+#endif
+
     reload_ini_cache(CONFIGFILE);
     return true;
   }
@@ -840,13 +784,45 @@ static void reinitSCSI()
   scsiInit();
 
 #ifdef ZULUSCSI_NETWORK
-  if (scsiDiskCheckAnyNetworkDevicesConfigured())
+  if (scsiDiskCheckAnyNetworkDevicesConfigured() && platform_network_supported())
   {
     platform_network_init(scsiDev.boardCfg.wifiMACAddress);
-    platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+    if (scsiDev.boardCfg.wifiSSID[0] != '\0')
+      platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+  }
+  else
+  {
+    platform_network_deinit();
   }
 #endif // ZULUSCSI_NETWORK
 
+}
+
+// Alert user that update bin file not used
+static void check_for_unused_update_files()
+{
+  FsFile root = SD.open("/");
+  FsFile file;
+  char filename[MAX_FILE_PATH + 1];
+  bool bin_files_found = false;
+  while (file.openNext(&root, O_RDONLY))
+  {
+    if (!file.isDir())
+    {
+      size_t filename_len = file.getName(filename, sizeof(filename));
+      if (strncasecmp(filename, "zuluscsi", sizeof("zuluscsi" - 1)) == 0 &&
+          strncasecmp(filename + filename_len - 4, ".bin", 4) == 0)
+      {
+        bin_files_found = true;
+        logmsg("Firmware update file \"", filename, "\" does not contain the board model string \"", FIRMWARE_NAME_PREFIX, "\"");
+      }
+    }
+  }
+  if (bin_files_found)
+  {
+    logmsg("Please use the ", FIRMWARE_PREFIX ,"*.zip firmware bundle, or the proper .bin or .uf2 file to update the firmware.");
+    logmsg("See http://zuluscsi.com/manual for more information");
+  }
 }
 
 // Update firmware by unzipping the firmware package
@@ -877,8 +853,10 @@ static void firmware_update()
   }
 
   logmsg("Found firmware package ", name);
-
-  zipparser::Parser parser = zipparser::Parser(FIRMWARE_NAME_PREFIX, sizeof(FIRMWARE_NAME_PREFIX) - 1);
+  // example fixed length at the end of the filename
+  const uint32_t postfix_filename_length = sizeof("_2025-02-21_e4be9ed.bin") - 1;
+  const uint32_t target_filename_length = sizeof(FIRMWARE_NAME_PREFIX) - 1 + postfix_filename_length;
+  zipparser::Parser parser = zipparser::Parser(FIRMWARE_NAME_PREFIX, sizeof(FIRMWARE_NAME_PREFIX) - 1, target_filename_length);
   uint8_t buf[512];
   int32_t parsed_length;
   int bytes_read = 0;
@@ -896,13 +874,14 @@ static void firmware_update()
       }
       else
       {
-        // seek to start of compressed data in matching file
+        // seek to start of data in matching file
         file.seekSet(file.position() - (sizeof(buf) - parsed_length));
         break;
       }
     }
     if (parsed_length < 0)
     {
+      logmsg("Filename character length of ", (int)target_filename_length , " with a prefix of ", FIRMWARE_NAME_PREFIX, " not found in ", name);
       file.close();
       root.close();
       return;
@@ -915,7 +894,10 @@ static void firmware_update()
 
     logmsg("Unzipping matching firmware with prefix: ", FIRMWARE_NAME_PREFIX);
     FsFile target_firmware;
-    target_firmware.open(&root, "ZuluSCSI.bin", O_BINARY | O_WRONLY | O_CREAT | O_TRUNC);
+    char firmware_name[64] = {0};
+    memcpy(firmware_name, FIRMWARE_NAME_PREFIX, sizeof(FIRMWARE_NAME_PREFIX) - 1);
+    memcpy(firmware_name + sizeof(FIRMWARE_NAME_PREFIX) - 1, ".bin", sizeof(".bin"));
+    target_firmware.open(&root, firmware_name, O_BINARY | O_WRONLY | O_CREAT | O_TRUNC);
     uint32_t position = 0;
     while ((bytes_read = file.read(buf, sizeof(buf))) > 0)
     {
@@ -944,15 +926,46 @@ static void firmware_update()
     {
       target_firmware.close();
       logmsg("Error reading firmware package file");
-      root.remove("ZuluSCSI.bin");
+      root.remove(firmware_name);
     }
   }
-  else
-    logmsg("Updater did not find matching file in package: ", name);
   file.close();
   root.close();
 }
 
+// Checks if SD card is still present
+static bool poll_sd_card()
+{
+#ifdef SD_USE_SDIO
+  return SD.card()->status() != 0 && SD.card()->errorCode() == 0;
+#else
+  uint32_t ocr;
+  return SD.card()->readOCR(&ocr);
+#endif
+}
+
+static void init_eject_button()
+{
+  if (platform_has_phy_eject_button() &&  !g_scsi_settings.isEjectButtonSet())
+  {
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+      S2S_CFG_TYPE dev_type = (S2S_CFG_TYPE)scsiDev.targets[i].cfg->deviceType;
+      if (dev_type == S2S_CFG_OPTICAL
+          ||dev_type == S2S_CFG_ZIP100
+          || dev_type == S2S_CFG_REMOVABLE
+          || dev_type == S2S_CFG_FLOPPY_14MB
+          || dev_type == S2S_CFG_MO
+          || dev_type == S2S_CFG_SEQUENTIAL
+      )
+      {
+          setEjectButton(i, 1);
+          logmsg("Setting hardware eject button to the first ejectable device on SCSI ID ", (int)i);
+          break;
+      }
+    }
+  }
+}
 
 // Place all the setup code that requires the SD card to be initialized here
 // Which is pretty much everything after platform_init and and platform_late_init
@@ -1006,36 +1019,14 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       logmsg("Continuing without SD card");
     }
   }
-
+  check_for_unused_update_files();
   firmware_update();
 
-  static const char sg_default[] = "Default";
+
+
   if (g_sdcard_present)
   {
-    char speed_grade_str[10];
-    ini_gets("SCSI", "SpeedGrade", sg_default, speed_grade_str, sizeof(speed_grade_str), CONFIGFILE);
-    zuluscsi_speed_grade_t grade = platform_string_to_speed_grade(speed_grade_str, sizeof(speed_grade_str));
-    if (grade != SPEED_GRADE_DEFAULT)
-    {
-      zuluscsi_reclock_status_t status = platform_reclock(grade);
-      switch (status)
-      {
-        case ZULUSCSI_RECLOCK_NOT_SUPPORTED:
-          logmsg("Reclocking this board is not supported");
-          break;
-        case ZULUSCSI_RECLOCK_FAILED:
-          logmsg("Reclocking failed");
-          break;
-        case ZULUSCSI_RECLOCK_SUCCESS:
-          logmsg("Reclocking was successful");
-          break;
-        case ZULUSCSI_RECLOCK_CUSTOM:
-          logmsg("Custom reclocking timings used");
-          break;
-      }
-      g_sdcard_present = mountSDCard();
-      reinitSCSI();
-    }
+
 
     if (SD.clusterCount() == 0)
     {
@@ -1047,6 +1038,26 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     char presetName[32];
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
     scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName);
+
+#ifdef RECLOCKING_SUPPORTED
+    zuluscsi_speed_grade_t speed_grade = (zuluscsi_speed_grade_t) g_scsi_settings.getSystem()->speedGrade;
+    if (speed_grade != zuluscsi_speed_grade_t::SPEED_GRADE_DEFAULT)
+    { 
+      logmsg("Speed grade set to ", g_scsi_settings.getSpeedGradeString(), " reclocking system");
+      if (platform_reclock(speed_grade))
+      {
+        logmsg("======== Reinitializing ZuluSCSI after reclock ========");
+        g_sdcard_present = mountSDCard();
+      }
+    }
+    else
+    {
+#ifndef ENABLE_AUDIO_OUTPUT // if audio is enabled, skip message because reclocking ocurred earlier
+      logmsg("Speed grade set to Default, skipping reclocking");
+#endif
+    }
+#endif
+
     int boot_delay_ms = cfg->initPreDelay;
     if (boot_delay_ms > 0)
     {
@@ -1055,7 +1066,6 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     }
     platform_post_sd_card_init();
     reinitSCSI();
-
 
     boot_delay_ms = cfg->initPostDelay;
     if (boot_delay_ms > 0)
@@ -1073,6 +1083,12 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     {
       platform_disable_led();
     }
+  }
+#ifdef PLATFORM_HAS_INITIATOR_MODE
+  if (!platform_is_initiator_mode_enabled())
+#endif
+  {
+    init_eject_button();
   }
 
   blinkStatus(BLINK_STATUS_OK);
@@ -1092,17 +1108,21 @@ extern "C" void zuluscsi_setup(void)
 
 #ifdef PLATFORM_MASS_STORAGE
   static bool check_mass_storage = true;
-  if (((check_mass_storage && g_scsi_settings.getSystem()->enableUSBMassStorage)
-      || platform_rebooted_into_mass_storage()) && !is_initiator)
+  if ((check_mass_storage || platform_rebooted_into_mass_storage()) && !is_initiator)
   {
-    check_mass_storage = false;
-
-    // perform checks to see if a computer is attached and return true if we should enter MSC mode.
-    if (platform_sense_msc())
+    if (g_scsi_settings.getSystem()->enableUSBMassStorage
+       || g_scsi_settings.getSystem()->usbMassStoragePresentImages
+    )
     {
-      zuluscsi_msc_loop();
-      logmsg("Re-processing filenames and zuluscsi.ini config parameters");
-      zuluscsi_setup_sd_card();
+      check_mass_storage = false;
+
+      // perform checks to see if a computer is attached and return true if we should enter MSC mode.
+      if (platform_sense_msc())
+      {
+        zuluscsi_msc_loop();
+        logmsg("Re-processing filenames and zuluscsi.ini config parameters");
+        zuluscsi_setup_sd_card();
+      }
     }
   }
 #endif
@@ -1162,10 +1182,9 @@ extern "C" void zuluscsi_main_loop(void)
         (uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INTERVAL)
     {
       sd_card_check_time = millis();
-      uint32_t ocr;
-      if (!SD.card()->readOCR(&ocr))
+      if (!poll_sd_card())
       {
-        if (!SD.card()->readOCR(&ocr))
+        if (!poll_sd_card())
         {
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");

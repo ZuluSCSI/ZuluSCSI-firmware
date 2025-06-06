@@ -1,6 +1,6 @@
 /** 
  * Copyright (C) 2023 saybur
- * ZuluSCSI™ - Copyright (c) 2023 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2023-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -22,7 +22,7 @@
 
 
 #pragma once
-#ifdef ENABLE_AUDIO_OUTPUT
+#ifdef ENABLE_AUDIO_OUTPUT_I2S
 
 extern bool g_audio_enabled;
 extern bool g_ode_audio_stopped;
@@ -58,4 +58,4 @@ void audio_setup();
  * Called from platform_poll() to fill sample buffer(s) if needed.
  */
 void audio_poll();
-#endif //ENABLE_AUDIO_OUTPUT
+#endif //ENABLE_AUDIO_OUTPUT_I2S

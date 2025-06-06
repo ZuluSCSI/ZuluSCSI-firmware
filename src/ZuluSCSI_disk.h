@@ -1,7 +1,7 @@
 /** 
  * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
  * Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * Copyright (c) 2023 joshua stein <jcs@jcs.org>
  * 
  * It is derived from disk.h in SCSI2SD V6.
@@ -59,9 +59,12 @@ struct image_config_t: public S2S_TargetCfg
     // default option of '0' disables this functionality
     uint8_t ejectButton;
 
-    // For tape drive emulation, current position in blocks
-    uint32_t tape_pos;
-
+    // For tape drive emulation
+    uint32_t tape_pos; // current position in blocks
+    uint32_t tape_mark_index; // a direct relationship to the file in a multi image file tape 
+    uint32_t tape_mark_count; // the number of marks
+    uint32_t tape_mark_block_offset; // Sum of the the previous image file sizes at the current mark
+    bool     tape_load_next_file;
     // True if there is a subdirectory of images for this target
     bool image_directory;
 
@@ -86,6 +89,9 @@ struct image_config_t: public S2S_TargetCfg
     // Cue sheet file for CD-ROM images
     FsFile cuesheetfile;
 
+    // the bin file for the cue sheet, the directory for multi bin files, or closed if neither
+    FsFile bin_container;
+
     // Right-align vendor / product type strings
     // Standard SCSI uses left alignment
     int rightAlignStrings;
@@ -101,6 +107,8 @@ struct image_config_t: public S2S_TargetCfg
 
     // Clear any image state to zeros
     void clear();
+
+    uint32_t get_capacity_lba();
 
 private:
     // There should be only one global instance of this struct per device, so make copy constructor private.
@@ -136,6 +144,9 @@ bool scsiDiskFilenameValid(const char* name);
 // This is used when single .cue sheet references multiple .bin files.
 bool scsiDiskFolderContainsCueSheet(FsFile *dir);
 
+// Checks if the directory name is for multi tagged tapes
+bool scsiDiskFolderIsTapeFolder(FsFile *dir);
+
 // Clear the ROM drive header from flash
 bool scsiDiskClearRomDrive();
 // Program ROM drive and rename image file
@@ -147,6 +158,11 @@ bool scsiDiskActivateRomDrive();
 
 // Returns true if there is at least one image active
 bool scsiDiskCheckAnyImagesConfigured();
+
+// Finds filename with the lowest lexical order _after_ the given filename in
+// the given folder. If there is no file after the given one, or if there is
+// no current file, this will return the lowest filename encountered.
+int findNextImageAfter(image_config_t &img, const char* dirname, const char* filename, char* buf, size_t buflen, bool ignore_prefix = false);
 
 // Gets the next image filename for the target, if configured for multiple
 // images. As a side effect this advances image tracking to the next image.

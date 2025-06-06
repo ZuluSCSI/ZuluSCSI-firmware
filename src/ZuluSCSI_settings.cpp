@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2023 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2023-2025 Rabbit Hole Computing™
  * Copyright (c) 2023 Eric Helgeson
  * 
  * This file is licensed under the GPL version 3 or any later version.  
@@ -36,6 +36,20 @@ ZuluSCSISettings g_scsi_settings;
 
 const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000"};
 const char *devicePresetName[] = {"", "ST32430N"};
+
+// must be in the same order as zuluscsi_speed_grade_t in ZuluSCSI_settings.h
+const char * const speed_grade_strings[] =
+{
+    "Default",
+    "TurboMax",
+    "Custom",
+    "AudioSPDIF",
+    "AudioI2S",
+    "A",
+    "B",
+    "C",
+    "WifiRM2"
+};
 
 // Helper function for case-insensitive string compare
 static bool strequals(const char *a, const char *b)
@@ -219,6 +233,8 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.headsPerCylinder = ini_getl(section, "HeadsPerCylinder", cfg.headsPerCylinder, CONFIGFILE);
     cfg.prefetchBytes = ini_getl(section, "PrefetchBytes", cfg.prefetchBytes, CONFIGFILE);
     cfg.ejectButton = ini_getl(section, "EjectButton", cfg.ejectButton, CONFIGFILE);
+    cfg.ejectBlinkTimes = ini_getl(section, "EjectBlinkTimes", cfg.ejectBlinkTimes, CONFIGFILE);
+    cfg.ejectBlinkPeriod = ini_getl(section, "EjectBlinkPeriod", cfg.ejectBlinkPeriod, CONFIGFILE);
 
     cfg.vol = ini_getl(section, "CDAVolume", cfg.vol, CONFIGFILE) & 0xFF;
 
@@ -297,18 +313,23 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableParity = true;
     cfgSys.useFATAllocSize = false;
     cfgSys.enableCDAudio = false;
+    cfgSys.maxVolume = 100;
     cfgSys.enableUSBMassStorage = false;
     cfgSys.usbMassStorageWaitPeriod = 1000;
     cfgSys.usbMassStoragePresentImages = false;
     cfgSys.invertStatusLed = false;
 
+    cfgSys.speedGrade = zuluscsi_speed_grade_t::SPEED_GRADE_DEFAULT;
+
     // setting set for all or specific devices
     cfgDev.deviceType = S2S_CFG_NOT_SET;
     cfgDev.deviceTypeModifier = 0;
-    cfgDev.sectorsPerTrack = 63;
-    cfgDev.headsPerCylinder = 255;
+    cfgDev.sectorsPerTrack = 0;
+    cfgDev.headsPerCylinder = 0;
     cfgDev.prefetchBytes = PREFETCH_BUFFER_SIZE;
     cfgDev.ejectButton = 0;
+    cfgDev.ejectBlinkTimes = 20;
+    cfgDev.ejectBlinkPeriod = 50;
     cfgDev.vol = DEFAULT_VOLUME_LEVEL;
     
     cfgDev.nameFromImage = false;
@@ -347,7 +368,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     else if (strequals(systemPresetName[SYS_PRESET_MPC3000], presetName))
     {
         m_sysPreset = SYS_PRESET_MPC3000;
-        cfgSys.initPreDelay = 600;
+        cfgSys.initPreDelay = 700;
     }
     else if (strequals(systemPresetName[SYS_PRESET_MEGASTE], presetName))
     {
@@ -394,12 +415,27 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableParity =  ini_getbool("SCSI", "EnableParity", cfgSys.enableParity, CONFIGFILE);
     cfgSys.useFATAllocSize = ini_getbool("SCSI", "UseFATAllocSize", cfgSys.useFATAllocSize, CONFIGFILE);
     cfgSys.enableCDAudio = ini_getbool("SCSI", "EnableCDAudio", cfgSys.enableCDAudio, CONFIGFILE);
+    cfgSys.maxVolume =  ini_getl("SCSI", "MaxVolume", cfgSys.maxVolume, CONFIGFILE);
 
     cfgSys.enableUSBMassStorage = ini_getbool("SCSI", "EnableUSBMassStorage", cfgSys.enableUSBMassStorage, CONFIGFILE);
     cfgSys.usbMassStorageWaitPeriod = ini_getl("SCSI", "USBMassStorageWaitPeriod", cfgSys.usbMassStorageWaitPeriod, CONFIGFILE);
     cfgSys.usbMassStoragePresentImages = ini_getbool("SCSI", "USBMassStoragePresentImages", cfgSys.usbMassStoragePresentImages, CONFIGFILE);
 
     cfgSys.invertStatusLed = ini_getbool("SCSI", "InvertStatusLED", cfgSys.invertStatusLed, CONFIGFILE);
+    
+    char tmp[32];
+    ini_gets("SCSI", "SpeedGrade", "", tmp, sizeof(tmp), CONFIGFILE);
+    if (tmp[0] != '\0')
+    {
+        if (platform_reclock_supported())
+        {
+            cfgSys.speedGrade = stringToSpeedGrade(tmp, sizeof(tmp));
+        }
+        else
+        {
+            logmsg("Speed grade setting ignored, reclocking the MCU is not supported by this device");
+        }
+    }
 
     return &cfgSys;
 }
@@ -491,4 +527,49 @@ scsi_device_preset_t ZuluSCSISettings::getDevicePreset(uint8_t scsiId)
 const char* ZuluSCSISettings::getDevicePresetName(uint8_t scsiId)
 {
     return devicePresetName[m_devPreset[scsiId]];
+}
+
+
+zuluscsi_speed_grade_t ZuluSCSISettings::stringToSpeedGrade(const char *speed_grade_target, size_t length)
+{
+    zuluscsi_speed_grade_t grade = zuluscsi_speed_grade_t::SPEED_GRADE_DEFAULT;
+
+    bool found_speed_grade = false;
+    // search the list of speed grade strings for a matching target
+    for (uint8_t i = 0; i < sizeof(speed_grade_strings)/sizeof(speed_grade_strings[0]); i++)
+    {
+        if (strncasecmp(speed_grade_target, speed_grade_strings[i], length) == 0)
+        {
+            grade = (zuluscsi_speed_grade_t)i;
+            found_speed_grade = true;
+            break;
+        }
+    }
+    if (!found_speed_grade)
+    {
+      logmsg("Setting \"", speed_grade_target, "\" does not match any known speed grade, using default");
+      grade = SPEED_GRADE_DEFAULT;
+    }
+
+    return grade;
+}
+
+const char *ZuluSCSISettings::getSpeedGradeString()
+{
+    return speed_grade_strings[m_sys.speedGrade];
+}
+
+
+const bool ZuluSCSISettings::isEjectButtonSet()
+{
+    bool is_set = false;
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        if (m_dev[i].ejectButton != 0)
+        {
+            is_set = true;
+            break;
+        }
+    }
+    return is_set;
 }

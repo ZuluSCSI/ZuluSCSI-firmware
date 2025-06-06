@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -50,6 +50,10 @@ bool scsiHostRequestWaiting();
 // These return the actual number of bytes transferred.
 uint32_t scsiHostWrite(const uint8_t *data, uint32_t count);
 uint32_t scsiHostRead(uint8_t *data, uint32_t count);
+
+// Release bus signals and expect the target to do the same.
+// Cycles ACK in case target still holds BSY and REQ.
+void scsiHostWaitBusFree();
 
 // Release all bus signals
 void scsiHostPhyRelease();

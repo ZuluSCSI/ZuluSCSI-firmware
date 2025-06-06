@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -113,16 +113,11 @@ uint8_t platform_get_buttons();
 
 uint32_t platform_sys_clock_in_hz();
 
-// Attempt to reclock the MCU - unsupported
-inline zuluscsi_reclock_status_t platform_reclock(zuluscsi_speed_grade_t speed_grade){return ZULUSCSI_RECLOCK_NOT_SUPPORTED;}
-
-// match string to speed grade - unsupported
-inline zuluscsi_speed_grade_t platform_string_to_speed_grade(const char *speed_grade_str, size_t length){return SPEED_GRADE_DEFAULT;}
+// Return whether device supports reclocking the MCU
+inline bool platform_reclock_supported(){return false;}
 
 // Returns true if reboot was for mass storage - unsupported
 inline bool platform_rebooted_into_mass_storage() {return false;}
-
-
 
 // Reinitialize SD card connection and save log from interrupt context.
 // This can be used in crash handlers.
@@ -204,6 +199,9 @@ const uint32_t platform_flash_sector_map[] =
 
 bool platform_firmware_erase(FsFile &file);
 bool platform_firmware_program(FsFile &file);
+
+bool platform_has_phy_eject_button(){return false};
+
 // SD card driver for SdFat
 
 // SDIO interface, ZuluSCSI v1.4
