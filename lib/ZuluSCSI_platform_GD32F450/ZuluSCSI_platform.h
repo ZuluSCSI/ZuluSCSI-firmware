@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -27,8 +27,7 @@
 #include <gd32f4xx.h>
 #include <gd32f4xx_gpio.h>
 #include <scsi2sd.h>
-#include "ZuluSCSI_config.h"
-
+#include <ZuluSCSI_config.h>
 
 #ifdef __cplusplus
 #include <SdFat.h>
@@ -37,21 +36,6 @@ extern "C" {
 #endif
 
 extern const char *g_platform_name;
-
-#if defined(ZULUSCSI_V1_4)
-#   define PLATFORM_NAME "ZuluSCSI v1.4"
-#   define PLATFORM_REVISION "1.4"
-#   define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_SYNC_10
-#   define PLATFORM_OPTIMAL_MIN_SD_WRITE_SIZE 4096
-#   define PLATFORM_OPTIMAL_MAX_SD_WRITE_SIZE 65536
-#   define PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE 8192
-#   define PLATFORM_FLASH_SECTOR_ERASE
-#   include "ZuluSCSI_v1_4_gpio.h"
-#endif
-
-#ifndef PLATFORM_VDD_WARNING_LIMIT_mV
-#define PLATFORM_VDD_WARNING_LIMIT_mV 2800
-#endif
 
 // Debug logging functions
 void platform_log(const char *s);
@@ -92,11 +76,28 @@ void platform_post_sd_card_init();
 // Hooks
 void platform_end_of_loop_hook(void);
 
+// Set the status LED only if it is not in a blinking routine
+void platform_write_led(bool state);
+#define LED_ON()  platform_write_led(true)
+#define LED_OFF() platform_write_led(false)
+// Used by the blinking routine
+void platform_set_blink_status(bool status);
+// LED override will set the status LED regardless of the blinking routine
+void platform_write_led_override(bool state);
+#define LED_ON_OVERRIDE()  platform_write_led_override(true)
+#define LED_OFF_OVERRIDE()  platform_write_led_override(false)
+
 // Disable the status LED
 void platform_disable_led(void);
 
+// Specific error code tied to the MCU when the SD card is not detected
+uint8_t platform_no_sd_card_on_init_error_code();
+
 // Setup soft watchdog
 void platform_reset_watchdog();
+
+// Reset MCU
+void platform_reset_mcu();
 
 // Poll function that is called every few milliseconds.
 // The SD card is free to access during this time, and pauses up to
@@ -109,6 +110,14 @@ void platform_poll();
 // Debouncing logic is left up to the specific implementation.
 // This function should return without significantly delay.
 uint8_t platform_get_buttons();
+
+uint32_t platform_sys_clock_in_hz();
+
+// Return whether device supports reclocking the MCU
+inline bool platform_reclock_supported(){return false;}
+
+// Returns true if reboot was for mass storage - unsupported
+inline bool platform_rebooted_into_mass_storage() {return false;}
 
 // Reinitialize SD card connection and save log from interrupt context.
 // This can be used in crash handlers.
@@ -130,18 +139,7 @@ void SysTick_Handle_PreEmptively();
 
 // must be a factor of each sector map size
 #define PLATFORM_FLASH_WRITE_BUFFER_SIZE 2048
-// From GD32F4xx user manual
-const uint32_t platform_flash_sector_map[] =
-    {
-         16 * 1024,
-         16 * 1024,
-         16 * 1024,
-         16 * 1024,
-         64 * 1024,
-        128 * 1024,
-        128 * 1024, 
-        128 * 1024
-    };
+
 
 void platform_boot_to_main_firmware();
 
@@ -186,8 +184,24 @@ extern const uint32_t g_scsi_out_byte_to_bop[256];
 #ifdef __cplusplus
 }
 
+// From GD32F4xx user manual
+const uint32_t platform_flash_sector_map[] =
+    {
+         16 * 1024,
+         16 * 1024,
+         16 * 1024,
+         16 * 1024,
+         64 * 1024,
+        128 * 1024,
+        128 * 1024, 
+        128 * 1024
+    };
+
 bool platform_firmware_erase(FsFile &file);
 bool platform_firmware_program(FsFile &file);
+
+bool platform_has_phy_eject_button(){return false};
+
 // SD card driver for SdFat
 
 // SDIO interface, ZuluSCSI v1.4

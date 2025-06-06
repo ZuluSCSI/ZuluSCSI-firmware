@@ -1,6 +1,6 @@
 /**
  * Portions - Copyright (C) 2023 Eric Helgeson
- * ZuluSCSI™ - Copyright (c) 2022-2023 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  *
  * This file is licensed under the GPL version 3 or any later version. 
  *
@@ -33,6 +33,7 @@
 #include <unistd.h>
 #include <SdFat.h>
 #include "ROMDrive.h"
+#include "ZuluSCSI_config.h"
 
 extern "C" {
 #include <scsi.h>
@@ -74,6 +75,9 @@ public:
     // Is this internal ROM drive in microcontroller flash?
     bool isRom();
 
+    // Is the image a folder, which contains multiple files (used for .bin/.cue)
+    bool isFolder();
+
     // Is this a contigious block on the SD card? Allowing less overhead
     bool isContiguous();
 
@@ -105,6 +109,10 @@ public:
 
     size_t getFilename(char* buf, size_t buflen);
 
+    // Change image if the image is a folder (used for .cue with multiple .bin)
+    bool selectImageFile(const char *filename);
+    size_t getFoldername(char* buf, size_t buflen);
+
 protected:
     bool m_iscontiguous;
     bool m_israw;
@@ -116,4 +124,9 @@ protected:
     uint32_t m_bgnsector;
     uint32_t m_endsector;
     uint32_t m_cursector;
+
+    bool m_isfolder;
+    char m_foldername[MAX_FILE_PATH + 1];
+
+    bool _internal_open(const char *filename);
 };

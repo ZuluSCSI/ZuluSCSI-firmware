@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -22,6 +22,8 @@
 #include "ZuluSCSI_platform.h"
 #include "gd32f20x_sdio.h"
 #include "gd32f20x_fmc.h"
+#include "gd32f20x_fwdgt.h"
+#include "gd32_sdio_sdcard.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "usbd_conf.h"
@@ -30,8 +32,9 @@
 #include <SdFat.h>
 #include <scsi.h>
 #include <assert.h>
-#include <audio.h>
+#include <audio_i2s.h>
 #include <ZuluSCSI_audio.h>
+#include <ZuluSCSI_settings.h>
 
 extern SdFs SD;
 extern bool g_rawdrive_active;
@@ -43,9 +46,14 @@ static bool g_enable_apple_quirks = false;
 bool g_direct_mode = false;
 ZuluSCSIVersion_t g_zuluscsi_version = ZSVersion_unknown;
 bool g_moved_select_in = false;
+static bool g_led_blinking = false;
 // hw_config.cpp c functions
 #include "platform_hw_config.h"
 
+// usb_log_poll() is called through function pointer to
+// avoid including USB in SD card bootloader.
+static void (*g_usb_log_poll_func)(void);
+static void usb_log_poll();
 
 
 /*************************/
@@ -136,6 +144,12 @@ void SysTick_Handle_PreEmptively()
     }
     __enable_irq();
 }
+
+uint32_t platform_sys_clock_in_hz()
+{
+    return rcu_clock_freq_get(CK_SYS);
+}
+
 
 /***************/
 /* GPIO init   */
@@ -386,8 +400,10 @@ static bool get_direct_mode(uint32_t port, uint32_t pin, const char *switch_name
 
 void platform_late_init()
 {
+
     // Initialize usb for CDC serial output
     usb_serial_init();
+    g_usb_log_poll_func = &usb_log_poll;
 
     logmsg("Platform: ", g_platform_name);
     logmsg("FW Version: ", g_log_firmwareversion);
@@ -446,12 +462,45 @@ void platform_post_sd_card_init()
     #endif
 }
 
+void platform_write_led(bool state)
+{
+    if (g_led_blinking) return;
+
+    if (g_scsi_settings.getSystem()->invertStatusLed)
+        state = !state;
+
+    if (state)
+        gpio_bit_reset(LED_PORT, LED_PINS);
+    else
+        gpio_bit_set(LED_PORT, LED_PINS);
+}
+
+void platform_set_blink_status(bool status)
+{
+    g_led_blinking = status;
+}
+
+void platform_write_led_override(bool state)
+{
+    if (g_scsi_settings.getSystem()->invertStatusLed)
+        state = !state;
+
+    if (state)
+        gpio_bit_reset(LED_PORT, LED_PINS);
+    else
+        gpio_bit_set(LED_PORT, LED_PINS);
+}
+
 void platform_disable_led(void)
 {   
     gpio_init(LED_PORT, GPIO_MODE_IPU, 0, LED_PINS);
     logmsg("Disabling status LED");
 }
 
+uint8_t platform_no_sd_card_on_init_error_code()
+{
+    return 0x80 | SD_CMD_RESP_TIMEOUT;
+}
 /*****************************************/
 /* Supply voltage monitor                */
 /*****************************************/
@@ -609,7 +658,7 @@ void show_hardfault(uint32_t *sp)
 
     while (1)
     {
-        usb_log_poll();
+        if (g_usb_log_poll_func) g_usb_log_poll_func();
         // Flash the crash address on the LED
         // Short pulse means 0, long pulse means 1
         int base_delay = 1000;
@@ -682,7 +731,7 @@ void __assert_func(const char *file, int line, const char *func, const char *exp
 
     while(1)
     {
-        usb_log_poll();
+        if (g_usb_log_poll_func) g_usb_log_poll_func();
         LED_OFF();
         for (int j = 0; j < 1000; j++) delay_ns(100000);
         LED_ON();
@@ -708,6 +757,14 @@ void platform_reset_watchdog()
     // USB log is polled here also to make sure any log messages in fault states
     // get passed to USB.
     usb_log_poll();
+}
+
+void platform_reset_mcu()
+{
+    // reset in 2 sec ( 1 / (40KHz / 32) * 2500 == 2sec)
+    fwdgt_config(2500, FWDGT_PSC_DIV32);
+    fwdgt_enable();
+
 }
 
 // Poll function that is called every few milliseconds.
@@ -770,6 +827,11 @@ uint8_t platform_get_buttons()
 #endif
 
     return buttons_debounced;
+}
+
+bool platform_has_phy_eject_button()
+{
+    return g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2;
 }
 
 /***********************/

@@ -1,7 +1,7 @@
 //	Copyright (C) 2014 Michael McMaster <michael@codesrc.com>
 //	Copyright (c) 2023 joshua stein <jcs@jcs.org>
 //	Copyright (c) 2023 Andrea Ottaviani <andrea.ottaviani.69@gmail.com>
-//	Copyright (C) 2024 Rabbit Hole Computing LLC
+//	Copyright (c) 2024-2025 Rabbit Hole Computing™
 //
 //	This file is part of SCSI2SD.
 //
@@ -28,6 +28,7 @@
 #include "led.h"
 #include "mode.h"
 #include "scsi2sd_time.h"
+#include "timings.h"
 #include "bsp.h"
 #include "cdrom.h"
 #include "network.h"
@@ -536,12 +537,25 @@ static void process_Command()
 			memset(scsiDev.data, 0, 256); // Max possible alloc length
 			scsiDev.data[0] = 0xF0;
 			scsiDev.data[2] = scsiDev.target->sense.code & 0x0F;
-
-			scsiDev.data[3] = transfer.lba >> 24;
-			scsiDev.data[4] = transfer.lba >> 16;
-			scsiDev.data[5] = transfer.lba >> 8;
-			scsiDev.data[6] = transfer.lba;
-
+			if (cfg->deviceType == S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.data[2] |= scsiDev.target->sense.filemark ? 1 << 7 : 0;
+				scsiDev.data[3] |= scsiDev.target->sense.eom ? 1 << 6 : 0;
+			}
+			if (cfg->deviceType == S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.data[3] = scsiDev.target->sense.info >> 24;
+				scsiDev.data[4] = scsiDev.target->sense.info >> 16;
+				scsiDev.data[5] = scsiDev.target->sense.info >> 8;
+				scsiDev.data[6] = scsiDev.target->sense.info;
+			}
+			else
+			{
+				scsiDev.data[3] = transfer.lba >> 24;
+				scsiDev.data[4] = transfer.lba >> 16;
+				scsiDev.data[5] = transfer.lba >> 8;
+				scsiDev.data[6] = transfer.lba;
+			}
 			// Additional bytes if there are errors to report
 			scsiDev.data[7] = 10; // additional length
 			scsiDev.data[12] = scsiDev.target->sense.asc >> 8;
@@ -758,8 +772,16 @@ static void scsiReset()
 
 	for (int i = 0; i < S2S_MAX_TARGETS; ++i)
 	{
-		scsiDev.targets[i].syncOffset = 0;
-		scsiDev.targets[i].syncPeriod = 0;
+		if (g_force_sync > 0)
+		{
+			scsiDev.targets[i].syncPeriod = g_force_sync;
+			scsiDev.targets[i].syncOffset = g_force_offset;
+		}
+		else
+		{
+			scsiDev.targets[i].syncOffset = 0;
+			scsiDev.targets[i].syncPeriod = 0;
+		}
 	}
 	scsiDev.minSyncPeriod = 0;
 
@@ -976,7 +998,7 @@ static void process_MessageOut()
 	}
 	else if (scsiDev.msgOut == 0x05)
 	{
-		// Initiate Detected Error
+		// Initiator Detected Error
 		// Ignore for now
 	}
 	else if (scsiDev.msgOut == 0x0F)
@@ -992,7 +1014,7 @@ static void process_MessageOut()
 	}
 	else if (scsiDev.msgOut == MSG_REJECT)
 	{
-		// Message Reject
+		// Message Rejected
 		// Oh well.
 
 		if (wasNeedSyncNegotiationAck)
@@ -1046,7 +1068,7 @@ static void process_MessageOut()
 	{
 		int i;
 
-		// Extended message.
+		// Extended message. These include speed negotiation
 		int msgLen = scsiReadByte();
 		if (msgLen == 0) msgLen = 256;
 		uint8_t extmsg[256];
@@ -1072,8 +1094,8 @@ static void process_MessageOut()
 			int oldPeriod = scsiDev.target->syncPeriod;
 			int oldOffset = scsiDev.target->syncOffset;
 
-			int transferPeriod = extmsg[1];
-			int offset = extmsg[2];
+			int transferPeriod = extmsg[1];	//This is actually 1/4 of the duration of transfer speed in ns
+			int offset = extmsg[2];	//Req/Ack offset
 
 			if ((
 					(transferPeriod > 0) &&
@@ -1100,34 +1122,37 @@ static void process_MessageOut()
 				// data corruption while reading data. We can count the
 				// ACK's correctly, but can't save the data to a register
 				// before it changes. (ie. transferPeriod == 12)
-				if ((scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_TURBO) &&
-					(transferPeriod <= 16))
+				//****TODO Try to get higher speeds
+				//The Adaptec AHA2940-UW seems to support 10, 13.4, 16 and 20 MHz
+				//The speeds above correspond to syncPeriod values of 25, 18, 15 and 12 (maybe, the last 3 are truncated)
+				//We will set the syncPeriod and syncOffset to the fastest we 
+				//can support if the initiator requests a faster speed
+				if (scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_SYNC_20 || scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_NoLimit)
 				{
-					scsiDev.target->syncPeriod = 16; // 15.6MB/s
+					if (transferPeriod <= g_max_sync_20_period)
+						scsiDev.target->syncPeriod = g_max_sync_20_period;
+					else 
+						scsiDev.target->syncPeriod = transferPeriod;	
 				}
-				else if (scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_TURBO)
+				else if (scsiDev.boardCfg.scsiSpeed >= S2S_CFG_SPEED_SYNC_10)
 				{
-					scsiDev.target->syncPeriod = transferPeriod;
+					if (transferPeriod <= g_max_sync_10_period)
+						scsiDev.target->syncPeriod = g_max_sync_10_period;
+					else
+						scsiDev.target->syncPeriod = transferPeriod;
 				}
-				else if (transferPeriod <= 25 &&
-					((scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_NoLimit) ||
-						(scsiDev.boardCfg.scsiSpeed >= S2S_CFG_SPEED_SYNC_10)))
+				else if (scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_SYNC_5)
 				{
-					scsiDev.target->syncPeriod = 25; // 100ns, 10MB/s
-
-				} else if (transferPeriod < 50 &&
-					((scsiDev.boardCfg.scsiSpeed == S2S_CFG_SPEED_NoLimit) ||
-						(scsiDev.boardCfg.scsiSpeed >= S2S_CFG_SPEED_SYNC_10)))
-				{
-					scsiDev.target->syncPeriod = transferPeriod;
-				} else if (transferPeriod >= 50)
-				{
-					scsiDev.target->syncPeriod = transferPeriod;
-				} else {
-					scsiDev.target->syncPeriod = 50;
+					if (transferPeriod <= g_max_sync_5_period)
+						scsiDev.target->syncPeriod = g_max_sync_5_period;
+					else
+						scsiDev.target->syncPeriod = transferPeriod;
 				}
 			}
 
+			//Reply back with negotiation speed (if different from previous one)
+			//Reply should be the same as request (if we support it) or slower if we don't
+			//Slower in this context means a higher syncPeriod or lower syncOffset 
 			if (transferPeriod != oldPeriod ||
 				scsiDev.target->syncPeriod != oldPeriod ||
 				offset != oldOffset ||
@@ -1342,8 +1367,16 @@ void scsiInit()
 		scsiDev.targets[i].sense.code = NO_SENSE;
 		scsiDev.targets[i].sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
 
-		scsiDev.targets[i].syncOffset = 0;
-		scsiDev.targets[i].syncPeriod = 0;
+		if (g_force_sync > 0)
+		{
+			scsiDev.targets[i].syncPeriod = g_force_sync;
+			scsiDev.targets[i].syncOffset = g_force_offset;
+		}
+		else
+		{
+			scsiDev.targets[i].syncOffset = 0;
+			scsiDev.targets[i].syncPeriod = 0;
+		}
 
 		// Always "start" the device. Many systems (eg. Apple System 7)
 		// won't respond properly to

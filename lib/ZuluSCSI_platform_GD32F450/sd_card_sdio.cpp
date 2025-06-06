@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -46,7 +46,7 @@ static uint32_t g_sdio_sector_count;
 static bool logSDError(int line)
 {
     g_sdio_error_line = line;
-    logmsg("SDIO SD card error on line ", line, ", error code ", (int)g_sdio_error);
+    dbgmsg("SDIO SD card error on line ", line, ", error code ", (int)g_sdio_error);
     return false;
 }
 
@@ -109,6 +109,19 @@ bool SdioCard::readCID(cid_t* cid)
 bool SdioCard::readCSD(csd_t* csd)
 {
     sd_csd_get((uint8_t*)csd);
+    return true;
+}
+
+bool SdioCard::readSDS(sds_t* sds)
+{
+    uint32_t raw_sds[64/4];
+    if (!checkReturnOk(sd_sdstatus_get(raw_sds)))
+        return false;
+    // SdFat expects the data in big endian format.
+    for (int i = 0; i < 16; i++)
+    {
+        ((uint8_t*)sds)[i] = (raw_sds[i / 4] >> (24 - (i % 4) * 8)) & 0xFF;
+    }
     return true;
 }
 

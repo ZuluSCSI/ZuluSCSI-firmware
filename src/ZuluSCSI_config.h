@@ -1,21 +1,21 @@
-/** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+/**
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * Portions copyright (c) 2023 joshua stein <jcs@jcs.org>
- * 
- * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
- * 
+ *
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
+ *
  * https://www.gnu.org/licenses/gpl-3.0.html
  * ----
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version. 
- * 
+ * (at your option) any later version.
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details. 
- * 
+ * GNU General Public License for more details.
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
@@ -24,12 +24,15 @@
 // Other settings can be set by ini file at runtime.
 
 #pragma once
-
-#include <ZuluSCSI_platform.h>
+#include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "24.07.22"
-#define FW_VER_SUFFIX   "devel"
+#define FW_VER_NUM      "25.06.01"
+#define FW_VER_SUFFIX   "release"
+
+#define DEF_STRINGFY(DEF) STRINGFY(DEF)
+#define STRINGFY(STR) #STR
+#define FIRMWARE_NAME_PREFIX DEF_STRINGFY(BUILD_ENV)
 #define ZULU_FW_VERSION FW_VER_NUM "-" FW_VER_SUFFIX
 #define INQUIRY_NAME  PLATFORM_NAME " v" ZULU_FW_VERSION
 #define TOOLBOX_API 0
@@ -38,6 +41,7 @@
 #define CONFIGFILE  "zuluscsi.ini"
 #define LOGFILE     "zululog.txt"
 #define CRASHFILE   "zuluerr.txt"
+#define FIRMWARE_PREFIX "ZuluSCSI-FW"
 
 // Prefix for command file to create new image (case-insensitive)
 #define CREATEFILE "create"
@@ -47,6 +51,9 @@
 #define LOGBUFSIZE 16384
 #endif
 #define LOG_SAVE_INTERVAL_MS 1000
+
+// How often to check for SD card presence
+#define SDCARD_POLL_INTERVAL 5000
 
 // Watchdog timeout
 // Watchdog will first issue a bus reset and if that does not help, crashdump.
@@ -123,3 +130,9 @@
 // Zip disk  media sizes
 #define ZIP100_DISK_SIZE    100663296 // bytes
 #define ZIP250_DISK_SIZE    250640384 // bytes
+
+#define TAPE_DEFAULT_NAME  "tape.000"
+
+// Settings for rebooting
+#define REBOOT_INTO_MASS_STORAGE_MAGIC_NUM 0x5eeded
+

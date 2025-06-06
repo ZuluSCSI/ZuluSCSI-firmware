@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -44,9 +44,10 @@ static uint32_t g_sdio_sector_count;
 static bool logSDError(int line)
 {
     g_sdio_error_line = line;
-    logmsg("SDIO SD card error on line ", line, ", error code ", (int)g_sdio_error);
+    dbgmsg("SDIO SD card error on line ", line, ", error code ", (int)g_sdio_error);
     return false;
 }
+
 
 bool SdioCard::begin(SdioConfig sdioConfig)
 {
@@ -55,10 +56,17 @@ bool SdioCard::begin(SdioConfig sdioConfig)
     nvic_irq_enable(SDIO_IRQn, 0, 0);
 
     g_sdio_error = sd_init();
+    static sd_error_enum last_error = SD_OK;
     if (g_sdio_error != SD_OK)
     {
-        // Don't spam the log when main program polls for card insertion.
-        dbgmsg("sd_init() failed: ", (int)g_sdio_error);
+        static uint32_t redisplay_error_start = millis();
+        // Don't spam the log when main program polls for card insertion, redisplay retry every 5 seconds.
+        if (last_error != g_sdio_error || (uint32_t)(millis() - redisplay_error_start) > 5000)
+        {
+            dbgmsg("sd_init() failed: ", (int)g_sdio_error);
+            last_error = g_sdio_error;
+            redisplay_error_start = millis();
+        }
         return false;
     }
 
@@ -110,6 +118,19 @@ bool SdioCard::readCSD(csd_t* csd)
     return true;
 }
 
+bool SdioCard::readSDS(sds_t* sds)
+{
+    uint32_t raw_sds[64/4];
+    if (!checkReturnOk(sd_sdstatus_get(raw_sds)))
+        return false;
+    // SdFat expects the data in big endian format.
+    for (int i = 0; i < 16; i++)
+    {
+        ((uint8_t*)sds)[i] = (raw_sds[i / 4] >> (24 - (i % 4) * 8)) & 0xFF;
+    }
+    return true;
+}
+
 bool SdioCard::readOCR(uint32_t* ocr)
 {
     // SDIO mode does not have CMD58, but main program uses this to
@@ -119,19 +140,19 @@ bool SdioCard::readOCR(uint32_t* ocr)
 
 bool SdioCard::readData(uint8_t* dst)
 {
-    logmsg("SdioCard::readData() called but not implemented!");
+    // logmsg("SdioCard::readData() called but not implemented!");
     return false;
 }
 
 bool SdioCard::readStart(uint32_t sector)
 {
-    logmsg("SdioCard::readStart() called but not implemented!");
+    // logmsg("SdioCard::readStart() called but not implemented!");
     return false;
 }
 
 bool SdioCard::readStop()
 {
-    logmsg("SdioCard::readStop() called but not implemented!");
+    // logmsg("SdioCard::readStop() called but not implemented!");
     return false;
 }
 
@@ -199,19 +220,19 @@ uint8_t SdioCard::type() const
 
 bool SdioCard::writeData(const uint8_t* src)
 {
-    logmsg("SdioCard::writeData() called but not implemented!");
+    // logmsg("SdioCard::writeData() called but not implemented!");
     return false;
 }
 
 bool SdioCard::writeStart(uint32_t sector)
 {
-    logmsg("SdioCard::writeStart() called but not implemented!");
+    // logmsg("SdioCard::writeStart() called but not implemented!");
     return false;
 }
 
 bool SdioCard::writeStop()
 {
-    logmsg("SdioCard::writeStop() called but not implemented!");
+    // logmsg("SdioCard::writeStop() called but not implemented!");
     return false;
 }
 
@@ -221,12 +242,12 @@ bool SdioCard::erase(uint32_t firstSector, uint32_t lastSector)
 }
 
 bool SdioCard::cardCMD6(uint32_t arg, uint8_t* status) {
-    logmsg("SdioCard::cardCMD6() not implemented");
+    // logmsg("SdioCard::cardCMD6() not implemented");
     return false;
 }
 
 bool SdioCard::readSCR(scr_t* scr) {
-    logmsg("SdioCard::readSCR() not implemented");
+    // logmsg("SdioCard::readSCR() not implemented");
     return false;
 }
 

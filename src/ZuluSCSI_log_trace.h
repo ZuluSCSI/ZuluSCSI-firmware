@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -31,3 +31,4 @@ void scsiLogPhaseChange(int new_phase);
 void scsiLogInitiatorPhaseChange(int new_phase);
 void scsiLogDataIn(const uint8_t *buf, uint32_t length);
 void scsiLogDataOut(const uint8_t *buf, uint32_t length);
+void scsiLogInitiatorCommandFailure(const char *command_text, int target_id, int status, uint8_t sense_key);

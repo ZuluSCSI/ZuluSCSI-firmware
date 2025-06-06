@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -27,33 +27,13 @@
 #include <gd32f20x.h>
 #include <gd32f20x_gpio.h>
 #include <scsi2sd.h>
+#include <ZuluSCSI_config.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 extern const char *g_platform_name;
-
-#if defined(ZULUSCSI_V1_0)
-#   if defined(ZULUSCSI_V1_0_mini)
-#       define PLATFORM_NAME "ZuluSCSI mini v1.0"
-#   else
-#       define PLATFORM_NAME "ZuluSCSI v1.0"
-#   endif
-#   define PLATFORM_REVISION "1.0"
-#   define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_ASYNC_50
-#   include "ZuluSCSI_v1_0_gpio.h"
-#else
-#   define PLATFORM_NAME "ZuluSCSI v1.1+"
-#   define PLATFORM_REVISION "1.1+"
-#   define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_SYNC_10
-#   define PLATFORM_OPTIMAL_MIN_SD_WRITE_SIZE 4096
-#   define PLATFORM_OPTIMAL_MAX_SD_WRITE_SIZE 65536
-#   define PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE 8192
-#   define PLATFORM_VERSION_1_1_PLUS
-#   define ZULUSCSI_HARDWARE_CONFIG
-#   include "ZuluSCSI_v1_1_gpio.h"
-#endif
 
 #include "platform_hw_config.h"
 
@@ -68,10 +48,6 @@ enum ZuluSCSIVersion_t
 
 extern enum ZuluSCSIVersion_t g_zuluscsi_version;
 extern bool g_moved_select_in;
-
-#ifndef PLATFORM_VDD_WARNING_LIMIT_mV
-#define PLATFORM_VDD_WARNING_LIMIT_mV 2800
-#endif
 
 // Debug logging functions
 void platform_log(const char *s);
@@ -108,11 +84,28 @@ void platform_late_init();
 // Initialization after the SD Card has been found
 void platform_post_sd_card_init();
 
+// Set the status LED only if it is not in a blinking routine
+void platform_write_led(bool state);
+#define LED_ON()  platform_write_led(true)
+#define LED_OFF() platform_write_led(false)
+// Used by the blinking routine
+void platform_set_blink_status(bool status);
+// LED override will set the status LED regardless of the blinking routine
+void platform_write_led_override(bool state);
+#define LED_ON_OVERRIDE()  platform_write_led_override(true)
+#define LED_OFF_OVERRIDE()  platform_write_led_override(false)
+
 // Disable the status LED
 void platform_disable_led(void);
 
+// Specific error code tied to the MCU when the SD card is not detected
+uint8_t platform_no_sd_card_on_init_error_code();
+
 // Setup soft watchdog
 void platform_reset_watchdog();
+
+// Reset MCU after a certain amount of time
+void platform_reset_mcu();
 
 // Poll function that is called every few milliseconds.
 // The SD card is free to access during this time, and pauses up to
@@ -125,6 +118,15 @@ void platform_poll();
 // Debouncing logic is left up to the specific implementation.
 // This function should return without significantly delay.
 uint8_t platform_get_buttons();
+
+// Return system clock in Hz
+uint32_t platform_sys_clock_in_hz();
+
+// Return whether device supports reclocking the MCU
+inline bool platform_reclock_supported(){return false;}
+
+// Returns true if reboot was for mass storage - unsupported
+inline bool platform_rebooted_into_mass_storage() {return false;}
 
 // Reinitialize SD card connection and save log from interrupt context.
 // This can be used in crash handlers.
@@ -146,6 +148,9 @@ void SysTick_Handle_PreEmptively();
 #define PLATFORM_FLASH_PAGE_SIZE 2048
 bool platform_rewrite_flash_page(uint32_t offset, uint8_t buffer[PLATFORM_FLASH_PAGE_SIZE]);
 void platform_boot_to_main_firmware();
+
+// True if the board has a physical eject button
+bool platform_has_phy_eject_button();
 
 // Configuration customizations based on DIP switch settings
 // When DIPSW1 is on, Apple quirks are enabled by default.

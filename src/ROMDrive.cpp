@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * Function romDriveClear() Copyright (c) 2023 Eric Helgeson
  *
  * This file is licensed under the GPL version 3 or any later version. 
@@ -131,8 +131,11 @@ bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S
     hdr.blocksize = blocksize;
     hdr.drivetype = type;
 
+    memset(scsiDev.data, 0, PLATFORM_ROMDRIVE_PAGE_SIZE);
+    memcpy(scsiDev.data, &hdr, sizeof(hdr));
+
     // Program the drive metadata header
-    if (!platform_write_romdrive((const uint8_t*)&hdr, 0, PLATFORM_ROMDRIVE_PAGE_SIZE))
+    if (!platform_write_romdrive(scsiDev.data, 0, PLATFORM_ROMDRIVE_PAGE_SIZE))
     {
         logmsg("---- Failed to program ROM drive header");
         file.close();

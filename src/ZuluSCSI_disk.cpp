@@ -2,7 +2,7 @@
  * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
  * Portions Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
  * Portions Copyright (C) 2023 Eric Helgeson
- * ZuluSCSI™ - Copyright (c) 2022-2023 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  *
  * This file is licensed under the GPL version 3 or any later version. 
  * It is derived from disk.c in SCSI2SD V6
@@ -31,8 +31,9 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
+#include "ZuluSCSI_blink.h"
 #ifdef ENABLE_AUDIO_OUTPUT
-#include "ZuluSCSI_audio.h"
+#  include "ZuluSCSI_audio.h"
 #endif
 #include "ZuluSCSI_cdrom.h"
 #include "ImageBackingStore.h"
@@ -165,7 +166,7 @@ bool scsiDiskActivateRomDrive()
 extern SdFs SD;
 SdDevice sdDev = {2, 256 * 1024 * 1024 * 2}; /* For SCSI2SD */
 
-static image_config_t g_DiskImages[S2S_MAX_TARGETS];
+image_config_t g_DiskImages[S2S_MAX_TARGETS];
 
 void scsiDiskResetImages()
 {
@@ -179,6 +180,55 @@ void image_config_t::clear()
 {
     static const image_config_t empty; // Statically zero-initialized
     *this = empty;
+}
+
+uint32_t image_config_t::get_capacity_lba()
+{
+    if (bin_container.isOpen() && cuesheetfile.isOpen())
+    {
+        size_t halfbufsize = sizeof(scsiDev.data) / 2;
+        char *cuebuf = (char*)&scsiDev.data[halfbufsize];
+        cuesheetfile.seekSet(0);
+        int len = cuesheetfile.read(cuebuf, halfbufsize);
+        if (len == 0)
+            return 0;
+        CUEParser parser(cuebuf);
+        CUETrackInfo const *track;
+        CUETrackInfo last_track = {0};
+        if (bin_container.isDir())
+        {
+            FsFile bin_file;
+            uint64_t prev_capacity = 0;
+            // Find last track
+            while((track = parser.next_track(prev_capacity)) != nullptr)
+            {
+                last_track = *track;
+                if (!bin_file.open(&bin_container, track->filename, O_RDONLY | O_BINARY))
+                {
+                    dbgmsg("Unable to open cue/multi-bin image file \"", track->filename, "\" to determine total capacity");
+                    return 0;
+                }
+                prev_capacity = bin_file.size();
+                bin_file.close();
+            }
+            if (last_track.track_number != 0)
+                return last_track.data_start  + prev_capacity / last_track.sector_length;
+            else
+                return 0;
+        }
+        else
+        {
+            // Single bin file
+            while((track = parser.next_track()) != nullptr)
+            {
+                last_track = *track;
+            }
+            return last_track.track_number == 0 ? 0 : last_track.data_start + (bin_container.size() - last_track.file_offset) / last_track.sector_length;
+        }
+    }
+    else
+        return file.size() / scsiDev.target->liveCfg.bytesPerSector;
+
 }
 
 void scsiDiskCloseSDCardImages()
@@ -264,10 +314,91 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     memcpy(img.serial, devCfg->serial, sizeof(img.serial));
 }
 
+static bool find_chs_capacity(uint64_t lba, uint16_t max_cylinders, uint8_t min_heads, uint16_t &c, uint8_t &h, uint8_t &s)
+{
+    bool found_chs = false;
+    uint32_t cylinders;
+    for (uint8_t heads = 16 ; heads >= min_heads; heads--)
+    {
+        if (lba % heads != 0)
+            continue;
+        for (uint8_t sectors = 63; sectors >= 1; sectors--)
+        {
+            if (lba % (heads * sectors) == 0)
+            {
+                cylinders = lba / (heads * sectors);
+                if (cylinders > max_cylinders)
+                    continue;
+                found_chs = true;
+                c = (uint16_t) cylinders;
+                h = heads;
+                s = sectors;
+                break;
+            }
+        }
+        if (found_chs)
+            break;
+    }
+    return found_chs;
+}
+
+static void autoConfigGeometry(image_config_t &img)
+{
+    const char *method = "INI config";
+    if (img.sectorsPerTrack == 0 || img.headsPerCylinder == 0)
+    {
+        uint16_t cyl = 0;
+        uint8_t head = 255;
+        uint8_t sect = 63;
+        bool found_chs = false;
+
+        if (img.deviceType == S2S_CFG_FLOPPY_14MB && img.scsiSectors <= 2880)
+        {
+            method = "device type floppy";
+            sect = 18;
+            head = 80;
+        }
+        else if (img.scsiSectors <= 1032192)
+        {
+            found_chs = find_chs_capacity(img.scsiSectors, 1024, 1, cyl, head, sect);
+            method = "image size";
+        }
+        else if (img.scsiSectors <= 16514064)
+        {
+            found_chs = find_chs_capacity(img.scsiSectors, 16383, 9, cyl, head, sect);
+            if (!found_chs)
+                found_chs = find_chs_capacity(img.scsiSectors, 32767, 5, cyl, head, sect);
+            if (!found_chs)
+                found_chs = find_chs_capacity(img.scsiSectors, 65535, 1, cyl, head, sect);
+            method = "image size";
+        }
+
+        if (!found_chs)
+        {
+            head = 255;
+            sect = 63;
+            method = "defaults";
+        }
+
+        img.sectorsPerTrack = sect;
+        img.headsPerCylinder = head;
+    }
+
+    bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
+    logmsg("---- Drive geometry from ", method,
+        ": SectorsPerTrack=", (int)img.sectorsPerTrack,
+        " HeadsPerCylinder=", (int)img.headsPerCylinder,
+        " total sectors ", (int)img.scsiSectors,
+        divisible ? " (divisible)" : " (not divisible)"
+        );
+}
+
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)
 {
     image_config_t &img = g_DiskImages[target_idx];
     img.cuesheetfile.close();
+    img.bin_container.close();
+    img.cdrom_binfile_index = -1;
     scsiDiskSetImageConfig(target_idx);
     img.file = ImageBackingStore(filename, blocksize);
 
@@ -278,18 +409,18 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         img.scsiId = target_idx | S2S_CFG_TARGET_ENABLED;
         img.sdSectorStart = 0;
 
-        if (type != S2S_CFG_NETWORK && img.scsiSectors == 0)
+        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && !img.file.isFolder())
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
             return false;
         }
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK)
+        if (img.file.isRom() || type == S2S_CFG_NETWORK || img.file.isFolder())
         {
             // ROM is always contiguous, no need to log
         }
-        else if (img.file.contiguousRange(&sector_begin, &sector_end))
+        else if (img.file.isContiguous() && img.file.contiguousRange(&sector_begin, &sector_end))
         {
 #ifdef ZULUSCSI_HARDWARE_CONFIG
             if (g_hw_config.is_active())
@@ -353,8 +484,11 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as tape drive");
             img.deviceType = S2S_CFG_SEQUENTIAL;
+            img.tape_mark_count = 0;
+            scsiDev.target->sense.filemark = false;
+            scsiDev.target->sense.eom = false;
         }
-                else if (type == S2S_CFG_ZIP100)
+        else if (type == S2S_CFG_ZIP100)
         {
             logmsg("---- Configuration as Iomega Zip100");
             img.deviceType = S2S_CFG_ZIP100;
@@ -362,6 +496,11 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             {
                 logmsg("---- Zip 100 disk (", (int)img.file.size(), " bytes) is not exactly ", ZIP100_DISK_SIZE, " bytes, may not work correctly");
             }
+        }
+
+        if (type != S2S_CFG_OPTICAL && type != S2S_CFG_NETWORK)
+        {
+            autoConfigGeometry(img);
         }
 
         quirksCheck(&img);
@@ -388,6 +527,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         if (img.deviceType == S2S_CFG_OPTICAL &&
             strncasecmp(filename + strlen(filename) - 4, ".bin", 4) == 0)
         {
+            // Check for .cue sheet with single .bin file
             char cuesheetname[MAX_FILE_PATH + 1] = {0};
             strncpy(cuesheetname, filename, strlen(filename) - 4);
             strlcat(cuesheetname, ".cue", sizeof(cuesheetname));
@@ -401,12 +541,77 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                     logmsg("---- Failed to parse cue sheet, using as plain binary image");
                     img.cuesheetfile.close();
                 }
+                else
+                {
+                    // Set bin container to single bin file
+                    img.bin_container.open(filename);
+                    // If bin container is a directory close the file
+                    if (img.bin_container.isDir())
+                        img.bin_container.close();
+                }
             }
             else
             {
                 logmsg("---- No CUE sheet found at ", cuesheetname, ", using as plain binary image");
             }
         }
+        else if (img.deviceType == S2S_CFG_OPTICAL && img.file.isFolder())
+        {
+            // The folder should contain .cue sheet and one or several .bin files
+            char foldername[MAX_FILE_PATH + 1] = {0};
+            char cuesheetname[MAX_FILE_PATH + 1] = {0};
+            img.file.getFoldername(foldername, sizeof(foldername));
+            FsFile folder = SD.open(foldername, O_RDONLY);
+            bool valid = false;
+            img.cuesheetfile.close();
+            while (!valid && img.cuesheetfile.openNext(&folder, O_RDONLY))
+            {
+                img.cuesheetfile.getName(cuesheetname, sizeof(cuesheetname));
+                if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
+                {
+                    valid = cdromValidateCueSheet(img);
+                }
+            }
+
+            if (valid)
+            {
+                img.bin_container.open(foldername);
+            }
+            else
+            {
+                logmsg("No valid .cue sheet found in folder '", foldername, "'");
+                img.cuesheetfile.close();
+            }
+        }
+        else if (img.deviceType == S2S_CFG_SEQUENTIAL && img.file.isFolder())
+        {
+            // multi file tape that implements tape markers
+            char name[MAX_FILE_PATH + 1] = {0};
+            img.file.getFoldername(name, sizeof(name));
+            img.bin_container.open(name);
+            FsFile file;
+            bool valid = false;
+
+            while(file.openNext(&img.bin_container))
+            {
+                file.getName(name, sizeof(name));
+                if(!file.isDir() && !file.isHidden() && scsiDiskFilenameValid(name))
+                {
+                    valid = true;
+                    img.tape_mark_count++;
+                }
+            }
+            if (!valid)
+            {
+                // if there are no valid image files, create one
+                file.open(&img.bin_container, TAPE_DEFAULT_NAME, O_CREAT);
+                file.close();
+            }
+            img.tape_mark_index = 0;
+            img.tape_mark_block_offset = 0;
+            img.tape_load_next_file = false;
+        }
+
         img.use_prefix = use_prefix;
         img.file.getFilename(img.current_image, sizeof(img.current_image));
         return true;
@@ -442,13 +647,14 @@ bool scsiDiskFilenameValid(const char* name)
     if (extension)
     {
         const char *ignore_exts[] = {
-            ".rom_loaded", ".cue", ".txt", ".rtf", ".md", ".nfo", ".pdf", ".doc", ".ini",
+            ".rom_loaded", ".cue", ".txt", ".rtf", ".md", ".nfo", ".pdf", ".doc", 
+	    ".ini", ".mid", ".midi", ".aiff", ".mp3", ".m4a",
             NULL
         };
         const char *archive_exts[] = {
             ".tar", ".tgz", ".gz", ".bz2", ".tbz2", ".xz", ".zst", ".z",
             ".zip", ".zipx", ".rar", ".lzh", ".lha", ".lzo", ".lz4", ".arj",
-            ".dmg", ".hqx", ".cpt", ".7z", ".s7z",
+            ".dmg", ".hqx", ".cpt", ".7z", ".s7z", ".mid", ".wav", ".aiff",
             NULL
         };
 
@@ -476,6 +682,36 @@ bool scsiDiskFilenameValid(const char* name)
         return false;
     }
     return true;
+}
+
+bool scsiDiskFolderContainsCueSheet(FsFile *dir)
+{
+    FsFile file;
+    char filename[MAX_FILE_PATH + 1];
+    while (file.openNext(dir, O_RDONLY))
+    {
+        if (file.getName(filename, sizeof(filename)) &&
+            (strncasecmp(filename + strlen(filename) - 4, ".cue", 4) == 0))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool scsiDiskFolderIsTapeFolder(FsFile *dir)
+{
+    char filename[MAX_FILE_PATH + 1];
+    dir->getName(filename, sizeof(filename));
+    // string starts with 'tp', the 3rd character is a SCSI ID, and it has more 3 charters
+    // e.g. "tp0 - tape 01"
+    if (strlen(filename) > 3 && strncasecmp("tp", filename, 2) == 0 
+        && filename[2] >= '0' && filename[2] - '0' < NUM_SCSIID)
+    {
+        return true;
+    }
+    return false;
 }
 
 static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* img, S2S_CFG_TYPE type, const char* type_name)
@@ -591,6 +827,8 @@ static void doPerformEject(image_config_t &img)
     uint8_t target = img.scsiId & 7;
     if (!img.ejected)
     {
+        blink_cancel();
+        blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
         dbgmsg("------ Device open tray on ID ", (int)target);
         img.ejected = true;
         switchNextImage(img); // Switch media for next time
@@ -601,13 +839,9 @@ static void doPerformEject(image_config_t &img)
     }
 }
 
-
-// Finds filename with the lowest lexical order _after_ the given filename in
-// the given folder. If there is no file after the given one, or if there is
-// no current file, this will return the lowest filename encountered.
-static int findNextImageAfter(image_config_t &img,
+int findNextImageAfter(image_config_t &img,
         const char* dirname, const char* filename,
-        char* buf, size_t buflen)
+        char* buf, size_t buflen, bool ignore_prefix)
 {
     FsFile dir;
     if (dirname[0] == '\0')
@@ -638,7 +872,7 @@ static int findNextImageAfter(image_config_t &img,
     FsFile file;
     while (file.openNext(&dir, O_RDONLY))
     {
-        if (file.isDir()) continue;
+        if (file.isDir() && !scsiDiskFolderContainsCueSheet(&file)) continue;
         if (!file.getName(buf, MAX_FILE_PATH))
         {
             logmsg("Image directory '", dirname, "' had invalid file");
@@ -650,7 +884,7 @@ static int findNextImageAfter(image_config_t &img,
             continue;
         }
 
-        if (img.use_prefix && !compare_prefix(filename, buf)) continue;
+        if (!ignore_prefix && img.use_prefix && !compare_prefix(filename, buf)) continue;
 
         // keep track of the first item to allow wrapping
         // without having to iterate again
@@ -1065,12 +1299,13 @@ void s2s_configInit(S2S_BoardCfg* config)
     config->selectionDelay = sysCfg->selectionDelay;
     config->flags6 = 0;
     config->scsiSpeed = PLATFORM_MAX_SCSI_SPEED;
-
     int maxSyncSpeed = sysCfg->maxSyncSpeed;
     if (maxSyncSpeed < 5 && config->scsiSpeed > S2S_CFG_SPEED_ASYNC_50)
         config->scsiSpeed = S2S_CFG_SPEED_ASYNC_50;
     else if (maxSyncSpeed < 10 && config->scsiSpeed > S2S_CFG_SPEED_SYNC_5)
         config->scsiSpeed = S2S_CFG_SPEED_SYNC_5;
+    else if (maxSyncSpeed < 20 && config->scsiSpeed > S2S_CFG_SPEED_SYNC_10)
+        config->scsiSpeed = S2S_CFG_SPEED_SYNC_10;
 
     logmsg("-- SelectionDelay = ", (int)config->selectionDelay);
 
@@ -1397,8 +1632,7 @@ int doTestUnitReady()
 static void doSeek(uint32_t lba)
 {
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-    uint32_t capacity = img.file.size() / bytesPerSector;
+    uint32_t capacity = img.get_capacity_lba();
 
     if (lba >= capacity)
     {
@@ -1416,6 +1650,15 @@ static void doSeek(uint32_t lba)
         }
         else
         {
+#ifdef ENABLE_AUDIO_OUTPUT
+            if (scsiDev.target->cfg->deviceType == S2S_CFG_OPTICAL)
+            {
+                // Uses audio play with a length of 0. CD audio won't actually play,
+                // but Read Subchannel will report the proper LBA location 
+                if (!audio_play(scsiDev.target->targetId, &img, lba, 0, false))
+                    dbgmsg("Failed to seek to audio track lba position ", (int) lba);
+            }
+#endif
             s2s_delay_us(10);
         }
     }
@@ -1671,6 +1914,12 @@ void diskDataOut()
             }
             platform_set_sd_callback(NULL, NULL);
             g_disk_transfer.bytes_sd += len;
+
+            // Reset the watchdog while the transfer is progressing.
+            // If the host stops transferring, the watchdog will eventually expire.
+            // This is needed to avoid hitting the watchdog if the host performs
+            // a large transfer compared to its transfer speed.
+            platform_reset_watchdog();
         }
     }
 
@@ -1844,6 +2093,12 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
 
     platform_poll();
     diskEjectButtonUpdate(false);
+
+    // Reset the watchdog while the transfer is progressing.
+    // If the host stops transferring, the watchdog will eventually expire.
+    // This is needed to avoid hitting the watchdog if the host performs
+    // a large transfer compared to its transfer speed.
+    platform_reset_watchdog();
 }
 
 static void diskDataIn()
@@ -2146,7 +2401,7 @@ int scsiDiskCommand()
 
         scsiDev.phase = DATA_IN;
     }
-    else if (img.file.isRom())
+    else if (!img.file.isWritable())
     {
         // Special handling for ROM drive to make SCSI2SD code report it as read-only
         blockDev.state |= DISK_WP;

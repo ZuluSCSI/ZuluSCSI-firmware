@@ -1,5 +1,5 @@
 /** 
- * ZuluSCSI™ - Copyright (c) 2022 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
  * 
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  * 
@@ -471,7 +471,7 @@ void scsi_accel_sync_send(const uint8_t* data, uint32_t count, volatile int *res
     }
     else
     {
-        dbgmsg("No optimized routine for syncOffset=", syncOffset, " syndPeriod=", syncPeriod, ", using fallback");
+        dbgmsg("No optimized routine for syncOffset=", syncOffset, " syncPeriod=", syncPeriod, ", using fallback");
         while (count-- > 0)
         {
             while (TIMER_CNT(SCSI_SYNC_TIMER) > count + syncOffset && !*resetFlag);
