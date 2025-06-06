@@ -407,7 +407,9 @@ void platform_late_init()
 #if defined(HAS_DIP_SWITCHES) && defined(PLATFORM_HAS_INITIATOR_MODE)
     if (g_scsi_initiator == true)
     {
-        logmsg("SCSI initiator mode selected by DIP switch, expecting SCSI disks on the bus");
+        logmsg("***************************************************************************");
+        logmsg("        SCSI initiator mode enabled, expecting SCSI disks on the bus       ");
+        logmsg("***************************************************************************");
     }
     else
     {
@@ -1040,7 +1042,10 @@ uint8_t platform_get_buttons()
     return buttons_debounced;
 }
 
-
+bool platform_has_phy_eject_button()
+{
+    return false;
+}
 
 /************************************/
 /* ROM drive in extra flash space   */
