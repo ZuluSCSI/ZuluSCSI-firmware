@@ -778,6 +778,8 @@ static void scsiReset()
 			scsiDev.targets[i].syncOffset = 0;
 			scsiDev.targets[i].syncPeriod = 0;
 		}
+
+		scsiDev.targets[i].busWidth = 0;
 	}
 	scsiDev.minSyncPeriod = 0;
 
