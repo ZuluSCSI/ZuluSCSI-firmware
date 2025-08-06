@@ -187,7 +187,7 @@ The Kiosk mode is designed for vintage computer museums or other demonstration s
 
 At startup, all files with `.ori` extensions are copied to new volumes. For instance, `HD10_512.hda.ori` would be copied to `HD10_512.hda`.
 
-Restoration takes a significant amount of time, so it should be used with small drives (for example, it takes around 20 seconds to restore a 40MB hard drive on a ZuluSCSI Pico). During the copy, the LED will blink with the pattern ON-OFF-ON-OFF-OFF. Each cycle corresponds to 5MB restored.
+Restoration takes a significant amount of time, so it should be used with small drives (it takes between 5 and 20 seconds to restore a 40MB hard drive depending on hardware). During the copy, the LED will blink with the pattern ON-OFF-ON-OFF-OFF. Each cycle corresponds to 5MB restored.
 
 Rebooting the machine will not restore the files - you need to physically power-cycle the ZuluSCSI device.
 
