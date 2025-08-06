@@ -84,7 +84,7 @@ static void scsi_accel_host_config_gpio()
     }
 }
 
-uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, volatile int *resetFlag)
+uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, int busWidth, volatile int *resetFlag)
 {
     // Currently this method just reads from the PIO RX fifo directly in software loop.
     // The SD card access is parallelized using DMA, so there is limited benefit from using DMA here.
@@ -99,12 +99,21 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, vo
 
     // Set the number of bytes to read, must be divisible by 2.
     assert((count & 1) == 0);
-    pio_sm_put(SCSI_PIO, SCSI_SM, count - 1);
+    if (busWidth == 0)
+    {
+        // 8-bit bus
+        pio_sm_put(SCSI_PIO, SCSI_SM, count - 1);
+    }
+    else
+    {
+        // 16-bit bus
+        pio_sm_put(SCSI_PIO, SCSI_SM, count / 2 - 1);
+    }
 
     // Read results from PIO RX FIFO
     uint8_t *dst = buf;
     uint8_t *end = buf + count;
-    uint32_t paritycheck = 0;
+    uint32_t paritycheck = 0xFFFFFFFF;
     uint32_t prev_rx_time = millis();
     while (dst < end)
     {
@@ -154,22 +163,56 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, vo
             }
         }
 
-        while (available > 0)
+        if (busWidth == 0)
         {
-            available--;
-            uint32_t word = pio_sm_get(SCSI_PIO, SCSI_SM);
-            paritycheck ^= word;
-            word = ~word;
-            *dst++ = word & 0xFF;
-            *dst++ = word >> 16;
+            // 8-bit bus
+            // For normal ZuluSCSI, there are two bytes per PIO word.
+            // For wide ZuluSCSI, there is one byte per PIO word.
+
+            while (available > 0)
+            {
+                available--;
+                uint32_t word = pio_sm_get(SCSI_PIO, SCSI_SM);
+                paritycheck ^= word;
+                word = ~word;
+
+#ifdef ZULUSCSI_WIDE
+                *dst++ = word & 0xFF;
+#else
+                *dst++ = word & 0xFF;
+                *dst++ = word >> 16;
+#endif
+            }
+        }
+        else
+        {
+            // 16-bit bus
+            while (available > 0)
+            {
+                available--;
+                uint32_t word = pio_sm_get(SCSI_PIO, SCSI_SM);
+                paritycheck ^= word;
+                word = ~word;
+
+                *dst++ = word & 0xFF;
+                *dst++ = (word >> 8) & 0xFF;
+            }
         }
     }
 
+#ifdef ZULUSCSI_WIDE
+    bool parity_ok;
+    if (busWidth == 0)
+        parity_ok = scsi_check_parity(paritycheck);
+    else
+        parity_ok = scsi_check_parity_16bit(paritycheck);
+#else
+    bool parity_ok = scsi_check_parity(paritycheck & 0xFFFF) && scsi_check_parity(paritycheck >> 16);
+#endif
+
     // Check parity errors in whole block
     // This doesn't detect if there is even number of parity errors in block.
-    uint8_t byte0 = ~(paritycheck & 0xFF);
-    uint8_t byte1 = ~(paritycheck >> 16);
-    if (paritycheck != ((g_scsi_parity_lookup[byte1] << 16) | g_scsi_parity_lookup[byte0]))
+    if (!parity_ok)
     {
         logmsg("Parity error in scsi_accel_host_read(): ", paritycheck);
         *parityError = 1;
@@ -192,13 +235,23 @@ void scsi_accel_host_init()
     // Load PIO programs
     pio_clear_instruction_memory(SCSI_PIO);
 
+#ifdef ZULUSCSI_WIDE
     // Asynchronous / synchronous SCSI read
-    g_scsi_host.pio_offset_async_read = pio_add_program(SCSI_PIO, &scsi_host_async_read_program);
+    const pio_program_t *program = &scsi_host_async_read_wide_program;
+#else
+    // Asynchronous / synchronous SCSI read
+    const pio_program_t *program = &scsi_host_async_read_program;
+#endif
+
+    g_scsi_host.pio_offset_async_read = pio_add_program(SCSI_PIO, program);
+
+    // Rewrite REQ pin based on IO assignment
     //    wait 0 gpio REQ             side 1  ; Wait for REQ low
     uint16_t instr = pio_encode_wait_gpio(false, SCSI_IN_REQ) | pio_encode_sideset(1, 1);
     SCSI_PIO->instr_mem[g_scsi_host.pio_offset_async_read + 2] = instr;
     instr =   pio_encode_wait_gpio(true, SCSI_IN_REQ) | pio_encode_sideset(1, 0);
     SCSI_PIO->instr_mem[g_scsi_host.pio_offset_async_read + 5] = instr;
+
     g_scsi_host.pio_cfg_async_read = scsi_host_async_read_program_get_default_config(g_scsi_host.pio_offset_async_read);
     sm_config_set_in_pins(&g_scsi_host.pio_cfg_async_read, SCSI_IO_DB0);
     sm_config_set_sideset_pins(&g_scsi_host.pio_cfg_async_read, SCSI_OUT_ACK);

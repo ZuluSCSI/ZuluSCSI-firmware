@@ -39,6 +39,13 @@ void scsiHostPhyReset(void);
 // Returns true if the target answers to selection request.
 bool scsiHostPhySelect(int target_id, uint8_t initiator_id);
 
+// Set SCSI ATN signal to request MESSAGE_OUT phase
+void scsiHostPhySetATN(bool atn);
+
+// Set wide (16-bit) bus mode
+// busWidth - 0 for 8-bit, 1 for 16-bit
+void scsiHostSetBusWidth(int busWidth);
+
 // Read the current communication phase as signaled by the target
 // Matches SCSI_PHASE enumeration from scsi.h.
 int scsiHostPhyGetPhase();
