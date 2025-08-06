@@ -550,10 +550,10 @@ void platform_reset_watchdog()
     g_watchdog_timeout = WATCHDOG_CRASH_TIMEOUT;
 }
 
-void platform_reset_mcu()
+void platform_reset_mcu(uint32_t reset_in_ms)
 {
     // reset in 2 sec ( 1 / (32KHz / 32) * 2000 == 2sec)
-    fwdgt_config(2000, FWDGT_PSC_DIV32);
+    fwdgt_config(reset_in_ms, FWDGT_PSC_DIV32);
     fwdgt_enable();
 
 }

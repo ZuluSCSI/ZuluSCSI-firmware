@@ -118,7 +118,7 @@ bool platform_is_initiator_mode_enabled();
 void platform_reset_watchdog();
 
 // Reset MCU
-void platform_reset_mcu();
+void platform_reset_mcu(uint32_t reset_in_ms);
 
 
 // Poll function that is called every few milliseconds.

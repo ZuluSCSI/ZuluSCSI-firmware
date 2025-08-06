@@ -108,6 +108,7 @@ static struct {
 } g_initiator_state;
 
 extern SdFs SD;
+static bool g_rebooting = false; 
 
 // Initialization of initiator mode
 void scsiInitiatorInit()
@@ -174,11 +175,21 @@ static void scsiInitiatorUpdateLed()
     }
 }
 
+static void poll_reset_on_eject_button()
+{
+    if (platform_has_phy_eject_button() && platform_get_buttons() == 1)
+    {
+        logmsg("Eject button detected for initiator reset...");
+        g_rebooting = true;
+    }
+}
+
 void delay_with_poll(uint32_t ms)
 {
     uint32_t start = millis();
     while ((uint32_t)(millis() - start) < ms)
     {
+        poll_reset_on_eject_button();
         platform_poll();
         delay(1);
     }
@@ -249,6 +260,18 @@ void scsiInitiatorMainLoop()
         return;
     }
 
+    if (g_rebooting)
+    {
+        scsiHostPhyReset();
+        logmsg("System parked. Waiting on system reset timer...");
+        platform_reset_mcu(500);
+        while(1)
+        {
+            platform_poll();
+        }
+    }
+
+    poll_reset_on_eject_button();
     if (!g_initiator_state.imaging)
     {
         // Scan for SCSI drives one at a time

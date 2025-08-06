@@ -759,10 +759,11 @@ void platform_reset_watchdog()
     usb_log_poll();
 }
 
-void platform_reset_mcu()
+void platform_reset_mcu(uint32_t reset_in_ms)
 {
     // reset in 2 sec ( 1 / (40KHz / 32) * 2500 == 2sec)
-    fwdgt_config(2500, FWDGT_PSC_DIV32);
+    uint32_t cycles = reset_in_ms * 160 / 128;
+    fwdgt_config(cycles, FWDGT_PSC_DIV32);
     fwdgt_enable();
 
 }

@@ -920,7 +920,7 @@ static void firmware_update()
       root.remove(name);
       root.close();
       logmsg("Update extracted from package, rebooting MCU");
-      platform_reset_mcu();
+      platform_reset_mcu(2000);
     }
     else
     {
