@@ -406,13 +406,13 @@ void platform_init()
     /* Note: the below notice and attribution is required to be preserved and displayed by
      * copies of this software, in accordance to section 7b of GPLv3 license.
      */
-    logmsg("==============================================================================");
+    logmsg("=========================================================================");
     logmsg(" Powered by Raspberry Pi");
     logmsg("            Raspberry Pi is a trademark of Raspberry Pi Ltd");
     logmsg("");
-    logmsg(" ZuluSCSI Raspberry Pi platform support is developed by Rabbit Hole Computing");
+    logmsg(" ZuluSCSI RPi platform support is developed by Rabbit Hole Computing");
     logmsg(" and provided to you under GNU General Public License version 3.");
-    logmsg("==============================================================================");
+    logmsg("=========================================================================");
 
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
