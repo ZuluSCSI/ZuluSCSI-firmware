@@ -181,6 +181,16 @@ To disable a previously programmed ROM drive, create empty file called `HD0.rom`
 If there is a `.bin` file with the same ID as the programmed ROM drive, it overrides the ROM drive.
 There can be at most one ROM drive enabled at a time.
 
+Kiosk mode for museums or demonstration setups
+----------------------------------------------
+The Kiosk mode is designed for vintage computer museums or other demonstration setups, where machines can be used by visitors but need to be easily restored to a pristine state.
+
+At startup, all files with `.ori` extensions are copied to new volumes. For instance, `HD10_512.hda.ori` would be copied to `HD10_512.hda`.
+
+Restoration takes a significant amount of time, so it should be used with small drives (it takes between 5 and 20 seconds to restore a 40MB hard drive depending on hardware). During the copy, the LED will blink with the pattern ON-OFF-ON-OFF-OFF. Each cycle corresponds to 5MB restored.
+
+Rebooting the machine will not restore the files - you need to physically power-cycle the ZuluSCSI device.
+
 Project structure
 -----------------
 - **src/ZuluSCSI.cpp**: Main portable SCSI implementation.
