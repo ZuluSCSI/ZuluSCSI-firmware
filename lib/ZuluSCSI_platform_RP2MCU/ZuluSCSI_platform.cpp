@@ -1086,9 +1086,9 @@ void platform_poll()
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
 }
 
-void platform_reset_mcu()
+void platform_reset_mcu(uint32_t reset_in_ms)
 {
-    watchdog_reboot(0, 0, 2000);
+    watchdog_reboot(0, 0, reset_in_ms);
 }
 
 uint8_t platform_get_buttons()

@@ -920,7 +920,7 @@ static void firmware_update()
       root.remove(name);
       root.close();
       logmsg("Update extracted from package, rebooting MCU");
-      platform_reset_mcu();
+      platform_reset_mcu(2000);
     }
     else
     {
@@ -1146,7 +1146,8 @@ extern "C" void zuluscsi_main_loop(void)
 
   platform_reset_watchdog();
   platform_poll();
-  diskEjectButtonUpdate(true);
+  if (!is_initiator)
+    diskEjectButtonUpdate(true);
   blink_poll();
 
 #ifdef ZULUSCSI_NETWORK

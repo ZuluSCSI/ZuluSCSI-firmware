@@ -108,6 +108,7 @@ static struct {
 } g_initiator_state;
 
 extern SdFs SD;
+static bool g_pause = false;
 
 // Initialization of initiator mode
 void scsiInitiatorInit()
@@ -174,11 +175,31 @@ static void scsiInitiatorUpdateLed()
     }
 }
 
+uint8_t ejectButtonUpdate()
+{
+    // treat '1' to '0' transitions as reset actions
+    static uint8_t previous = 0x00;
+    uint8_t bitmask = platform_get_buttons() & EJECT_BTN_MASK;
+    uint8_t ejectors = (previous ^ bitmask) & previous;
+    previous = bitmask;
+    return ejectors;
+}
+
+static void pollPauseOnEjectButton()
+{
+    if (ejectButtonUpdate() == 1)
+    {
+        logmsg("Eject button detected while in initiator mode, resetting state...");
+        g_pause = true;
+    }
+}
+
 void delay_with_poll(uint32_t ms)
 {
     uint32_t start = millis();
     while ((uint32_t)(millis() - start) < ms)
     {
+        pollPauseOnEjectButton();
         platform_poll();
         delay(1);
     }
@@ -247,6 +268,47 @@ void scsiInitiatorMainLoop()
     {
         // Wait for SD card
         return;
+    }
+
+    pollPauseOnEjectButton();
+    if (g_pause)
+    {
+        g_initiator_state.target_file.close();
+        scsiInitiatorInit();
+        logmsg("Initiator reset, pausing. Press eject to start initiator...");
+        uint32_t pause_blink_start = millis();
+        uint32_t blink_delay = 10;
+        uint8_t blink_count = 0;
+        platform_set_blink_status(false);
+        while(ejectButtonUpdate() != 1)
+        {
+            // LED pulsates
+            if ((uint32_t)(millis() - pause_blink_start) > blink_delay)
+            {
+                pause_blink_start = millis();
+                if (blink_count++ & 1)
+                {
+                    LED_ON();
+                    blink_delay = 5;
+                }
+                else
+                {
+                    LED_OFF();
+                    blink_delay = 10;
+                }
+
+                if (blink_count > 7)
+                {
+                    blink_delay = 100;
+                    blink_count = 0;
+                }
+            }
+            platform_poll();
+            platform_reset_watchdog();
+        }
+        LED_OFF();
+        g_pause = false;
+        scsiHostPhyReset();
     }
 
     if (!g_initiator_state.imaging)
