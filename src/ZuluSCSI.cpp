@@ -1146,7 +1146,8 @@ extern "C" void zuluscsi_main_loop(void)
 
   platform_reset_watchdog();
   platform_poll();
-  diskEjectButtonUpdate(true);
+  if (!is_initiator)
+    diskEjectButtonUpdate(true);
   blink_poll();
 
 #ifdef ZULUSCSI_NETWORK

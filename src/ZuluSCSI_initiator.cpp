@@ -108,7 +108,7 @@ static struct {
 } g_initiator_state;
 
 extern SdFs SD;
-static bool g_rebooting = false; 
+static bool g_pause = false;
 
 // Initialization of initiator mode
 void scsiInitiatorInit()
@@ -175,12 +175,22 @@ static void scsiInitiatorUpdateLed()
     }
 }
 
-static void poll_reset_on_eject_button()
+uint8_t ejectButtonUpdate()
 {
-    if (platform_has_phy_eject_button() && platform_get_buttons() == 1)
+    // treat '1' to '0' transitions as reset actions
+    static uint8_t previous = 0x00;
+    uint8_t bitmask = platform_get_buttons() & EJECT_BTN_MASK;
+    uint8_t ejectors = (previous ^ bitmask) & previous;
+    previous = bitmask;
+    return ejectors;
+}
+
+static void pollPauseOnEjectButton()
+{
+    if (ejectButtonUpdate() == 1)
     {
-        logmsg("Eject button detected for initiator reset...");
-        g_rebooting = true;
+        logmsg("Eject button detected while in initiator mode, resetting state...");
+        g_pause = true;
     }
 }
 
@@ -189,7 +199,7 @@ void delay_with_poll(uint32_t ms)
     uint32_t start = millis();
     while ((uint32_t)(millis() - start) < ms)
     {
-        poll_reset_on_eject_button();
+        pollPauseOnEjectButton();
         platform_poll();
         delay(1);
     }
@@ -260,18 +270,47 @@ void scsiInitiatorMainLoop()
         return;
     }
 
-    if (g_rebooting)
+    pollPauseOnEjectButton();
+    if (g_pause)
     {
-        scsiHostPhyReset();
-        logmsg("System parked. Waiting on system reset timer...");
-        platform_reset_mcu(500);
-        while(1)
+        g_initiator_state.target_file.close();
+        scsiInitiatorInit();
+        logmsg("Initiator reset, pausing. Press eject to start initiator...");
+        uint32_t pause_blink_start = millis();
+        uint32_t blink_delay = 10;
+        uint8_t blink_count = 0;
+        platform_set_blink_status(false);
+        while(ejectButtonUpdate() != 1)
         {
+            // LED pulsates
+            if ((uint32_t)(millis() - pause_blink_start) > blink_delay)
+            {
+                pause_blink_start = millis();
+                if (blink_count++ & 1)
+                {
+                    LED_ON();
+                    blink_delay = 5;
+                }
+                else
+                {
+                    LED_OFF();
+                    blink_delay = 10;
+                }
+
+                if (blink_count > 7)
+                {
+                    blink_delay = 100;
+                    blink_count = 0;
+                }
+            }
             platform_poll();
+            platform_reset_watchdog();
         }
+        LED_OFF();
+        g_pause = false;
+        scsiHostPhyReset();
     }
 
-    poll_reset_on_eject_button();
     if (!g_initiator_state.imaging)
     {
         // Scan for SCSI drives one at a time
