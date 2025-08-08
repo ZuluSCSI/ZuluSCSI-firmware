@@ -22,8 +22,6 @@
 #define EXP_ROT_PIN     5
 #define EXP_INSERT_PIN  3
 
-#define TOTAL_DEVICES 8
-
 struct DeviceMap
 {
     // Set during path checking phase

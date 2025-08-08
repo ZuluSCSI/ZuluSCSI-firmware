@@ -20,6 +20,7 @@ Doesn't work with IMGx= style images (i.e. explictly defined in a list in config
 
 Bugs:
 -----
+*  !! After swapping SDs, the Zulu freeze for a while and Akai locks up. Restart fixes it. 
 *  Rotary skips clicks sometimes (flat view I think)
 *  Not working with a blank card (used to in early dev) (also why no logs onm a blank card?)
 *  why does bool checkForDevice() return -2 but everything seems to work?
