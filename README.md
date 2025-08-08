@@ -26,6 +26,8 @@ Bugs:
 
 Todo:
 -----
+*  Work out why MAX_PATH_LEN of 260 wasn't working but 64 does. Also means path len > 64 will probably crash at the moment
+-  Change 17->18 caused the issue. Instabiliy and not loading. Seemed fixed with the above. Work out why
 *  Merge in latest code
 *  what should "program_flash_allocation" be changed to?
 *  free more space in bootloader (specically for rp2040)
