@@ -1,5 +1,181 @@
+ZuluSCSI Control
+================
+
+Current known issues:
+---------------------
+* Not Great:
+
+If the root folder has no ISOs, then nothing initially loads, and I can't load anything after that
+*  WORKAROUND: Always have at least 1 iso in the root folder
+
+It takes 30+ms to do a screen update which is in the main loop
+*  WORKAROUND: Don't be on a screen with scroller (i.e. browsers or info) whilst using drive
+*  IDEA: can I multithread for the UI? Need to know how on the RP
+*  IDEA: hardware accelerator for the SSD1306 (another rp2040)
+
+Probably not the end of world :):
+
+Doesn't work with IMGx= style images (i.e. explictly defined in a list in config)
+*  WORKAROUND: Don't use IMGx config. Just put them in a folder
+
+Bugs:
+-----
+*  Rotary skips clicks sometimes (flat view I think)
+*  Not working with a blank card (used to in early dev) (also why no logs onm a blank card?)
+*  why does bool checkForDevice() return -2 but everything seems to work?
+
+Todo:
+-----
+*  Merge in latest code
+*  what should "program_flash_allocation" be changed to?
+*  free more space in bootloader (specically for rp2040)
+*  Merge Browse and BrowseFlat Screens
+*  Find a way to determine when image is fully loaded after a loadImage to close the MessageBox then
+*  Make message box dyanmically resize
+*  Nothing done during bootload. Should it had SSD1306 boot screen and firmware update screen?
+*  g_pendingLoadComplete is ugly. Think of a neater way
+*  If no nested folders disable 'normal' (use HasDirs) and just use flat
+*  #define out all the control board settings
+*  rewrite loadImage code as it's a bit hacky
+
+Design choices to question
+--------------------------
+*  If an error occurs loading an image (eg path too long) it returns you to the current loaded image after the message box
+- Should it stay on the failed load?
+
+Cleanup:
+--------
+*  Clean up warnings
+
+Current Build state:
+--------------------
+* OK (disabled)				ZuluSCSIv1_0 , ZuluSCSIv1_0_mini, ZuluSCSIv1_1_plus, ZuluSCSI_RP2040_Audio, ZuluSCSI_Pico, ZuluSCSI_Pico_DaynaPORT, ZuluSCSI_Pico_2, ZuluSCSI_Pico_2_DaynaPORT
+* Bootloader overflow		ZuluSCSI_RP2040
+* OK (working and tested)	ZuluSCSI_Blaster
+
+Icons converted with:
+---------------------
+https://javl.github.io/image2cpp/
+
+Documentation
+=============
+It will boot and show the splash screen, then loads the main screen.
+
+Main Screen
+-----------
+Here the rotary encoder lets you select a SCSI device (only ones that the board has recognised can be selected)
+Buttons:
+Short Rotary -> Info screen
+Short Eject -> Browser (with folders)
+Long Eject -> Browser Type
+Long User -> About screen
+
+Info Screen
+-----------
+Short User -> Return to Main
+
+Browser Type
+------------
+This let you pick the browser type (use the rotary):
+All (Folders) - Browser with folders
+All (flat) - Flattens all the files into a single list
+Cat: Category Name - Flattens the files and only shows ones which match the category
+
+Short Rotary -> Just to Appropraite Browser Screen
+Short User -> Return to main menu
+
+Browser (Folder)
+----------------
+Rotary -> Pick a file
+Short User -> Return to main menu
+Short Eject -> Load Image
+Long Press Eject -> Back a folder
+
+Browser (Flat)
+----------------
+Rotary -> Pick a file
+Short User -> Return to main menu
+Short Eject -> Load Image
+
+No SD Screen
+------------
+Short User -> Return to main menu
+
+To Set up categories
+--------------------
+Assume this is in the config:
+
+    [SCSI0]
+    Product = "CD1"
+    Type=2 # CDROM drive
+    ImgDir = "ISO1"
+    Cat0 = "dDrums"
+    Cat1 = "aAction"
+    Cat2 = "cCats"
+    Cat3 = "bBallons"
+    Cat4 = "mMany"
+    Cat5 = "sSome"
+    Cat6 = "xX-Ray"
+
+This means SCSI ID 0 has 7 categories: Drums, Action, etc. The single character at the start is the character to put in the filename.
+So if you had the following file:
+
+    Test {dac}.iso
+
+Then it would be in categories: Drums, Action and Cats
+
+
+My Current test config:
+-----------------------
+
+    [SCSI]
+    Debug = 0
+    ReinsertCDOnInquiry = 1
+    EnableControlBoard = 1
+    EnableControlBoardCache = 1
+    ReverseControlBoardRotary = 0
+
+    [SCSI0]
+    Product = "CD1"
+    Type=2 # CDROM drive
+    ImgDir = "ISO1"
+    Cat0 = "dDrums"
+    Cat1 = "aAction"
+    Cat2 = "cCats"
+    Cat3 = "bBallons"
+    Cat4 = "mMany"
+    Cat5 = "sSome"
+    Cat6 = "xX-Ray"
+
+    [SCSI1]
+    Product = "CD2"
+    Type=2 # CDROM drive
+    ImgDir = "ISO2"
+
+    [SCSI2]
+    Product = "CD3"
+    Type=2 # CDROM drive
+    ImgDir = "ISO3"
+
+    [SCSI3]
+    Product = "CD4"
+    Type=2 # CDROM drive
+    IMG0 = D1.iso
+    IMG1 = D2.iso
+    IMG2 = D3.iso
+
+    [SCSI4]
+    Product = "CD5"
+    Type=2 # CDROM drive
+
+    [SCSI5]
+    Type = 0
+
+=======================================================================================================================================
+
+
 ZuluSCSI™ Firmware
-=================
+==================
 
 Hard Drive & ISO image files
 ---------------------
@@ -224,3 +400,4 @@ Major changes from BlueSCSI and SCSI2SD include:
 * Removal of Arduino core dependency, as it was not currently available for GD32F205.
 * Buffered log functions.
 * Simultaneous transfer between SD card and SCSI for improved performance.
+

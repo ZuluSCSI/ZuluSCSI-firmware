@@ -1,0 +1,21 @@
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+
+#ifndef SCREENTYPE_H
+#define SCREENTYPE_H
+
+typedef enum
+{
+	SCREEN_SPLASH,
+    SCREEN_MAIN,
+    SCREEN_NOSD,
+    SCREEN_INFO,
+    SCREEN_BROWSE_TYPE,
+    SCREEN_BROWSE,
+    SCREEN_BROWSE_FLAT,
+    MESSAGE_BOX,
+    SCREEN_ABOUT
+} SCREEN_TYPE;
+
+#endif
+
+#endif

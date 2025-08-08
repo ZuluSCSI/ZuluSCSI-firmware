@@ -311,6 +311,9 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableSelLatch = false;
     cfgSys.mapLunsToIDs = false;
     cfgSys.enableParity = true;
+    cfgSys.enableControlBoard = false;
+    cfgSys.enableControlBoardCache = false;
+    cfgSys.reverseControlBoardRotary = false;
     cfgSys.useFATAllocSize = false;
     cfgSys.enableCDAudio = false;
     cfgSys.maxVolume = 100;
@@ -413,6 +416,10 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableSelLatch = ini_getbool("SCSI", "EnableSelLatch", cfgSys.enableSelLatch, CONFIGFILE);
     cfgSys.mapLunsToIDs = ini_getbool("SCSI", "MapLunsToIDs", cfgSys.mapLunsToIDs, CONFIGFILE);
     cfgSys.enableParity =  ini_getbool("SCSI", "EnableParity", cfgSys.enableParity, CONFIGFILE);
+    cfgSys.enableControlBoard =  ini_getbool("SCSI", "EnableControlBoard", cfgSys.enableControlBoard, CONFIGFILE);
+    cfgSys.enableControlBoardCache =  ini_getbool("SCSI", "EnableControlBoardCache", cfgSys.enableControlBoardCache, CONFIGFILE);
+    cfgSys.reverseControlBoardRotary =   ini_getbool("SCSI", "ReverseControlBoardRotary", cfgSys.reverseControlBoardRotary, CONFIGFILE);
+
     cfgSys.useFATAllocSize = ini_getbool("SCSI", "UseFATAllocSize", cfgSys.useFATAllocSize, CONFIGFILE);
     cfgSys.enableCDAudio = ini_getbool("SCSI", "EnableCDAudio", cfgSys.enableCDAudio, CONFIGFILE);
     cfgSys.maxVolume =  ini_getl("SCSI", "MaxVolume", cfgSys.maxVolume, CONFIGFILE);

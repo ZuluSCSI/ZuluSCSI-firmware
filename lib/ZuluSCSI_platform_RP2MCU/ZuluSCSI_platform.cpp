@@ -19,10 +19,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-
+#include "ui.h"
 
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI_log.h"
@@ -406,36 +403,10 @@ void platform_init()
 
 }
 
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
-#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
-
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
-
 // late_init() only runs in main application, SCSI not needed in bootloader
 void platform_late_init()
 {
-    // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for(;;); // Don't proceed, loop forever
-  }
-
-  // Show initial display buffer contents on the screen --
-  // the library initializes this with an Adafruit splash screen.
-  display.display();
-  delay(2000); // Pause for 2 seconds
-
-  // Clear the buffer
-  display.clearDisplay();
-
-  // Draw a single pixel in white
-  display.drawPixel(10, 10, SSD1306_WHITE);
-  // Show the display buffer on the screen. You MUST call display() after
-  // drawing commands to make them visible on screen!
-  display.display();
+    initUI();
 
 #if defined(HAS_DIP_SWITCHES) && defined(PLATFORM_HAS_INITIATOR_MODE)
     if (g_scsi_initiator == true)
@@ -1045,32 +1016,40 @@ void platform_reset_mcu()
     watchdog_reboot(0, 0, 2000);
 }
 
+
+// This method is polled
 uint8_t platform_get_buttons()
 {
     uint8_t buttons = 0;
+    static uint8_t buttons_debounced = 0;
 
 #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
     // pulled to VCC via resistor, sinking when pressed
     if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
 #elif defined(GPIO_I2C_SDA)
-    // SDA = button 1, SCL = button 2
-    if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
-    if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
-#endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
-    // Simple debouncing logic: handle button releases after 100 ms delay.
     static uint32_t debounce;
-    static uint8_t buttons_debounced = 0;
+    
+    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+    if (!cfg->enableControlBoard) // use legacy button pressing stuff
+    {
+        // SDA = button 1, SCL = button 2
+        if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
+        if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
 
-    if (buttons != 0)
-    {
-        buttons_debounced = buttons;
-        debounce = millis();
+        // Simple debouncing logic: handle button releases after 100 ms delay.
+        if (buttons != 0 && buttons_debounced == 0)
+        {
+            buttons_debounced = buttons;
+            debounce = millis();
+        }
+        else if ((uint32_t)(millis() - debounce) > 10 && buttons_debounced != 0)
+        {
+            buttons_debounced = 0;
+        }
     }
-    else if ((uint32_t)(millis() - debounce) > 100)
-    {
-        buttons_debounced = 0;
-    }
+   
+#endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
     return buttons_debounced;
 }

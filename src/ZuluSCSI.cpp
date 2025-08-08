@@ -63,6 +63,8 @@
 #include "ZuluSCSI_blink.h"
 #include "ROMDrive.h"
 
+#include "ui.h"
+
 SdFs SD;
 FsFile g_logfile;
 bool g_rawdrive_active;
@@ -796,6 +798,7 @@ static void reinitSCSI()
   }
 #endif // ZULUSCSI_NETWORK
 
+  scsiReinitComplete();
 }
 
 // Alert user that update bin file not used
@@ -888,7 +891,7 @@ static void firmware_update()
     }
   }
 
-
+  
   if (parser.FoundMatch())
   {
 
@@ -973,6 +976,10 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 {
   g_sdcard_present = mountSDCard();
 
+  bool orig_g_sdcard_present = g_sdcard_present;
+
+  sdCardStateChanged(!g_sdcard_present);
+
   if(!g_sdcard_present)
   {
     if (SD.sdErrorCode() == platform_no_sd_card_on_init_error_code())
@@ -1006,6 +1013,12 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
       platform_reset_watchdog();
       g_sdcard_present = mountSDCard();
+
+      if (g_sdcard_present != orig_g_sdcard_present)
+      {
+          sdCardStateChanged(!g_sdcard_present);
+      }
+  
     } while (!g_sdcard_present && wait_for_card);
     blink_cancel();
     LED_OFF();
@@ -1126,8 +1139,23 @@ extern "C" void zuluscsi_setup(void)
     }
   }
 #endif
+
+  scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+  if (cfg->enableControlBoard)
+  {
+    controlInit();
+  }
+
   logmsg("Clock set to: ", (int) platform_sys_clock_in_hz(), "Hz");
   logmsg("Initialization complete!");
+}
+
+void control_disk_swap()
+{
+  if (g_pendingLoadIndex != -1)
+  {
+    loadImage();
+  }
 }
 
 extern "C" void zuluscsi_main_loop(void)
@@ -1143,7 +1171,16 @@ extern "C" void zuluscsi_main_loop(void)
   platform_reset_watchdog();
   platform_poll();
   diskEjectButtonUpdate(true);
+
+  control_disk_swap();
+
   blink_poll();
+
+  scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+  if (cfg->enableControlBoard) // use legacy button pressing stuff
+  {
+    controlLoop();
+  }
 
 #ifdef ZULUSCSI_NETWORK
   platform_network_poll();
@@ -1188,6 +1225,8 @@ extern "C" void zuluscsi_main_loop(void)
         {
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
+
+          sdCardStateChanged(true);
         }
       }
     }
@@ -1208,6 +1247,9 @@ extern "C" void zuluscsi_main_loop(void)
         blink_cancel();
         LED_OFF();
         logmsg("SD card reinit succeeded");
+
+        sdCardStateChanged(false);
+
         print_sd_info();
         reinitSCSI();
         init_logfile();
