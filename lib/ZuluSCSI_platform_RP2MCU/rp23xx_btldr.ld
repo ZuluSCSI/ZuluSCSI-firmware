@@ -74,10 +74,9 @@ SECTIONS
        *libZuluSCSI_platform_RP2MCU.a:BrowseScreenFlat.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:BrowseTypeScreen.cpp.o*(*)
 
-       *libAdafruit SSD1306.a:*(*)
-       *libAdafruit BusIO.a:*(*)
+       *libAdafruit*.a:*(*)
        *ZuluSCSI_tape.cpp.o*(*)
-
+        
 
     }
 
