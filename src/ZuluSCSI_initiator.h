@@ -46,6 +46,12 @@ int scsiInitiatorRunCommand(int target_id,
                             bool returnDataPhase = false,
                             uint32_t timeout = 30000);
 
+// Run TestUnitReady command and exchange messages
+int scsiInitiatorMessage(int target_id,
+                         const uint8_t *msgOut, size_t msgOutLen,
+                         uint8_t *msgIn, size_t msgInBufSize, size_t *msgInLen,
+                         uint32_t timeout = 30000);
+
 // Detect support of read10 commands.
 // Returns true if supported.
 // Return value can be overridden by .ini file, in which case test is not done.
@@ -65,6 +71,13 @@ bool scsiInquiry(int target_id, uint8_t inquiry_data[36]);
 
 // Execute TEST UNIT READY command and handle unit attention state
 bool scsiTestUnitReady(int target_id);
+
+// Reset bus configuration to default (async 8-bit)
+bool scsiInitiatorResetBusConfig(int target_id);
+
+// Enable/disable wide bus mode and test communication
+// Reverts to 8-bit on failure
+bool scsiInitiatorSetBusWidth(int target_id, int busWidth);
 
 // Read a block of data from SCSI device and write to file on SD card
 class FsFile;

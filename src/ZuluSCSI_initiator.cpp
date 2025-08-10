@@ -101,10 +101,14 @@ static struct {
 
     uint32_t removable_count[8];
 
+    // Negotiated bus width for targets
+    int targetBusWidth[NUM_SCSIID];
+
     FsFile target_file;
 } g_initiator_state;
 
 extern SdFs SD;
+static bool g_pause = false;
 
 // Initialization of initiator mode
 void scsiInitiatorInit()
@@ -171,11 +175,31 @@ static void scsiInitiatorUpdateLed()
     }
 }
 
+uint8_t ejectButtonUpdate()
+{
+    // treat '1' to '0' transitions as reset actions
+    static uint8_t previous = 0x00;
+    uint8_t bitmask = platform_get_buttons() & EJECT_BTN_MASK;
+    uint8_t ejectors = (previous ^ bitmask) & previous;
+    previous = bitmask;
+    return ejectors;
+}
+
+static void pollPauseOnEjectButton()
+{
+    if (ejectButtonUpdate() == 1)
+    {
+        logmsg("Eject button detected while in initiator mode, resetting state...");
+        g_pause = true;
+    }
+}
+
 void delay_with_poll(uint32_t ms)
 {
     uint32_t start = millis();
     while ((uint32_t)(millis() - start) < ms)
     {
+        pollPauseOnEjectButton();
         platform_poll();
         delay(1);
     }
@@ -246,6 +270,47 @@ void scsiInitiatorMainLoop()
         return;
     }
 
+    pollPauseOnEjectButton();
+    if (g_pause)
+    {
+        g_initiator_state.target_file.close();
+        scsiInitiatorInit();
+        logmsg("Initiator reset, pausing. Press eject to start initiator...");
+        uint32_t pause_blink_start = millis();
+        uint32_t blink_delay = 10;
+        uint8_t blink_count = 0;
+        platform_set_blink_status(false);
+        while(ejectButtonUpdate() != 1)
+        {
+            // LED pulsates
+            if ((uint32_t)(millis() - pause_blink_start) > blink_delay)
+            {
+                pause_blink_start = millis();
+                if (blink_count++ & 1)
+                {
+                    LED_ON();
+                    blink_delay = 5;
+                }
+                else
+                {
+                    LED_OFF();
+                    blink_delay = 10;
+                }
+
+                if (blink_count > 7)
+                {
+                    blink_delay = 100;
+                    blink_count = 0;
+                }
+            }
+            platform_poll();
+            platform_reset_watchdog();
+        }
+        LED_OFF();
+        g_pause = false;
+        scsiHostPhyReset();
+    }
+
     if (!g_initiator_state.imaging)
     {
         // Scan for SCSI drives one at a time
@@ -270,9 +335,28 @@ void scsiInitiatorMainLoop()
             uint8_t inquiry_data[36] = {0};
 
             LED_ON();
+
             bool startstopok =
                 scsiTestUnitReady(g_initiator_state.target_id) &&
                 scsiStartStopUnit(g_initiator_state.target_id, true);
+
+#if defined(PLATFORM_MAX_BUS_WIDTH) && PLATFORM_MAX_BUS_WIDTH > 0
+            if (startstopok)
+            {
+                // Negotiate bus width
+                // This is done before other commands just in case the target
+                // happens to be in 16-bit mode. Only commands that have no
+                // data phase can be used before this.
+                int configBusWidth = ini_getl("SCSI", "InitiatorBusWidth", PLATFORM_MAX_BUS_WIDTH, CONFIGFILE);
+                bool busWidthSet = scsiInitiatorSetBusWidth(g_initiator_state.target_id, configBusWidth);
+                if (!busWidthSet && ini_haskey("SCSI", "InitiatorBusWidth", CONFIGFILE))
+                {
+                    logmsg("-- Failed to negotiate ", 8 << configBusWidth, " bit bus width that is forced in .ini file");
+                    logmsg("-- Refusing to connect at lower bus width");
+                    return;
+                }
+            }
+#endif
 
             bool readcapok = startstopok &&
                 scsiInitiatorReadCapacity(g_initiator_state.target_id,
@@ -652,7 +736,9 @@ int scsiInitiatorRunCommand(int target_id,
                 break;
             }
 
+            scsiHostSetBusWidth(g_initiator_state.targetBusWidth[target_id]);
             uint32_t readCount = scsiHostRead(bufIn, bufInLen);
+            scsiHostSetBusWidth(0);
             if (readCount != bufInLen)
             {
                 logmsg("scsiHostRead failed, tried to read ", (int)bufInLen, " bytes, got ", (int)readCount);
@@ -670,7 +756,9 @@ int scsiInitiatorRunCommand(int target_id,
                 break;
             }
 
+            scsiHostSetBusWidth(g_initiator_state.targetBusWidth[target_id]);
             uint32_t writeCount = scsiHostWrite(bufOut, bufOutLen);
+            scsiHostSetBusWidth(0);
             if (writeCount != bufOutLen)
             {
                 logmsg("scsiHostWrite failed, was writing ", bytearray(bufOut, bufOutLen), " return value ", (int)writeCount);
@@ -686,6 +774,88 @@ int scsiInitiatorRunCommand(int target_id,
 #ifndef ZULUSCSI_NETWORK
             dbgmsg("------ STATUS: ", tmp);
 #endif
+        }
+    }
+
+    scsiHostWaitBusFree();
+
+    return status;
+}
+
+int scsiInitiatorMessage(int target_id,
+    const uint8_t *msgOut, size_t msgOutLen,
+    uint8_t *msgIn, size_t msgInBufSize, size_t *msgInLen,
+    uint32_t timeout)
+{
+    uint8_t command[6] = {0x00, 0, 0, 0, 0, 0};
+
+    scsiHostPhySetATN(true);
+
+    if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
+    {
+        dbgmsg("------ Target ", target_id, " did not respond");
+        scsiHostPhyRelease();
+        return -1;
+    }
+
+    size_t dummy;
+    if (!msgInLen) msgInLen = &dummy;
+    *msgInLen = 0;
+
+    size_t msgOutSent = 0;
+
+    SCSI_PHASE phase;
+    int status = -1;
+    uint32_t start = millis();
+    while ((phase = (SCSI_PHASE)scsiHostPhyGetPhase()) != BUS_FREE)
+    {
+        // If explicit timeout is specified, prevent watchdog from triggering too early.
+        if ((uint32_t)(millis() - start) < timeout)
+        {
+            platform_reset_watchdog();
+        }
+
+        platform_poll();
+
+        if (phase == MESSAGE_IN)
+        {
+            uint8_t msg = 0;
+            scsiHostRead(&msg, 1);
+
+            if (*msgInLen < msgInBufSize)
+            {
+                msgIn[*msgInLen] = msg;
+                *msgInLen += 1;
+            }
+
+            if (status != -1 && msg == MSG_COMMAND_COMPLETE)
+            {
+                break;
+            }
+        }
+        else if (phase == MESSAGE_OUT)
+        {
+            if (msgOutSent < msgOutLen)
+            {
+                scsiHostWrite(&msgOut[msgOutSent++], 1);
+                if (msgOutSent >= msgOutLen)
+                {
+                    // End of MESSAGE_OUT phase
+                    // Note that target may switch to MESSAGE_IN earlier than this
+                    scsiHostPhySetATN(false);
+                }
+            }
+        }
+        else if (phase == COMMAND)
+        {
+            scsiHostWrite(command, sizeof(command));
+        }
+        else if (phase == STATUS)
+        {
+            uint8_t tmp = -1;
+            scsiHostRead(&tmp, 1);
+            status = tmp;
+            dbgmsg("------ STATUS: ", tmp);
         }
     }
 
@@ -885,6 +1055,100 @@ bool scsiTestUnitReady(int target_id)
     return false;
 }
 
+bool scsiInitiatorResetBusConfig(int target_id)
+{
+    uint8_t msgOut[] = {0x80, // Identify
+        0x01, 0x03, 0x01, 0x00, 0x00, // Disable synchronous mode
+        0x01, 0x02, 0x03, 0x00  // 8-bit mode
+    };
+
+    g_initiator_state.targetBusWidth[target_id] = 0;
+
+    int status = scsiInitiatorMessage(target_id, msgOut, sizeof(msgOut), nullptr, 0, nullptr);
+    return status == 0;
+}
+
+#if !defined(PLATFORM_MAX_BUS_WIDTH) || PLATFORM_MAX_BUS_WIDTH == 0
+bool scsiInitiatorSetBusWidth(int target_id, int busWidth)
+{
+    return false;
+}
+#else
+bool scsiInitiatorSetBusWidth(int target_id, int busWidth)
+{
+    uint8_t msgOut[] = {0x80, // Identify
+        0x01, 0x02, 0x03, (uint8_t)busWidth  // Bus width
+    };
+
+    uint8_t msgIn[16] = {0};
+    size_t msgInLen = 0;
+
+    dbgmsg("---- Negotiating bus width = ", (uint8_t)busWidth);
+    int status = scsiInitiatorMessage(target_id, msgOut, sizeof(msgOut), msgIn, sizeof(msgIn), &msgInLen);
+    if (status != 0)
+    {
+        scsiInitiatorResetBusConfig(target_id);
+        return false;
+    }
+
+    // Parse response message
+    int agreedMode = -1;
+    size_t parsed = 0;
+    while (parsed < msgInLen)
+    {
+        uint8_t msgByte = msgIn[parsed++];
+        if (msgByte == 0x01)
+        {
+            // Extended message
+            uint8_t extLen = msgIn[parsed++];
+            uint8_t *extMsg = &msgIn[parsed];
+            parsed += extLen;
+
+            if (extMsg[0] == 0x03)
+            {
+                dbgmsg("-- Target bus width response: ", extMsg[1]);
+                agreedMode = extMsg[1];
+            }
+        }
+        else if ((msgByte & 0xF0) == 0x20)
+        {
+            // Two-byte message, ignore
+            parsed++;
+        }
+    }
+
+    if (agreedMode < 0)
+    {
+        logmsg("-- Target did not respond to bus width negotiation, reverting to 8-bit");
+        scsiInitiatorResetBusConfig(target_id);
+        return false;
+    }
+    else if (agreedMode == busWidth)
+    {
+        dbgmsg("-- Negotiated bus width ", 8 << busWidth, " bits, testing with Inquiry command");
+        g_initiator_state.targetBusWidth[target_id] = busWidth;
+        uint8_t inquiryData[36];
+        if (!scsiInquiry(target_id, inquiryData))
+        {
+            logmsg("-- Bus width test failed, reverting to 8-bit");
+            scsiInitiatorResetBusConfig(target_id);
+            return false;
+        }
+        else
+        {
+            logmsg("-- Successfully negotiated ", 8 << busWidth, " bit bus mode");
+            return true;
+        }
+    }
+    else
+    {
+        logmsg("-- Target refused wide bus request, reverting to 8-bit");
+        scsiInitiatorResetBusConfig(target_id);
+        return false;
+    }
+}
+#endif
+
 // This uses callbacks to run SD and SCSI transfers in parallel
 static struct {
     uint32_t bytes_sd; // Number of bytes that have been transferred on SD card side
@@ -949,7 +1213,10 @@ static void initiatorReadSDCallback(uint32_t bytes_complete)
             return;
 
         // dbgmsg("SCSI read ", (int)start, " + ", (int)len, ", sd ready cnt ", (int)sd_ready_cnt, " ", (int)bytes_complete, ", scsi done ", (int)g_initiator_transfer.bytes_scsi_done);
-        if (scsiHostRead(&scsiDev.data[start], len) != len)
+        scsiHostSetBusWidth(g_initiator_state.targetBusWidth[g_initiator_state.target_id]);
+        uint32_t rxcount = scsiHostRead(&scsiDev.data[start], len);
+        scsiHostSetBusWidth(0);
+        if (rxcount != len)
         {
             logmsg("Read failed at byte ", (int)g_initiator_transfer.bytes_scsi_done);
             g_initiator_transfer.all_ok = false;

@@ -101,6 +101,10 @@ static void gpio_conf(uint gpio, gpio_function_t fn, bool pullup, bool pulldown,
     if (fast_slew)
     {
         pads_bank0_hw->io[gpio] |= PADS_BANK0_GPIO0_SLEWFAST_BITS;
+
+#ifdef FAST_IO_DRIVE_STRENGTH
+        gpio_set_drive_strength(gpio, FAST_IO_DRIVE_STRENGTH);
+#endif
     }
 }
 
@@ -249,6 +253,33 @@ static pin_setup_state_t read_setup_ack_pin()
 }
 #endif
 
+// Allows execution on Core1 via function pointers. Each function can take
+// no parameters and should return nothing, operating via side-effects only.
+static void core1_handler() {
+    while (1) {
+        void (*function)() = (void (*)()) multicore_fifo_pop_blocking();
+        (*function)();
+    }
+}
+
+#ifdef ZULUSCSI_MCU_RP23XX
+static void __no_inline_not_in_flash_func(set_flash_clock)()
+{
+    // Ensure that high performance 4-bit flash mode is used for code fetches.
+    // This is normally the default but if coming through rom_chain_image() the
+    // flash may be in 1-bit mode after flash_do_cmd() call.
+    // See https://github.com/raspberrypi/pico-bootrom-rp2350/issues/10
+    //
+    // Flash clock divider 3 gives 50 MHz clock for 150 MHz, and 83 for 250 MHz.
+    // The W25Q16JV maximum is 133 MHz.
+    //
+    // In practice most of the code is in cache or RAM, so the performance effect
+    // of higher clocks is not huge.
+    rom_flash_exit_xip();
+    rom_flash_select_xip_read_mode(BOOTROM_XIP_MODE_EBH_QUAD, 3);
+}
+#endif
+
 void platform_init()
 {
     // Make sure second core is stopped
@@ -260,17 +291,35 @@ void platform_init()
     /* First configure the pins that affect external buffer directions.
      * RP2040 defaults to pulldowns, while these pins have external pull-ups.
      */
-    //        pin             function       pup   pdown  out    state fast
-    gpio_conf(SCSI_DATA_DIR,  GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_RST,   GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_BSY,   GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_SEL,   GPIO_FUNC_SIO, false,false, true,  true, true);
+#ifdef SCSI_DATA_DIR_ACTIVE_HIGH
+    bool data_dir_state = false;
+#else
+    bool data_dir_state = true;
+#endif
+
+    //        pin             function       pup   pdown  out   state           fast
+    gpio_conf(SCSI_DATA_DIR,  GPIO_FUNC_SIO, false,false, true, data_dir_state, true);
+    gpio_conf(SCSI_OUT_RST,   GPIO_FUNC_SIO, false,false, true, true,           true);
+    gpio_conf(SCSI_OUT_BSY,   GPIO_FUNC_SIO, false,false, true, true,           true);
+    gpio_conf(SCSI_OUT_SEL,   GPIO_FUNC_SIO, false,false, true, true,           true);
 
     /* Check dip switch settings */
 #ifdef HAS_DIP_SWITCHES
     gpio_conf(DIP_INITIATOR,  GPIO_FUNC_SIO, false, false, false, false, false);
     gpio_conf(DIP_DBGLOG,     GPIO_FUNC_SIO, false, false, false, false, false);
     gpio_conf(DIP_TERM,       GPIO_FUNC_SIO, false, false, false, false, false);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    /* RP2350-E9 errata workaround for excessive input pin leakage */
+    gpio_set_input_enabled(DIP_INITIATOR, false);
+    gpio_set_input_enabled(DIP_DBGLOG, false);
+    gpio_set_input_enabled(DIP_TERM, false);
+    delay(10);
+    gpio_set_input_enabled(DIP_INITIATOR, true);
+    gpio_set_input_enabled(DIP_DBGLOG, true);
+    gpio_set_input_enabled(DIP_TERM, true);
+#endif
+
     delay(10); // 10 ms delay to let pull-ups do their work
     bool working_dip = true;
     bool dbglog = false;
@@ -356,10 +405,16 @@ void platform_init()
     logmsg ("SCSI termination is handled by a hardware jumper");
 #endif  // HAS_DIP_SWITCHES
 
-        logmsg("===========================================================");
-        logmsg(" Powered by Raspberry Pi");
-        logmsg("            Raspberry Pi is a trademark of Raspberry Pi Ltd");
-        logmsg("===========================================================");
+    /* Note: the below notice and attribution is required to be preserved and displayed by
+     * copies of this software, in accordance to section 7b of GPLv3 license.
+     */
+    logmsg("=========================================================================");
+    logmsg(" Powered by Raspberry Pi");
+    logmsg("            Raspberry Pi is a trademark of Raspberry Pi Ltd");
+    logmsg("");
+    logmsg(" ZuluSCSI RPi platform support is developed by Rabbit Hole Computing");
+    logmsg(" and provided to you under GNU General Public License version 3.");
+    logmsg("=========================================================================");
 
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
@@ -369,6 +424,10 @@ void platform_init()
     restore_interrupts(saved_irq);
     g_flash_chip_size = (1 << response_jedec[3]);
     logmsg("Flash chip size: ", (int)(g_flash_chip_size / 1024), " kB");
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    set_flash_clock();
+#endif
 
     // SD card pins
     // Card is used in SDIO mode for main program, and in SPI mode for crash handler & bootloader.
@@ -400,6 +459,11 @@ void platform_init()
 #ifdef GPIO_USB_POWER
     gpio_conf(GPIO_USB_POWER, GPIO_FUNC_SIO, false, false, false,  false, false);
 #endif
+
+#ifdef GPIO_EJECT_BTN
+    gpio_conf(GPIO_EJECT_BTN, GPIO_FUNC_SIO, false,false, false,  false, false);
+#endif
+
 
 }
 
@@ -440,6 +504,21 @@ void platform_late_init()
     gpio_conf(SCSI_IO_DB6,    GPIO_FUNC_SIO, true, false, false, true, true);
     gpio_conf(SCSI_IO_DB7,    GPIO_FUNC_SIO, true, false, false, true, true);
     gpio_conf(SCSI_IO_DBP,    GPIO_FUNC_SIO, true, false, false, true, true);
+
+#ifdef SCSI_IO_DB8
+    gpio_conf(SCSI_IO_DB8,    GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB9,    GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB10,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB11,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB12,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB13,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB14,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB15,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DBP1,   GPIO_FUNC_SIO, true, false, false, true, true);
+#endif
+
+    dbgmsg("Starting Core1 dispatcher");
+    multicore_launch_core1(core1_handler);
 
     if (!g_scsi_initiator)
     {
@@ -833,7 +912,7 @@ static void adc_poll()
         adc_init();
         adc_set_temp_sensor_enabled(true);
         adc_set_clkdiv(65535); // Lowest samplerate, about 2 kHz
-#ifdef ZULUSCSI_BLASTER
+#if defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
         adc_select_input(8);
 #else
         adc_select_input(4);
@@ -1011,9 +1090,9 @@ void platform_poll()
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
 }
 
-void platform_reset_mcu()
+void platform_reset_mcu(uint32_t reset_in_ms)
 {
-    watchdog_reboot(0, 0, 2000);
+    watchdog_reboot(0, 0, reset_in_ms);
 }
 
 
@@ -1026,6 +1105,11 @@ uint8_t platform_get_buttons()
 #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
     // pulled to VCC via resistor, sinking when pressed
     if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+#elif defined(GPIO_EJECT_BTN)
+    // EJECT_BTN = 1, SDA = button 2, SCL = button 4
+    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
+    if (!gpio_get(GPIO_I2C_SDA))   buttons |= 2;
+    if (!gpio_get(GPIO_I2C_SCL))   buttons |= 4;
 #elif defined(GPIO_I2C_SDA)
 
     static uint32_t debounce;
@@ -1056,7 +1140,11 @@ uint8_t platform_get_buttons()
 
 bool platform_has_phy_eject_button()
 {
+#ifdef ZULUSCSI_WIDE
+    return true;
+#else
     return false;
+#endif
 }
 
 /************************************/
@@ -1127,6 +1215,8 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
 }
 
 #endif // PLATFORM_HAS_ROM_DRIVE
+
+#ifndef RP2MCU_USE_CPU_PARITY
 
 /**********************************************/
 /* Mapping from data bytes to GPIO BOP values */
@@ -1233,6 +1323,8 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 };
 
 #undef X
+
+#endif
 
 } /* extern "C" */
 

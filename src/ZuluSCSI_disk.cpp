@@ -488,9 +488,12 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as tape drive");
             img.deviceType = S2S_CFG_SEQUENTIAL;
-            img.tape_mark_count = 0;
+            img.tape_mark_count = 1;
             scsiDev.target->sense.filemark = false;
             scsiDev.target->sense.eom = false;
+            img.tape_mark_index = 0;
+            img.tape_mark_block_offset = 0;
+            img.tape_load_next_file = true;
         }
         else if (type == S2S_CFG_ZIP100)
         {
@@ -595,7 +598,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             img.bin_container.open(name);
             FsFile file;
             bool valid = false;
-
+            img.tape_mark_count = 0;
             while(file.openNext(&img.bin_container))
             {
                 file.getName(name, sizeof(name));
@@ -611,9 +614,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                 file.open(&img.bin_container, TAPE_DEFAULT_NAME, O_CREAT);
                 file.close();
             }
-            img.tape_mark_index = 0;
-            img.tape_mark_block_offset = 0;
-            img.tape_load_next_file = false;
+
         }
 
         img.use_prefix = use_prefix;
@@ -651,8 +652,9 @@ bool scsiDiskFilenameValid(const char* name)
     if (extension)
     {
         const char *ignore_exts[] = {
-            ".rom_loaded", ".cue", ".txt", ".rtf", ".md", ".nfo", ".pdf", ".doc", 
+            ".rom_loaded", ".rom_bkup", ".cue", ".txt", ".rtf", ".md", ".nfo", ".pdf", ".doc", 
 	    ".ini", ".mid", ".midi", ".aiff", ".mp3", ".m4a",
+            ".ori", // Kiosk mode original images
             NULL
         };
         const char *archive_exts[] = {
@@ -1386,6 +1388,14 @@ void s2s_configInit(S2S_BoardCfg* config)
         logmsg("-- EnableParity = No");
     }
 #endif
+
+#if defined(PLATFORM_MAX_BUS_WIDTH) && PLATFORM_MAX_BUS_WIDTH > 0
+    uint8_t busWidth = sysCfg->maxBusWidth;
+    if (busWidth > PLATFORM_MAX_BUS_WIDTH) busWidth = PLATFORM_MAX_BUS_WIDTH;
+    logmsg("-- Bus width = ", (int)busWidth, " (", (int)(8 << busWidth), " bits)");
+    config->busWidth = busWidth;
+#endif
+
     memset(tmp, 0, sizeof(tmp));
     ini_gets("SCSI", "WiFiMACAddress", "", tmp, sizeof(tmp), CONFIGFILE);
     if (tmp[0])

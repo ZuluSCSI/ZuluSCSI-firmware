@@ -187,7 +187,7 @@ ZuluSCSI uses raw hard drive image files, which are stored on a FAT32 or exFAT-f
 Examples of valid filenames:
 * `HD5.hda` or `HD5.img`: hard drive with SCSI ID 5
 * `HD20_512.hda`: hard drive with SCSI ID 2, LUN 0, block size 512. Currently, ZuluSCSI does not support multiple LUNs, only LUN 0.
-* `CD3.iso`: CD drive with SCSI ID 3
+* `CD3.iso`: CD drive with SCSI ID 3. The default CD block size is 2048. This can be overridden by setting the block size manually, eg `CD3_512.iso`
 
 In addition to the simplified filenames style above, the ZuluSCSI firmware also looks for images using the BlueSCSI-style "HDxy_512.hda" filename formatting.
 
@@ -359,6 +359,16 @@ The status and maximum size of ROM drive are reported in `zululog.txt`.
 To disable a previously programmed ROM drive, create empty file called `HD0.rom`.
 If there is a `.bin` file with the same ID as the programmed ROM drive, it overrides the ROM drive.
 There can be at most one ROM drive enabled at a time.
+
+Kiosk mode for museums or demonstration setups
+----------------------------------------------
+The Kiosk mode is designed for vintage computer museums or other demonstration setups, where machines can be used by visitors but need to be easily restored to a pristine state.
+
+At startup, all files with `.ori` extensions are copied to new volumes. For instance, `HD10_512.hda.ori` would be copied to `HD10_512.hda`.
+
+Restoration takes a significant amount of time, so it should be used with small drives (it takes between 5 and 20 seconds to restore a 40MB hard drive depending on hardware). During the copy, the LED will blink with the pattern ON-OFF-ON-OFF-OFF. Each cycle corresponds to 5MB restored.
+
+Rebooting the machine will not restore the files - you need to physically power-cycle the ZuluSCSI device.
 
 Project structure
 -----------------

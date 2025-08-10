@@ -95,6 +95,7 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
     bool reverseControlBoardRotary;
     bool enableControlBoardCache;
 
+    uint8_t maxBusWidth;
 } scsi_system_settings_t;
 
 // This struct should only have new setting added to the end
