@@ -11,6 +11,8 @@ class InfoScreen : public Screen
 public:
     InfoScreen(Adafruit_SSD1306 &display) : Screen(display) {}
 
+    SCREEN_TYPE screenType() { return SCREEN_INFO; }
+
     void init(int index);
     void draw();
 

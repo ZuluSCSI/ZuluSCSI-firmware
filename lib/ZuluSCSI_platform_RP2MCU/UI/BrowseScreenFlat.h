@@ -11,6 +11,8 @@ class BrowseScreenFlat : public Screen
 public:
     BrowseScreenFlat(Adafruit_SSD1306 &display) : Screen(display) {}
 
+    SCREEN_TYPE screenType() { return SCREEN_BROWSE_FLAT; }
+
     void init(int index);
     void draw();
 

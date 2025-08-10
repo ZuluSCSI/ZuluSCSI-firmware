@@ -10,6 +10,8 @@ class SplashScreen : public Screen
 public:
     SplashScreen(Adafruit_SSD1306 &display) : Screen(display) {}
 
+    SCREEN_TYPE screenType() { return SCREEN_SPLASH; }
+
     void init(int index);
 };
 

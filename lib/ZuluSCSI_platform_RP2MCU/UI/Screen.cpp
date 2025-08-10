@@ -3,6 +3,11 @@
 #include "screen.h"
 #include "ZuluSCSI_log.h"
 
+SCREEN_TYPE Screen::screenType()
+{
+  return (SCREEN_TYPE)SCREEN_NONE;
+}
+
 void Screen::init(int index)
 {
     _nextRefresh = make_timeout_time_ms(360);

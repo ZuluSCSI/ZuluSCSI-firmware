@@ -46,7 +46,10 @@ public:
 
 	bool virtual clearScreenOnDraw();
 
+	SCREEN_TYPE virtual screenType();
+
 protected:
+	SCREEN_TYPE _type;
 	bool _hasDrawn;
 	int _iconX;
 	char _sizeBuffer[8];

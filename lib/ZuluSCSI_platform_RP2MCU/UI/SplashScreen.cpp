@@ -21,7 +21,7 @@ void SplashScreen::init(int index)
 
   _display.display();
 
-  delay(1500);
+// delay(1500);
 }
 
 #endif

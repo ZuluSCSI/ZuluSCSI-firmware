@@ -10,6 +10,8 @@ class NoSDScreen : public Screen
 public:
     NoSDScreen(Adafruit_SSD1306 &display) : Screen(display) {}
 
+    SCREEN_TYPE screenType() { return SCREEN_NOSD; }
+
     void draw();
 };
 

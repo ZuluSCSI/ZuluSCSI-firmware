@@ -10,6 +10,8 @@ class BrowseScreen : public Screen
 public:
     BrowseScreen(Adafruit_SSD1306 &display) : Screen(display) {}
 
+    SCREEN_TYPE screenType() { return SCREEN_BROWSE; }
+
     void init(int index);
     void draw();
     void sdCardStateChange(bool cardIsPresent);

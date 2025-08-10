@@ -328,7 +328,10 @@ void updateRotary(int dir)
         dir = -dir; // inverter with my encoder
     }
 
-    g_activeScreen->rotaryChange(dir);
+    if (g_activeScreen != NULL)
+    {
+        g_activeScreen->rotaryChange(dir);
+    }
 }
 
 
@@ -336,6 +339,8 @@ void updateRotary(int dir)
 // Called on sd remove and Device Chnages
 void stateChange()
 {
+    _messageBox.ShowModal(-1,"stateChange", "", "");
+
     logmsg("*** stateChange()");
     printDevices();
 
@@ -427,7 +432,8 @@ void processRotaryEncoder(uint8_t input_byte)
 // When this is called, the device list is complete, either on startup or on a card swap
 void devicesUpdated()
 {
-    logmsg("*** devicesUpdated()");
+    _messageBox.ShowModal(-1,"devicesUpdated", "", "");
+
     if (!g_controlBoardInit)
     {
         return;
@@ -439,6 +445,8 @@ void devicesUpdated()
 // This clear the list of devices, used at startup and on card removal
 void initDevices()
 {
+    _messageBox.ShowModal(-1,"initDevices", "", "");
+
     logmsg("*** initDevices()");
 
     int i;
@@ -570,6 +578,7 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
 extern "C" void sdCardStateChanged(bool absent)
 {
     logmsg("*** sdCardStateChanged()); absent = ", absent);
+    _messageBox.ShowModal(-1,"sdCardStateChanged", "", "");
 
     g_sdAvailable = !absent;
 
@@ -585,6 +594,8 @@ extern "C" void sdCardStateChanged(bool absent)
 extern "C" void scsiReinitComplete()
 {
     logmsg("*** scsiReinitComplete()");
+    _messageBox.ShowModal(-1,"scsiReinitComplete", "", "");
+
     patchDevices();
 
     devicesUpdated();
@@ -625,32 +636,35 @@ extern "C" void controlLoop()
     processRotaryEncoder(input_byte);
     processButtons(input_byte);
 
-    if (g_shortPressed[2])
+    if (g_activeScreen != NULL)
     {
-        g_activeScreen->shortRotaryPress();
-    }
-    if (g_longPressed[2])
-    {
-        g_activeScreen->longRotaryPress();
-    }
-    if (g_shortPressed[0])
-    {
-        g_activeScreen->shortUserPress();
-    }
-    if (g_longPressed[0])
-    {
-        g_activeScreen->longUserPress();
-    }
-    if (g_shortPressed[1])
-    {
-        g_activeScreen->shortEjectPress();
-    }
-    if (g_longPressed[1])
-    {
-        g_activeScreen->longEjectPress();
-    }
+        if (g_shortPressed[2])
+        {
+            g_activeScreen->shortRotaryPress();
+        }
+        if (g_longPressed[2])
+        {
+            g_activeScreen->longRotaryPress();
+        }
+        if (g_shortPressed[0])
+        {
+            g_activeScreen->shortUserPress();
+        }
+        if (g_longPressed[0])
+        {
+            g_activeScreen->longUserPress();
+        }
+        if (g_shortPressed[1])
+        {
+            g_activeScreen->shortEjectPress();
+        }
+        if (g_longPressed[1])
+        {
+            g_activeScreen->longEjectPress();
+        }
 
-    g_activeScreen->tick();
+        g_activeScreen->tick();
+    }
 }
 
 #endif

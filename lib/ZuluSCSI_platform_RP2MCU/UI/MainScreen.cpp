@@ -76,6 +76,11 @@ void MainScreen::shortRotaryPress()
   changeScreen(SCREEN_INFO, _selectedDevice);
 }
 
+void MainScreen::shortUserPress()
+{
+  
+}
+
 void MainScreen::shortEjectPress()
 {
   if (_selectedDevice == -1)

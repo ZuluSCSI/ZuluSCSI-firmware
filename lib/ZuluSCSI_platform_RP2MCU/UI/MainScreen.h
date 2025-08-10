@@ -10,14 +10,18 @@ class MainScreen : public Screen
 public:
     MainScreen(Adafruit_SSD1306 &display) : Screen(display) 
     {
-        _selectedDevice= -1;
+        _selectedDevice= -1; // TODO move to sdCardStateChange?
     }
+
+    SCREEN_TYPE screenType() { return SCREEN_MAIN; }
 
     void init(int index);
     void draw();
     void tick();
     
     void sdCardStateChange(bool cardIsPresent);
+
+    void shortUserPress();
 
     void shortRotaryPress();
     void shortEjectPress();

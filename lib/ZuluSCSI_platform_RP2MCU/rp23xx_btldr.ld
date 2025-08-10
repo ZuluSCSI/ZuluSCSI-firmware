@@ -59,6 +59,8 @@ SECTIONS
        /* gt */
        *libZuluSCSI_platform_RP2MCU.a:control.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:cache.cpp.o*(*)
+
+
        *libZuluSCSI_platform_RP2MCU.a:BrowseScreen.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:InfoScreen.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:MainScreen.cpp.o*(*)
@@ -72,7 +74,11 @@ SECTIONS
        *libZuluSCSI_platform_RP2MCU.a:BrowseScreenFlat.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:BrowseTypeScreen.cpp.o*(*)
 
+       *libAdafruit SSD1306.a:*(*)
+       *libAdafruit BusIO.a:*(*)
        *ZuluSCSI_tape.cpp.o*(*)
+
+
     }
 
     .text : {

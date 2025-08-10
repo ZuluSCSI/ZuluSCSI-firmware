@@ -78,6 +78,12 @@ Screen *GetScreen(SCREEN_TYPE type)
 
 void changeScreen(SCREEN_TYPE type, int index)
 {
+    if (type == NULL)
+    {
+        g_activeScreen = NULL;
+        return;
+    }
+
     // Make the new screen active
     g_activeScreen = GetScreen(type);
 

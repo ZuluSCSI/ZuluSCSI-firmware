@@ -10,6 +10,8 @@ class BrowseTypeScreen : public Screen
 public:
     BrowseTypeScreen(Adafruit_SSD1306 &display) : Screen(display) {}
 
+    SCREEN_TYPE screenType() { return SCREEN_BROWSE_TYPE; }
+
     void init(int index);
     void draw();
 

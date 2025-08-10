@@ -5,6 +5,7 @@
 
 typedef enum
 {
+    SCREEN_NONE,
 	SCREEN_SPLASH,
     SCREEN_MAIN,
     SCREEN_NOSD,

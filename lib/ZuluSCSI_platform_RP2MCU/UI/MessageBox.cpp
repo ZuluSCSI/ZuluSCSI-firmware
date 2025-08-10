@@ -6,11 +6,15 @@
 
 #include "control_global.h"
 
+extern Screen *g_activeScreen;
+
 void MessageBox::init(int index)
 {
   Screen::init(index);
 
   _index = index;
+
+  _isActive = true;
 }
 
 void MessageBox::draw()
@@ -48,21 +52,25 @@ void MessageBox::tick()
 void MessageBox::shortRotaryPress()
 {
     changeScreen(_return, _index);
+    _isActive = false;
 }
 
 void MessageBox::shortUserPress()
 {
     changeScreen(_return, _index);
+    _isActive = false;
 }
 
 void MessageBox::shortEjectPress()
 {
     changeScreen(_return, _index);
+    _isActive = false;
 }
 
 void MessageBox::rotaryChange(int direction)
 {
   changeScreen(_return, _index);
+  _isActive = false;
 }
 
 void MessageBox::setReturnScreen(SCREEN_TYPE ret)
@@ -85,6 +93,31 @@ void MessageBox::setText(const char *title, const char *line1, const char *line2
 bool MessageBox::clearScreenOnDraw()
 {
   return false;
+}
+
+void MessageBox::ShowModal(int index, const char *title, const char *line1, const char *line2)
+{
+  return;
+  
+  if (g_activeScreen != NULL)
+  {
+    _return = g_activeScreen->screenType();
+  }
+  else
+  {
+    _return = (SCREEN_TYPE)SCREEN_NONE;
+  }
+
+  setText(title, line1, line2);
+
+  changeScreen(MESSAGE_BOX, index);
+
+  tick();
+
+  while(_messageBox._isActive)
+  {
+      controlLoop();
+  }
 }
 
 void MessageBox::drawText(Rectangle bound, int yOffset, const char *msg)

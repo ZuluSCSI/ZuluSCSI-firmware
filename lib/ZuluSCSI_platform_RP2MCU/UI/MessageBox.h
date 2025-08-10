@@ -10,6 +10,8 @@ class MessageBox : public Screen
 public:
     MessageBox(Adafruit_SSD1306 &display) : Screen(display) {}
 
+    SCREEN_TYPE screenType() { return MESSAGE_BOX; }
+
     void init(int index);
     void draw();
     void tick();
@@ -25,7 +27,12 @@ public:
     void setText(const char *title, const char *line1, const char *line2);
 
     bool clearScreenOnDraw();
+
+    void ShowModal(int index, const char *title, const char *line1, const char *line2);
+    
 private:
+    bool _isActive;
+
     int _index;
     bool _conditionPendingLoadComplete;
     SCREEN_TYPE _return;

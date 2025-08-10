@@ -10,6 +10,8 @@ class AboutScreen : public Screen
 public:
     AboutScreen(Adafruit_SSD1306 &display) : Screen(display) {}
 
+    SCREEN_TYPE screenType() { return SCREEN_ABOUT; }
+
     void draw();
     void shortUserPress();
 };
