@@ -84,6 +84,11 @@ static bool g_led_blinking = false;
 
 static void usb_log_poll();
 
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+#include <compact_ed25519.h>
+static void platform_auth_check();
+#endif
+
 /***************/
 /* GPIO init   */
 /***************/
@@ -634,6 +639,10 @@ void platform_late_init()
     Serial.begin();
 #endif
     scsi_accel_rp2040_init();
+
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+    multicore_fifo_push_blocking((uintptr_t) &platform_auth_check);
+#endif
 }
 
 void platform_post_sd_card_init() {}
@@ -1203,6 +1212,58 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
 }
 
 #endif // PLATFORM_HAS_ROM_DRIVE
+
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+
+/*************************************************/
+/* Public key check to distinguish clone devices */
+/*************************************************/
+
+static uint32_t adler32(const uint8_t *buf, size_t len)
+{
+    uint32_t s1 = 1, s2 = 0;
+    for (size_t n = 0; n < len; n++) {
+       s1 = (s1 + buf[n]) % 65521;
+       s2 = (s2 + s1) % 65521;
+    }
+    return (s2 << 16) | s1;
+}
+
+static void format_hexstring(const uint8_t *buf, size_t len, char *dest, size_t destlen)
+{
+    assert(destlen >= len * 2 + 1);
+    const char *nibble = "0123456789ABCDEF";
+    for (size_t i = 0; i < len; i++)
+    {
+        dest[i * 2] = nibble[buf[i] >> 4];
+        dest[i * 2 + 1] = nibble[buf[i] & 0x0F];
+    }
+    dest[len * 2] = '\0';
+}
+
+static void platform_auth_check()
+{
+    const uint8_t *randid = PLATFORM_AUTH_CHECK_RANDID_ADDR;
+    const uint8_t *signature = PLATFORM_AUTH_CHECK_SIGNATURE_ADDR;
+    const uint8_t pubkey[] = PLATFORM_AUTH_CHECK_PUBKEY;
+    if (compact_ed25519_verify(signature, pubkey, randid, PLATFORM_AUTH_CHECK_RANDID_SIZE))
+    {
+        // Signature is valid, print it in log to permit offline validation
+        char serial[33];
+        char sighashstr[9];
+        uint32_t sighash = __builtin_bswap32(adler32(signature, ED25519_SIGNATURE_SIZE));
+        format_hexstring(randid, PLATFORM_AUTH_CHECK_RANDID_SIZE, serial, sizeof(serial));
+        format_hexstring((uint8_t*)&sighash, 4, sighashstr, sizeof(sighashstr));
+        logmsg("Running on genuine ", g_platform_name);
+        logmsg("Signature: ", serial, " ", sighashstr);
+    }
+    else
+    {
+        logmsg("Running on a clone device (please support ZuluSCSI firmware project!)");
+    }
+}
+
+#endif
 
 #ifndef RP2MCU_USE_CPU_PARITY
 
