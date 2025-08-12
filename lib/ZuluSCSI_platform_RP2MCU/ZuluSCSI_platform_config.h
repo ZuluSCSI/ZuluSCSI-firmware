@@ -60,6 +60,16 @@
 # define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_SYNC_20
 # define PLATFORM_DEFAULT_SCSI_SPEED_SETTING 20
 # define PLATFORM_MAX_BUS_WIDTH 1
+# define PLATFORM_AUTH_CHECK_ENABLE
+# define PLATFORM_AUTH_CHECK_RANDID_ADDR ((uint8_t*)0x40130008)
+# define PLATFORM_AUTH_CHECK_RANDID_SIZE 16
+# define PLATFORM_AUTH_CHECK_SIGNATURE_ADDR ((uint8_t*)0x40131D80)
+# define PLATFORM_AUTH_CHECK_PUBKEY { \
+    0xc8, 0xa1, 0x3b, 0xe6, 0xed, 0x66, 0xb0, 0x24, \
+    0x46, 0x8d, 0x47, 0x6c, 0x84, 0x7e, 0xc9, 0xc8, \
+    0x40, 0xac, 0x3e, 0xf2, 0x0a, 0x07, 0xd2, 0x9d, \
+    0x02, 0xcd, 0x99, 0xcf, 0x17, 0xb9, 0xb2, 0xef, \
+}
 #elif defined(ZULUSCSI_BS2)
 # define PLATFORM_NAME "ZuluSCSI BS2"
 # define PLATFORM_PID "BS2"
