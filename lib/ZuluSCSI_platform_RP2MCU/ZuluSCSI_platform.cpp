@@ -49,6 +49,7 @@
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
 # include <SerialUSB.h>
 # include <class/cdc/cdc_device.h>
+# include <device/usbd.h>
 #endif
 
 #include <pico/multicore.h>
@@ -327,8 +328,10 @@ void platform_init()
     gpio_set_input_enabled(DIP_DBGLOG, true);
     gpio_set_input_enabled(DIP_TERM, true);
 #endif
-
+    // In case of a firmware update the USB connection fails and needs to be restarted
+    tud_disconnect();
     delay(10); // 10 ms delay to let pull-ups do their work
+    tud_connect();
     bool working_dip = true;
     bool dbglog = false;
     bool termination = false;

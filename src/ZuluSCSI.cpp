@@ -810,11 +810,25 @@ static void check_for_unused_update_files()
     if (!file.isDir())
     {
       size_t filename_len = file.getName(filename, sizeof(filename));
-      if (strncasecmp(filename, "zuluscsi", sizeof("zuluscsi" - 1)) == 0 &&
+      if (strncasecmp(filename, "zuluscsi", sizeof("zuluscsi") - 1) == 0 &&
           strncasecmp(filename + filename_len - 4, ".bin", 4) == 0)
       {
-        bin_files_found = true;
-        logmsg("Firmware update file \"", filename, "\" does not contain the board model string \"", FIRMWARE_NAME_PREFIX, "\"");
+        if (strncasecmp(filename, FIRMWARE_NAME_PREFIX, sizeof(FIRMWARE_NAME_PREFIX) - 1) == 0)
+        {
+          if (file.isReadOnly())
+          {
+              logmsg("The firmware file ", filename, " is read-only, the ZuluSCSI will continue to update every power cycle with this SD card inserted");
+          }
+          else
+          {
+              logmsg("Found firmware file ", filename, " on the SD card, to update this ZuluSCSI with the file please power cycle the board");
+          }
+        }
+        else
+        {
+          bin_files_found = true;
+          logmsg("Firmware update file \"", filename, "\" does not contain the board model string \"", FIRMWARE_NAME_PREFIX, "\"");
+        }
       }
     }
   }
