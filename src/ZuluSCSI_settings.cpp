@@ -312,7 +312,11 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.mapLunsToIDs = false;
     cfgSys.enableParity = true;
     cfgSys.useFATAllocSize = false;
+#ifdef ZULUSCSI_MCU_RP20XX
     cfgSys.enableCDAudio = false;
+#else
+    cfgSys.enableCDAudio = true;
+#endif
     cfgSys.maxVolume = 100;
     cfgSys.enableUSBMassStorage = false;
     cfgSys.usbMassStorageWaitPeriod = 1000;

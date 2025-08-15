@@ -32,7 +32,9 @@ typedef enum
     SPEED_GRADE_A,
     SPEED_GRADE_B,
     SPEED_GRADE_C,
-    SPEED_GRADE_WIFI_RM2
+    SPEED_GRADE_WIFI_RM2,
+    SPEED_GRADE_BASE_203MHZ,
+    SPEED_GRADE_BASE_155MHZ,
 } zuluscsi_speed_grade_t;
 
 #ifdef __cplusplus
