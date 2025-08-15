@@ -1195,7 +1195,7 @@ static void diskEjectAction(uint8_t buttonId)
             if (img.deviceType == S2S_CFG_OPTICAL)
             {
                 found = true;
-                logmsg("Eject button ", (int)buttonId, " pressed, passing to CD drive SCSI", (int)i);
+                logmsg("Eject button ", (int)buttonId, " pressed, passing to CD drive SCSI ID: ", (int)i);
                 cdromPerformEject(img);
             }
             else if (img.deviceType == S2S_CFG_ZIP100 
@@ -1205,7 +1205,7 @@ static void diskEjectAction(uint8_t buttonId)
                     || img.deviceType == S2S_CFG_SEQUENTIAL)
             {
                 found = true;
-                logmsg("Eject button ", (int)buttonId, " pressed, passing to SCSI device", (int)i);
+                logmsg("Eject button ", (int)buttonId, " pressed, passing to device SCSI ID: ", (int)i);
                 doPerformEject(img);
             }
         }
