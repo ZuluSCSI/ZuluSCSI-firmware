@@ -27,6 +27,7 @@
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
 #include "ZuluSCSI_platform.h"
+#include "ZuluSCSI_globals.h"
 #include <strings.h>
 #include <minIni.h>
 #include <minIni_cache.h>
@@ -112,7 +113,7 @@ const char **ZuluSCSISettings::deviceInitST32430N(uint8_t scsiId)
 void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type)
 {
     char section[6] = "SCSI0";
-    section[4] += scsiId;
+    section[4] = scsiEncodeID(scsiId);
 
     scsi_device_settings_t &cfgDev = m_dev[scsiId];
     scsi_device_settings_t &cfgDefault = m_dev[SCSI_SETTINGS_SYS_IDX];
@@ -444,6 +445,13 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     }
 
     cfgSys.maxBusWidth = ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE);
+    if (cfgSys.maxBusWidth == 0)
+        g_scsi_max_targets = 8;
+    else if (cfgSys.maxBusWidth == 1)
+        g_scsi_max_targets = 16;
+    else if (cfgSys.maxBusWidth == 1)
+        g_scsi_max_targets = 32;
+    g_scsi_targets_mask = g_scsi_max_targets - 1;
 
     return &cfgSys;
 }
@@ -453,7 +461,7 @@ scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYP
     scsi_device_settings_t& cfg = m_dev[scsiId];
     char presetName[32] = {};
     char section[6] = "SCSI0";
-    section[4] = '0' + scsiId;
+    section[4] = scsiEncodeID(scsiId);
 
 #ifdef ZULUSCSI_HARDWARE_CONFIG
     const char *hwDevicePresetName = g_scsi_settings.getDevicePresetName(scsiId);
@@ -571,7 +579,7 @@ const char *ZuluSCSISettings::getSpeedGradeString()
 const bool ZuluSCSISettings::isEjectButtonSet()
 {
     bool is_set = false;
-    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
+    for (uint8_t i = 0; i < g_scsi_max_targets; i++)
     {
         if (m_dev[i].ejectButton != 0)
         {

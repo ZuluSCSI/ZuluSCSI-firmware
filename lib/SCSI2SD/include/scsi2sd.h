@@ -41,13 +41,21 @@ extern "C" {
 */
 
 #include "stdint.h"
+#ifdef ZULUSCSI_WIDE_BITS
+#  define S2S_MAX_TARGETS ZULUSCSI_WIDE_BITS
+#else
+#  define S2S_MAX_TARGETS 8
+#endif
 
-#define S2S_MAX_TARGETS 8
 #define S2S_CFG_SIZE (S2S_MAX_TARGETS * sizeof(S2S_TargetCfg) + sizeof(S2S_BoardCfg))
 
 typedef enum
 {
+#ifdef ZULUSCSI_WIDE_BITS
+	S2S_CFG_TARGET_ID_BITS = ZULUSCSI_WIDE_BITS - 1,
+#else
 	S2S_CFG_TARGET_ID_BITS = 0x07,
+#endif	
 	S2S_CFG_TARGET_ENABLED = 0x80
 } S2S_CFG_TARGET_FLAGS;
 
@@ -107,8 +115,8 @@ typedef enum
 
 typedef struct __attribute__((packed))
 {
-	// bits 7 -> 3 = S2S_CFG_TARGET_FLAGS
-	// bits 2 -> 0 = target SCSI ID.
+	// bits 7 -> 5  = S2S_CFG_TARGET_FLAGS
+	// bits 4, 3, or 2 -> 0 = target SCSI ID depending on bus width.
 	uint8_t scsiId;
 
 	uint8_t deviceType; // S2S_CFG_TYPE

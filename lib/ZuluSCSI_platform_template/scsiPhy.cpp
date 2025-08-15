@@ -66,7 +66,7 @@ void scsi_bsy_deassert_interrupt()
         int sel_id = -1;
         for (int i = 0; i < S2S_MAX_TARGETS; i++)
         {
-            if (scsiDev.targets[i].targetId <= 7 && scsiDev.targets[i].cfg)
+            if (scsiDev.targets[i].targetId < S2S_MAX_TARGETS && scsiDev.targets[i].cfg)
             {
                 if (sel_bits & (1 << scsiDev.targets[i].targetId))
                 {

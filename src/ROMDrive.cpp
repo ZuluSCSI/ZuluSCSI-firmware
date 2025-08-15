@@ -77,7 +77,7 @@ bool romDriveCheckPresent(romdrive_hdr_t *hdr)
         return false;
     }
 
-    if (hdr->imagesize <= 0 || hdr->scsi_id < 0 || hdr->scsi_id > 8)
+    if (hdr->imagesize <= 0 || hdr->scsi_id < 0 || hdr->scsi_id > S2S_MAX_TARGETS)
     {
         return false;
     }

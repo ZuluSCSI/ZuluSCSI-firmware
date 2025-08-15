@@ -28,6 +28,7 @@
 #include "QuirksCheck.h"
 #include <assert.h>
 #include <stdint.h>
+#include "ZuluSCSI_globals.h"
 
 
 static bool isValidMacintoshImage(image_config_t *img)
@@ -85,7 +86,7 @@ static bool isValidMacintoshImage(image_config_t *img)
 static void macQuirksSanityCheck(image_config_t *img)
 {
 
-    if(g_scsi_settings.getDevice(img->scsiId & 7)->disableMacSanityCheck)
+    if(g_scsi_settings.getDevice(img->scsiId & g_scsi_targets_mask)->disableMacSanityCheck)
     {
         dbgmsg("---- Skipping Mac sanity check due to DisableMacSanityCheck");
         return;
@@ -104,7 +105,7 @@ static void macQuirksSanityCheck(image_config_t *img)
     }
     
     // Macintosh hosts reserve ID 7, so warn the user this configuration wont work
-    if((img->scsiId & S2S_CFG_TARGET_ID_BITS) == 7)
+    if((img->scsiId & g_scsi_targets_mask) == 7)
     {
         logmsg("---- WARNING: Quirks set to Apple so can not use SCSI ID 7!");
     }
