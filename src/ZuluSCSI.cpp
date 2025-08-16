@@ -1230,6 +1230,7 @@ extern "C" void zuluscsi_main_loop(void)
         print_sd_info();
         reinitSCSI();
         init_logfile();
+        init_eject_button();
         blinkStatus(BLINK_STATUS_OK);
       }
       else if (!g_romdrive_active)
