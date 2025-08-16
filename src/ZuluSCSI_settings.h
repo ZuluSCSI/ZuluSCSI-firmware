@@ -43,8 +43,8 @@ typedef enum
 
 
 // Index 8 is the system defaults
-// Index 0-7 represent device settings
-#define SCSI_SETTINGS_SYS_IDX 8
+// Index 0-15 represent device settings
+#define SCSI_SETTINGS_SYS_IDX S2S_MAX_TARGETS
 
 typedef enum
 {

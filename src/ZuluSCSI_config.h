@@ -27,8 +27,8 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "25.08.13"
-#define FW_VER_SUFFIX   "release"
+#define FW_VER_NUM      "25.08.15"
+#define FW_VER_SUFFIX   "dev"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
 #define STRINGFY(STR) #STR
@@ -70,7 +70,6 @@
 #define IMAGE_INDEX_MAX 9               // Maximum number of 'IMG0' style statements parsed
 
 // SCSI config
-#define NUM_SCSIID  8          // Maximum number of supported SCSI-IDs (The minimum is 0)
 #define NUM_SCSILUN 1          // Maximum number of LUNs supported     (Currently has to be 1)
 #define READ_PARITY_CHECK 0    // Perform read parity check (unverified)
 

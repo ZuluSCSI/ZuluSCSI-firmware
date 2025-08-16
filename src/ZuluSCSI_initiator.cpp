@@ -102,7 +102,7 @@ static struct {
     uint32_t removable_count[8];
 
     // Negotiated bus width for targets
-    int targetBusWidth[NUM_SCSIID];
+    int targetBusWidth[S2S_MAX_TARGETS];
 
     FsFile target_file;
 } g_initiator_state;

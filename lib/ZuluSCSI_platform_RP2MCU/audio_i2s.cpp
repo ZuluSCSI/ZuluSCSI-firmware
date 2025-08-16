@@ -34,6 +34,7 @@
 // #include "ide_imagefile.h"
 // #include "ide_atapi.h"
 #include <ZuluI2S.h>
+#include <ZuluSCSI_globals.h>
 
 
 extern SdFs SD;
@@ -390,7 +391,7 @@ bool audio_is_active() {
 
 bool audio_is_playing(uint8_t id) {
 //    return audio_playing;
-    return audio_owner == (id & 7) && audio_playing;
+    return audio_owner == (id & g_scsi_targets_mask) && audio_playing;
 }
 
 void audio_setup() {
@@ -774,7 +775,7 @@ bool audio_set_paused(uint8_t id, bool paused) {
 }
 
 void audio_stop(uint8_t id) {
-    if (audio_idle || (id & 7) != audio_owner) return;
+    if (audio_idle || (id & g_scsi_targets_mask) != audio_owner) return;
 
     memset(&current_track, 0, sizeof(current_track));
     memset(output_buf_a, 0, sizeof(output_buf_a));
