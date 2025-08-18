@@ -22,7 +22,6 @@
 #include "ZuluSCSI_disk.h"
 #include "ZuluSCSI_cdrom.h"
 #include "ZuluSCSI_log.h"
-#include "ZuluSCSI_globals.h"
 #include <minIni.h>
 #include <SdFat.h>
 extern "C" {
@@ -210,7 +209,7 @@ static FsFile get_file_from_index(uint8_t index, const char * dir_name, bool isC
 // Devices that are active on this SCSI device.
 static void onListDevices()
 {
-    for (int i = 0; i < g_scsi_max_targets; i++)
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
     {
         const S2S_TargetCfg* cfg = s2s_getConfigById(i);
         if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
@@ -222,7 +221,7 @@ static void onListDevices()
             scsiDev.data[i] = 0xFF; // not enabled target.
         }
     }
-    scsiDev.dataLen = g_scsi_max_targets;
+    scsiDev.dataLen = S2S_MAX_TARGETS;
 }
 
 static void onSetNextCD(const char * img_dir)
@@ -420,14 +419,14 @@ extern "C" int scsiToolboxCommand()
     {
         char img_dir[4];
         dbgmsg("TOOLBOX_LIST_CDS");
-        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & g_scsi_targets_mask));
+        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         onListFiles(img_dir, true);
     }
     else if(unlikely(command == TOOLBOX_SET_NEXT_CD))
     {
         char img_dir[4];
         dbgmsg("TOOLBOX_SET_NEXT_CD");
-        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & g_scsi_targets_mask));
+        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         onSetNextCD(img_dir);
     }
     else if(unlikely(command == TOOLBOX_LIST_DEVICES))
@@ -439,7 +438,7 @@ extern "C" int scsiToolboxCommand()
     {
         char img_dir[4];
         dbgmsg("TOOLBOX_COUNT_CDS");
-        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & g_scsi_targets_mask));
+        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         doCountFiles(img_dir, true);
     }
     else

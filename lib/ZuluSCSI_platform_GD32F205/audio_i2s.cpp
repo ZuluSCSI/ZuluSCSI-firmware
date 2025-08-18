@@ -25,7 +25,6 @@
 #include "ZuluSCSI_audio.h"
 #include "ZuluSCSI_v1_1_gpio.h"
 #include "ZuluSCSI_log.h"
-#include <ZuluSCSI_globals.h>
 
 extern "C" 
 {

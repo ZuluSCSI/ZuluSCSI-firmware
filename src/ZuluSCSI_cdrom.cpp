@@ -37,7 +37,6 @@
 #include <CUEParser.h>
 #include <assert.h>
 #include <minIni.h>
-#include "ZuluSCSI_globals.h"
 #ifdef ENABLE_AUDIO_OUTPUT
 #include "ZuluSCSI_audio.h"
 #endif
@@ -828,7 +827,7 @@ void doReadHeader(bool MSF, uint32_t lba, uint16_t allocationLength)
 
 #ifdef ENABLE_AUDIO_OUTPUT
     // terminate audio playback if active on this target (Annex C)
-    audio_stop(img.scsiId & g_scsi_targets_mask);
+    audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 #endif
 
     uint8_t mode = 1;
@@ -1245,7 +1244,7 @@ void cdromCloseTray(image_config_t &img)
 {
     if (img.ejected)
     {
-        uint8_t target = img.scsiId & g_scsi_targets_mask;
+        uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         dbgmsg("------ CDROM close tray on ID ", (int)target);
         img.ejected = false;
         img.cdrom_events = 2; // New media
@@ -1262,7 +1261,7 @@ void cdromCloseTray(image_config_t &img)
 // Switch image on ejection.
 void cdromPerformEject(image_config_t &img)
 {
-    uint8_t target = img.scsiId & g_scsi_targets_mask;
+    uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 #if ENABLE_AUDIO_OUTPUT
     // terminate audio playback if active on this target (MMC-1 Annex C)
     audio_stop(target);
@@ -1288,7 +1287,7 @@ void cdromReinsertFirstImage(image_config_t &img)
     if (img.image_index > 0)
     {
         // Multiple images for this drive, force restart from first one
-        uint8_t target = img.scsiId & g_scsi_targets_mask;
+        uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         dbgmsg("---- Restarting from first CD-ROM image for ID ", (int)target);
         img.image_index = -1;
         img.current_image[0] = '\0';
@@ -1355,7 +1354,7 @@ void cdromGetAudioPlaybackStatus(uint8_t *status, uint32_t *current_lba, bool cu
 #ifdef ENABLE_AUDIO_OUTPUT
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     if (status) {
-        uint8_t target = img.scsiId & g_scsi_targets_mask;
+        uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         if (current_only) {
             *status = audio_is_playing(target) ? 1 : 0;
         } else {
@@ -1378,12 +1377,12 @@ static void doPlayAudio(uint32_t lba, uint32_t length)
 #if defined(ENABLE_AUDIO_OUTPUT) && !defined(ZULUSCSI_BLASTER)
     dbgmsg("------ CD-ROM Play Audio request at ", lba, " for ", length, " sectors");
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & g_scsi_targets_mask;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     // Per Annex C terminate playback immediately if already in progress on
     // the current target. Non-current targets may also get their audio
     // interrupted later due to hardware limitations
-    audio_stop(img.scsiId & g_scsi_targets_mask);
+    audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 
     // if transfer length is zero no audio playback happens.
     // don't treat as an error per SCSI-2; handle via short-circuit
@@ -1451,7 +1450,7 @@ static void doPlayAudio(uint32_t lba, uint32_t length)
 #elif defined(ENABLE_AUDIO_OUTPUT_I2S) && defined(ZULUSCSI_BLASTER)
     dbgmsg("------ CD-ROM Play Audio request at ", (int)lba, " for ", (int)length, " sectors");
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & g_scsi_targets_mask;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     // if transfer length is zero no audio playback happens.
     // don't treat as an error per SCSI-2; handle via short-circuit
@@ -1501,7 +1500,7 @@ static void doPlayAudioTrackIndex(uint8_t start_track, uint8_t start_index, uint
 # if defined(ZULUSCSI_BLASTER)
     dbgmsg("------ CD-ROM Play Audio request at track:index ", (int)start_track, ":", (int)start_index, " until ", (int)end_track, ":", (int)end_index);
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & g_scsi_targets_mask;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     if (audio_play_track_index(target_id, &img, start_track, start_index, end_track, end_index))
     {
         scsiDev.status = 0;
@@ -1549,7 +1548,7 @@ static void doPauseResumeAudio(bool resume)
 #ifdef ENABLE_AUDIO_OUTPUT
     dbgmsg("------ CD-ROM ", resume ? "resume" : "pause", " audio playback");
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & g_scsi_targets_mask;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     if (audio_is_playing(target_id))
     {
@@ -1578,7 +1577,7 @@ static void doStopAudio()
     dbgmsg("------ CD-ROM Stop Audio request");
 #ifdef ENABLE_AUDIO_OUTPUT
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & g_scsi_targets_mask;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     audio_stop(target_id);
 #endif
 }
@@ -1618,7 +1617,7 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
 
 #ifdef ENABLE_AUDIO_OUTPUT 
     // terminate audio playback if active on this target (Annex C)
-    audio_stop(img.scsiId & g_scsi_targets_mask);
+    audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 #endif
 
     if (!img.cuesheetfile.isOpen()
@@ -1638,7 +1637,7 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
     // Figure out the data offset in the file
     int64_t offset;
     if (sector_type == SECTOR_TYPE_VENDOR_PLEXTOR &&
-         g_scsi_settings.getDevice(img.scsiId & g_scsi_targets_mask)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
+         g_scsi_settings.getDevice(img.scsiId & S2S_CFG_TARGET_ID_BITS)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
     {
         // This overrides values so doReadCD can be used with the
         // Vendor specific Plextor 0xD8 command to read raw CD data
@@ -1720,7 +1719,7 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
             sector_type_ok = true;
         }
         else if (sector_type == SECTOR_TYPE_VENDOR_PLEXTOR && 
-            g_scsi_settings.getDevice(img.scsiId & g_scsi_targets_mask)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
+            g_scsi_settings.getDevice(img.scsiId & S2S_CFG_TARGET_ID_BITS)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
         {
             sector_type_ok = true;
         }
@@ -1849,7 +1848,7 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
             diskEjectButtonUpdate(false);
         }
         if (scsiDev.resetFlag) break;
-        if ((g_scsi_settings.getDevice(img.scsiId & g_scsi_targets_mask)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR))
+        if ((g_scsi_settings.getDevice(img.scsiId & S2S_CFG_TARGET_ID_BITS)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR))
         {
             if (sector_length > 0)
             {
@@ -2037,7 +2036,7 @@ static bool doReadCapacity(uint32_t lba, uint8_t pmi)
     }
     else
     {
-        logmsg("WARNING: unable to find capacity of device ID ", (int) g_scsi_targets_mask & img.scsiId);
+        logmsg("WARNING: unable to find capacity of device ID ", (int) S2S_CFG_TARGET_ID_BITS & img.scsiId);
     }
     uint32_t bytes_per_sector  = scsiDev.target->liveCfg.bytesPerSector;
     scsiDev.data[0] = capacity >> 24;
@@ -2079,7 +2078,7 @@ extern "C" int scsiCDRomCommand()
     {
 #ifdef ENABLE_AUDIO_OUTPUT
         // terminate audio playback if active on this target (MMC-1 Annex C)
-        audio_stop(img.scsiId & g_scsi_targets_mask);
+        audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 #endif
         if ((scsiDev.cdb[4] & 2))
         {

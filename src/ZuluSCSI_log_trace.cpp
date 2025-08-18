@@ -25,7 +25,6 @@
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_log.h"
 #include <scsi2sd.h>
-#include "ZuluSCSI_globals.h"
 extern "C" {
 #include <scsi.h>
 #include <scsiPhy.h>
@@ -145,7 +144,7 @@ static void printNewPhase(int phase, bool initiator = false)
             if (initiator)
                 dbgmsg("---- SELECTION");
             else
-                dbgmsg("---- SELECTION: ", (int)(*SCSI_STS_SELECTED & g_scsi_targets_mask));
+                dbgmsg("---- SELECTION: ", (int)(*SCSI_STS_SELECTED & S2S_CFG_TARGET_ID_BITS));
             break;
         
         case RESELECTION:

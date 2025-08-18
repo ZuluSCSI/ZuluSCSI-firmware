@@ -25,15 +25,16 @@
 
 #pragma once
 
+#include <scsi2sd.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <scsiPhy.h>
 
-#ifndef ZULUSCSI_WIDE_BITS
+#if   S2S_MAX_TARGETS == 8
  # define ZULUSCSI_DEFAULT_LOG_MASK 0xFF
-#elif ZULUSCSI_WIDE_BITS == 16
+#elif S2S_MAX_TARGETS == 16
 # define ZULUSCSI_DEFAULT_LOG_MASK 0xFFFF
-#elif ZULUSCSI_WIDE_BITS == 32
+#elif S2S_MAX_TARGETS == 32
 # define ZULUSCSI_DEFAULT_LOG_MASK 0xFFFFFFFF
 #endif
 

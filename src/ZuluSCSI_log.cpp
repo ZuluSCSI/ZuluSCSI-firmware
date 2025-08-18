@@ -25,7 +25,6 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_platform.h"
-#include "ZuluSCSI_globals.h"
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -163,7 +162,7 @@ bool dbgmsg_start()
         if (
             g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK
             && (SCSI_STS_SELECTION_SUCCEEDED & *SCSI_STS_SELECTED)
-            && (0 == (g_scsi_log_mask & (1 << (*SCSI_STS_SELECTED & g_scsi_targets_mask))))
+            && (0 == (g_scsi_log_mask & (1 << (*SCSI_STS_SELECTED & S2S_CFG_TARGET_ID_BITS))))
            )
         {
             return false;

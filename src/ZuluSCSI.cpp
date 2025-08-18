@@ -69,9 +69,6 @@ bool g_rawdrive_active;
 static bool g_romdrive_active;
 bool g_sdcard_present;
 
-volatile uint8_t g_scsi_max_targets = S2S_MAX_TARGETS;
-volatile uint8_t g_scsi_targets_mask = S2S_CFG_TARGET_ID_BITS;
-
 #ifndef SD_SPEED_CLASS_WARN_BELOW
 #define SD_SPEED_CLASS_WARN_BELOW 10
 #endif
@@ -438,16 +435,13 @@ bool findHDDImages()
         int file_name_length = strlen(name);
         if(file_name_length > 2) { // HD[N]
           int tmp_id = scsiParseId(name[HDIMG_ID_POS]);
-          if (tmp_id >= g_scsi_max_targets)
+          if (tmp_id >= S2S_MAX_TARGETS)
           {
-            if (g_scsi_max_targets < S2S_MAX_TARGETS)
-              logmsg("The file, ", name, " with SCSI ID: ", tmp_id, " is larger than allowed on the SCSI bus because MaxBusWidth has been set to 0, skipping file");
-            else
-               logmsg("The file, ", name, " with SCSI ID: ", tmp_id, " is larger than allowed on the SCSI bus, skipping file");
+            logmsg("The file, ", name, " with SCSI ID: ", tmp_id, " is larger than allowed on the SCSI bus, skipping file");
             continue;
           }
 
-          if(tmp_id > -1 && tmp_id < g_scsi_max_targets)
+          if(tmp_id > -1 && tmp_id < S2S_MAX_TARGETS)
           {
             id = tmp_id; // If valid id, set it, else use default
             use_prefix = true;
@@ -518,7 +512,7 @@ bool findHDDImages()
             foundImage = true;
           }
         }
-        else if(id < g_scsi_max_targets && lun < NUM_SCSILUN) {
+        else if(id < S2S_MAX_TARGETS && lun < NUM_SCSILUN) {
           logmsg("-- Opening ", fullname, " for id:", id, " lun:", lun);
 
           if (g_scsi_settings.getDevicePreset(id) != DEV_PRESET_NONE)
@@ -549,8 +543,16 @@ bool findHDDImages()
 
   g_romdrive_active = scsiDiskActivateRomDrive();
 
+  uint8_t max_bus_width_setting = g_scsi_settings.getSystem()->maxBusWidth;
+  uint8_t current_bus_width = 8 << max_bus_width_setting; 
+  if (max_bus_width_setting < PLATFORM_MAX_BUS_WIDTH)
+  {
+    logmsg("Max bus width set to ", (int)max_bus_width_setting, " (", (int)current_bus_width," bits), but device is capable of ", (int)8 << PLATFORM_MAX_BUS_WIDTH," bits.");
+    logmsg("Host may ignore devices with SCSI IDs above ", (int)current_bus_width - 1, " and data transfers will only use ", (int)current_bus_width, " bits" );
+  }
+
   // Print SCSI drive map
-  for (int i = 0; i < g_scsi_max_targets; i++)
+  for (int i = 0; i < S2S_MAX_TARGETS; i++)
   {
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(i);
 
@@ -560,13 +562,13 @@ bool findHDDImages()
 
       if (cfg->deviceType == S2S_CFG_NETWORK)
       {
-        logmsg("SCSI ID: ", (int)(cfg->scsiId & g_scsi_targets_mask),
+        logmsg("SCSI ID: ", (int)(cfg->scsiId & S2S_CFG_TARGET_ID_BITS),
               ", Type: ", (int)cfg->deviceType,
               ", Quirks: ", (int)cfg->quirks);
       }
       else
       {
-        logmsg("SCSI ID: ", (int)(cfg->scsiId & g_scsi_targets_mask),
+        logmsg("SCSI ID: ", (int)(cfg->scsiId & S2S_CFG_TARGET_ID_BITS),
               ", BlockSize: ", (int)cfg->bytesPerSector,
               ", Type: ", (int)cfg->deviceType,
               ", Quirks: ", (int)cfg->quirks,
@@ -577,7 +579,7 @@ bool findHDDImages()
     }
   }
   // count the removable drives and drive with eject enabled
-  for (uint8_t id = 0; id < g_scsi_max_targets; id++)
+  for (uint8_t id = 0; id < S2S_MAX_TARGETS; id++)
   {
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(id);
     if (cfg  && (cfg->scsiId & S2S_CFG_TARGET_ENABLED ))
@@ -614,7 +616,7 @@ bool findHDDImages()
       else
         logmsg("Eject set on the following SCSI IDs:");
 
-      for (uint8_t id = 0; id < g_scsi_max_targets; id++)
+      for (uint8_t id = 0; id < S2S_MAX_TARGETS; id++)
       {
         if( getEjectButton(id) != 0)
         {
@@ -641,7 +643,7 @@ void readSCSIDeviceConfig()
 {
   s2s_configInit(&scsiDev.boardCfg);
 
-  for (int i = 0; i < g_scsi_max_targets; i++)
+  for (int i = 0; i < S2S_MAX_TARGETS; i++)
   {
     scsiDiskLoadConfig(i);
   }
@@ -976,7 +978,7 @@ static void init_eject_button()
 {
   if (platform_has_phy_eject_button() &&  !g_scsi_settings.isEjectButtonSet())
   {
-    for (uint8_t i = 0; i < g_scsi_max_targets; i++)
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
       S2S_CFG_TYPE dev_type = (S2S_CFG_TYPE)scsiDev.targets[i].cfg->deviceType;
       if (dev_type == S2S_CFG_OPTICAL

@@ -28,7 +28,6 @@
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_platform.h"
-#include <ZuluSCSI_globals.h>
 
 extern SdFs SD;
 
@@ -192,7 +191,7 @@ static uint8_t invert = 0; // biphase encode help: set if last wire bit was '1'
  * output.
  */
 static void snd_encode(uint8_t* samples, uint16_t* wire_patterns, uint16_t len, uint8_t swap) {
-    uint16_t wvol = volumes[audio_owner & g_scsi_targets_mask];
+    uint16_t wvol = volumes[audio_owner & S2S_CFG_TARGET_ID_BITS];
     uint8_t lvol = ((wvol >> 8) + (wvol & 0xFF)) >> 1; // average of both values
     // limit maximum volume; with my DACs I've had persistent issues
     // with signal clipping when sending data in the highest bit position
@@ -201,7 +200,7 @@ static void snd_encode(uint8_t* samples, uint16_t* wire_patterns, uint16_t len, 
     // enable or disable based on the channel information for both output
     // ports, where the high byte and mask control the right channel, and
     // the low control the left channel
-    uint16_t chn = channels[audio_owner & g_scsi_targets_mask] & AUDIO_CHANNEL_ENABLE_MASK;
+    uint16_t chn = channels[audio_owner & S2S_CFG_TARGET_ID_BITS] & AUDIO_CHANNEL_ENABLE_MASK;
     if (!(chn >> 8)) rvol = 0;
     if (!(chn & 0xFF)) lvol = 0;
 
@@ -366,7 +365,7 @@ bool audio_is_active() {
 }
 
 bool audio_is_playing(uint8_t id) {
-    return audio_owner == (id & g_scsi_targets_mask);
+    return audio_owner == (id & S2S_CFG_TARGET_ID_BITS);
 }
 
 void audio_setup() {
@@ -506,7 +505,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
     sbufswap = swap;
     sbufst_a = READY;
     sbufst_b = READY;
-    audio_owner = owner & g_scsi_targets_mask;
+    audio_owner = owner & S2S_CFG_TARGET_ID_BITS;
     audio_last_status[audio_owner] = ASC_PLAYING;
     audio_paused = false;
 
@@ -546,7 +545,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
 }
 
 bool audio_set_paused(uint8_t id, bool paused) {
-    if (audio_owner != (id & g_scsi_targets_mask)) return false;
+    if (audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return false;
     else if (audio_paused && paused) return false;
     else if (!audio_paused && !paused) return false;
 
@@ -560,7 +559,7 @@ bool audio_set_paused(uint8_t id, bool paused) {
 }
 
 void audio_stop(uint8_t id) {
-    if (audio_owner != (id & g_scsi_targets_mask)) return;
+    if (audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return;
 
     // to help mute external hardware, send a bunch of '0' samples prior to
     // halting the datastream; easiest way to do this is invalidating the
@@ -583,27 +582,27 @@ void audio_stop(uint8_t id) {
 }
 
 audio_status_code audio_get_status_code(uint8_t id) {
-    audio_status_code tmp = audio_last_status[id & g_scsi_targets_mask];
+    audio_status_code tmp = audio_last_status[id & S2S_CFG_TARGET_ID_BITS];
     if (tmp == ASC_COMPLETED || tmp == ASC_ERRORED) {
-        audio_last_status[id & g_scsi_targets_mask] = ASC_NO_STATUS;
+        audio_last_status[id & S2S_CFG_TARGET_ID_BITS] = ASC_NO_STATUS;
     }
     return tmp;
 }
 
 uint16_t audio_get_volume(uint8_t id) {
-    return volumes[id & g_scsi_targets_mask];
+    return volumes[id & S2S_CFG_TARGET_ID_BITS];
 }
 
 void audio_set_volume(uint8_t id, uint16_t vol) {
-    volumes[id & g_scsi_targets_mask] = vol;
+    volumes[id & S2S_CFG_TARGET_ID_BITS] = vol;
 }
 
 uint16_t audio_get_channel(uint8_t id) {
-    return channels[id & g_scsi_targets_mask];
+    return channels[id & S2S_CFG_TARGET_ID_BITS];
 }
 
 void audio_set_channel(uint8_t id, uint16_t chn) {
-    channels[id & g_scsi_targets_mask] = chn;
+    channels[id & S2S_CFG_TARGET_ID_BITS] = chn;
 }
 
 uint64_t audio_get_file_position()

@@ -37,7 +37,6 @@
 #include "vendor.h"
 #include <string.h>
 #include "toolbox.h"
-#include <ZuluSCSI_globals.h>
 
 // Global SCSI device state.
 ScsiDevice scsiDev S2S_DMA_ALIGN;
@@ -344,7 +343,7 @@ static void process_Command()
 	if ((scsiDev.lun > 0) && (scsiDev.boardCfg.flags & S2S_CFG_MAP_LUNS_TO_IDS))
 	{
 		int tgtIndex;
-		for (tgtIndex = 0; tgtIndex < g_scsi_max_targets; ++tgtIndex)
+		for (tgtIndex = 0; tgtIndex < S2S_MAX_TARGETS; ++tgtIndex)
 		{
 			if (scsiDev.targets[tgtIndex].targetId == scsiDev.lun)
 			{
@@ -767,7 +766,7 @@ static void scsiReset()
 	}
 	scsiDev.target = NULL;
 
-	for (int i = 0; i < g_scsi_max_targets; ++i)
+	for (int i = 0; i < S2S_MAX_TARGETS; ++i)
 	{
 		if (g_force_sync > 0)
 		{
@@ -856,9 +855,9 @@ static void process_SelectionPhase()
 
 	int tgtIndex;
 	TargetState* target = NULL;
-	for (tgtIndex = 0; tgtIndex < g_scsi_max_targets; ++tgtIndex)
+	for (tgtIndex = 0; tgtIndex < S2S_MAX_TARGETS; ++tgtIndex)
 	{
-		if (scsiDev.targets[tgtIndex].targetId == (selStatus & g_scsi_targets_mask))
+		if (scsiDev.targets[tgtIndex].targetId == (selStatus & S2S_CFG_TARGET_ID_BITS))
 		{
 			target = &scsiDev.targets[tgtIndex];
 			break;
@@ -1344,7 +1343,7 @@ void scsiInit()
 		const S2S_TargetCfg* cfg = s2s_getConfigByIndex(i);
 		if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
 		{
-			scsiDev.targets[i].targetId = cfg->scsiId & g_scsi_targets_mask;
+			scsiDev.targets[i].targetId = cfg->scsiId & S2S_CFG_TARGET_ID_BITS;
 			scsiDev.targets[i].cfg = cfg;
 
 			scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;

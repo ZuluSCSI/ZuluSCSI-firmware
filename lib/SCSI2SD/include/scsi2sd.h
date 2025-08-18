@@ -24,38 +24,16 @@
 extern "C" {
 #endif
 
-/* Common type definitions shared between the firmware and config tools
-
-	The configuration data is now stored on the SD card, occupying the
-	last 2 sectors.
-
-	BoardConfig
-	TargetConfig (disk 0)
-	TargetConfig (disk 1)
-	TargetConfig (disk 2)
-	TargetConfig (disk 3)
-	TargetConfig (disk 4)
-	TargetConfig (disk 5)
-	TargetConfig (disk 6)
-
-*/
-
 #include "stdint.h"
-#ifdef ZULUSCSI_WIDE_BITS
-#  define S2S_MAX_TARGETS ZULUSCSI_WIDE_BITS
-#else
-#  define S2S_MAX_TARGETS 8
-#endif
+#include <ZuluSCSI_platform_config.h>
+
+#define S2S_MAX_TARGETS (8 << PLATFORM_MAX_BUS_WIDTH)
 
 #define S2S_CFG_SIZE (S2S_MAX_TARGETS * sizeof(S2S_TargetCfg) + sizeof(S2S_BoardCfg))
 
 typedef enum
 {
-#ifdef ZULUSCSI_WIDE_BITS
-	S2S_CFG_TARGET_ID_BITS = ZULUSCSI_WIDE_BITS - 1,
-#else
-	S2S_CFG_TARGET_ID_BITS = 0x07,
-#endif	
+	S2S_CFG_TARGET_ID_BITS = (S2S_MAX_TARGETS - 1),
 	S2S_CFG_TARGET_ENABLED = 0x80
 } S2S_CFG_TARGET_FLAGS;
 

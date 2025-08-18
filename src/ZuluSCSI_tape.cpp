@@ -26,7 +26,6 @@
 #include "ZuluSCSI_disk.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
-#include "ZuluSCSI_globals.h"
 #include <ZuluSCSI_platform.h>
 
 extern "C" {

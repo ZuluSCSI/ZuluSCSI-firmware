@@ -32,7 +32,6 @@
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
 #include "ZuluSCSI_blink.h"
-#include "ZuluSCSI_globals.h"
 #ifdef ENABLE_AUDIO_OUTPUT
 #  include "ZuluSCSI_audio.h"
 #endif
@@ -118,23 +117,6 @@ char scsiEncodeID(const uint8_t scsi_id)
     else if (scsi_id >= 0 && scsi_id <= 9)
         return '0' + scsi_id;
     return '\0';
-}
-// Encode ID as string
-static char* scsiEncodeIDString(char *id_string, const uint8_t scsi_id, bool hex_prefix = false)
-{
-    char* id = id_string;
-    if (hex_prefix)
-    {
-        id++[0] = 0;
-        id++[0] = 'x';
-    }
-
-    if (scsi_id >= 0xA && scsi_id <= 0xF)
-        id++[0] = 'A' + (scsi_id - 0xA);
-    else if (scsi_id >= 0 && scsi_id <= 9)
-        id++[0] = '0' + scsi_id;
-    id[0] = '\0';
-    return id_string;
 }
 
 /************************************************/
@@ -845,7 +827,7 @@ static void doCloseTray(image_config_t &img)
 {
     if (img.ejected)
     {
-        uint8_t target = img.scsiId & g_scsi_targets_mask;
+        uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         dbgmsg("------ Device close tray on ID ", (int)target);
         img.ejected = false;
 
@@ -861,7 +843,7 @@ static void doCloseTray(image_config_t &img)
 // Eject and switch image
 static void doPerformEject(image_config_t &img)
 {
-    uint8_t target = img.scsiId & g_scsi_targets_mask;
+    uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     if (!img.ejected)
     {
         blink_cancel();
@@ -883,7 +865,7 @@ int findNextImageAfter(image_config_t &img,
     FsFile dir;
     if (dirname[0] == '\0')
     {
-        logmsg("Image directory name invalid for ID", (img.scsiId & g_scsi_targets_mask));
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
         return 0;
     }
     if (!dir.open(dirname))
@@ -966,7 +948,7 @@ int findNextImageAfter(image_config_t &img,
 
 int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 {
-    int target_idx = img.scsiId & g_scsi_targets_mask;
+    int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     char section[6] = "SCSI0";
     section[4] = scsiEncodeID(target_idx);
@@ -1151,7 +1133,7 @@ bool switchNextImage(image_config_t &img, const char* next_filename)
 {
     // Check if we have a next image to load, so that drive is closed next time the host asks.
     
-    int target_idx = img.scsiId & g_scsi_targets_mask;
+    int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     char filename[MAX_FILE_PATH];
     if (next_filename == nullptr)
     {
@@ -1202,7 +1184,7 @@ bool switchNextImage(image_config_t &img, const char* next_filename)
 
 bool scsiDiskCheckAnyImagesConfigured()
 {
-    for (int i = 0; i < g_scsi_max_targets; i++)
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
     {
         if (g_DiskImages[i].file.isOpen() && (g_DiskImages[i].scsiId & S2S_CFG_TARGET_ENABLED))
         {
@@ -1215,14 +1197,14 @@ bool scsiDiskCheckAnyImagesConfigured()
 
 image_config_t &scsiDiskGetImageConfig(int target_idx)
 {
-    assert(target_idx >= 0 && target_idx < g_scsi_max_targets);
+    assert(target_idx >= 0 && target_idx < S2S_MAX_TARGETS);
     return g_DiskImages[target_idx];
 }
 
 static void diskEjectAction(uint8_t buttonId)
 {
     bool found = false;
-    for (uint8_t i = 0; i < g_scsi_max_targets; i++)
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
         image_config_t &img = g_DiskImages[i];
         if (img.ejectButton & buttonId)
@@ -1287,7 +1269,7 @@ uint8_t diskEjectButtonUpdate(bool immediate)
 
 bool scsiDiskCheckAnyNetworkDevicesConfigured()
 {
-    for (int i = 0; i < g_scsi_max_targets; i++)
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
     {
         if (g_DiskImages[i].file.isOpen() && (g_DiskImages[i].scsiId & S2S_CFG_TARGET_ENABLED) && g_DiskImages[i].deviceType == S2S_CFG_NETWORK)
         {
@@ -1456,7 +1438,7 @@ void s2s_configSave(int scsiId, uint16_t byesPerSector)
 extern "C"
 const S2S_TargetCfg* s2s_getConfigByIndex(int index)
 {
-    if (index < 0 || index >= g_scsi_max_targets)
+    if (index < 0 || index >= S2S_MAX_TARGETS)
     {
         return NULL;
     }
@@ -1470,10 +1452,10 @@ extern "C"
 const S2S_TargetCfg* s2s_getConfigById(int scsiId)
 {
     int i;
-    for (i = 0; i < g_scsi_max_targets; ++i)
+    for (i = 0; i < S2S_MAX_TARGETS; ++i)
     {
         const S2S_TargetCfg* tgt = s2s_getConfigByIndex(i);
-        if ((tgt->scsiId & g_scsi_targets_mask) == scsiId &&
+        if ((tgt->scsiId & S2S_CFG_TARGET_ID_BITS) == scsiId &&
             (tgt->scsiId & S2S_CFG_TARGET_ENABLED))
         {
             return tgt;
@@ -1758,7 +1740,7 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
         unlikely(!img.file.isWritable()))
 
     {
-        logmsg("WARNING: Host attempted write to read-only drive ID ", (int)(img.scsiId & g_scsi_targets_mask));
+        logmsg("WARNING: Host attempted write to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         scsiDev.status = CHECK_CONDITION;
         scsiDev.target->sense.code = ILLEGAL_REQUEST;
         scsiDev.target->sense.asc = WRITE_PROTECTED;
@@ -2521,7 +2503,7 @@ void scsiDiskReset()
 #endif
 
     // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
-    for (int i = 0; i < g_scsi_max_targets; ++i)
+    for (int i = 0; i < S2S_MAX_TARGETS; ++i)
     {
         image_config_t &img = g_DiskImages[i];
         if (img.deviceType == S2S_CFG_OPTICAL)
