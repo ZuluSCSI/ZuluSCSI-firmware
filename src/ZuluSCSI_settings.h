@@ -42,8 +42,8 @@ typedef enum
 #include <scsi2sd.h>
 
 
-// Index 8 is the system defaults
-// Index 0-15 represent device settings
+// Index S2S_MAX_TARGETS is the system defaults
+// Index 0 to (S2S_MAX_TARGETS - 1) represent device settings
 #define SCSI_SETTINGS_SYS_IDX S2S_MAX_TARGETS
 
 typedef enum

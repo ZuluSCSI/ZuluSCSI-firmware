@@ -449,7 +449,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
         g_scsi_max_targets = 8;
     else if (cfgSys.maxBusWidth == 1)
         g_scsi_max_targets = 16;
-    else if (cfgSys.maxBusWidth == 1)
+    else if (cfgSys.maxBusWidth == 2)
         g_scsi_max_targets = 32;
     g_scsi_targets_mask = g_scsi_max_targets - 1;
 

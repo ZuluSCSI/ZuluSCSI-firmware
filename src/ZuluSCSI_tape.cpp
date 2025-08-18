@@ -340,7 +340,7 @@ extern "C" int scsiTapeCommand()
     {
         // SPACE
         // Set the tape position forward to a specified offset.
-        uint8_t code = scsiDev.cdb[1] & g_scsi_targets_mask;
+        uint8_t code = scsiDev.cdb[1] & 0x7;
         uint32_t count =
             (((uint32_t) scsiDev.cdb[2]) << 24) +
             (((uint32_t) scsiDev.cdb[3]) << 16) +
