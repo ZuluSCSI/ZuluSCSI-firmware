@@ -1235,7 +1235,7 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
 #ifdef PLATFORM_AUTH_CHECK_ENABLE
 
 /*************************************************/
-/* Public key check to distinguish clone devices */
+/* Public key check to distinguish 1st party devices */
 /*************************************************/
 
 static uint32_t adler32(const uint8_t *buf, size_t len)
@@ -1278,7 +1278,7 @@ static void platform_auth_check()
     }
     else
     {
-        logmsg("Running on a clone device (please support ZuluSCSI firmware project!)");
+        logmsg("Running on non-ZuluSCSI, no Rabbit Hole Computing customer service provided - consider supporting the open-source ZuluSCSI Firmware project!");
     }
 }
 
