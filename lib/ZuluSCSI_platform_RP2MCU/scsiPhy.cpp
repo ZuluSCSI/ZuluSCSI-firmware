@@ -31,7 +31,6 @@
 #include "ZuluSCSI_config.h"
 #include "scsi_accel_target.h"
 #include "hardware/structs/iobank0.h"
-
 #include <scsi2sd.h>
 extern "C" {
 #include <scsi.h>
@@ -67,11 +66,11 @@ void scsi_bsy_deassert_interrupt()
         g_scsi_phase = BUS_BUSY;
 
         // Check if any of the targets we simulate is selected
-        uint8_t sel_bits = SCSI_IN_DATA();
+        uint32_t sel_bits = SCSI_IN_DATA();
         int sel_id = -1;
         for (int i = 0; i < S2S_MAX_TARGETS; i++)
         {
-            if (scsiDev.targets[i].targetId <= 7 && scsiDev.targets[i].cfg)
+            if (scsiDev.targets[i].targetId < S2S_MAX_TARGETS && scsiDev.targets[i].cfg)
             {
                 if (sel_bits & (1 << scsiDev.targets[i].targetId))
                 {

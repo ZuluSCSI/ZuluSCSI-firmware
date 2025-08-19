@@ -186,3 +186,9 @@ bool scsiDiskCheckAnyNetworkDevicesConfigured();
 
 // Switch to next Drive image if multiple have been configured
 bool switchNextImage(image_config_t &img, const char* next_filename = nullptr);
+
+// Parse SCSI ID - if illegal return -1 else return the SCSI Id
+int8_t scsiParseId(const char scsi_id_text);
+
+// Encode ID as char
+char scsiEncodeID(const uint8_t scsi_id);

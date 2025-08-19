@@ -434,9 +434,14 @@ bool findHDDImages()
         // Parse SCSI device ID
         int file_name_length = strlen(name);
         if(file_name_length > 2) { // HD[N]
-          int tmp_id = name[HDIMG_ID_POS] - '0';
+          int tmp_id = scsiParseId(name[HDIMG_ID_POS]);
+          if (tmp_id >= S2S_MAX_TARGETS)
+          {
+            logmsg("The file, ", name, " with SCSI ID: ", tmp_id, " is larger than allowed on the SCSI bus, skipping file");
+            continue;
+          }
 
-          if(tmp_id > -1 && tmp_id < 8)
+          if(tmp_id > -1 && tmp_id < S2S_MAX_TARGETS)
           {
             id = tmp_id; // If valid id, set it, else use default
             use_prefix = true;
@@ -496,9 +501,9 @@ bool findHDDImages()
         if (is_tp) type = S2S_CFG_SEQUENTIAL;
         if (is_zp) type = S2S_CFG_ZIP100;
 
-        g_scsi_settings.initDevice(id & 7, type);
+        g_scsi_settings.initDevice(id, type);
         // Open the image file
-        if (id < NUM_SCSIID && is_romdrive)
+        if (id < S2S_MAX_TARGETS && is_romdrive)
         {
           logmsg("-- Loading ROM drive from ", fullname, " for id:", id);
           imageReady = scsiDiskProgramRomDrive(fullname, id, blk, type);
@@ -507,7 +512,7 @@ bool findHDDImages()
             foundImage = true;
           }
         }
-        else if(id < NUM_SCSIID && lun < NUM_SCSILUN) {
+        else if(id < S2S_MAX_TARGETS && lun < NUM_SCSILUN) {
           logmsg("-- Opening ", fullname, " for id:", id, " lun:", lun);
 
           if (g_scsi_settings.getDevicePreset(id) != DEV_PRESET_NONE)
@@ -538,8 +543,16 @@ bool findHDDImages()
 
   g_romdrive_active = scsiDiskActivateRomDrive();
 
+  uint8_t max_bus_width_setting = g_scsi_settings.getSystem()->maxBusWidth;
+  uint8_t current_bus_width = 8 << max_bus_width_setting; 
+  if (max_bus_width_setting < PLATFORM_MAX_BUS_WIDTH)
+  {
+    logmsg("Max bus width set to ", (int)max_bus_width_setting, " (", (int)current_bus_width," bits), but device is capable of ", (int)8 << PLATFORM_MAX_BUS_WIDTH," bits.");
+    logmsg("Host may ignore devices with SCSI IDs above ", (int)current_bus_width - 1, " and data transfers will only use ", (int)current_bus_width, " bits" );
+  }
+
   // Print SCSI drive map
-  for (int i = 0; i < NUM_SCSIID; i++)
+  for (int i = 0; i < S2S_MAX_TARGETS; i++)
   {
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(i);
 
@@ -549,7 +562,7 @@ bool findHDDImages()
 
       if (cfg->deviceType == S2S_CFG_NETWORK)
       {
-        logmsg("SCSI ID: ", (int)(cfg->scsiId & 7),
+        logmsg("SCSI ID: ", (int)(cfg->scsiId & S2S_CFG_TARGET_ID_BITS),
               ", Type: ", (int)cfg->deviceType,
               ", Quirks: ", (int)cfg->quirks);
       }
@@ -630,7 +643,7 @@ void readSCSIDeviceConfig()
 {
   s2s_configInit(&scsiDev.boardCfg);
 
-  for (int i = 0; i < NUM_SCSIID; i++)
+  for (int i = 0; i < S2S_MAX_TARGETS; i++)
   {
     scsiDiskLoadConfig(i);
   }

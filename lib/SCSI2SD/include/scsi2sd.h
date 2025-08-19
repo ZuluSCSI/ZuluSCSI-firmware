@@ -24,30 +24,16 @@
 extern "C" {
 #endif
 
-/* Common type definitions shared between the firmware and config tools
-
-	The configuration data is now stored on the SD card, occupying the
-	last 2 sectors.
-
-	BoardConfig
-	TargetConfig (disk 0)
-	TargetConfig (disk 1)
-	TargetConfig (disk 2)
-	TargetConfig (disk 3)
-	TargetConfig (disk 4)
-	TargetConfig (disk 5)
-	TargetConfig (disk 6)
-
-*/
-
 #include "stdint.h"
+#include <ZuluSCSI_platform_config.h>
 
-#define S2S_MAX_TARGETS 8
+#define S2S_MAX_TARGETS (8 << PLATFORM_MAX_BUS_WIDTH)
+
 #define S2S_CFG_SIZE (S2S_MAX_TARGETS * sizeof(S2S_TargetCfg) + sizeof(S2S_BoardCfg))
 
 typedef enum
 {
-	S2S_CFG_TARGET_ID_BITS = 0x07,
+	S2S_CFG_TARGET_ID_BITS = (S2S_MAX_TARGETS - 1),
 	S2S_CFG_TARGET_ENABLED = 0x80
 } S2S_CFG_TARGET_FLAGS;
 
@@ -107,8 +93,8 @@ typedef enum
 
 typedef struct __attribute__((packed))
 {
-	// bits 7 -> 3 = S2S_CFG_TARGET_FLAGS
-	// bits 2 -> 0 = target SCSI ID.
+	// bits 7 -> 5  = S2S_CFG_TARGET_FLAGS
+	// bits 4, 3, or 2 -> 0 = target SCSI ID depending on bus width.
 	uint8_t scsiId;
 
 	uint8_t deviceType; // S2S_CFG_TYPE
