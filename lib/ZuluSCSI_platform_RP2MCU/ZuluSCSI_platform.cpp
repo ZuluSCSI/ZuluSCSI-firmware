@@ -1278,7 +1278,9 @@ static void platform_auth_check()
     }
     else
     {
-        logmsg("Running on non-ZuluSCSI, no Rabbit Hole Computing customer service provided - consider supporting the open-source ZuluSCSI Firmware project!");
+        logmsg("Hardware not produced by Rabbit Hole Computing or its associates");
+        logmsg("Hardware support provided on a best-effort basis only");
+        logmsg("Please support the open-source ZuluSCSI Firmware project! See https://github.com/ZuluSCSI");
     }
 }
 
