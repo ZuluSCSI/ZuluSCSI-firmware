@@ -32,6 +32,7 @@
 #include <hardware/clocks.h>
 #include <hardware/spi.h>
 #include <hardware/adc.h>
+#include <hardware/pwm.h>
 #include <hardware/flash.h>
 #include <hardware/structs/xip_ctrl.h>
 #include <hardware/structs/usb.h>
@@ -82,6 +83,15 @@ static bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
+static bool g_led_state = false;
+static struct {
+    uint32_t slice;
+    uint32_t chan;
+    uint16_t level_off;
+    uint16_t breath_level;
+    bool breathing;
+    uint32_t period;
+} g_led_pwm = {0};
 
 static void usb_log_poll();
 
@@ -451,7 +461,13 @@ void platform_init()
     gpio_conf(SDIO_D2,        GPIO_FUNC_SIO, true, false, false, true, true);
 
     // LED pin
-    gpio_conf(LED_PIN,        GPIO_FUNC_SIO, false,false, true,  false, false);
+    gpio_conf(LED_PIN,        GPIO_FUNC_PWM, false,false, true,  false, false);
+    g_led_pwm.slice = pwm_gpio_to_slice_num(LED_PIN);
+    g_led_pwm.chan = pwm_gpio_to_channel(LED_PIN);
+    pwm_config led_pwm_config = pwm_get_default_config();
+    pwm_config_set_wrap(&led_pwm_config, PLATFORM_LED_PWM_WRAP);
+    pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, g_led_pwm.level_off);
+    pwm_init(g_led_pwm.slice, &led_pwm_config, true);
 
 #ifndef ENABLE_AUDIO_OUTPUT_SPDIF
 #ifdef GPIO_I2C_SDA
@@ -487,6 +503,7 @@ void platform_late_init()
         logmsg("*************************************************************************");
         logmsg("     SCSI initiator mode enabled, expecting SCSI disks on the bus        ");
         logmsg("*************************************************************************");
+        g_led_pwm.level_off = PLATFORM_LED_PWM_WRAP / PLATFORM_LED_PWM_INITIATOR_DIV;
     }
     else
     {
@@ -665,9 +682,11 @@ void platform_write_led(bool state)
 {
     if (g_led_blinking) return;
 
+    g_led_state = state;
+
     if (g_scsi_settings.getSystem()->invertStatusLed)
         state = !state;
-    gpio_put(LED_PIN, state);
+    pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, state ? PLATFORM_LED_PWM_WRAP : g_led_pwm.level_off);
 }
 
 void platform_set_blink_status(bool status)
@@ -677,10 +696,17 @@ void platform_set_blink_status(bool status)
 
 void platform_write_led_override(bool state)
 {
+    g_led_state = state;
     if (g_scsi_settings.getSystem()->invertStatusLed)
         state = !state;
-    gpio_put(LED_PIN, state);
+    pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, state ? PLATFORM_LED_PWM_WRAP : g_led_pwm.level_off);
 
+}
+
+void platform_led_breath(bool breath, uint32_t period_ms)
+{
+    g_led_pwm.period = period_ms == 0 ? PLATFORM_LED_PWM_BREATH_PERIOD_MS : period_ms;
+    g_led_pwm.breathing = breath;
 }
 
 void platform_disable_led(void)
@@ -972,6 +998,70 @@ static void adc_poll()
 #endif // PLATFORM_VDD_WARNING_LIMIT_mV > 0
 }
 
+static void led_pwm_breath_poll()
+{
+    if (!g_led_pwm.breathing) return;
+
+    // The pwm level when it reaches half way of the total breath period
+    const uint32_t breath_level_mark = PLATFORM_LED_PWM_WRAP / PLATFORM_LED_PWM_BREATH_DIV;
+    const int32_t increment_diff = (int32_t)g_led_pwm.level_off - breath_level_mark;
+
+    // The period between pwm level changes
+    const uint32_t increment_period =  g_led_pwm.period / 2 / abs(increment_diff);
+
+    static uint32_t tick = 0;
+    static uint32_t start_time = millis();
+    if ((uint32_t)(millis() - start_time) > increment_period)
+    {
+        start_time = millis();
+
+        if (tick == 0)
+        {
+            g_led_pwm.breath_level = g_led_pwm.level_off;
+        }
+        else if (tick < g_led_pwm.period / 2)
+        {
+            g_led_pwm.breath_level = g_led_pwm.level_off - ((int32_t)tick * increment_diff / (g_led_pwm.period / 2));
+
+        }
+        else if(tick == g_led_pwm.period / 2)
+        {
+            g_led_pwm.breath_level = breath_level_mark;
+        }
+        else
+        {
+            g_led_pwm.breath_level = breath_level_mark + ((int32_t)(tick - g_led_pwm.period / 2) * increment_diff / (g_led_pwm.period / 2));
+
+        }
+        // only set the led level if the LED is in the off state
+        if (g_led_state == false)
+        {
+            // trim g_led_pwm.breath_level
+            if (breath_level_mark > g_led_pwm.level_off)
+            {
+                if (g_led_pwm.breath_level < g_led_pwm.level_off)
+                    g_led_pwm.breath_level = g_led_pwm.level_off;
+                else if (g_led_pwm.breath_level > breath_level_mark )
+                    g_led_pwm.breath_level = breath_level_mark;
+            }
+            else
+            {
+                if (g_led_pwm.breath_level < breath_level_mark)
+                    g_led_pwm.breath_level = breath_level_mark;
+                else if (g_led_pwm.breath_level > g_led_pwm.level_off)
+                    g_led_pwm.breath_level = g_led_pwm.level_off;
+            }
+            pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, g_led_pwm.breath_level);
+
+        }
+        
+        if (tick < g_led_pwm.period)
+            tick++;
+        else
+            tick = 0;
+    }
+}
+
 // This function is called for every log message.
 void platform_log(const char *s)
 {
@@ -1098,7 +1188,7 @@ void platform_poll()
     usb_input_poll();
     usb_log_poll();
     adc_poll();
-
+    led_pwm_breath_poll();
 #if defined(ENABLE_AUDIO_OUTPUT_SPDIF) || defined(ENABLE_AUDIO_OUTPUT_I2S)
     audio_poll();
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF

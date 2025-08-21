@@ -105,6 +105,13 @@ void platform_write_led_override(bool state);
 #define LED_ON_OVERRIDE()  platform_write_led_override(true)
 #define LED_OFF_OVERRIDE()  platform_write_led_override(false)
 
+/**
+ *  LED will "breath" when LED is in the off state
+ *  \param breath true LED will breath, false will turn off breathing
+ *  \param period_ms will cycle in that amount of milliseconds, 0 will breath the standard defined amount
+ **/
+void platform_led_breath(bool breath, uint32_t period_ms);
+
 // Disable the status LED
 void platform_disable_led(void);
 
