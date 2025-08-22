@@ -453,6 +453,7 @@ extern "C" void scsiRead(uint8_t* data, uint32_t count, int* parityError)
 
     scsiStartRead(data, count, parityError);
     scsiFinishRead(NULL, 0, parityError);
+    scsiLogDataOut(data, count);
 }
 
 extern "C" void scsiStartRead(uint8_t* data, uint32_t count, int *parityError)
@@ -491,7 +492,8 @@ extern "C" void scsiFinishRead(uint8_t* data, uint32_t count, int *parityError)
     if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY)) { parityError = NULL; }
     scsi_accel_rp2040_finishRead(data, count, parityError, &scsiDev.resetFlag);
 #endif
-    scsiLogDataOut(data, count);
+    if (data != NULL)
+        scsiLogDataOut(data, count);
 }
 
 extern "C" bool scsiIsReadFinished(const uint8_t *data)
