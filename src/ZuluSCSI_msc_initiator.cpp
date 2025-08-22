@@ -153,6 +153,7 @@ bool setup_msc_initiator()
     logmsg("SCSI Initiator: activating USB MSC mode");
     g_msc_initiator = true;
 
+
     if (!ini_getbool("SCSI", "InitiatorMSCDisablePrefetch", false, CONFIGFILE))
     {
         // We can use the device mode buffer for prefetching data in initiator mode
@@ -169,7 +170,7 @@ bool setup_msc_initiator()
     }
 
     scsiInitiatorInit();
-
+    platform_led_breath(true, 600);
     // Scan for targets
     scan_targets();
 
