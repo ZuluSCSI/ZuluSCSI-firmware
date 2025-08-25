@@ -73,11 +73,13 @@ SECTIONS
        *libZuluSCSI_platform_RP2MCU.a:UIContainer.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:BrowseScreenFlat.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:BrowseTypeScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:InitiatorDriveScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:InitiatorMainScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:ProgressBar.cpp.o*(*)
 
+        
        *libAdafruit*.a:*(*)
        *ZuluSCSI_tape.cpp.o*(*)
-        
-
     }
 
     .text : {

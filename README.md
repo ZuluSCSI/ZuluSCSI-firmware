@@ -18,6 +18,9 @@ Probably not the end of world :):
 Doesn't work with IMGx= style images (i.e. explictly defined in a list in config)
 *  WORKAROUND: Don't use IMGx config. Just put them in a folder
 
+Existing Bugs
+-------------
+No logs written if: 
 Bugs:
 -----
 *  !! After swapping SDs, the Zulu freeze for a while and Akai locks up. Restart fixes it. 
@@ -40,6 +43,11 @@ Todo:
 *  If no nested folders disable 'normal' (use HasDirs) and just use flat
 *  #define out all the control board settings
 *  rewrite loadImage code as it's a bit hacky
+*  Initiator Mode - not sure if scans starts again after imaging
+*  Initiator Mode - it used to scan all the drives, then image, why not anymore
+*  Initiator Mode - Not returning to Screen if SD remove and reinserted (stays on No SD Card screen)
+*  Initiator Mode - Add Initiator Info screen, shows more details about cloned drive
+*  Initiator Mode - Deal with error cases
 
 Design choices to question
 --------------------------
@@ -59,6 +67,14 @@ Current Build state:
 Icons converted with:
 ---------------------
 https://javl.github.io/image2cpp/
+
+NEW
+====
+Initiator Todo:
+---------------
+- show Initiator ID 
+
+
 
 Documentation
 =============

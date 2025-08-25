@@ -21,6 +21,11 @@ extern "C" int scanFilesRecursiveInDir(uint8_t id, const char *dirname, bool &ha
 // new in ZuluSCSI_log.h
 extern const char *g_log_short_firmwareversion;
 
+// new in ZuluSCSI_platform.h
+extern bool g_scsi_initiator;
+
+
+
 #endif
 
 #endif

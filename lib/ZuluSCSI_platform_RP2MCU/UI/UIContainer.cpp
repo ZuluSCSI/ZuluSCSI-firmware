@@ -2,6 +2,8 @@
 
 #include "ZuluSCSI_log.h"
 
+#include "SystemMode.h"
+
 #include "UI/MainScreen.h"
 #include "UI/SplashScreen.h"
 #include "UI/NoSDScreen.h"
@@ -11,6 +13,8 @@
 #include "UI/InfoScreen.h"
 #include "UI/MessageBox.h"
 #include "UI/AboutScreen.h"
+#include "UI/InitiatorDriveScreen.h"
+#include "UI/InitiatorMainScreen.h"
 #include "control.h"
 
 extern Adafruit_SSD1306 g_display;
@@ -26,6 +30,8 @@ BrowseTypeScreen _browseTypeScreen(g_display);
 BrowseScreenFlat _browseScreenFlat(g_display);
 MessageBox _messageBox(g_display);
 AboutScreen _aboutScreen(g_display);
+InitiatorDriveScreen _initiatorDriveScreen(g_display);
+InitiatorMainScreen _initiatorMainScreen(g_display);
 
 // Call new card method on all screens
 void sendSDCardStateChangedToScreens(bool cardIsPresent)
@@ -39,6 +45,8 @@ void sendSDCardStateChangedToScreens(bool cardIsPresent)
     _browseScreenFlat.sdCardStateChange(cardIsPresent);
     _messageBox.sdCardStateChange(cardIsPresent);
     _aboutScreen.sdCardStateChange(cardIsPresent);
+    _initiatorDriveScreen.sdCardStateChange(cardIsPresent);
+    _initiatorMainScreen.sdCardStateChange(cardIsPresent);
 }
 
 // Return a pointer to a screen
@@ -72,6 +80,12 @@ Screen *GetScreen(SCREEN_TYPE type)
             
         case SCREEN_ABOUT:
             return &_aboutScreen;
+
+        case SCREEN_INITIATOR_DRIVE:
+            return &_initiatorDriveScreen;
+
+        case SCREEN_INITIATOR_MAIN:
+            return &_initiatorMainScreen;
     }
     return NULL;
 }

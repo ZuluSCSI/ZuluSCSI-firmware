@@ -22,6 +22,15 @@
 #define EXP_ROT_PIN     5
 #define EXP_INSERT_PIN  3
 
+typedef enum
+{
+    INITIATOR_DRIVE_UNKNOWN,
+    INITIATOR_DRIVE_PROBING,
+    INITIATOR_DRIVE_CLONABLE,
+    INITIATOR_DRIVE_CLONED,
+
+} INITIATOR_DRIVE_STATUS;
+
 struct DeviceMap
 {
     // Set during path checking phase
@@ -30,8 +39,6 @@ struct DeviceMap
     char RootFolder[MAX_PATH_LEN];
 
     // Set during patching
-    uint8_t DeviceType;
-    char Filename[MAX_PATH_LEN]; 
     uint64_t Size;
     bool IsRemovable;
     bool IsRaw;
@@ -48,7 +55,20 @@ struct DeviceMap
     int TotalFlatFiles;
     int HasDirs;
     int TotalFilesInCategory[MAX_CATEGORIES];
-    int BrowseScreenType; // TODO This is really a UI concept - move?
+    int BrowseScreenType; // GT TODO This is really a UI concept - move?
+
+    // Used by both Normal and Initiator
+    char Filename[MAX_PATH_LEN]; 
+    uint8_t DeviceType;
+
+    // Initiator
+    // Reuse: uint8_t DeviceType;
+    INITIATOR_DRIVE_STATUS InitiatorDriveStatus;
+    int TotalRetries; 
+    int TotalErrors;
+
+    int SectorSize;
+    u_int64_t SectorCount;
 };
 
 extern char g_tmpFilename[MAX_PATH_LEN];
@@ -60,8 +80,18 @@ extern bool loadImageDeferred(uint8_t id, const char* next_filename, SCREEN_TYPE
 extern void patchDevice(uint8_t i);
 
 // In UIContainer.cpp
+
+typedef enum
+{
+    INITIATOR_SCANNING,
+    INITIATOR_CLONING,
+} INITIATOR_MODE;
+
+extern INITIATOR_MODE g_initiatorMode;
+
 extern void sendSDCardStateChangedToScreens(bool cardIsPresent);
 extern void changeScreen(SCREEN_TYPE type, int index);
+
 
 #endif
 

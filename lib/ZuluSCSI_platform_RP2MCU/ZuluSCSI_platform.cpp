@@ -79,7 +79,7 @@ extern bool g_rawdrive_active;
 extern "C" {
 #include "timings_RP2MCU.h"
 const char *g_platform_name = PLATFORM_NAME;
-static bool g_scsi_initiator = false;
+bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
@@ -958,9 +958,59 @@ static void adc_poll()
 #endif // PLATFORM_VDD_WARNING_LIMIT_mV > 0
 }
 
+#ifdef G_LOOGER
+
+bool firstLog = true;
+
+extern "C" void WriteGLog(const char *str)
+{
+    FsFile fileHandle;
+    FsVolume *vol = SD.vol();
+    char p[64];
+    strcpy(p, "glog_run.txt");
+
+    if (SD.exists(p) && firstLog)
+    {
+        firstLog = false;
+        SD.remove(p);
+    }
+    if (SD.exists(p))
+    {
+        fileHandle= vol->open(p, O_RDWR | O_APPEND | O_AT_END);
+    }
+    else
+    {
+        fileHandle= vol->open(p, O_WRONLY | O_CREAT);
+    }
+
+    fileHandle.write(str, strlen(str));
+    fileHandle.flush();
+    fileHandle.close();
+
+    strcpy(p, "glog_all.txt");
+
+    if (SD.exists(p))
+    {
+        fileHandle= vol->open(p, O_RDWR | O_APPEND | O_AT_END);
+    }
+    else
+    {
+        fileHandle= vol->open(p, O_WRONLY | O_CREAT);
+    }
+
+    fileHandle.write(str, strlen(str));
+    fileHandle.flush();
+    fileHandle.close();
+}
+#endif
+
 // This function is called for every log message.
 void platform_log(const char *s)
 {
+#ifdef G_LOOGER
+    WriteGLog(s);
+#endif
+
     if (g_uart_initialized)
     {
         uart_puts(uart0, s);

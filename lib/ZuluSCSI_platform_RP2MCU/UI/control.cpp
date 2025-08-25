@@ -6,6 +6,7 @@
 #include "ZuluSCSI_settings.h"
 #include <scsi2sd.h>
 
+#include "SystemMode.h"
 #include "control.h"
 #include "cache.h"
 #include "control_global.h"
@@ -79,6 +80,8 @@ DeviceMap g_devices[TOTAL_DEVICES];
 Screen *g_activeScreen;
 
 int g_prevousIndex = -1;
+
+SYSTEM_MODE g_systemMode = SYSTEM_NORMAL;
 
 int g_pcaAddr = 0x3F;
 bool g_deviceExists = false;
@@ -339,7 +342,7 @@ void updateRotary(int dir)
 // Called on sd remove and Device Chnages
 void stateChange()
 {
-    _messageBox.ShowModal(-1,"stateChange", "", "");
+    //_messageBox.ShowModal(-1,"stateChange", "", "");
 
     logmsg("*** stateChange()");
     printDevices();
@@ -432,20 +435,20 @@ void processRotaryEncoder(uint8_t input_byte)
 // When this is called, the device list is complete, either on startup or on a card swap
 void devicesUpdated()
 {
-    _messageBox.ShowModal(-1,"devicesUpdated", "", "");
+    //_messageBox.ShowModal(-1,"devicesUpdated", "", "");
 
     if (!g_controlBoardInit)
     {
         return;
     }
-    
+
     stateChange();
 }
 
 // This clear the list of devices, used at startup and on card removal
 void initDevices()
 {
-    _messageBox.ShowModal(-1,"initDevices", "", "");
+    //_messageBox.ShowModal(-1,"initDevices", "", "");
 
     logmsg("*** initDevices()");
 
@@ -578,7 +581,7 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
 extern "C" void sdCardStateChanged(bool absent)
 {
     logmsg("*** sdCardStateChanged()); absent = ", absent);
-    _messageBox.ShowModal(-1,"sdCardStateChanged", "", "");
+    //_messageBox.ShowModal(-1,"sdCardStateChanged", "", "");
 
     g_sdAvailable = !absent;
 
@@ -593,8 +596,8 @@ extern "C" void sdCardStateChanged(bool absent)
 // On startup on when a card has finished been reinserted, this is call. Used to call 2nd pass of device seup
 extern "C" void scsiReinitComplete()
 {
-    logmsg("*** scsiReinitComplete()");
-    _messageBox.ShowModal(-1,"scsiReinitComplete", "", "");
+    //logmsg("*** scsiReinitComplete()");
+    //_messageBox.ShowModal(-1,"scsiReinitComplete", "", "");
 
     patchDevices();
 
@@ -604,6 +607,11 @@ extern "C" void scsiReinitComplete()
 extern "C" void controlInit()
 {
     logmsg("ControlBoard enabled.");
+
+    if (g_scsi_initiator)
+    {
+      g_systemMode = SYSTEM_INITIATOR;  
+    }
 
     initControlBoardI2CExpander();
 
@@ -624,8 +632,26 @@ extern "C" void controlInit()
     }
     
     g_controlBoardInit = true;
-    
-    devicesUpdated();
+
+    switch(g_systemMode)
+    {
+        default:
+        case SYSTEM_NORMAL:
+            logmsg("controlInit() -> SYSTEM_NORMAL");
+            devicesUpdated();
+            break;
+
+        case SYSTEM_INITIATOR:
+
+            for (i=0;i<TOTAL_DEVICES;i++)
+            {
+                DeviceMap *deviceMap = &g_devices[i];
+                deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_UNKNOWN;
+            }
+            logmsg("controlInit() -> SYSTEM_INITIATOR");
+            changeScreen(SCREEN_INITIATOR_MAIN, -1);
+            break;
+    }
 }
 
 extern "C" void controlLoop()
@@ -666,5 +692,93 @@ extern "C" void controlLoop()
         g_activeScreen->tick();
     }
 }
+
+/// Initiator
+INITIATOR_MODE g_initiatorMode = INITIATOR_SCANNING;
+InitiatorTransientData g_initiatorTransientData;
+
+void UIInitiatorScanning(uint8_t deviceId)
+{
+    g_initiatorTransientData.Type = INITIATOR_MSG_SCANNING;
+
+    DeviceMap *deviceMap = &g_devices[g_initiatorTransientData.DeviceId];
+
+    if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_UNKNOWN)
+    {
+        deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_PROBING;
+        deviceMap->TotalRetries = 0;
+        deviceMap->TotalErrors  = 0;
+    }
+}
+
+void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorCount, uint32_t sectorSize) 
+{
+    g_initiatorTransientData.Type = INITIATOR_MSG_READCAPOK;
+
+    DeviceMap *deviceMap = &g_devices[g_initiatorTransientData.DeviceId];
+
+    deviceMap->DeviceType = deviceType;
+    deviceMap->SectorCount = sectorCount;
+    deviceMap->SectorSize = sectorSize;
+
+    if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_UNKNOWN)
+    {
+        deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_CLONABLE;
+    }
+
+    changeScreen(SCREEN_INITIATOR_DRIVE, deviceId);
+}
+
+void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) 
+{
+    g_initiatorTransientData.Type = INITIATOR_MSG_PROGRESS;
+
+    g_initiatorTransientData.BlockTime = blockTime;
+    g_initiatorTransientData.SectorsCopied = sectorsCopied;
+    g_initiatorTransientData.SectorsInBatch = sectorInBatch;
+}
+
+void UIInitiatorRetry(uint8_t deviceId) 
+{
+    g_initiatorTransientData.Type = INITIATOR_MSG_RETRY;
+
+    DeviceMap *deviceMap = &g_devices[deviceId];
+    deviceMap->TotalRetries++;
+}
+
+void UIInitiatorSkippedSector(uint8_t deviceId) 
+{
+    g_initiatorTransientData.Type = INITIATOR_MSG_SKIPPED_SECTOR;
+
+    DeviceMap *deviceMap = &g_devices[deviceId];
+    deviceMap->TotalErrors++;
+}
+
+void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) 
+{
+    g_initiatorTransientData.Type = INITIATOR_MSG_TARGET_FILENAME;
+
+    DeviceMap *deviceMap = &g_devices[deviceId];
+    strcpy(deviceMap->Filename, filename);
+}
+
+void UIInitiatorFailedToTransfer(uint8_t deviceId) 
+{
+    g_initiatorTransientData.Type = INITIATOR_MSG_FAILED_TO_TRANSFER;
+}
+
+void UIInitiatorImagingComplete(uint8_t deviceId) 
+{
+    g_initiatorTransientData.Type = INITIATOR_MSG_IMAGING_COMPLETE;
+
+    DeviceMap *deviceMap = &g_devices[deviceId];
+
+    deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_CLONED;
+
+    logmsg("*** IMaging COMPLETE");
+
+    changeScreen(SCREEN_INITIATOR_MAIN, -1);
+}
+
 
 #endif

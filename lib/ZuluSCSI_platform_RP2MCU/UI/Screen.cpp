@@ -180,6 +180,77 @@ void Screen::drawIconFromRight(const uint8_t *icon, int extraSpace, int y)
     _iconX -= extraSpace;
 }
 
+void Screen::makeTimeStr(int seconds, char *buffer)
+{
+  int pos = 0;
+  int hours = seconds / 3600;
+  int rem =  seconds - (hours * 3600);
+
+  if (hours > 99)
+  {
+    hours = 99; // Hard cap
+  }
+
+  int mins = rem / 60;
+  rem = rem - (mins * 60);
+
+//  logmsg("seconds = ", seconds, "  H:", hours, " M:", mins, " S:", rem);
+
+  //strcpy(buffer, ""); // blank to start
+
+  if (hours < 10)
+  {
+    buffer[pos++] = '0';
+  }
+  else
+  {
+    int h = hours / 10; // add 1st digit of hours
+    buffer[pos++] = h + '0';
+
+    hours -= (h * 10);
+  }
+  
+  // low hour digit
+  buffer[pos++] = hours + '0';
+
+  // add 1st :  
+  buffer[pos++] = ':';
+  
+  if (mins < 10)
+  {
+    buffer[pos++] = '0';
+  }
+  else
+  {
+    int m = mins / 10;
+    buffer[pos++] = m + '0';
+
+    mins -= (m * 10);
+  }
+
+  // low minute digit
+  buffer[pos++] = mins + '0';
+
+  buffer[pos++] = ':';
+
+  if (rem < 10)
+  {
+    buffer[pos++] = '0';
+  }
+  else
+  {
+    int s = rem / 10;
+    buffer[pos++] = s + '0';
+
+    rem -= (s * 10);
+  }
+  
+  // lower sec
+  buffer[pos++] = rem + '0';
+  buffer[pos++] = 0;
+
+}
+
 void Screen::makeImageSizeStr(uint64_t size, char *buffer) 
 {
   if (size > 1073741824) 

@@ -15,4 +15,13 @@ char g_categoryCodeAndNames[8][10][32];
 char g_filenameToLoad[MAX_PATH_LEN];
 int g_pendingLoadComplete;
 
+void UIInitiatorScanning(uint8_t deviceId) {}
+void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorCount, uint32_t sectorSize) {}
+void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) {}
+void UIInitiatorRetry(uint8_t deviceId) {}
+void UIInitiatorSkippedSector(uint8_t deviceId) {}
+void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) {}
+void UIInitiatorFailedToTransfer(uint8_t deviceId) {}
+void UIInitiatorImagingComplete(uint8_t deviceId) {}
+
 #endif
