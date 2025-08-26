@@ -33,8 +33,7 @@ const char *g_log_short_firmwareversion = ZULU_FW_VERSION;
 
 bool g_log_debug = false;
 bool g_log_ignore_busy_free = false;
-uint8_t g_scsi_log_mask = 0xFF;
-
+uint32_t g_scsi_log_mask = ZULUSCSI_DEFAULT_LOG_MASK;
 // This memory buffer can be read by debugger and is also saved to zululog.txt
 #define LOGBUFMASK (LOGBUFSIZE - 1)
 
@@ -161,9 +160,10 @@ bool dbgmsg_start()
     if (g_log_debug)
     {
         // Check if log mask is not the default value, the selection was a success, and the selected ID was not match, then skip logging
-        if ( g_scsi_log_mask != 0xFF
+        if (
+            g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK
             && (SCSI_STS_SELECTION_SUCCEEDED & *SCSI_STS_SELECTED)
-            && (0 == (g_scsi_log_mask & (1 << (*SCSI_STS_SELECTED & 7))))
+            && (0 == (g_scsi_log_mask & (1 << (*SCSI_STS_SELECTED & S2S_CFG_TARGET_ID_BITS))))
            )
         {
             return false;

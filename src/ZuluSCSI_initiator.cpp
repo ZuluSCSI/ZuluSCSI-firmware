@@ -104,7 +104,7 @@ static struct {
     uint32_t removable_count[8];
 
     // Negotiated bus width for targets
-    int targetBusWidth[NUM_SCSIID];
+    int targetBusWidth[S2S_MAX_TARGETS];
 
     FsFile target_file;
 } g_initiator_state;
@@ -181,8 +181,6 @@ static void scsiInitiatorUpdateLed()
 
 uint8_t ejectButtonUpdate()
 {
-    // GT TODO - use control if enabled
-
     // treat '1' to '0' transitions as reset actions
     static uint8_t previous = 0x00;
     uint8_t bitmask = platform_get_buttons() & EJECT_BTN_MASK;

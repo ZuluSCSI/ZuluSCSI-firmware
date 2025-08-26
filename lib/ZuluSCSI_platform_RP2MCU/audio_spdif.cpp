@@ -138,18 +138,41 @@ static uint64_t fpos;
 static uint32_t fleft;
 
 // historical playback status information
-static audio_status_code audio_last_status[8] = {ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
-                                                 ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS};
+#if S2S_MAX_TARGETS == 16
+static audio_status_code audio_last_status[S2S_MAX_TARGETS] = {
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS
+};
 // volume information for targets
-static volatile uint16_t volumes[8] = {
+static volatile uint16_t volumes[S2S_MAX_TARGETS] = {
+    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
+    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH
 };
-static volatile uint16_t channels[8] = {
+static volatile uint16_t channels[S2S_MAX_TARGETS] = {
+    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
+    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK
 };
 
+#else
+static audio_status_code audio_last_status[S2S_MAX_TARGETS] = {
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS};
+// volume information for targets
+static volatile uint16_t volumes[S2S_MAX_TARGETS] = {
+    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
+    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH
+};
+static volatile uint16_t channels[S2S_MAX_TARGETS] = {
+    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
+    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK
+};
+#endif
 // mechanism for cleanly stopping DMA units
 static volatile bool audio_stopping = false;
 
@@ -168,7 +191,7 @@ static uint8_t invert = 0; // biphase encode help: set if last wire bit was '1'
  * output.
  */
 static void snd_encode(uint8_t* samples, uint16_t* wire_patterns, uint16_t len, uint8_t swap) {
-    uint16_t wvol = volumes[audio_owner & 7];
+    uint16_t wvol = volumes[audio_owner & S2S_CFG_TARGET_ID_BITS];
     uint8_t lvol = ((wvol >> 8) + (wvol & 0xFF)) >> 1; // average of both values
     // limit maximum volume; with my DACs I've had persistent issues
     // with signal clipping when sending data in the highest bit position
@@ -177,7 +200,7 @@ static void snd_encode(uint8_t* samples, uint16_t* wire_patterns, uint16_t len, 
     // enable or disable based on the channel information for both output
     // ports, where the high byte and mask control the right channel, and
     // the low control the left channel
-    uint16_t chn = channels[audio_owner & 7] & AUDIO_CHANNEL_ENABLE_MASK;
+    uint16_t chn = channels[audio_owner & S2S_CFG_TARGET_ID_BITS] & AUDIO_CHANNEL_ENABLE_MASK;
     if (!(chn >> 8)) rvol = 0;
     if (!(chn & 0xFF)) lvol = 0;
 
@@ -338,14 +361,28 @@ void audio_dma_irq() {
 }
 
 bool audio_is_active() {
-    return audio_owner != 0xFF;
+    return audio_owner != 0xFF && g_scsi_settings.getSystem()->enableCDAudio;
 }
 
 bool audio_is_playing(uint8_t id) {
-    return audio_owner == (id & 7);
+    return audio_owner == (id & S2S_CFG_TARGET_ID_BITS);
 }
 
 void audio_setup() {
+    if (!g_scsi_settings.getSystem()->enableCDAudio)
+        return;
+    logmsg("ZuluSCSI CD Audio Enabled - Connect DAC to ZuluSCSI or use SPDIF on I2C SCL pin");
+    gpio_put(GPIO_EXP_AUDIO, true);
+    gpio_set_dir(GPIO_EXP_AUDIO, false);
+    gpio_set_pulls(GPIO_EXP_AUDIO, true, false);
+    gpio_set_function(GPIO_EXP_AUDIO, GPIO_FUNC_SPI);
+    gpio_set_slew_rate(GPIO_EXP_AUDIO, GPIO_SLEW_RATE_FAST);
+
+    gpio_put(GPIO_EXP_SPARE, true);
+    gpio_set_dir(GPIO_EXP_SPARE, false);
+    gpio_set_pulls(GPIO_EXP_SPARE, true, false);
+    gpio_set_function(GPIO_EXP_SPARE, GPIO_FUNC_SIO);
+
     // setup SPI to blast S/PDIF data over the TX pin
     spi_set_baudrate(AUDIO_SPI, 5644800); // will be slightly wrong, ~0.03% slow
     hw_write_masked(&spi_get_hw(AUDIO_SPI)->cr0,
@@ -368,7 +405,7 @@ void audio_setup() {
 }
 
 void audio_poll() {
-    if (!audio_is_active()) return;
+    if (!audio_is_active() || !g_scsi_settings.getSystem()->enableCDAudio) return;
     if (audio_paused) return;
     if (fleft == 0 && sbufst_a == STALE && sbufst_b == STALE) {
         // out of data and ready to stop
@@ -482,7 +519,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
     sbufswap = swap;
     sbufst_a = READY;
     sbufst_b = READY;
-    audio_owner = owner & 7;
+    audio_owner = owner & S2S_CFG_TARGET_ID_BITS;
     audio_last_status[audio_owner] = ASC_PLAYING;
     audio_paused = false;
 
@@ -522,7 +559,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
 }
 
 bool audio_set_paused(uint8_t id, bool paused) {
-    if (audio_owner != (id & 7)) return false;
+    if (audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return false;
     else if (audio_paused && paused) return false;
     else if (!audio_paused && !paused) return false;
 
@@ -536,7 +573,7 @@ bool audio_set_paused(uint8_t id, bool paused) {
 }
 
 void audio_stop(uint8_t id) {
-    if (audio_owner != (id & 7)) return;
+    if (audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return;
 
     // to help mute external hardware, send a bunch of '0' samples prior to
     // halting the datastream; easiest way to do this is invalidating the
@@ -559,27 +596,27 @@ void audio_stop(uint8_t id) {
 }
 
 audio_status_code audio_get_status_code(uint8_t id) {
-    audio_status_code tmp = audio_last_status[id & 7];
+    audio_status_code tmp = audio_last_status[id & S2S_CFG_TARGET_ID_BITS];
     if (tmp == ASC_COMPLETED || tmp == ASC_ERRORED) {
-        audio_last_status[id & 7] = ASC_NO_STATUS;
+        audio_last_status[id & S2S_CFG_TARGET_ID_BITS] = ASC_NO_STATUS;
     }
     return tmp;
 }
 
 uint16_t audio_get_volume(uint8_t id) {
-    return volumes[id & 7];
+    return volumes[id & S2S_CFG_TARGET_ID_BITS];
 }
 
 void audio_set_volume(uint8_t id, uint16_t vol) {
-    volumes[id & 7] = vol;
+    volumes[id & S2S_CFG_TARGET_ID_BITS] = vol;
 }
 
 uint16_t audio_get_channel(uint8_t id) {
-    return channels[id & 7];
+    return channels[id & S2S_CFG_TARGET_ID_BITS];
 }
 
 void audio_set_channel(uint8_t id, uint16_t chn) {
-    channels[id & 7] = chn;
+    channels[id & S2S_CFG_TARGET_ID_BITS] = chn;
 }
 
 uint64_t audio_get_file_position()

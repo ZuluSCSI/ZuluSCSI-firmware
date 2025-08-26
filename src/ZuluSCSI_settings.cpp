@@ -112,7 +112,7 @@ const char **ZuluSCSISettings::deviceInitST32430N(uint8_t scsiId)
 void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type)
 {
     char section[6] = "SCSI0";
-    section[4] += scsiId;
+    section[4] = scsiEncodeID(scsiId);
 
     scsi_device_settings_t &cfgDev = m_dev[scsiId];
     scsi_device_settings_t &cfgDefault = m_dev[SCSI_SETTINGS_SYS_IDX];
@@ -315,7 +315,11 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableControlBoardCache = false;
     cfgSys.reverseControlBoardRotary = false;
     cfgSys.useFATAllocSize = false;
+#ifdef ZULUSCSI_MCU_RP20XX
     cfgSys.enableCDAudio = false;
+#else
+    cfgSys.enableCDAudio = true;
+#endif
     cfgSys.maxVolume = 100;
     cfgSys.enableUSBMassStorage = false;
     cfgSys.usbMassStorageWaitPeriod = 1000;
@@ -460,7 +464,7 @@ scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYP
     scsi_device_settings_t& cfg = m_dev[scsiId];
     char presetName[32] = {};
     char section[6] = "SCSI0";
-    section[4] = '0' + scsiId;
+    section[4] = scsiEncodeID(scsiId);
 
 #ifdef ZULUSCSI_HARDWARE_CONFIG
     const char *hwDevicePresetName = g_scsi_settings.getDevicePresetName(scsiId);

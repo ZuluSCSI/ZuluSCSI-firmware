@@ -32,7 +32,9 @@ typedef enum
     SPEED_GRADE_A,
     SPEED_GRADE_B,
     SPEED_GRADE_C,
-    SPEED_GRADE_WIFI_RM2
+    SPEED_GRADE_WIFI_RM2,
+    SPEED_GRADE_BASE_203MHZ,
+    SPEED_GRADE_BASE_155MHZ,
 } zuluscsi_speed_grade_t;
 
 #ifdef __cplusplus
@@ -42,9 +44,9 @@ typedef enum
 #include <scsi2sd.h>
 
 
-// Index 8 is the system defaults
-// Index 0-7 represent device settings
-#define SCSI_SETTINGS_SYS_IDX 8
+// Index S2S_MAX_TARGETS is the system defaults
+// Index 0 to (S2S_MAX_TARGETS - 1) represent device settings
+#define SCSI_SETTINGS_SYS_IDX S2S_MAX_TARGETS
 
 typedef enum
 {

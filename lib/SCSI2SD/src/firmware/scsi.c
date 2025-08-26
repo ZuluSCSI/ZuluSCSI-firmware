@@ -857,7 +857,7 @@ static void process_SelectionPhase()
 	TargetState* target = NULL;
 	for (tgtIndex = 0; tgtIndex < S2S_MAX_TARGETS; ++tgtIndex)
 	{
-		if (scsiDev.targets[tgtIndex].targetId == (selStatus & 7))
+		if (scsiDev.targets[tgtIndex].targetId == (selStatus & S2S_CFG_TARGET_ID_BITS))
 		{
 			target = &scsiDev.targets[tgtIndex];
 			break;

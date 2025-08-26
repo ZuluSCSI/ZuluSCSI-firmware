@@ -77,7 +77,7 @@ bool romDriveCheckPresent(romdrive_hdr_t *hdr)
         return false;
     }
 
-    if (hdr->imagesize <= 0 || hdr->scsi_id < 0 || hdr->scsi_id > 8)
+    if (hdr->imagesize <= 0 || hdr->scsi_id < 0 || hdr->scsi_id > S2S_MAX_TARGETS)
     {
         return false;
     }
@@ -88,9 +88,8 @@ bool romDriveCheckPresent(romdrive_hdr_t *hdr)
 // Clear the drive metadata header
 bool romDriveClear()
 {
-    romdrive_hdr_t hdr = {0x0};
-
-    if (!platform_write_romdrive((const uint8_t*)&hdr, 0, PLATFORM_ROMDRIVE_PAGE_SIZE))
+    memset(scsiDev.data, 0, PLATFORM_ROMDRIVE_PAGE_SIZE);
+    if (!platform_write_romdrive(scsiDev.data, 0, PLATFORM_ROMDRIVE_PAGE_SIZE))
     {
         logmsg("-- Failed to clear ROM drive");
         return false;

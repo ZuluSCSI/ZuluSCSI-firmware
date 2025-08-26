@@ -51,6 +51,7 @@
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
 # include <SerialUSB.h>
 # include <class/cdc/cdc_device.h>
+# include <device/usbd.h>
 #endif
 
 #include <pico/multicore.h>
@@ -86,6 +87,11 @@ static bool g_led_blinking = false;
 
 static void usb_log_poll();
 
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+#include <compact_ed25519.h>
+static void platform_auth_check();
+#endif
+
 /***************/
 /* GPIO init   */
 /***************/
@@ -101,6 +107,10 @@ static void gpio_conf(uint gpio, gpio_function_t fn, bool pullup, bool pulldown,
     if (fast_slew)
     {
         pads_bank0_hw->io[gpio] |= PADS_BANK0_GPIO0_SLEWFAST_BITS;
+
+#ifdef FAST_IO_DRIVE_STRENGTH
+        gpio_set_drive_strength(gpio, FAST_IO_DRIVE_STRENGTH);
+#endif
 
 #ifdef FAST_IO_DRIVE_STRENGTH
         gpio_set_drive_strength(gpio, FAST_IO_DRIVE_STRENGTH);
@@ -255,10 +265,15 @@ static pin_setup_state_t read_setup_ack_pin()
 
 // Allows execution on Core1 via function pointers. Each function can take
 // no parameters and should return nothing, operating via side-effects only.
+mutex g_core1_mutex;
+__attribute__((section(".time_critical.core1_handler")))
 static void core1_handler() {
     while (1) {
         void (*function)() = (void (*)()) multicore_fifo_pop_blocking();
+
+        mutex_enter_blocking(&g_core1_mutex);
         (*function)();
+        mutex_exit(&g_core1_mutex);
     }
 }
 
@@ -319,8 +334,10 @@ void platform_init()
     gpio_set_input_enabled(DIP_DBGLOG, true);
     gpio_set_input_enabled(DIP_TERM, true);
 #endif
-
+    // In case of a firmware update the USB connection fails and needs to be restarted
+    tud_disconnect();
     delay(10); // 10 ms delay to let pull-ups do their work
+    tud_connect();
     bool working_dip = true;
     bool dbglog = false;
     bool termination = false;
@@ -442,19 +459,13 @@ void platform_init()
     // LED pin
     gpio_conf(LED_PIN,        GPIO_FUNC_SIO, false,false, true,  false, false);
 
-#ifndef ENABLE_AUDIO_OUTPUT_SPDIF
+
 #ifdef GPIO_I2C_SDA
     // I2C pins
     //        pin             function       pup   pdown  out    state fast
     gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_I2C, true,false, false,  true, true);
     gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_I2C, true,false, false,  true, true);
 #endif  // GPIO_I2C_SDA
-#else
-    //        pin             function       pup   pdown  out    state fast
-    gpio_conf(GPIO_EXP_AUDIO, GPIO_FUNC_SPI, true,false, false,  true, true);
-    gpio_conf(GPIO_EXP_SPARE, GPIO_FUNC_SIO, true,false, false,  true, false);
-    // configuration of corresponding SPI unit occurs in audio_setup()
-#endif  // ENABLE_AUDIO_OUTPUT_SPDIF
 
 #ifdef GPIO_USB_POWER
     gpio_conf(GPIO_USB_POWER, GPIO_FUNC_SIO, false, false, false,  false, false);
@@ -518,6 +529,7 @@ void platform_late_init()
 #endif
 
     dbgmsg("Starting Core1 dispatcher");
+    mutex_init(&g_core1_mutex);
     multicore_launch_core1(core1_handler);
 
     if (!g_scsi_initiator)
@@ -551,6 +563,24 @@ void platform_late_init()
         gpio_conf(SCSI_IN_ATN,    GPIO_FUNC_SIO, true, false, false, true, false);
         gpio_conf(SCSI_IN_RST,    GPIO_FUNC_SIO, true, false, false, true, false);
 
+#if defined(ZULUSCSI_WIDE)
+    logmsg("Wide board runs at base speed of ",(int) platform_sys_clock_in_hz(), "Hz");
+#elif defined(ZULUSCSI_BLASTER)
+    logmsg("Reclock Blaster based boards to standardized speed");
+    platform_reclock(SPEED_GRADE_BASE_155MHZ);
+#elif defined(ZULUSCSI_PICO_2)
+    logmsg("Reclock Pico 2/2W based boards to standardized speed");
+    platform_reclock(SPEED_GRADE_BASE_155MHZ);
+#elif defined(ZULUSCSI_MCU_RP20XX)
+    logmsg("Reclock RP2040 & Pico 1/1W based boards to standardized speed");
+    platform_reclock(SPEED_GRADE_BASE_203MHZ);
+#endif
+
+#ifdef ENABLE_AUDIO_OUTPUT_I2S
+    logmsg("ZuluSCSI CD Audio enabled - requires DAC");
+    audio_setup();
+#endif
+
 #ifdef ZULUSCSI_RM2
     uint rm2_pins[CYW43_PIN_INDEX_WL_COUNT] = {0};
     rm2_pins[CYW43_PIN_INDEX_WL_REG_ON] = GPIO_RM2_ON;
@@ -560,45 +590,18 @@ void platform_late_init()
     rm2_pins[CYW43_PIN_INDEX_WL_CLOCK] = GPIO_RM2_CLK;
     rm2_pins[CYW43_PIN_INDEX_WL_CS] = GPIO_RM2_CS;
     assert(PICO_OK == cyw43_set_pins_wl(rm2_pins));
-    if (platform_reclock(SPEED_GRADE_WIFI_RM2))
-    {
+    
         // The iface check turns on the LED on the RM2 early in the init process
-        // Should tell the user that the RM2 is working
-        if(platform_network_iface_check())
-        {
-            logmsg("RM2 found");
-        }
-        else
-        {
-# ifdef ZULUSCSI_BLASTER
-            logmsg("RM2 not found, upclocking");
-            platform_reclock(SPEED_GRADE_AUDIO_I2S);
-# else
-            logmsg("RM2 not found");
-# endif
-        }
+    // Should tell the user that the RM2 is working
+    if(platform_network_iface_check())
+    {
+        logmsg("RM2 found");
     }
     else
     {
-        logmsg("WiFi RM2 timings not found");
+        logmsg("RM2 not found");
     }
-#elif defined(ENABLE_AUDIO_OUTPUT_I2S)
-    logmsg("I2S audio to expansion header enabled");
-    if (!platform_reclock(SPEED_GRADE_AUDIO_I2S))
-    {
-        logmsg("Audio output timings not found");
-    }
-#elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-    logmsg("S/PDIF audio to expansion header enabled");
-    if (platform_reclock(SPEED_GRADE_AUDIO_SPDIF))
-    {
-        logmsg("Reclocked for Audio Ouput at ", (int) platform_sys_clock_in_hz(), "Hz");
-    }
-    else
-    {
-        logmsg("Audio Output timings not found");
-    }
-#endif // ENABLE_AUDIO_OUTPUT_SPDIF
+#endif 
 
 // This should turn on the LED for Pico 1/2 W devices early in the init process
 // It should help indicate to the user that interface is working and the board is ready for DaynaPORT
@@ -606,11 +609,6 @@ void platform_late_init()
     platform_network_iface_check();
 #endif
 
-
-#ifdef ENABLE_AUDIO_OUTPUT
-        // one-time control setup for DMA channels and second core
-        audio_setup();
-#endif // ENABLE_AUDIO_OUTPUT_SPDIF
     }
     else
     {
@@ -638,9 +636,19 @@ void platform_late_init()
     Serial.begin();
 #endif
     scsi_accel_rp2040_init();
+
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+    multicore_fifo_push_blocking((uintptr_t) &platform_auth_check);
+#endif
 }
 
-void platform_post_sd_card_init() {}
+void platform_post_sd_card_init() 
+{
+#if defined(ENABLE_AUDIO_OUTPUT) && !defined(ZULUSCSI_BLASTER)
+        // one-time control setup for DMA channels and second core
+        audio_setup();
+#endif // ENABLE_AUDIO_OUTPUT
+}
 
 bool platform_is_initiator_mode_enabled()
 {
@@ -1257,14 +1265,78 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
     assert(start < platform_get_romdrive_maxsize());
     assert((count % PLATFORM_ROMDRIVE_PAGE_SIZE) == 0);
 
+    // XIP is disabled during flashing so interrupts and
+    // core1 handlers must be blocked.
+    mutex_enter_blocking(&g_core1_mutex);
     uint32_t saved_irq = save_and_disable_interrupts();
+
     flash_range_erase(start + ROMDRIVE_OFFSET, count);
     flash_range_program(start + ROMDRIVE_OFFSET, data, count);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    set_flash_clock();
+#endif
+
     restore_interrupts(saved_irq);
+    mutex_exit(&g_core1_mutex);
     return true;
 }
 
 #endif // PLATFORM_HAS_ROM_DRIVE
+
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+
+/*************************************************/
+/* Public key check to distinguish 1st party devices */
+/*************************************************/
+
+static uint32_t adler32(const uint8_t *buf, size_t len)
+{
+    uint32_t s1 = 1, s2 = 0;
+    for (size_t n = 0; n < len; n++) {
+       s1 = (s1 + buf[n]) % 65521;
+       s2 = (s2 + s1) % 65521;
+    }
+    return (s2 << 16) | s1;
+}
+
+static void format_hexstring(const uint8_t *buf, size_t len, char *dest, size_t destlen)
+{
+    assert(destlen >= len * 2 + 1);
+    const char *nibble = "0123456789ABCDEF";
+    for (size_t i = 0; i < len; i++)
+    {
+        dest[i * 2] = nibble[buf[i] >> 4];
+        dest[i * 2 + 1] = nibble[buf[i] & 0x0F];
+    }
+    dest[len * 2] = '\0';
+}
+
+static void platform_auth_check()
+{
+    const uint8_t *randid = PLATFORM_AUTH_CHECK_RANDID_ADDR;
+    const uint8_t *signature = PLATFORM_AUTH_CHECK_SIGNATURE_ADDR;
+    const uint8_t pubkey[] = PLATFORM_AUTH_CHECK_PUBKEY;
+    if (compact_ed25519_verify(signature, pubkey, randid, PLATFORM_AUTH_CHECK_RANDID_SIZE))
+    {
+        // Signature is valid, print it in log to permit offline validation
+        char serial[33];
+        char sighashstr[9];
+        uint32_t sighash = __builtin_bswap32(adler32(signature, ED25519_SIGNATURE_SIZE));
+        format_hexstring(randid, PLATFORM_AUTH_CHECK_RANDID_SIZE, serial, sizeof(serial));
+        format_hexstring((uint8_t*)&sighash, 4, sighashstr, sizeof(sighashstr));
+        logmsg("Running on genuine ", g_platform_name);
+        logmsg("Signature: ", serial, " ", sighashstr);
+    }
+    else
+    {
+        logmsg("Hardware not produced by Rabbit Hole Computing or its associates");
+        logmsg("Hardware support provided on a best-effort basis only");
+        logmsg("Please support the open-source ZuluSCSI Firmware project! See https://github.com/ZuluSCSI");
+    }
+}
+
+#endif
 
 #ifndef RP2MCU_USE_CPU_PARITY
 
