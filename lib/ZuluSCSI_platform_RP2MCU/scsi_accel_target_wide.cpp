@@ -279,7 +279,8 @@ static uint32_t *scsi_generate_parity_16bit(uint8_t *src, uint32_t count, uint32
     // From measurements this takes approx 23 µs per 1024 bytes at 150 MHz
     // This gives 1.2 clock cycles per instruction, and throughput of 44 MB/s.
     asm(R"(
-            ldm %[src]!, {r0, r2}    // Load source words
+            ldr r0, [%[src]], #4   // Load source words
+            ldr r2, [%[src]], #4
             subs %[cnt], %[cnt], #7  // Make sure count goes <= 0 when there is less than 8 left
             mov r4, #0x02040000      // Load multiplication constant for bit shuffling
             ble 2f                   // Skip loop if count is too low

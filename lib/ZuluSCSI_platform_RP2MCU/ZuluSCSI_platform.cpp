@@ -41,6 +41,10 @@
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
 
+#ifdef ZULUSCSI_MCU_RP23XX
+# include <hardware/structs/scb.h>
+#endif
+
 #ifdef SD_USE_RP2350_SDIO
 #include <sdio_rp2350.h>
 #else
@@ -761,7 +765,10 @@ void show_hardfault(uint32_t *sp)
     logmsg("R1: ", sp[1]);
     logmsg("R2: ", sp[2]);
     logmsg("R3: ", sp[3]);
-
+#ifdef ZULUSCSI_MCU_RP23XX
+    logmsg("CFSR: ", (uint32_t)scb_hw->cfsr);
+    logmsg("BFAR: ", (uint32_t)scb_hw->bfar);
+#endif
     uint32_t *p = (uint32_t*)((uint32_t)sp & ~3);
 
     for (int i = 0; i < 8; i++)
