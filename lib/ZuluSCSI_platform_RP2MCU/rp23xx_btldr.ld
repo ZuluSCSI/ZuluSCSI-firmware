@@ -57,10 +57,12 @@ SECTIONS
        *libFrameworkArduino.a:cyw43_wrappers.cpp.o*(*)
 
        /* gt */
+       *ZuluSCSI_tape.cpp.o*(*)
+       *libAdafruit*.a:*(*)
+       *libWire.a:*(*)
+        
        *libZuluSCSI_platform_RP2MCU.a:control.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:cache.cpp.o*(*)
-
-
        *libZuluSCSI_platform_RP2MCU.a:BrowseScreen.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:InfoScreen.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:MainScreen.cpp.o*(*)
@@ -76,10 +78,6 @@ SECTIONS
        *libZuluSCSI_platform_RP2MCU.a:InitiatorDriveScreen.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:InitiatorMainScreen.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:ProgressBar.cpp.o*(*)
-
-        
-       *libAdafruit*.a:*(*)
-       *ZuluSCSI_tape.cpp.o*(*)
     }
 
     .text : {
