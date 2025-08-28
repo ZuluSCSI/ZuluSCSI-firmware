@@ -149,6 +149,7 @@ void scsiInitiatorInit()
     g_initiator_state.removable = false;
     g_initiator_state.eject_when_done = false;
     memset(g_initiator_state.removable_count, 0, sizeof(g_initiator_state.removable_count));
+    platform_led_breath(true, 0);
 
 }
 
@@ -280,37 +281,16 @@ void scsiInitiatorMainLoop()
         g_initiator_state.target_file.close();
         scsiInitiatorInit();
         logmsg("Initiator reset, pausing. Press eject to start initiator...");
-        uint32_t pause_blink_start = millis();
-        uint32_t blink_delay = 10;
-        uint8_t blink_count = 0;
+        LED_OFF();
         platform_set_blink_status(false);
+        platform_led_breath(true, PLATFORM_LED_PWM_BREATH_PERIOD_MS / 4);
         while(ejectButtonUpdate() != 1)
         {
-            // LED pulsates
-            if ((uint32_t)(millis() - pause_blink_start) > blink_delay)
-            {
-                pause_blink_start = millis();
-                if (blink_count++ & 1)
-                {
-                    LED_ON();
-                    blink_delay = 5;
-                }
-                else
-                {
-                    LED_OFF();
-                    blink_delay = 10;
-                }
-
-                if (blink_count > 7)
-                {
-                    blink_delay = 100;
-                    blink_count = 0;
-                }
-            }
             platform_poll();
             platform_reset_watchdog();
         }
-        LED_OFF();
+
+        platform_led_breath(true, 0);
         g_pause = false;
         scsiHostPhyReset();
     }

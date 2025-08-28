@@ -227,6 +227,7 @@ void platform_enter_msc() {
 /* perform any cleanup tasks for the MSC-specific functionality */
 void platform_exit_msc() {
    g_MSC.unitReady = 0;
+   LED_OFF();
 }
 
 /* TinyUSB mass storage callbacks follow */

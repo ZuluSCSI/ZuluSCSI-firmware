@@ -768,7 +768,7 @@ static void scsiDiskSetConfig(int target_idx)
     scsiDiskSetImageConfig(target_idx);
 
     char section[6] = "SCSI0";
-    section[4] += scsiEncodeID(target_idx);
+    section[4] = scsiEncodeID(target_idx);
     char tmp[32];
 
     ini_gets(section, "ImgDir", "", tmp, sizeof(tmp), CONFIGFILE);
