@@ -129,14 +129,24 @@ void BrowseScreen::longRotaryPress()
 
 void BrowseScreen::shortUserPress()
 {
-  resetScrollerDelay();
-  changeScreen(SCREEN_MAIN, -1);
+  if (!goBackADirectory())
+  {
+    resetScrollerDelay();
+    changeScreen(SCREEN_MAIN, -1);
+  }
 }
 
 void BrowseScreen::shortEjectPress()
 {
-  resetScrollerDelay();
-  loadSelectedImage();
+  if (_isCurrentObjectADir)
+  {
+    selectCurrentObject();
+  }
+  else
+  {
+    resetScrollerDelay();
+    loadSelectedImage();
+  }
 }
 
 void BrowseScreen::rotaryChange(int direction)

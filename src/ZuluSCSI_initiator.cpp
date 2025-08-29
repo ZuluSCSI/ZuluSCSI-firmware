@@ -115,8 +115,6 @@ static bool g_pause = false;
 // Initialization of initiator mode
 void scsiInitiatorInit()
 {
-    logmsg("*** scsiInitiatorInit()");
-
     scsiHostPhyReset();
 
     g_initiator_state.initiator_id = ini_getl("SCSI", "InitiatorID", 7, CONFIGFILE);

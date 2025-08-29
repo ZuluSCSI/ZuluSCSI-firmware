@@ -12,6 +12,7 @@
 #include "control_global.h"
 #include "Screen.h"
 #include "MessageBox.h"
+#include "SplashScreen.h"
 
 #define TOTAL_CONTROL_BOARD_BUTTONS 3
 
@@ -84,9 +85,8 @@ int g_prevousIndex = -1;
 SYSTEM_MODE g_systemMode = SYSTEM_NORMAL;
 
 int g_pcaAddr = 0x3F;
-bool g_deviceExists = false;
 
-bool g_controlBoardInit = false;
+bool g_controlBoardEnabled = false;
 bool g_firstInitDevices = true; // For the first lots of SetFolder during start up
 
 /// Helpers
@@ -182,41 +182,13 @@ static bool isTypeRemovable(S2S_CFG_TYPE type)
   }
 }
 
-
-extern "C" void initDisplay()
-{
-    g_wire.setClock(100000);
-
-    // Setting the drive strength seems to help the I2C bus with the Pico W controller and the controller OLED display
-    // to communicate and handshake properly
-    gpio_set_drive_strength(GPIO_I2C_SCL, GPIO_DRIVE_STRENGTH_12MA);
-    gpio_set_drive_strength(GPIO_I2C_SDA, GPIO_DRIVE_STRENGTH_12MA);
-    
-    // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-    if(!g_display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) 
-    {
-        logmsg("SSD1306 allocation failed");
-    }
-    
-    g_display.setTextWrap(false);
-    g_display.setRotation(2);
-   
-      // Clear the buffer
-    g_display.clearDisplay();
-    g_display.display(); 
-}
-
-bool checkForDevice()
+bool initControlBoardI2C()
 {
   g_wire.beginTransmission(g_pcaAddr);
   uint8_t  res = g_wire.endTransmission();
-  logmsg("inside I2c Init");
-  logmsg(" g_wire.endTransmission(); = ");
-  logmsg(res);
-  g_deviceExists = 0 == res;
-
-  return g_deviceExists;
+  return res == 0;
 }
+
 
 uint8_t getValue() 
 {
@@ -235,14 +207,57 @@ uint8_t getValue()
   return input_byte;
 }
 
-extern "C" void initControlBoardI2CExpander()
+bool initControlBoardHardware()
 {
-    checkForDevice();
-    if (!g_deviceExists)
+    g_wire.setClock(100000);
+
+    // Setting the drive strength seems to help the I2C bus with the Pico W controller and the controller OLED display
+    // to communicate and handshake properly
+    gpio_set_drive_strength(GPIO_I2C_SCL, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_drive_strength(GPIO_I2C_SDA, GPIO_DRIVE_STRENGTH_12MA);
+    
+    // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+    if(!g_display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) 
     {
-        logmsg("Init bad :(");
+        logmsg("Failed to initialize Display. Disabling Control Board functionality");
+
+        // Disable Control board as it couldn't be initalized
+        g_controlBoardEnabled = false;
+
+        return false;
     }
+    
+    g_display.setTextWrap(false);
+    g_display.setRotation(2);
+   
+      // Clear the buffer
+    g_display.clearDisplay();
+    g_display.display(); 
+
+    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+    g_reverseRotary = !cfg->reverseControlBoardRotary;
+
+    if (!initControlBoardI2C())
+    {
+        logmsg("Failed to init Control Board Input I2C chip. Disabling Control Board functionality");
+
+        // Disable Control board as it couldn't be initalized
+        g_controlBoardEnabled = false;
+
+        g_display.setCursor(0,0);             
+        g_display.print(F("ZuluSCSI Control"));
+        g_display.drawLine(0,10,127,10, 1);
+        g_display.setCursor(0,16);             
+        g_display.print(F("Failed to Init I2C chip"));
+    
+        return false;
+    }
+
+    g_controlBoardEnabled = true;
+    return true;
 }
+
+
 
 void checkButton(uint8_t input_byte, int index)
 {
@@ -316,12 +331,12 @@ void processButtons(uint8_t input_byte)
 
 void initUI()
 {
-    initDisplay();
+    if (initControlBoardHardware())
+    {
+        changeScreen(SCREEN_SPLASH, -1);
+    }
 
-    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-    g_reverseRotary = !cfg->reverseControlBoardRotary;
-
-    changeScreen(SCREEN_SPLASH, -1);
+    logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
 }
 
 void updateRotary(int dir)
@@ -342,26 +357,23 @@ void updateRotary(int dir)
 // Called on sd remove and Device Chnages
 void stateChange()
 {
-    //_messageBox.ShowModal(-1,"stateChange", "", "");
-
-    logmsg("*** stateChange()");
-    printDevices();
+    // printDevices();
 
     sendSDCardStateChangedToScreens(g_sdAvailable);
+
+    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+    g_cacheActive = cfg->enableControlBoardCache;
 
     if (g_sdAvailable)
     {
         // either boot or valid card change
-        scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-        g_cacheActive = cfg->enableControlBoardCache;
-        
         if (g_cacheActive)
         {
             buildCache();
         }
         else
         {
-            clearCahceData();
+            clearCacheData();
         }
         
         changeScreen(SCREEN_MAIN, -1);
@@ -435,9 +447,7 @@ void processRotaryEncoder(uint8_t input_byte)
 // When this is called, the device list is complete, either on startup or on a card swap
 void devicesUpdated()
 {
-    //_messageBox.ShowModal(-1,"devicesUpdated", "", "");
-
-    if (!g_controlBoardInit)
+    if (!g_controlBoardEnabled)
     {
         return;
     }
@@ -448,10 +458,6 @@ void devicesUpdated()
 // This clear the list of devices, used at startup and on card removal
 void initDevices()
 {
-    //_messageBox.ShowModal(-1,"initDevices", "", "");
-
-    logmsg("*** initDevices()");
-
     int i;
     for (i=0;i<TOTAL_DEVICES;i++)
     {
@@ -549,7 +555,6 @@ void patchDevice(uint8_t i)
 
 void patchDevices()
 {
-    logmsg("*** patchDevices()");
     for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
         patchDevice(i);
@@ -564,6 +569,11 @@ void patchDevices()
 // This is used as the 1st pass on setting device info
 extern "C" void setFolder(int target_idx, bool userSet, const char *path)
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     if (g_firstInitDevices)
     {
         g_firstInitDevices = false;
@@ -580,8 +590,10 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
 // When a card is removed or inserted. If it's removed then clear the device list
 extern "C" void sdCardStateChanged(bool absent)
 {
-    logmsg("*** sdCardStateChanged()); absent = ", absent);
-    //_messageBox.ShowModal(-1,"sdCardStateChanged", "", "");
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
 
     g_sdAvailable = !absent;
 
@@ -596,8 +608,10 @@ extern "C" void sdCardStateChanged(bool absent)
 // On startup on when a card has finished been reinserted, this is call. Used to call 2nd pass of device seup
 extern "C" void scsiReinitComplete()
 {
-    //logmsg("*** scsiReinitComplete()");
-    //_messageBox.ShowModal(-1,"scsiReinitComplete", "", "");
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
 
     patchDevices();
 
@@ -606,14 +620,15 @@ extern "C" void scsiReinitComplete()
 
 extern "C" void controlInit()
 {
-    logmsg("ControlBoard enabled.");
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
 
     if (g_scsi_initiator)
     {
       g_systemMode = SYSTEM_INITIATOR;  
     }
-
-    initControlBoardI2CExpander();
 
     g_tick_count = 0;
     g_going_cw = true;
@@ -631,14 +646,12 @@ extern "C" void controlInit()
         g_longPressed[i] = false;
     }
     
-    g_controlBoardInit = true;
+    _splashScreen.showMode(g_systemMode);
 
     switch(g_systemMode)
     {
         default:
         case SYSTEM_NORMAL:
-            logmsg("controlInit() -> SYSTEM_NORMAL");
-            devicesUpdated();
             break;
 
         case SYSTEM_INITIATOR:
@@ -648,7 +661,6 @@ extern "C" void controlInit()
                 DeviceMap *deviceMap = &g_devices[i];
                 deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_UNKNOWN;
             }
-            logmsg("controlInit() -> SYSTEM_INITIATOR");
             changeScreen(SCREEN_INITIATOR_MAIN, -1);
             break;
     }
@@ -656,6 +668,11 @@ extern "C" void controlInit()
 
 extern "C" void controlLoop()
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     // Get the input from the control board
     uint8_t input_byte = getValue();
 
@@ -699,6 +716,11 @@ InitiatorTransientData g_initiatorTransientData;
 
 void UIInitiatorScanning(uint8_t deviceId)
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     g_initiatorTransientData.Type = INITIATOR_MSG_SCANNING;
 
     DeviceMap *deviceMap = &g_devices[g_initiatorTransientData.DeviceId];
@@ -713,6 +735,11 @@ void UIInitiatorScanning(uint8_t deviceId)
 
 void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorCount, uint32_t sectorSize) 
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     g_initiatorTransientData.Type = INITIATOR_MSG_READCAPOK;
 
     DeviceMap *deviceMap = &g_devices[g_initiatorTransientData.DeviceId];
@@ -731,6 +758,11 @@ void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorC
 
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) 
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     g_initiatorTransientData.Type = INITIATOR_MSG_PROGRESS;
 
     g_initiatorTransientData.BlockTime = blockTime;
@@ -740,6 +772,11 @@ void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsC
 
 void UIInitiatorRetry(uint8_t deviceId) 
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     g_initiatorTransientData.Type = INITIATOR_MSG_RETRY;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -748,6 +785,11 @@ void UIInitiatorRetry(uint8_t deviceId)
 
 void UIInitiatorSkippedSector(uint8_t deviceId) 
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     g_initiatorTransientData.Type = INITIATOR_MSG_SKIPPED_SECTOR;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -756,6 +798,11 @@ void UIInitiatorSkippedSector(uint8_t deviceId)
 
 void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) 
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     g_initiatorTransientData.Type = INITIATOR_MSG_TARGET_FILENAME;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -764,18 +811,26 @@ void UIInitiatorTargetFilename(uint8_t deviceId, char *filename)
 
 void UIInitiatorFailedToTransfer(uint8_t deviceId) 
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     g_initiatorTransientData.Type = INITIATOR_MSG_FAILED_TO_TRANSFER;
 }
 
 void UIInitiatorImagingComplete(uint8_t deviceId) 
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     g_initiatorTransientData.Type = INITIATOR_MSG_IMAGING_COMPLETE;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
 
     deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_CLONED;
-
-    logmsg("*** IMaging COMPLETE");
 
     changeScreen(SCREEN_INITIATOR_MAIN, -1);
 }

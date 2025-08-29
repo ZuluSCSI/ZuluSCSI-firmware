@@ -1,9 +1,27 @@
 ZuluSCSI Control
 ================
 
-Current known issues:
----------------------
-* Not Great:
+Existing Bugs
+-------------
+No logs written if: 
+Bugs:
+-----
+*  Rotary skips clicks sometimes (flat view I think)
+
+Todo:
+-----
+
+*  Initiator Mode - not sure if scans starts again after imaging
+*  Initiator Mode - it used to scan all the drives, then image, why not anymore
+*  Initiator Mode - Not returning to Screen if SD remove and reinserted (stays on No SD Card screen)
+*  Initiator Mode - Add Initiator Info screen, shows more details about cloned drive
+*  Initiator Mode - Deal with error cases
+
+Limitations
+-----------
+* Max path length for an file is currently 64 characters
+-  Work out why MAX_PATH_LEN of 260 wasn't working but 64 does. Also means path len > 64 will probably crash at the moment
+  -  Change 17->18 caused the issue. Instabiliy and not loading. Seemed fixed with the above. Work out why
 
 If the root folder has no ISOs, then nothing initially loads, and I can't load anything after that
 *  WORKAROUND: Always have at least 1 iso in the root folder
@@ -13,41 +31,22 @@ It takes 30+ms to do a screen update which is in the main loop
 *  IDEA: can I multithread for the UI? Need to know how on the RP
 *  IDEA: hardware accelerator for the SSD1306 (another rp2040)
 
-Probably not the end of world :):
-
 Doesn't work with IMGx= style images (i.e. explictly defined in a list in config)
 *  WORKAROUND: Don't use IMGx config. Just put them in a folder
 
-Existing Bugs
--------------
-No logs written if: 
-Bugs:
------
-*  !! After swapping SDs, the Zulu freeze for a while and Akai locks up. Restart fixes it. 
-*  Rotary skips clicks sometimes (flat view I think)
-*  Not working with a blank card (used to in early dev) (also why no logs onm a blank card?)
-*  why does bool checkForDevice() return -2 but everything seems to work?
-
-Todo:
------
-*  Work out why MAX_PATH_LEN of 260 wasn't working but 64 does. Also means path len > 64 will probably crash at the moment
--  Change 17->18 caused the issue. Instabiliy and not loading. Seemed fixed with the above. Work out why
-*  Merge in latest code
-*  what should "program_flash_allocation" be changed to?
-*  free more space in bootloader (specically for rp2040)
+Improvements
+------------
+*  If no nested folders disable 'normal' (use HasDirs) and just use flat
+*  Make message box dyanmically resize
 *  Merge Browse and BrowseFlat Screens
 *  Find a way to determine when image is fully loaded after a loadImage to close the MessageBox then
-*  Make message box dyanmically resize
-*  Nothing done during bootload. Should it had SSD1306 boot screen and firmware update screen?
 *  g_pendingLoadComplete is ugly. Think of a neater way
-*  If no nested folders disable 'normal' (use HasDirs) and just use flat
-*  #define out all the control board settings
 *  rewrite loadImage code as it's a bit hacky
-*  Initiator Mode - not sure if scans starts again after imaging
-*  Initiator Mode - it used to scan all the drives, then image, why not anymore
-*  Initiator Mode - Not returning to Screen if SD remove and reinserted (stays on No SD Card screen)
-*  Initiator Mode - Add Initiator Info screen, shows more details about cloned drive
-*  Initiator Mode - Deal with error cases
+
+Things for others to do?
+-------------------------
+*  what should "program_flash_allocation" be changed to?
+*  free more space in bootloader (specically for rp2040)
 
 Design choices to question
 --------------------------
@@ -57,6 +56,10 @@ Design choices to question
 Cleanup:
 --------
 *  Clean up warnings
+
+Bug (not Zulu's fault)
+----------------------
+*  !! After swapping SDs, the Zulu freeze for a while and Akai locks up. Restart fixes it. 
 
 Current Build state:
 --------------------

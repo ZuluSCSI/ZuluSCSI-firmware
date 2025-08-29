@@ -1270,7 +1270,7 @@ uint8_t platform_get_buttons()
     static uint32_t debounce;
     
     scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-    if (!cfg->enableControlBoard) // use legacy button pressing stuff
+    if (!g_controlBoardEnabled) // use legacy button pressing stuff
     {
         // SDA = button 1, SCL = button 2
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;

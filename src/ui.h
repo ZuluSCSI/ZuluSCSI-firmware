@@ -21,6 +21,8 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path);
 
 extern "C" void initUI();
 
+extern bool g_controlBoardEnabled;
+
 extern int g_pendingLoadIndex;
 extern int g_totalCategories[TOTAL_DEVICES];
 extern char g_categoryCodeAndNames[TOTAL_DEVICES][MAX_CATEGORIES][MAX_CATEGORY_NAME_LEN];

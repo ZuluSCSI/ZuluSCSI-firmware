@@ -7,7 +7,8 @@
 
 void AboutScreen::draw()
 {
-  _display.drawBitmap(0,0, icon_zuluscsi, 128,64, WHITE);
+  // _display.drawBitmap(0,0, icon_zuluscsi, 128,64, WHITE);
+  _display.drawBitmap(6,0, icon_zuluscsi, 115,56, WHITE);
   _display.setCursor(0,56);             
   _display.print(g_log_short_firmwareversion);
 }

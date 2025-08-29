@@ -4,6 +4,7 @@
 #define SPLASHSCREEN_H
 
 #include "Screen.h"
+#include "SystemMode.h"
 
 class SplashScreen : public Screen
 {
@@ -13,7 +14,10 @@ public:
     SCREEN_TYPE screenType() { return SCREEN_SPLASH; }
 
     void init(int index);
+    void showMode(SYSTEM_MODE mode);
 };
+
+extern SplashScreen _splashScreen;
 
 #endif
 

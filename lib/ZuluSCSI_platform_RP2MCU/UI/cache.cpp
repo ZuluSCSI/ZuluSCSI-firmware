@@ -145,7 +145,7 @@ extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *
 }
 
 // By setting this, there are implicitely no categories
-void clearCahceData()
+void clearCacheData()
 {
     int i;
     for (i=0;i<TOTAL_DEVICES;i++)
@@ -167,7 +167,6 @@ void clearCahceData()
 
 void buildCache()
 {
-    logmsg("BuildCache()");
     _messageBox.setText("-- Busy --", "Building", "Cache...");
     changeScreen(MESSAGE_BOX, -1);
     _messageBox.tick(); // During boot, there is no loop, so manually trigger the tick, to draw the screen

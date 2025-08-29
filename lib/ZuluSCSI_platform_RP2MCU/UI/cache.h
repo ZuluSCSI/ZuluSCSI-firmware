@@ -9,7 +9,7 @@ extern "C" bool doesDeviceHaveAnyCategoryFiles(int scsiId);
 
 extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *path, u_int64_t &size);
 
-extern void clearCahceData();
+extern void clearCacheData();
 extern void buildCache();
 
 #endif

@@ -1141,8 +1141,6 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
 extern "C" void zuluscsi_setup(void)
 {
-  logmsg("*** extern C void zuluscsi_setup(void)");
-
   platform_init();
   platform_late_init();
 
@@ -1151,12 +1149,7 @@ extern "C" void zuluscsi_setup(void)
   is_initiator = platform_is_initiator_mode_enabled();
 #endif
 
-  logmsg("*** is_initiator ", is_initiator);
-
-
   zuluscsi_setup_sd_card(!is_initiator);
-
-  logmsg("*** zuluscsi_setup_sd_card(!is_initiator);");
 
 #ifdef PLATFORM_MASS_STORAGE
   static bool check_mass_storage = true;
@@ -1179,11 +1172,7 @@ extern "C" void zuluscsi_setup(void)
   }
 #endif
 
-  logmsg("scsi_system_settings_t *cfg = g_scsi_settings.getSystem();");
-  
-  scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-  logmsg("*** if (cfg->enableControlBoard)  : ", cfg->enableControlBoard);
-  if (cfg->enableControlBoard)
+  if (g_controlBoardEnabled)
   {
     controlInit();
   }
@@ -1219,8 +1208,7 @@ extern "C" void zuluscsi_main_loop(void)
     diskEjectButtonUpdate(true);
   blink_poll();
 
-  scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-  if (cfg->enableControlBoard) // use legacy button pressing stuff
+  if (g_controlBoardEnabled)
   {
     controlLoop();
   }
