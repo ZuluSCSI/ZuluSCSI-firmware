@@ -16,18 +16,17 @@ void SplashScreen::showMode(SYSTEM_MODE mode)
   
   // _display.drawBitmap(0,0, icon_zuluscsi, 128,64, WHITE);
   _display.drawBitmap(6,0, icon_zuluscsi, 115,56, WHITE);
-  _display.setCursor(0,56);             
-
+  
   _display.setTextSize(1);    
 
   switch(mode)
   {
     case SYSTEM_NORMAL:
-      _display.print("Normal Mode");
+      printCenteredText("Normal Mode", 56);
       break;
 
     case SYSTEM_INITIATOR:
-      _display.print("Initiator Mode");
+      printCenteredText("Initiator Mode", 56);
       break;
   }
 
@@ -46,14 +45,10 @@ void SplashScreen::init(int index)
   
   // _display.drawBitmap(0,0, icon_zuluscsi, 128,64, WHITE);
   _display.drawBitmap(6,0, icon_zuluscsi, 115,56, WHITE);
-  _display.setCursor(0,56);             
-  _display.print(g_log_short_firmwareversion);
 
-  _display.display();
-
+  printCenteredText(g_log_short_firmwareversion, 56);
   
-
-// delay(1500);
+  _display.display();
 }
 
 #endif

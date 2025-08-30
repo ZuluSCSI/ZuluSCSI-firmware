@@ -1038,7 +1038,7 @@ int getFirstFile(image_config_t &img, const char* dirname, char *path, char *fil
 
             return getFirstFile(img, newPath, path, filename);
         }
-    }
+    }   
     return 0;
 }
 
@@ -3064,4 +3064,28 @@ extern "C" int findFilesecursiveByIndex(uint8_t id, const char *dirname, int ind
 {
     int counter = 0;
     return FindFilesecursiveByIndex(g_DiskImages[id], dirname, index, buf, path, buflen, size, counter);
+}
+
+extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size)
+{
+    char section[6] = "SCSI0";
+    section[4] = scsiEncodeID(id);
+
+    logmsg("img.image_index ", id);
+
+    char key[5] = "IMG0";
+    key[3] = '0' + index;
+
+    logmsg("key ", key);
+
+    ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+    
+    logmsg("filename ", buf);
+
+    FsVolume *vol = SD.vol();
+    FsFile fHandle = vol->open(buf, O_RDONLY);
+    size = fHandle.size();
+    fHandle.close();
+
+    logmsg("size ", size);
 }

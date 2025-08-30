@@ -39,6 +39,10 @@ private:
     
     void getCurrentFilenameAndUpdateScrollers();
 
+    // 
+    void initImgDir(int index);
+    void initImgX(int index);
+
     // Backend
     void getCurrentFilename();
     void loadSelectedImage();

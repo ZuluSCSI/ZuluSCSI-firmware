@@ -98,14 +98,30 @@ void MainScreen::shortEjectPress()
   }
   else
   { 
-    if (_deviceMap->BrowseScreenType == 0)
+    switch(map->BrowseMethod)
     {
-        changeScreen(SCREEN_BROWSE, _selectedDevice);
-    }
-    else
-    {
+      case BROWSE_METHOD_IMDDIR:
+        if (_deviceMap->BrowseScreenType == 0)
+        {
+            changeScreen(SCREEN_BROWSE, _selectedDevice);
+        }
+        else
+        {
+            changeScreen(SCREEN_BROWSE_FLAT, _selectedDevice);
+        }
+        break;
+	    case BROWSE_METHOD_IMGX:
         changeScreen(SCREEN_BROWSE_FLAT, _selectedDevice);
+        break;
+
+      case BROWSE_METHOD_USE_PREFIX:
+      case BROWSE_METHOD_NOT_BROWSABLE:
+        _messageBox.setReturnScreen(SCREEN_MAIN);
+        _messageBox.setText("-- Warning --", "Browsing not", "Supported...");
+        changeScreen(MESSAGE_BOX, _selectedDevice);
+        break;
     }
+    
   }
 }
 
@@ -131,15 +147,33 @@ void MainScreen::longEjectPress()
   }
   else
   { 
-    if ((doesDeviceHaveAnyCategoryFiles(_selectedDevice) == 0 && !_deviceMap->HasDirs) && g_cacheActive)
+    switch(map->BrowseMethod)
     {
-      _messageBox.setReturnScreen(SCREEN_MAIN);
-      _messageBox.setText("-- Warning --", "No folders or", "categories...");
-      changeScreen(MESSAGE_BOX, _selectedDevice);
-    }
-    else
-    {
-      changeScreen(SCREEN_BROWSE_TYPE, _selectedDevice); 
+      case BROWSE_METHOD_IMDDIR:
+        if ((doesDeviceHaveAnyCategoryFiles(_selectedDevice) == 0 && !_deviceMap->HasDirs) && g_cacheActive)
+        {
+          _messageBox.setReturnScreen(SCREEN_MAIN);
+          _messageBox.setText("-- Warning --", "No folders or", "categories...");
+          changeScreen(MESSAGE_BOX, _selectedDevice);
+        }
+        else
+        {
+          changeScreen(SCREEN_BROWSE_TYPE, _selectedDevice); 
+        }
+        break;
+
+      case BROWSE_METHOD_IMGX:
+        _messageBox.setReturnScreen(SCREEN_MAIN);
+        _messageBox.setText("-- Warning --", "No options", "for IMGx style");
+        changeScreen(MESSAGE_BOX, _selectedDevice);
+        break;
+
+      case BROWSE_METHOD_USE_PREFIX:
+      case BROWSE_METHOD_NOT_BROWSABLE:
+        _messageBox.setReturnScreen(SCREEN_MAIN);
+        _messageBox.setText("-- Warning --", "Browsing not", "Supported...");
+        changeScreen(MESSAGE_BOX, _selectedDevice);
+        break;
     }
   }
 }

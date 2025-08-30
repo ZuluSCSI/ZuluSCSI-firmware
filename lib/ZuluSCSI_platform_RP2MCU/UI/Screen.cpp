@@ -173,6 +173,18 @@ void Screen::resetScrollerDelay()
     }
 }
 
+void Screen::printCenteredText(const char *text, int y)
+{
+   int16_t lx = 0, ly = 0;
+   Size toDispSize;;
+  
+   _display.getTextBounds(text, 0 ,0, &lx, &ly, &toDispSize.width, &toDispSize.height);
+    int x = 64 - (toDispSize.width/2);
+
+  _display.setCursor(x, y);
+  _display.print(text);
+}
+
 void Screen::drawIconFromRight(const uint8_t *icon, int extraSpace, int y)
 {
     _display.drawBitmap(_iconX, y, icon, 12,12, WHITE);

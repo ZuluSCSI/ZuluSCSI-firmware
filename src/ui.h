@@ -1,7 +1,9 @@
 #ifndef UI_H
 #define UI_H
 
-#define G_LOOGER
+#define G_LOOGER // This is a hack. I needed to see logs even when it wasn't meant to be logging. 
+                 // Not sure how logs are disabled when in RAW SD mode, but a better appoach would be a #define
+                 // to prevent the supression of logs
 
 #include <sys/endian.h>
 

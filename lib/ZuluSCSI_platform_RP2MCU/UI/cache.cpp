@@ -142,6 +142,8 @@ extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *
     fHandle.read(file, MAX_PATH_LEN);
     fHandle.read(path, MAX_PATH_LEN);
     fHandle.read(&size, sizeof(u_int64_t));
+
+    fHandle.close();
 }
 
 // By setting this, there are implicitely no categories

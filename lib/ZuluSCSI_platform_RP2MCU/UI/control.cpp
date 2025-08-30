@@ -4,6 +4,7 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_disk.h"
 #include "ZuluSCSI_settings.h"
+#include "minini.h"
 #include <scsi2sd.h>
 
 #include "SystemMode.h"
@@ -475,11 +476,11 @@ void initDevices()
 }
 
 // This is the 2nd pass of setting device info (Active/UserFolder/RootFolder will already be set from 1st pass)
-void patchDevice(uint8_t i)
+void patchDevice(uint8_t target_idx)
 {
-    image_config_t &img = g_DiskImages[i];
+    image_config_t &img = g_DiskImages[target_idx];
 
-    DeviceMap &map = g_devices[i];
+    DeviceMap &map = g_devices[target_idx];
 
     strcpy(map.Filename, img.current_image);
     map.Size = img.file.size();
@@ -492,18 +493,52 @@ void patchDevice(uint8_t i)
         map.Active = img.file.isOpen();
     }
 
-    const S2S_TargetCfg* cfg = s2s_getConfigByIndex(i);
+    const S2S_TargetCfg* cfg = s2s_getConfigByIndex(target_idx);
     if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
     {
         map.DeviceType = cfg->deviceType;
         map.IsRemovable = isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType);
-        map.IsBrowsable = map.IsRemovable && map.UserFolder;
+       
+        if (img.image_directory)
+        {
+            map.BrowseMethod = BROWSE_METHOD_IMDDIR;
+            map.IsBrowsable = map.IsRemovable && map.UserFolder;
+        }
+        else if (img.use_prefix)
+        {
+            map.BrowseMethod = BROWSE_METHOD_USE_PREFIX;
+            map.IsBrowsable = false;
+        }
+        else
+        {
+            map.BrowseMethod = BROWSE_METHOD_IMGX;
+            map.IsBrowsable = true;
+
+            // MaxImgX
+            char filename[MAX_PATH_LEN];
+            char section[6] = "SCSI0";
+            section[4] = scsiEncodeID(target_idx);
+            int j;
+            for (j=0;j<=IMAGE_INDEX_MAX;j++)
+            {
+                char key[5] = "IMG0";
+                key[3] = '0' + j;
+
+                int ret = ini_gets(section, key, "", filename, MAX_PATH_LEN, CONFIGFILE);
+                if (filename[0] == '\0')
+                {
+                    break;
+                }
+            }
+            map.MaxImgX = j;
+        }
     }
     else
     {
         map.DeviceType = S2S_CFG_NOT_SET;
         map.IsRemovable = false;
         map.IsBrowsable = false;
+        map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
     }
 
     /*

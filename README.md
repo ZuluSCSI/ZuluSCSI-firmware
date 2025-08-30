@@ -14,7 +14,6 @@ A
 
 Existing Bugs
 -------------
-No logs written if: 
 Bugs:
 -----
 *  Rotary skips clicks sometimes (flat view I think)
@@ -38,9 +37,6 @@ It takes 30+ms to do a screen update which is in the main loop
 *  WORKAROUND: Don't be on a screen with scroller (i.e. browsers or info) whilst using drive
 *  IDEA: can I multithread for the UI? Need to know how on the RP
 *  IDEA: hardware accelerator for the SSD1306 (another rp2040)
-
-Doesn't work with IMGx= style images (i.e. explictly defined in a list in config)
-*  WORKAROUND: Don't use IMGx config. Just put them in a folder
 
 Improvements
 ------------
@@ -85,6 +81,25 @@ Initiator Todo:
 ---------------
 - show Initiator ID 
 
+To test
+=======
+- bin/cue with with browser
+- Images in DirN folders
+- The different device types
+- Can you browse nin removables?
+
+Future
+======
+- Extra page in info to show 
+  - vendor etc
+- -drive geometry
+- Settings page to snow settings
+- Remove glog or #define it
+- Create image file
+- Kiosk copy
+- Rom copy
+- Rom info (chip on splash)
+- use_prefix
 
 
 Documentation

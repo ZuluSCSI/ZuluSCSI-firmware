@@ -146,7 +146,7 @@ void BrowseScreen::draw()
   _display.setTextSize(1);            
 
   _display.setCursor(0,36);             
-  _display.print(F("CWD: "));     
+  _display.print(F("Path: "));     
 
   _display.setCursor(0,22);             
   _display.print(F("Item: "));

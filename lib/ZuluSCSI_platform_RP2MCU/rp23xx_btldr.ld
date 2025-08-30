@@ -60,6 +60,7 @@ SECTIONS
        *ZuluSCSI_tape.cpp.o*(*)
        *libAdafruit*.a:*(*)
        *libWire.a:*(*)
+       *libSPI.a:*(*)
         
        *libZuluSCSI_platform_RP2MCU.a:control.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:cache.cpp.o*(*)

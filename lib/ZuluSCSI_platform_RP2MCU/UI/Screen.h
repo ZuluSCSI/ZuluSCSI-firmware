@@ -66,6 +66,7 @@ protected:
 
 	void makeTimeStr(int seconds, char *buffer) ;
 
+	void printCenteredText(const char *text, int y);
 
 private:	
 	bool _halted;

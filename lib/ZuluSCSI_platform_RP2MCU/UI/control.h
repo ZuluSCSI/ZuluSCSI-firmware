@@ -8,8 +8,9 @@
 #include <Adafruit_SSD1306.h>
 
 #include "..\src\ui.h"
-#include "UI/ScreenType.h"
-#include "UI/dimensions.h"
+#include "ScreenType.h"
+#include "dimensions.h"
+#include "BrowseMethod.h"
 
 #include <scsi2sd.h>
 #include "ZuluSCSI_config.h"
@@ -45,9 +46,13 @@ struct DeviceMap
     bool IsRom;
     bool IsWritable;
 
-    // Computed
-    bool IsBrowsable;  // to be browsable it must be removeable & have a user folder
 
+    // Computed
+    bool IsBrowsable;  // to be browsable it must be removeable & have a user folder. TODO : can I get rid of this as there is now BrowseMethod?
+    BROWSE_METHOD BrowseMethod;
+
+    int MaxImgX;
+    
     // Runtime for browsing
     char Path[MAX_PATH_LEN];
   
