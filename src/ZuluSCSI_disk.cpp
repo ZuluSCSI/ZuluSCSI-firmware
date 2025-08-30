@@ -1247,8 +1247,6 @@ bool switchNextImage(image_config_t &img, const char* next_filename)
     if (next_filename == nullptr)
     {
         scsiDiskGetNextImageName(img, filename, sizeof(filename));
-
-        logmsg("*** switchNextImage, after scsiDiskGetNextImageName filename = ", filename);
     }
     else
     {
@@ -3071,21 +3069,14 @@ extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, 
     char section[6] = "SCSI0";
     section[4] = scsiEncodeID(id);
 
-    logmsg("img.image_index ", id);
-
     char key[5] = "IMG0";
     key[3] = '0' + index;
 
-    logmsg("key ", key);
-
     ini_gets(section, key, "", buf, buflen, CONFIGFILE);
-    
-    logmsg("filename ", buf);
+
 
     FsVolume *vol = SD.vol();
     FsFile fHandle = vol->open(buf, O_RDONLY);
     size = fHandle.size();
     fHandle.close();
-
-    logmsg("size ", size);
 }

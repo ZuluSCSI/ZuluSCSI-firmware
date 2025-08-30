@@ -62,6 +62,8 @@ void BrowseScreenFlat::initImgX(int index)
   int i;
   u_int64_t size;
 
+  strcpy(_currentObjectPath, "");
+  
   for (i=0;i<_totalObjects;i++)
   {
     getImgXByIndex(_scsiId, i, g_tmpFilename, MAX_PATH_LEN, size);

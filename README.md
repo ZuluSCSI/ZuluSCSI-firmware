@@ -46,6 +46,7 @@ Improvements
 *  Find a way to determine when image is fully loaded after a loadImage to close the MessageBox then
 *  g_pendingLoadComplete is ugly. Think of a neater way
 *  rewrite loadImage code as it's a bit hacky
+*  If no scrolling, don't update. put checks back/in
 
 Things for others to do?
 -------------------------
