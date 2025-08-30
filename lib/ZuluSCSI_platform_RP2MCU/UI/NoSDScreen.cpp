@@ -1,5 +1,6 @@
 #if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
+#include "ui.h"
 #include "NOSDScreen.h"
 #include "ZuluSCSI_log.h"
 
@@ -10,6 +11,11 @@ void NoSDScreen::draw()
   _display.drawLine(0,10,127,10, 1);
   _display.setCursor(0,16);             
   _display.print(F("No SD Card..."));
+
+#ifdef SCREEN_SHOTS
+  _display.display();
+  saveScreenShot();
+#endif
 }
 
 #endif

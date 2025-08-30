@@ -150,7 +150,7 @@ bool loadImageDeferred(uint8_t id, const char* next_filename, SCREEN_TYPE return
     _messageBox.setReturnScreen(returnScreen);
     _messageBox.setReturnConditionPendingLoadComplete();
         
-    if (strlen(next_filename) > 63)
+    if (strlen(next_filename) > (MAX_PATH_LEN-1))
     {
         _messageBox.setText("-- Warning --", "Filepath", "too long...");
         changeScreen(MESSAGE_BOX, returnIndex);

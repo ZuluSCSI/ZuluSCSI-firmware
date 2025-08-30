@@ -1,5 +1,6 @@
 #if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
+#include "ui.h"
 #include "MessageBox.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_disk.h"
@@ -33,6 +34,10 @@ void MessageBox::draw()
     _display.drawLine(bounds.topLeft.x+2, bounds.topLeft.y + 15, bounds.topLeft.x+bounds.size.width-4, bounds.topLeft.y + 15, 1);
     drawText(bounds, bounds.topLeft.y + 19, _line1);
     drawText(bounds, bounds.topLeft.y + 28, _line2);
+
+#ifdef SCREEN_SHOTS
+    saveScreenShot();
+#endif 
 }
 
 void MessageBox::tick()

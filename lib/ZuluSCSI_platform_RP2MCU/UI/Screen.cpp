@@ -90,6 +90,9 @@ void Screen::longRotaryPress()
 
 void Screen::longUserPress()
 {
+#ifdef SCREEN_SHOTS
+    saveScreenShot();
+#endif
 }
 
 void Screen::longEjectPress()
@@ -305,6 +308,92 @@ void Screen::displayScrollers()
     {
         _scrollingText[i].Display();
     }
+}
+
+FsFile Screen::createFile()
+{
+  int i;
+  char file[64], b[64];
+  for (i=0;i<1000;i++)
+  {
+    strcpy(file, "screen");
+    itoa(i, b, 10);
+    strcat(file,b);
+    strcat(file,".bmp");
+
+    if (!SD.exists(file))
+    {
+      break;
+    }
+  }
+
+  FsVolume *vol = SD.vol();
+  return vol->open(file, O_WRONLY | O_CREAT);
+}
+
+void Screen::saveScreenShot()
+{
+  FsFile fileHandle = createFile();
+
+  int w = 128;
+  int h = 64;
+  int imgSize = w*h;
+
+  // set fileSize (used in bmp header)
+  int rowSize = 4 * ((3*w + 3)/4);      // how many bytes in the row (used to create padding)
+  int fileSize = 54 + h*rowSize;        // headers (54 bytes) + pixel data
+
+  unsigned char *img = NULL;            // image data
+  img = (unsigned char *)malloc(3*imgSize);
+
+  for (int y=0; y<h; y++) {
+    for (int x=0; x<w; x++) {
+      bool pix = _display.getPixel(x,y);
+
+      int colorVal = pix ? 255 : 0;                   // classic formula for px listed in line
+      img[(y*w + x)*3+0] = (unsigned char)(colorVal);    // R
+      img[(y*w + x)*3+1] = (unsigned char)(colorVal);    // G
+      img[(y*w + x)*3+2] = (unsigned char)(colorVal);    // B
+      // padding (the 4th byte) will be added later as needed...
+    }
+  }
+  // create padding (based on the number of pixels in a row
+  unsigned char bmpPad[rowSize - 3*w];
+  for (int i=0; i<sizeof(bmpPad); i++) {         // fill with 0s
+    bmpPad[i] = 0;
+  }
+
+  // create file headers (also taken from StackOverflow example)
+  unsigned char bmpFileHeader[14] = {            // file header (always starts with BM!)
+    'B','M', 0,0,0,0, 0,0, 0,0, 54,0,0,0   };
+  unsigned char bmpInfoHeader[40] = {            // info about the file (size, etc)
+    40,0,0,0, 0,0,0,0, 0,0,0,0, 1,0, 24,0   };
+
+  bmpFileHeader[ 2] = (unsigned char)(fileSize      );
+  bmpFileHeader[ 3] = (unsigned char)(fileSize >>  8);
+  bmpFileHeader[ 4] = (unsigned char)(fileSize >> 16);
+  bmpFileHeader[ 5] = (unsigned char)(fileSize >> 24);
+
+  bmpInfoHeader[ 4] = (unsigned char)(       w      );
+  bmpInfoHeader[ 5] = (unsigned char)(       w >>  8);
+  bmpInfoHeader[ 6] = (unsigned char)(       w >> 16);
+  bmpInfoHeader[ 7] = (unsigned char)(       w >> 24);
+  bmpInfoHeader[ 8] = (unsigned char)(       h      );
+  bmpInfoHeader[ 9] = (unsigned char)(       h >>  8);
+  bmpInfoHeader[10] = (unsigned char)(       h >> 16);
+  bmpInfoHeader[11] = (unsigned char)(       h >> 24);
+
+  // write the file (thanks forum!)
+  fileHandle.write(bmpFileHeader, sizeof(bmpFileHeader));    // write file header
+  fileHandle.write(bmpInfoHeader, sizeof(bmpInfoHeader));    // " info header
+
+  for (int i=0; i<h; i++) {                            // iterate image array
+    fileHandle.write(img+(w*(h-i-1)*3), 3*w);                // write px data
+    fileHandle.write(bmpPad, (4-(w*3)%4)%4);                 // and padding as needed
+  }
+  free(img);
+
+  fileHandle.close();    
 }
 
 #endif

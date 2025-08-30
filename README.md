@@ -47,6 +47,7 @@ Improvements
 *  g_pendingLoadComplete is ugly. Think of a neater way
 *  rewrite loadImage code as it's a bit hacky
 *  If no scrolling, don't update. put checks back/in
+*  Merge Splash and About
 
 Things for others to do?
 -------------------------

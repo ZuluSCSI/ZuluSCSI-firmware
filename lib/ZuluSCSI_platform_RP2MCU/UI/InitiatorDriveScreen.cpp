@@ -124,6 +124,16 @@ void InitiatorDriveScreen::tick()
         }
         break;
       }
+
+      case INITIATOR_MSG_NONE:
+      case INITIATOR_MSG_SCANNING:
+      case INITIATOR_MSG_READCAPOK:
+      case INITIATOR_MSG_TARGET_FILENAME:
+      case INITIATOR_MSG_FAILED_TO_TRANSFER:
+      case INITIATOR_MSG_RETRY:
+      case INITIATOR_MSG_SKIPPED_SECTOR:
+      case INITIATOR_MSG_IMAGING_COMPLETE:
+        break;
   }
 
   int64_t togo = absolute_time_diff_us (get_absolute_time(), _nextScreenUpdate);

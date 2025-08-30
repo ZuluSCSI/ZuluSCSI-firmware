@@ -68,6 +68,9 @@ protected:
 
 	void printCenteredText(const char *text, int y);
 
+	FsFile createFile();
+	void saveScreenShot();
+
 private:	
 	bool _halted;
 	absolute_time_t _nextRefresh;

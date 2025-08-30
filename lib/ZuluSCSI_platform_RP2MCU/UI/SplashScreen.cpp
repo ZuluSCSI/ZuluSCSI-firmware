@@ -31,6 +31,10 @@ void SplashScreen::showMode(SYSTEM_MODE mode)
   }
 
   _display.display();
+#ifdef SCREEN_SHOTS
+    saveScreenShot();
+#endif 
+
   delay(1000);
 }
 
@@ -49,6 +53,10 @@ void SplashScreen::init(int index)
   printCenteredText(g_log_short_firmwareversion, 56);
   
   _display.display();
+
+#ifdef SCREEN_SHOTS
+    saveScreenShot();
+#endif 
 }
 
 #endif

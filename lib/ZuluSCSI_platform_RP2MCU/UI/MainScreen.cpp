@@ -1,5 +1,6 @@
 #if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
+#include "ui.h"
 #include "MainScreen.h"
 #include "MessageBox.h"
 #include "ZuluSCSI_log.h"
@@ -127,6 +128,11 @@ void MainScreen::shortEjectPress()
 
 void MainScreen::longUserPress()
 {
+#ifdef SCREEN_SHOTS
+  Screen::longUserPress(); //TODO just for screensjjot
+  // changeScreen(SCREEN_SPLASH, -1);
+#endif
+
   changeScreen(SCREEN_ABOUT, -1);
 }
 

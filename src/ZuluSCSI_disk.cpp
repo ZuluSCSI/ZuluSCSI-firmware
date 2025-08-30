@@ -976,8 +976,6 @@ int findNextImageAfter(image_config_t &img,
 int getFirstFile(image_config_t &img, const char* dirname, char *path, char *filename)
 {
     char buf[MAX_PATH_LEN];
-    
-    int total = 0;
 
     FsFile dir;
     if (dirname[0] == '\0')

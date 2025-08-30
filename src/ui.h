@@ -5,10 +5,12 @@
                  // Not sure how logs are disabled when in RAW SD mode, but a better appoach would be a #define
                  // to prevent the supression of logs
 
+// #define SCREEN_SHOTS
+
 #include <sys/endian.h>
 
 #define TOTAL_DEVICES 8
-#define MAX_PATH_LEN 64
+#define MAX_PATH_LEN 128
 #define MAX_CATEGORIES 10
 #define MAX_CATEGORY_NAME_LEN 32
 
