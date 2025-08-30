@@ -17,6 +17,7 @@ extern "C" int findObjectByIndex(uint8_t id, const char *dirname, int index, cha
 extern "C" int totalFilesRecursiveInDir(uint8_t id, const char *dirname); 
 extern "C" int findFilesecursiveByIndex(uint8_t id, const char *dirname, int index, char* buf, char *path, size_t buflen, u_int64_t &size);
 extern "C" int scanFilesRecursiveInDir(uint8_t id, const char *dirname, bool &hasDirs, void (*callback)(int, char *, char *, u_int64_t));
+extern "C" bool getFirstFile(uint8_t id, const char *dirname, char *file);
 
 // new in ZuluSCSI_log.h
 extern const char *g_log_short_firmwareversion;

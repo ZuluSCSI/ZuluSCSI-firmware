@@ -587,6 +587,12 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
     strcpy(map.Path, path); // Default Cwd to the root
 }
 
+extern "C" void setCurrentFolder(int target_idx, const char *path)
+{
+    DeviceMap &map = g_devices[target_idx];
+    strcpy(map.Path, path); // Default Cwd to the root
+}
+
 // When a card is removed or inserted. If it's removed then clear the device list
 extern "C" void sdCardStateChanged(bool absent)
 {

@@ -53,7 +53,76 @@ void BrowseScreen::init(int index)
       }
     }
   }
-   
+
+  // Need to recreate the stack
+  // e.g. ISO3/folder  needs a stack of 1, where element 0 is the position of 'folder'
+  bool done = false;
+  char folderToCheck[MAX_PATH_LEN];
+  char folderToLookFor[MAX_PATH_LEN];
+  char tmpFilename[MAX_PATH_LEN];
+
+  char *start = _currentObjectPath;
+  while(!done)
+  {
+    char *firstSlash = strchr(start, (char)'/');
+    
+    u_int64_t size;
+    bool isDir;
+
+    if (firstSlash == NULL) // End of the list
+    {
+        done = true;
+    }
+    else
+    {
+        int len = (firstSlash - _currentObjectPath);
+        strncpy(folderToCheck, _currentObjectPath, ((size_t)len));
+        folderToCheck[len] = 0;
+        start = firstSlash+1;
+
+        char *secondSlash = strchr(start, (char)'/');
+        if (secondSlash == NULL)
+        {
+          strcpy(folderToLookFor, firstSlash+1);
+        }
+        else
+        {
+          int len = (secondSlash - firstSlash)-1;
+          strncpy(folderToLookFor, firstSlash+1, ((size_t)len));
+          folderToLookFor[len] = 0;
+        }
+    }
+
+    if (!done)
+    {
+      // Here folderToCheck is the partial path
+      logmsg("--- folderToCheck = '", folderToCheck, "'");
+      logmsg("   --- folderToLookFor = '", folderToLookFor, "'");
+
+      int totalObjects = totalObjectInDir(_scsiId, folderToCheck);
+      for (i=0;i<totalObjects;i++)
+      {
+        if (!findObjectByIndex(_scsiId, folderToCheck, i,  tmpFilename, (size_t)MAX_PATH_LEN, isDir, size))
+        {
+          // error
+          logmsg("Error searching for filename : ", _deviceMap->Filename);
+          break;
+        }
+        else
+        {
+          if (isDir)
+          {
+            if (strcmp(folderToLookFor, tmpFilename) == 0)
+            {
+              _returnStack[_stackDepth++] = i;
+              break;
+            }
+          }
+        }
+      }
+    }
+  } 
+     
   getCurrentFilenameAndUpdateScrollers();
 }
 

@@ -972,6 +972,76 @@ int findNextImageAfter(image_config_t &img,
     }
 }
 
+
+int getFirstFile(image_config_t &img, const char* dirname, char *path, char *filename)
+{
+    char buf[MAX_PATH_LEN];
+    
+    int total = 0;
+
+    FsFile dir;
+    if (dirname[0] == '\0')
+    {
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        return 0;
+    }
+    if (!dir.open(dirname))
+    {
+        logmsg("Image directory '", dirname, "' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '", dirname, "', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '", dirname, "' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        memset(buf, 0, MAX_PATH_LEN);
+        
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '", dirname, "' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) {
+            logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
+            continue;
+        }
+
+        if (!file.isDir())
+        {
+            strcpy(path, dirname);
+
+            strcpy(filename, dirname);
+            strcat(filename, "/");
+            strcat(filename, buf);
+            return 1;
+        }
+        else
+        {
+            char newPath[MAX_PATH_LEN];
+            strcpy(newPath, dirname);
+            strcat(newPath, "/");
+            strcat(newPath, buf);
+
+            return getFirstFile(img, newPath, path, filename);
+        }
+    }
+    return 0;
+}
+
 int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 {
     int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
@@ -1034,8 +1104,21 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 
         if (nextlen == 0)
         {
-            logmsg("Image directory was empty for ID", target_idx);
-            return 0;
+            logmsg("Couldn't find file in root. Looking in subfolders");
+            char path[MAX_PATH_LEN];
+            if (getFirstFile(img, dirname, path, buf))
+            {
+                setCurrentFolder(target_idx, path); // patch the path
+
+                logmsg("Found file: ", buf);
+                img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
+                return strlen(buf);
+            }
+            else
+            {
+                logmsg("Image directory was empty for ID", target_idx);
+                return 0;
+            }
         }
         else if (buflen < nextlen + dirlen + 2)
         {
@@ -1164,6 +1247,8 @@ bool switchNextImage(image_config_t &img, const char* next_filename)
     if (next_filename == nullptr)
     {
         scsiDiskGetNextImageName(img, filename, sizeof(filename));
+
+        logmsg("*** switchNextImage, after scsiDiskGetNextImageName filename = ", filename);
     }
     else
     {
@@ -2550,11 +2635,6 @@ void scsiDiskInit()
 
 ///////////// These are so LoadImage works - There is a better way
 
-image_config_t *getImageBySCSIID(uint8_t id)
-{
-	image_config_t &img = g_DiskImages[id];
-    return &img;
-}
 
 // Eject CDROM tray if closed, close if open
 // Switch image on ejection.
@@ -2701,12 +2781,7 @@ int findObjectByIndex(image_config_t &img, const char* dirname, uint32_t index, 
 
 extern "C" int findObjectByIndex(uint8_t id, const char *dirname, int index, char* buf, size_t buflen, bool &isDir, u_int64_t &size)
 {
-    image_config_t *img = getImageBySCSIID(id);
-    if (img != NULL)
-    {
-        return findObjectByIndex(*img, dirname, index, buf, buflen, isDir, size);
-    }
-    return -1;
+    return findObjectByIndex(g_DiskImages[id], dirname, index, buf, buflen, isDir, size);
 }
 
 int totalObjectInDir(image_config_t &img, const char* dirname)
@@ -2761,12 +2836,7 @@ int totalObjectInDir(image_config_t &img, const char* dirname)
 
 extern "C" int totalObjectInDir(uint8_t id, const char *dirname)
 {
-    image_config_t *img = getImageBySCSIID(id);
-    if (img != NULL)
-    {
-        return totalObjectInDir(*img, dirname);
-    }
-    return -1;
+    return totalObjectInDir(g_DiskImages[id], dirname);
 }
 
 int totalFilesRecursiveInDir(image_config_t &img, const char* dirname)
@@ -2833,12 +2903,7 @@ int totalFilesRecursiveInDir(image_config_t &img, const char* dirname)
 
 extern "C" int totalFilesRecursiveInDir(uint8_t id, const char *dirname)
 {
-    image_config_t *img = getImageBySCSIID(id);
-    if (img != NULL)
-    {
-        return totalFilesRecursiveInDir(*img, dirname);
-    }
-    return -1;
+    return totalFilesRecursiveInDir(g_DiskImages[id], dirname);
 }
 
 
@@ -2918,13 +2983,8 @@ int ScanFilesRecursiveInDir(image_config_t &img, const char* dirname, int &count
 
 extern "C" int scanFilesRecursiveInDir(uint8_t id, const char *dirname, bool &hasDirs, void (*callback)(int, char *, char *, u_int64_t))
 {
-    image_config_t *img = getImageBySCSIID(id);
-    if (img != NULL)
-    {
-        int counter = 0;
-        return ScanFilesRecursiveInDir(*img, dirname, counter, hasDirs, callback);
-    }
-    return -1;
+    int counter = 0;
+    return ScanFilesRecursiveInDir(g_DiskImages[id], dirname, counter, hasDirs, callback);
 }
 
 int FindFilesecursiveByIndex(image_config_t &img, const char* dirname, uint32_t index, char* filename, char *path, size_t buflen, u_int64_t &size, int &counter)
@@ -3002,11 +3062,6 @@ int FindFilesecursiveByIndex(image_config_t &img, const char* dirname, uint32_t 
 
 extern "C" int findFilesecursiveByIndex(uint8_t id, const char *dirname, int index, char* buf, char *path, size_t buflen, u_int64_t &size)
 {
-    image_config_t *img = getImageBySCSIID(id);
-    if (img != NULL)
-    {
-        int counter = 0;
-        return FindFilesecursiveByIndex(*img, dirname, index, buf, path, buflen, size, counter);
-    }
-    return -1;
+    int counter = 0;
+    return FindFilesecursiveByIndex(g_DiskImages[id], dirname, index, buf, path, buflen, size, counter);
 }

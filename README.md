@@ -1,6 +1,17 @@
 ZuluSCSI Control
 ================
 
+Test cards
+----------
+A
+=
+0 - Folder - files in folder root - categories - extra long path > 64
+1 - Folder - files in folder root - long files name - 2 level folder
+2 - Folder - no files in folder root - 2 in folder
+3 - IMGx - 3 files - 0->2
+4 - Fixed ISO - root CD4_Hyper Dance.iso
+5 - Fixed HDA - root HD5_akai.hda
+
 Existing Bugs
 -------------
 No logs written if: 
@@ -22,9 +33,6 @@ Limitations
 * Max path length for an file is currently 64 characters
 -  Work out why MAX_PATH_LEN of 260 wasn't working but 64 does. Also means path len > 64 will probably crash at the moment
   -  Change 17->18 caused the issue. Instabiliy and not loading. Seemed fixed with the above. Work out why
-
-If the root folder has no ISOs, then nothing initially loads, and I can't load anything after that
-*  WORKAROUND: Always have at least 1 iso in the root folder
 
 It takes 30+ms to do a screen update which is in the main loop
 *  WORKAROUND: Don't be on a screen with scroller (i.e. browsers or info) whilst using drive
