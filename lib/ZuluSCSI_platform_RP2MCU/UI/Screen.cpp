@@ -321,6 +321,8 @@ FsFile Screen::createFile()
     strcat(file,b);
     strcat(file,".bmp");
 
+    logmsg("--> Filename:", file);
+
     if (!SD.exists(file))
     {
       break;
@@ -333,6 +335,7 @@ FsFile Screen::createFile()
 
 void Screen::saveScreenShot()
 {
+  logmsg("Creating screen shot");
   FsFile fileHandle = createFile();
 
   int w = 128;

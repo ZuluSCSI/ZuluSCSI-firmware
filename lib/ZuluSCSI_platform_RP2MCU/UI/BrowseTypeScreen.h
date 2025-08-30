@@ -18,6 +18,7 @@ public:
     void rotaryChange(int direction);
     void shortRotaryPress();
     void shortUserPress();
+    void shortEjectPress();
 
 private:
     int _selectedDevice;

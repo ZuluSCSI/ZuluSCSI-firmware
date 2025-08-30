@@ -51,6 +51,20 @@ void BrowseTypeScreen::shortUserPress()
   changeScreen(SCREEN_MAIN, -1);
 }
 
+void BrowseTypeScreen::shortEjectPress()
+{
+  _deviceMap->BrowseScreenType = _selectedDevice;
+
+  if (_deviceMap->BrowseScreenType == 0)
+  {
+      changeScreen(SCREEN_BROWSE, _scsiId); 
+  }
+  else
+  {
+      changeScreen(SCREEN_BROWSE_FLAT, _scsiId); 
+  }
+}
+
 void BrowseTypeScreen::shortRotaryPress()
 {
   _deviceMap->BrowseScreenType = _selectedDevice;
