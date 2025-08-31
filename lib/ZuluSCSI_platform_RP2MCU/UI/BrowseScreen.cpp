@@ -96,8 +96,8 @@ void BrowseScreen::init(int index)
     if (!done)
     {
       // Here folderToCheck is the partial path
-      logmsg("--- folderToCheck = '", folderToCheck, "'");
-      logmsg("   --- folderToLookFor = '", folderToLookFor, "'");
+      // logmsg("--- folderToCheck = '", folderToCheck, "'");
+      // logmsg("   --- folderToLookFor = '", folderToLookFor, "'");
 
       int totalObjects = totalObjectInDir(_scsiId, folderToCheck);
       for (i=0;i<totalObjects;i++)
