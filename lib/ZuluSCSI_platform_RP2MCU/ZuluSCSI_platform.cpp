@@ -1268,8 +1268,6 @@ uint8_t platform_get_buttons()
 #elif defined(GPIO_I2C_SDA)
 
     static uint32_t debounce;
-    
-    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
     if (!g_controlBoardEnabled) // use legacy button pressing stuff
     {
         // SDA = button 1, SCL = button 2

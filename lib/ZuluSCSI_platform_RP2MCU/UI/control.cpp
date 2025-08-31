@@ -524,7 +524,7 @@ void patchDevice(uint8_t target_idx)
                 char key[5] = "IMG0";
                 key[3] = '0' + j;
 
-                int ret = ini_gets(section, key, "", filename, MAX_PATH_LEN, CONFIGFILE);
+                ini_gets(section, key, "", filename, MAX_PATH_LEN, CONFIGFILE);
                 if (filename[0] == '\0')
                 {
                     break;

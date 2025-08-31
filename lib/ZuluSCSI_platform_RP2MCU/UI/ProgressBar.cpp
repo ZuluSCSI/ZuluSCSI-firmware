@@ -35,11 +35,6 @@ bool ProgressBar::SetPercent(float percentage)
 void ProgressBar::Display()
 {
     graph->setTextColor(1);
-
-    auto dispBox = bounds.MakeCentered(toDispSize);
-  //  graph->setCursor(dispBox.topLeft.x, dispBox.topLeft.y);
-  //  graph->print(to_display);
-
     graph->drawRect(bounds.topLeft.x, bounds.topLeft.y, bounds.size.width, bounds.size.height, 1);
 
     float scale = _percent / 100.0;

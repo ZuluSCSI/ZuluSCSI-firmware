@@ -54,6 +54,9 @@ Screen *GetScreen(SCREEN_TYPE type)
 {
     switch(type)
     {
+        case SCREEN_NONE:
+           return NULL;
+
         case SCREEN_SPLASH:
            return &_splashScreen;
             
@@ -92,7 +95,7 @@ Screen *GetScreen(SCREEN_TYPE type)
 
 void changeScreen(SCREEN_TYPE type, int index)
 {
-    if (type == NULL)
+    if (type == SCREEN_NONE)
     {
         g_activeScreen = NULL;
         return;
