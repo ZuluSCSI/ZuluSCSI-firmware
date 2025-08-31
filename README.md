@@ -93,7 +93,6 @@ Future
 - Remove glog or #define it
 - Create image file
 - Kiosk copy
-- Rom copy
 - Rom info (chip on splash)
 - use_prefix
 - Initiator Mode - Add Initiator Info screen, shows more details about cloned drive

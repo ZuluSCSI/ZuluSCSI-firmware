@@ -14,6 +14,7 @@
 #include "Screen.h"
 #include "MessageBox.h"
 #include "SplashScreen.h"
+#include "CopyScreen.h"
 
 #define TOTAL_CONTROL_BOARD_BUTTONS 3
 
@@ -89,6 +90,9 @@ int g_pcaAddr = 0x3F;
 
 bool g_controlBoardEnabled = false;
 bool g_firstInitDevices = true; // For the first lots of SetFolder during start up
+
+CopyData g_copyData;
+
 
 /// Helpers
 
@@ -774,9 +778,34 @@ extern "C" void controlLoop()
     }
 }
 
+/// Rom copy
+void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, uint32_t blockSize)
+{
+    g_copyData.TotalRetries = 0;
+    g_copyData.TotalErrors  = 0;
+
+    g_copyData.DeviceType = deviceType;
+    g_copyData.BlockCount = blockCount;
+    g_copyData.BlockSize = blockSize;
+
+    _copyScreen.setBannerText("Flashing ROM");
+    _copyScreen.setShowRetriesAndErrors(false);
+    changeScreen(SCREEN_COPY, deviceId);
+
+}
+void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) 
+{
+    g_copyData.BlockTime = blockTime;
+   g_copyData.BlocksCopied = blocksCopied;
+   g_copyData.BlocksInBatch = 1;
+   g_copyData.NeedsProcessing = true;
+
+   _copyScreen.tick();
+}
+
 /// Initiator
 INITIATOR_MODE g_initiatorMode = INITIATOR_SCANNING;
-InitiatorTransientData g_initiatorTransientData;
+bool g_initiatorMessageToProcess;
 
 void UIInitiatorScanning(uint8_t deviceId)
 {
@@ -785,15 +814,18 @@ void UIInitiatorScanning(uint8_t deviceId)
         return;
     }
 
-    g_initiatorTransientData.Type = INITIATOR_MSG_SCANNING;
+    g_initiatorMessageToProcess = true;
 
-    DeviceMap *deviceMap = &g_devices[g_initiatorTransientData.DeviceId];
+    DeviceMap *deviceMap = &g_devices[deviceId];
 
     if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_UNKNOWN)
     {
         deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_PROBING;
         deviceMap->TotalRetries = 0;
         deviceMap->TotalErrors  = 0;
+
+        g_copyData.TotalRetries = 0;
+        g_copyData.TotalErrors  = 0;
     }
 }
 
@@ -804,20 +836,26 @@ void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorC
         return;
     }
 
-    g_initiatorTransientData.Type = INITIATOR_MSG_READCAPOK;
+    g_initiatorMessageToProcess = true;
 
-    DeviceMap *deviceMap = &g_devices[g_initiatorTransientData.DeviceId];
+    DeviceMap *deviceMap = &g_devices[deviceId];
 
     deviceMap->DeviceType = deviceType;
     deviceMap->SectorCount = sectorCount;
     deviceMap->SectorSize = sectorSize;
+
+    g_copyData.DeviceType = deviceType;
+    g_copyData.BlockCount = sectorCount;
+    g_copyData.BlockSize = sectorSize;
 
     if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_UNKNOWN)
     {
         deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_CLONABLE;
     }
 
-    changeScreen(SCREEN_INITIATOR_DRIVE, deviceId);
+    _copyScreen.setBannerText("Cloning");
+    _copyScreen.setShowRetriesAndErrors(true);
+    changeScreen(SCREEN_COPY, deviceId);
 }
 
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) 
@@ -827,11 +865,10 @@ void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsC
         return;
     }
 
-    g_initiatorTransientData.Type = INITIATOR_MSG_PROGRESS;
-
-    g_initiatorTransientData.BlockTime = blockTime;
-    g_initiatorTransientData.SectorsCopied = sectorsCopied;
-    g_initiatorTransientData.SectorsInBatch = sectorInBatch;
+   g_copyData.BlockTime = blockTime;
+   g_copyData.BlocksCopied = sectorsCopied;
+   g_copyData.BlocksInBatch = sectorInBatch;
+   g_copyData.NeedsProcessing = true;
 }
 
 void UIInitiatorRetry(uint8_t deviceId) 
@@ -841,10 +878,11 @@ void UIInitiatorRetry(uint8_t deviceId)
         return;
     }
 
-    g_initiatorTransientData.Type = INITIATOR_MSG_RETRY;
+    g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
     deviceMap->TotalRetries++;
+    g_copyData.TotalRetries++;
 }
 
 void UIInitiatorSkippedSector(uint8_t deviceId) 
@@ -854,10 +892,11 @@ void UIInitiatorSkippedSector(uint8_t deviceId)
         return;
     }
 
-    g_initiatorTransientData.Type = INITIATOR_MSG_SKIPPED_SECTOR;
+    g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
     deviceMap->TotalErrors++;
+    g_copyData.TotalErrors++;
 }
 
 void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) 
@@ -867,7 +906,7 @@ void UIInitiatorTargetFilename(uint8_t deviceId, char *filename)
         return;
     }
 
-    g_initiatorTransientData.Type = INITIATOR_MSG_TARGET_FILENAME;
+    g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
     strcpy(deviceMap->Filename, filename);
@@ -880,7 +919,7 @@ void UIInitiatorFailedToTransfer(uint8_t deviceId)
         return;
     }
 
-    g_initiatorTransientData.Type = INITIATOR_MSG_FAILED_TO_TRANSFER;
+    g_initiatorMessageToProcess = true;
 }
 
 void UIInitiatorImagingComplete(uint8_t deviceId) 
@@ -890,7 +929,7 @@ void UIInitiatorImagingComplete(uint8_t deviceId)
         return;
     }
 
-    g_initiatorTransientData.Type = INITIATOR_MSG_IMAGING_COMPLETE;
+    g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
 

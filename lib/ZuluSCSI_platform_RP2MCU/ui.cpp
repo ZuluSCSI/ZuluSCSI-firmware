@@ -26,4 +26,7 @@ void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) {}
 void UIInitiatorFailedToTransfer(uint8_t deviceId) {}
 void UIInitiatorImagingComplete(uint8_t deviceId) {}
 
+void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, uint32_t blockSize) {}
+void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) {}
+
 #endif

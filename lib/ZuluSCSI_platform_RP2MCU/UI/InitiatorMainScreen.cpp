@@ -47,33 +47,9 @@ void InitiatorMainScreen::draw()
 
 void InitiatorMainScreen::tick()
 {
-  /*
-  switch(g_initiatorTransientData.Type)    
+  if (g_initiatorMessageToProcess)
   {
-      case INITIATOR_MSG_PROGRESS:
-      {
-          int speed_kbps = g_initiatorTransientData.SectorsInBatch * g_initiatorTransientData.SectorSize / g_initiatorTransientData.Elapsed;
-          
-          logmsg("*** Main Scren INITIATOR_MSG_PROGRESS SCSI read succeeded, sectors done: ",
-              (int)g_initiatorTransientData.SectorsCopied, " / ", (int)g_initiatorTransientData.SectorCount,
-              " speed ", speed_kbps, " kB/s - ", 
-              (int)(100 * (int64_t)g_initiatorTransientData.SectorsCopied / g_initiatorTransientData.SectorCount), "%");
-
-          int per = (int)(100 * (int64_t)g_initiatorTransientData.SectorsCopied / g_initiatorTransientData.SectorCount);
-          if (per != _prevPer)
-          {
-            _prevPer = per;
-            g_initiatorTransientData.Type = INITIATOR_MSG_NONE;
-            forceDraw();
-          }
-          break;
-      }
-  }
-  */
-
-  if (g_initiatorTransientData.Type != INITIATOR_MSG_NONE)
-  {
-    g_initiatorTransientData.Type = INITIATOR_MSG_NONE;
+    g_initiatorMessageToProcess = false;
     forceDraw();
   }
   

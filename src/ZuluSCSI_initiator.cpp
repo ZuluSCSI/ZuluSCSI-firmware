@@ -635,10 +635,7 @@ void scsiInitiatorMainLoop()
         {
             logmsg("Failed to transfer ", numtoread, " sectors starting at ", (int)g_initiator_state.sectors_done);
 
-            UIInitiatorFailedToTransfer(g_initiator_state.target_id);
-            // TODO g_initiatorTransientData.SectorsCopied = g_initiator_state.sectors_done;
-            //g_initiatorTransientData.SectorsInBatch = numtoread;
-            
+            UIInitiatorFailedToTransfer(g_initiator_state.target_id);          
 
             if (g_initiator_state.retrycount < g_initiator_state.max_retry_count)
             {

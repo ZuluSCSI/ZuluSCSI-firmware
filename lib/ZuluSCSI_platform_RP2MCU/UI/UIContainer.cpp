@@ -12,7 +12,7 @@
 #include "UI/BrowseScreenFlat.h"
 #include "UI/InfoScreen.h"
 #include "UI/MessageBox.h"
-#include "UI/InitiatorDriveScreen.h"
+#include "UI/CopyScreen.h"
 #include "UI/InitiatorMainScreen.h"
 #include "control.h"
 
@@ -28,7 +28,7 @@ BrowseScreen _browseScreen(g_display);
 BrowseTypeScreen _browseTypeScreen(g_display);
 BrowseScreenFlat _browseScreenFlat(g_display);
 MessageBox _messageBox(g_display);
-InitiatorDriveScreen _initiatorDriveScreen(g_display);
+CopyScreen _copyScreen(g_display);
 InitiatorMainScreen _initiatorMainScreen(g_display);
 
 // Call new card method on all screens
@@ -42,7 +42,7 @@ void sendSDCardStateChangedToScreens(bool cardIsPresent)
     _browseTypeScreen.sdCardStateChange(cardIsPresent);
     _browseScreenFlat.sdCardStateChange(cardIsPresent);
     _messageBox.sdCardStateChange(cardIsPresent);
-    _initiatorDriveScreen.sdCardStateChange(cardIsPresent);
+    _copyScreen.sdCardStateChange(cardIsPresent);
     _initiatorMainScreen.sdCardStateChange(cardIsPresent);
 }
 
@@ -78,8 +78,8 @@ Screen *GetScreen(SCREEN_TYPE type)
         case MESSAGE_BOX:
             return &_messageBox;
 
-        case SCREEN_INITIATOR_DRIVE:
-            return &_initiatorDriveScreen;
+        case SCREEN_COPY:
+            return &_copyScreen;
 
         case SCREEN_INITIATOR_MAIN:
             return &_initiatorMainScreen;
@@ -118,8 +118,8 @@ const char *GetScreenName(SCREEN_TYPE type)
         case MESSAGE_BOX:
             return "Message Box";
 
-        case SCREEN_INITIATOR_DRIVE:
-            return "Initiator Drive";
+        case SCREEN_COPY:
+            return "Copy";
 
         case SCREEN_INITIATOR_MAIN:
             return "Initiator Main";

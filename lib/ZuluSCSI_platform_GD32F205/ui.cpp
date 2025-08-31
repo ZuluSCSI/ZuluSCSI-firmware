@@ -15,7 +15,8 @@ char g_categoryCodeAndNames[8][10][32];
 char g_filenameToLoad[MAX_PATH_LEN];
 int g_pendingLoadComplete;
 
-InitiatorTransientData g_initiatorTransientData;
+bool g_initiatorMessageToProcess;
+CopyData g_copyData;
 
 void UIInitiatorScanning(uint8_t deviceId) {}
 void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorCount, uint32_t sectorSize) {}
@@ -25,3 +26,6 @@ void UIInitiatorSkippedSector(uint8_t deviceId) {}
 void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) {}
 void UIInitiatorFailedToTransfer(uint8_t deviceId) {}
 void UIInitiatorImagingComplete(uint8_t deviceId) {}
+
+void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, uint32_t blockSize) {}
+void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) {}

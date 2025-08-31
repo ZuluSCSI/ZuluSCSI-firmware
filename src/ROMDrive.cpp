@@ -29,6 +29,8 @@
 #include <strings.h>
 #include <string.h>
 
+#include "ui.h"
+
 extern "C" {
 #include <scsi.h>
 }
@@ -143,8 +145,13 @@ bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S
 
     // Program the drive contents
     uint32_t pages = (filesize + PLATFORM_ROMDRIVE_PAGE_SIZE - 1) / PLATFORM_ROMDRIVE_PAGE_SIZE;
+
+    UIRomCopyInit(scsi_id, type, pages, PLATFORM_ROMDRIVE_PAGE_SIZE);
+
     for (uint32_t i = 0; i < pages; i++)
     {
+        uint32_t time_start = millis();
+
         if (i % 2)
             LED_ON();
         else
@@ -157,7 +164,11 @@ bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S
             file.close();
             return false;
         }
+
+        UIRomCopyProgress(scsi_id, millis() - time_start, i);
     }
+
+    UIRomCopyProgress(scsi_id, 0, pages);
 
     LED_OFF();
 
