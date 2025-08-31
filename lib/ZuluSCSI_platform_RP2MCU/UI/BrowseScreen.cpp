@@ -281,16 +281,26 @@ int BrowseScreen::selectCurrentObject()
 
     if (index < _totalObjects) // Object from disc
     {
-        bool isDir;
-        u_int64_t size;
-        
-        if (!findObjectByIndex(_scsiId, _currentObjectPath, index, g_tmpFilename, (size_t)MAX_PATH_LEN, isDir, size))
-        {
-            // Error
-        }
-
+      bool isDir;
+      u_int64_t size;
+      
+      if (!findObjectByIndex(_scsiId, _currentObjectPath, index, g_tmpFilename, (size_t)MAX_PATH_LEN, isDir, size))
+      {
+          return 0;
+      }
+      else
+      {
         if (isDir)
         {
+            int newPathLen = strlen(_currentObjectPath) + strlen(g_tmpFilename) + 1;
+            if ( newPathLen > (MAX_PATH_LEN-1))
+            {
+                _messageBox.setReturnScreen(SCREEN_BROWSE);
+                _messageBox.setText("-- Warning --", "Filepath", "too long...");
+                changeScreen(MESSAGE_BOX, _scsiId);
+                return 0;
+            }
+
             // About to go into a dir, so save the position in the list at this level for when we return.
             _returnStack[_stackDepth++] = _currentObjectIndex;
   
@@ -306,6 +316,7 @@ int BrowseScreen::selectCurrentObject()
         {          
             // This is a file click. which doesn't nothing.   
         }
+      }
     }
     else
     {

@@ -1063,7 +1063,7 @@ static void led_pwm_breath_poll()
     }
 }
 
-#ifdef G_LOOGER
+#ifdef G_LOGGER
 
 bool firstLog = true;
 
@@ -1112,7 +1112,7 @@ extern "C" void WriteGLog(const char *str)
 // This function is called for every log message.
 void platform_log(const char *s)
 {
-#ifdef G_LOOGER
+#ifdef G_LOGGER
     WriteGLog(s);
 #endif
 
