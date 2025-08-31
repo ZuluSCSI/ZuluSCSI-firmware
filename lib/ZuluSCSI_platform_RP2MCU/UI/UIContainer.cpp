@@ -12,7 +12,6 @@
 #include "UI/BrowseScreenFlat.h"
 #include "UI/InfoScreen.h"
 #include "UI/MessageBox.h"
-#include "UI/AboutScreen.h"
 #include "UI/InitiatorDriveScreen.h"
 #include "UI/InitiatorMainScreen.h"
 #include "control.h"
@@ -29,7 +28,6 @@ BrowseScreen _browseScreen(g_display);
 BrowseTypeScreen _browseTypeScreen(g_display);
 BrowseScreenFlat _browseScreenFlat(g_display);
 MessageBox _messageBox(g_display);
-AboutScreen _aboutScreen(g_display);
 InitiatorDriveScreen _initiatorDriveScreen(g_display);
 InitiatorMainScreen _initiatorMainScreen(g_display);
 
@@ -44,7 +42,6 @@ void sendSDCardStateChangedToScreens(bool cardIsPresent)
     _browseTypeScreen.sdCardStateChange(cardIsPresent);
     _browseScreenFlat.sdCardStateChange(cardIsPresent);
     _messageBox.sdCardStateChange(cardIsPresent);
-    _aboutScreen.sdCardStateChange(cardIsPresent);
     _initiatorDriveScreen.sdCardStateChange(cardIsPresent);
     _initiatorMainScreen.sdCardStateChange(cardIsPresent);
 }
@@ -80,9 +77,6 @@ Screen *GetScreen(SCREEN_TYPE type)
             
         case MESSAGE_BOX:
             return &_messageBox;
-            
-        case SCREEN_ABOUT:
-            return &_aboutScreen;
 
         case SCREEN_INITIATOR_DRIVE:
             return &_initiatorDriveScreen;
@@ -93,8 +87,50 @@ Screen *GetScreen(SCREEN_TYPE type)
     return NULL;
 }
 
+const char *GetScreenName(SCREEN_TYPE type)
+{
+    switch(type)
+    {
+        case SCREEN_NONE:
+           return "None";
+
+        case SCREEN_SPLASH:
+           return "Splash";
+            
+        case SCREEN_MAIN:
+            return "Main";
+            
+        case SCREEN_NOSD:
+            return "NoSD";
+            
+        case SCREEN_INFO:
+            return "Info";
+            
+        case SCREEN_BROWSE_TYPE:
+            return "Browse Type";
+
+        case SCREEN_BROWSE:
+            return "Browse";
+            
+        case SCREEN_BROWSE_FLAT:
+            return "Browse Flat";
+            
+        case MESSAGE_BOX:
+            return "Message Box";
+
+        case SCREEN_INITIATOR_DRIVE:
+            return "Initiator Drive";
+
+        case SCREEN_INITIATOR_MAIN:
+            return "Initiator Main";
+    }
+    return "Unknown";
+}
+
 void changeScreen(SCREEN_TYPE type, int index)
 {
+    // logmsg("*** Change screen: ", GetScreenName(type));
+
     if (type == SCREEN_NONE)
     {
         g_activeScreen = NULL;

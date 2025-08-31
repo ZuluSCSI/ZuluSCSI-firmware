@@ -72,7 +72,6 @@ SECTIONS
        *libZuluSCSI_platform_RP2MCU.a:Screen.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:scrolling_text.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:SplashScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:AboutScreen.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:UIContainer.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:BrowseScreenFlat.cpp.o*(*)
        *libZuluSCSI_platform_RP2MCU.a:BrowseTypeScreen.cpp.o*(*)

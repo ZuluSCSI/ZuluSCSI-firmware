@@ -13,8 +13,15 @@ public:
 
     SCREEN_TYPE screenType() { return SCREEN_SPLASH; }
 
+    void draw();
     void init(int index);
     void showMode(SYSTEM_MODE mode);
+
+    void shortUserPress();
+
+    void setBannerText(const char *text);
+private:
+    char _bannerText[32];
 };
 
 extern SplashScreen _splashScreen;

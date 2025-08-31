@@ -92,6 +92,21 @@ bool g_firstInitDevices = true; // For the first lots of SetFolder during start 
 
 /// Helpers
 
+const char *systemModeToString(SYSTEM_MODE systemMode)
+{
+    switch (systemMode)
+    {
+        case SYSTEM_NORMAL:
+            return "Normal Mode";
+
+        case SYSTEM_INITIATOR:
+            return "Initiator Mode";
+
+        default:
+            return "Unknown";
+    }
+}
+
 const char* typeToShortString(S2S_CFG_TYPE type) 
 {
     switch (type)
@@ -334,7 +349,9 @@ void initUI()
 {
     if (initControlBoardHardware())
     {
+        _splashScreen.setBannerText(g_log_short_firmwareversion);
         changeScreen(SCREEN_SPLASH, -1);
+        delay(1500);
     }
 
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
@@ -687,8 +704,9 @@ extern "C" void controlInit()
         g_longPressed[i] = false;
     }
     
-    _splashScreen.showMode(g_systemMode);
-
+    _splashScreen.setBannerText(systemModeToString(g_systemMode));
+    changeScreen(SCREEN_SPLASH, -1);
+    
     switch(g_systemMode)
     {
         default:

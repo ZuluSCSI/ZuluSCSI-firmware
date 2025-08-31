@@ -1149,6 +1149,11 @@ extern "C" void zuluscsi_setup(void)
   is_initiator = platform_is_initiator_mode_enabled();
 #endif
 
+  if (g_controlBoardEnabled)
+  {
+    controlInit();
+  }
+
   zuluscsi_setup_sd_card(!is_initiator);
 
 #ifdef PLATFORM_MASS_STORAGE
@@ -1172,10 +1177,7 @@ extern "C" void zuluscsi_setup(void)
   }
 #endif
 
-  if (g_controlBoardEnabled)
-  {
-    controlInit();
-  }
+  
 
   logmsg("Clock set to: ", (int) platform_sys_clock_in_hz(), "Hz");
   logmsg("Initialization complete!");

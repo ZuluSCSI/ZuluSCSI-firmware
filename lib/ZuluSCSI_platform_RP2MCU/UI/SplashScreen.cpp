@@ -7,50 +7,30 @@
 
 #include "control_global.h"
 
-void SplashScreen::showMode(SYSTEM_MODE mode)
+void SplashScreen::shortUserPress()
 {
-  _display.clearDisplay();
-
-  _display.setTextSize(1);             
-  _display.setTextColor(SSD1306_WHITE);        
-  
-  // _display.drawBitmap(0,0, icon_zuluscsi, 128,64, WHITE);
-  _display.drawBitmap(6,0, icon_zuluscsi, 115,56, WHITE);
-  
-  _display.setTextSize(1);    
-
-  switch(mode)
-  {
-    case SYSTEM_NORMAL:
-      printCenteredText("Normal Mode", 56);
-      break;
-
-    case SYSTEM_INITIATOR:
-      printCenteredText("Initiator Mode", 56);
-      break;
-  }
-
-  _display.display();
-#ifdef SCREEN_SHOTS
-    saveScreenShot();
-#endif 
-
-  delay(1000);
+  changeScreen(SCREEN_MAIN, -1);
 }
 
+void SplashScreen::draw()
+{
+  _display.setTextSize(1);             
+  _display.setTextColor(SSD1306_WHITE);        
+  _display.drawBitmap(6,0, icon_zuluscsi, 115,56, WHITE);
+  printCenteredText(_bannerText, 56);
+}
+
+void SplashScreen::setBannerText(const char *text)
+{
+  strcpy(_bannerText, text);
+}
 void SplashScreen::init(int index)
 {
   Screen::init(index);
 
   _display.clearDisplay();
 
-  _display.setTextSize(1);             
-  _display.setTextColor(SSD1306_WHITE);        
-  
-  // _display.drawBitmap(0,0, icon_zuluscsi, 128,64, WHITE);
-  _display.drawBitmap(6,0, icon_zuluscsi, 115,56, WHITE);
-
-  printCenteredText(g_log_short_firmwareversion, 56);
+  draw();
   
   _display.display();
 

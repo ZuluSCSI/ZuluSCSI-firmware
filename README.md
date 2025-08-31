@@ -24,7 +24,6 @@ Todo:
 *  Initiator Mode - not sure if scans starts again after imaging
 *  Initiator Mode - it used to scan all the drives, then image, why not anymore
 *  Initiator Mode - Not returning to Screen if SD remove and reinserted (stays on No SD Card screen)
-*  Initiator Mode - Add Initiator Info screen, shows more details about cloned drive
 *  Initiator Mode - Deal with error cases
 
 Limitations
@@ -47,7 +46,6 @@ Improvements
 *  g_pendingLoadComplete is ugly. Think of a neater way
 *  rewrite loadImage code as it's a bit hacky
 *  If no scrolling, don't update. put checks back/in
-*  Merge Splash and About
 
 Things for others to do?
 -------------------------
@@ -102,7 +100,7 @@ Future
 - Rom copy
 - Rom info (chip on splash)
 - use_prefix
-
+- Initiator Mode - Add Initiator Info screen, shows more details about cloned drive
 
 Documentation
 =============

@@ -3,6 +3,7 @@
 #include "ui.h"
 #include "MainScreen.h"
 #include "MessageBox.h"
+#include "SplashScreen.h"
 #include "ZuluSCSI_log.h"
 
 #include "cache.h"
@@ -130,10 +131,10 @@ void MainScreen::longUserPress()
 {
 #ifdef SCREEN_SHOTS
   Screen::longUserPress(); //TODO just for screensjjot
-  // changeScreen(SCREEN_SPLASH, -1);
 #endif
 
-  changeScreen(SCREEN_ABOUT, -1);
+  _splashScreen.setBannerText(g_log_short_firmwareversion);
+  changeScreen(SCREEN_SPLASH, -1);
 }
 
 void MainScreen::longEjectPress()
