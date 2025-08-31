@@ -1144,15 +1144,15 @@ extern "C" void zuluscsi_setup(void)
   platform_init();
   platform_late_init();
 
-  bool is_initiator = false;
-#ifdef PLATFORM_HAS_INITIATOR_MODE
-  is_initiator = platform_is_initiator_mode_enabled();
-#endif
-
   if (g_controlBoardEnabled)
   {
     controlInit();
   }
+
+  bool is_initiator = false;
+#ifdef PLATFORM_HAS_INITIATOR_MODE
+  is_initiator = platform_is_initiator_mode_enabled();
+#endif
 
   zuluscsi_setup_sd_card(!is_initiator);
 

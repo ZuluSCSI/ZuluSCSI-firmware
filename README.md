@@ -57,10 +57,6 @@ Design choices to question
 *  If an error occurs loading an image (eg path too long) it returns you to the current loaded image after the message box
 - Should it stay on the failed load?
 
-Cleanup:
---------
-*  Clean up warnings
-
 Bug (not Zulu's fault)
 ----------------------
 *  !! After swapping SDs, the Zulu freeze for a while and Akai locks up. Restart fixes it. 

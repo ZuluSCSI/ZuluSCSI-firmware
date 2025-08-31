@@ -10,7 +10,7 @@
 #include <sys/endian.h>
 
 #define TOTAL_DEVICES 8
-#define MAX_PATH_LEN 64
+#define MAX_PATH_LEN 260
 #define MAX_CATEGORIES 10
 #define MAX_CATEGORY_NAME_LEN 32
 

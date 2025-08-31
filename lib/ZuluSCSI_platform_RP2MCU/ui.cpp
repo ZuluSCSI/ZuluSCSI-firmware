@@ -10,6 +10,7 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path) {}
 extern "C" void setCurrentFolder(int target_idx, const char *path) {}
 extern "C" void initUI() {}
 
+bool g_controlBoardEnabled = false;
 int g_pendingLoadIndex;
 int g_totalCategories[8];
 char g_categoryCodeAndNames[8][10][32];

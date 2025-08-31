@@ -268,6 +268,28 @@ void MainScreen::drawSCSIItem(int x, int y, int index)
   if (map->Active)
   {
     const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)map->DeviceType, true);
+    _display.drawBitmap(x+33, y, deviceIcon, 12,12, WHITE);
+
+    if (map->IsRom)
+    {
+      _display.drawBitmap(x+48, y, icon_rom, 12,12, WHITE);  
+    }
+    else if (map->IsRaw)
+    {
+      _display.drawBitmap(x+48, y, icon_raw, 12,12, WHITE);  
+    }
+
+    _display.drawBitmap(x+18, y, icon_ledon, 12,12, WHITE);
+    
+  }
+  else
+  {
+    _display.drawBitmap(x+18, y, icon_ledoff, 12,12, WHITE);
+  }
+
+  /*if (map->Active)
+  {
+    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)map->DeviceType, true);
     _display.drawBitmap(x+43, y, deviceIcon, 12,12, WHITE);
 
     _display.drawBitmap(x+25, y, icon_ledon, 12,12, WHITE);
@@ -276,7 +298,7 @@ void MainScreen::drawSCSIItem(int x, int y, int index)
   else
   {
     _display.drawBitmap(x+25, y, icon_ledoff, 12,12, WHITE);
-  }
+  } */
 }
 
 #endif

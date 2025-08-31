@@ -529,25 +529,28 @@ void patchDevice(uint8_t target_idx)
         else
         {
             map.BrowseMethod = BROWSE_METHOD_IMGX;
-            map.IsBrowsable = true;
-
-            // MaxImgX
-            char filename[MAX_PATH_LEN];
-            char section[6] = "SCSI0";
-            section[4] = scsiEncodeID(target_idx);
-            int j;
-            for (j=0;j<=IMAGE_INDEX_MAX;j++)
+            if (!map.IsRom && !map.IsRaw)
             {
-                char key[5] = "IMG0";
-                key[3] = '0' + j;
-
-                ini_gets(section, key, "", filename, MAX_PATH_LEN, CONFIGFILE);
-                if (filename[0] == '\0')
+                map.IsBrowsable = true;
+            
+                // MaxImgX
+                char filename[MAX_PATH_LEN];
+                char section[6] = "SCSI0";
+                section[4] = scsiEncodeID(target_idx);
+                int j;
+                for (j=0;j<=IMAGE_INDEX_MAX;j++)
                 {
-                    break;
+                    char key[5] = "IMG0";
+                    key[3] = '0' + j;
+
+                    ini_gets(section, key, "", filename, MAX_PATH_LEN, CONFIGFILE);
+                    if (filename[0] == '\0')
+                    {
+                        break;
+                    }
                 }
+                map.MaxImgX = j;
             }
-            map.MaxImgX = j;
         }
     }
     else
@@ -706,6 +709,8 @@ extern "C" void controlInit()
     
     _splashScreen.setBannerText(systemModeToString(g_systemMode));
     changeScreen(SCREEN_SPLASH, -1);
+
+    // printDevices();
     
     switch(g_systemMode)
     {
