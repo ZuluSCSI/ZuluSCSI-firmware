@@ -35,27 +35,6 @@ extern int g_pendingLoadComplete;
 extern char g_filenameToLoad[MAX_PATH_LEN];
 
 // Initiator
-
-struct CopyData
-{
-    // Copies from the device
-    uint8_t DeviceType;
-    int BlockSize;
-    uint64_t BlockCount;
-
-    // Info
-    int TotalRetries; 
-    int TotalErrors;
-
-    // Transient
-    uint32_t BlockTime;
-    uint32_t BlocksCopied;
-    int BlocksInBatch;
-
-    bool NeedsProcessing;
-};
-
-extern CopyData g_copyData;
 extern bool g_initiatorMessageToProcess;
 
 extern void UIInitiatorScanning(uint8_t deviceId);

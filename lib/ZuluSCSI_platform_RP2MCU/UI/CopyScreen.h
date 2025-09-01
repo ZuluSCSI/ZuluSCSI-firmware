@@ -45,6 +45,22 @@ public:
     void setInfoText(const char *text);
     void setShowRetriesAndErrors(bool showRetriesAndErrors);
     void setShowInfoText(bool showInfoText);
+
+    uint8_t DeviceType;
+    int BlockSize;
+    uint64_t BlockCount;
+
+    // Info
+    int TotalRetries; 
+    int TotalErrors;
+
+    // Transient
+    uint32_t BlockTime;
+    uint32_t BlocksCopied;
+    int BlocksInBatch;
+
+    bool NeedsProcessing;
+    
 private:
     char _bannerText[32];
     char _infoText[MAX_PATH_LEN];

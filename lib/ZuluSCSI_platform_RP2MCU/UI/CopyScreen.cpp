@@ -32,9 +32,9 @@ void CopyScreen::draw()
   _display.print(_bannerText);
   
   _iconX = 92;
-  if (g_copyData.DeviceType != 255)
+  if (DeviceType != 255)
   {
-    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)g_copyData.DeviceType, true);
+    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)DeviceType, true);
     
     drawIconFromRight(deviceIcon, 6, 0);
   }
@@ -66,10 +66,10 @@ void CopyScreen::draw()
   {
     _display.setCursor(0,32);       
     _display.print("Ret: ");           
-    _display.print(g_copyData.TotalRetries);           
+    _display.print(TotalRetries);           
     _display.setCursor(68,32);       
     _display.print("Err: ");           
-    _display.print(g_copyData.TotalErrors);      
+    _display.print(TotalErrors);      
   }
   if (_showInfoText)
   {
@@ -86,7 +86,7 @@ void CopyScreen::draw()
   _display.print("E:");           
   _display.print(_buff);           
 
-  float tot = ((float)ela / (float)g_copyData.BlocksCopied) * (float)g_copyData.BlockCount;
+  float tot = ((float)ela / (float)BlocksCopied) * (float)BlockCount;
   float rem = tot - ela;
   makeTimeStr((int)rem, _buff);
 
@@ -96,9 +96,9 @@ void CopyScreen::draw()
 
     // Speed
   _display.setCursor(0,45);
-  if (g_copyData.BlockTime > 0)
+  if (BlockTime > 0)
   {
-    int speed_kbps = g_copyData.BlocksInBatch * g_copyData.BlockSize / g_copyData.BlockTime;
+    int speed_kbps = BlocksInBatch * BlockSize / BlockTime;
     speed_kbps *= 1000; // BlockTime is in ms
 
     makeImageSizeStr(speed_kbps , _buff);
@@ -112,11 +112,11 @@ void CopyScreen::draw()
   
  
   // Remaiing
-  //u_int64_t copied = (g_copyData.SectorsCopied * g_copyData.BlockSize);
-  //u_int64_t total = (g_copyData.SectorCount * g_copyData.BlockSize);
+  //u_int64_t copied = (SectorsCopied * BlockSize);
+  //u_int64_t total = (SectorCount * BlockSize);
   //u_int64_t remaining = total - copied;
 
-  u_int64_t remaining = (g_copyData.BlockCount - g_copyData.BlocksCopied) * g_copyData.BlockSize;
+  u_int64_t remaining = (BlockCount - BlocksCopied) * BlockSize;
  
   _display.setCursor(0,56);       
   makeImageSizeStr(remaining , _buff);
@@ -138,16 +138,16 @@ void CopyScreen::draw()
 
 void CopyScreen::tick()
 {
-  if (g_copyData.NeedsProcessing)
+  if (NeedsProcessing)
   {
-    g_copyData.NeedsProcessing = false;
+    NeedsProcessing = false;
   
     if (_firstBlock)
     {
       _firstBlock = false;
       _startTime = millis();
     }
-    _per = (float)(100.0 * ((float)g_copyData.BlocksCopied / (float)g_copyData.BlockCount));
+    _per = (float)(100.0 * ((float)BlocksCopied / (float)BlockCount));
     if (_progressBar.SetPercent(_per))
     {
       forceDraw();

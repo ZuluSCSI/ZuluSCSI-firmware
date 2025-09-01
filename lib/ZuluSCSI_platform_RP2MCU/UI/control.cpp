@@ -91,8 +91,6 @@ int g_pcaAddr = 0x3F;
 bool g_controlBoardEnabled = false;
 bool g_firstInitDevices = true; // For the first lots of SetFolder during start up
 
-CopyData g_copyData;
-
 
 /// Helpers
 
@@ -786,12 +784,12 @@ void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename)
         return;
     }
 
-    g_copyData.TotalRetries = 0;
-    g_copyData.TotalErrors  = 0;
+    _copyScreen.TotalRetries = 0;
+    _copyScreen.TotalErrors  = 0;
 
-    g_copyData.DeviceType = 255;
-    g_copyData.BlockCount = blockCount;
-    g_copyData.BlockSize = blockSize;
+    _copyScreen.DeviceType = 255;
+    _copyScreen.BlockCount = blockCount;
+    _copyScreen.BlockSize = blockSize;
 
     _copyScreen.setBannerText("Create Image");
     _copyScreen.setShowInfoText(true);
@@ -806,10 +804,10 @@ void UICreateProgress(uint32_t blockTime, uint32_t blockCopied)
     {
         return;
     }
-    g_copyData.BlockTime = blockTime;
-    g_copyData.BlocksCopied = blockCopied;
-    g_copyData.BlocksInBatch = 1;
-    g_copyData.NeedsProcessing = true;
+    _copyScreen.BlockTime = blockTime;
+    _copyScreen.BlocksCopied = blockCopied;
+    _copyScreen.BlocksInBatch = 1;
+    _copyScreen.NeedsProcessing = true;
 
    _copyScreen.tick();
 }
@@ -821,12 +819,12 @@ void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCo
     {
         return;
     }
-    g_copyData.TotalRetries = 0;
-    g_copyData.TotalErrors  = 0;
+    _copyScreen.TotalRetries = 0;
+    _copyScreen.TotalErrors  = 0;
 
-    g_copyData.DeviceType = 255;
-    g_copyData.BlockCount = blockCount;
-    g_copyData.BlockSize = blockSize;
+    _copyScreen.DeviceType = 255;
+    _copyScreen.BlockCount = blockCount;
+    _copyScreen.BlockSize = blockSize;
 
     char t[10];
     char banner[MAX_PATH_LEN];
@@ -853,10 +851,10 @@ void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
     {
         return;
     }
-    g_copyData.BlockTime = blockTime;
-    g_copyData.BlocksCopied = blockCopied;
-    g_copyData.BlocksInBatch = 1;
-    g_copyData.NeedsProcessing = true;
+    _copyScreen.BlockTime = blockTime;
+    _copyScreen.BlocksCopied = blockCopied;
+    _copyScreen.BlocksInBatch = 1;
+    _copyScreen.NeedsProcessing = true;
 
     _copyScreen.tick();
 }
@@ -868,12 +866,12 @@ void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, ui
     {
         return;
     }
-    g_copyData.TotalRetries = 0;
-    g_copyData.TotalErrors  = 0;
+    _copyScreen.TotalRetries = 0;
+    _copyScreen.TotalErrors  = 0;
 
-    g_copyData.DeviceType = deviceType;
-    g_copyData.BlockCount = blockCount;
-    g_copyData.BlockSize = blockSize;
+    _copyScreen.DeviceType = deviceType;
+    _copyScreen.BlockCount = blockCount;
+    _copyScreen.BlockSize = blockSize;
 
     _copyScreen.setBannerText("Flashing ROM");
     _copyScreen.setShowInfoText(false);
@@ -887,10 +885,10 @@ void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopi
     {
         return;
     }
-    g_copyData.BlockTime = blockTime;
-    g_copyData.BlocksCopied = blocksCopied;
-    g_copyData.BlocksInBatch = 1;
-    g_copyData.NeedsProcessing = true;
+    _copyScreen.BlockTime = blockTime;
+    _copyScreen.BlocksCopied = blocksCopied;
+    _copyScreen.BlocksInBatch = 1;
+    _copyScreen.NeedsProcessing = true;
 
     _copyScreen.tick();
 }
@@ -916,8 +914,8 @@ void UIInitiatorScanning(uint8_t deviceId)
         deviceMap->TotalRetries = 0;
         deviceMap->TotalErrors  = 0;
 
-        g_copyData.TotalRetries = 0;
-        g_copyData.TotalErrors  = 0;
+        _copyScreen.TotalRetries = 0;
+        _copyScreen.TotalErrors  = 0;
     }
 }
 
@@ -936,9 +934,9 @@ void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorC
     deviceMap->SectorCount = sectorCount;
     deviceMap->SectorSize = sectorSize;
 
-    g_copyData.DeviceType = deviceType;
-    g_copyData.BlockCount = sectorCount;
-    g_copyData.BlockSize = sectorSize;
+    _copyScreen.DeviceType = deviceType;
+    _copyScreen.BlockCount = sectorCount;
+    _copyScreen.BlockSize = sectorSize;
 
     if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_UNKNOWN)
     {
@@ -958,10 +956,10 @@ void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsC
         return;
     }
 
-   g_copyData.BlockTime = blockTime;
-   g_copyData.BlocksCopied = sectorsCopied;
-   g_copyData.BlocksInBatch = sectorInBatch;
-   g_copyData.NeedsProcessing = true;
+   _copyScreen.BlockTime = blockTime;
+   _copyScreen.BlocksCopied = sectorsCopied;
+   _copyScreen.BlocksInBatch = sectorInBatch;
+   _copyScreen.NeedsProcessing = true;
 }
 
 void UIInitiatorRetry(uint8_t deviceId) 
@@ -975,7 +973,7 @@ void UIInitiatorRetry(uint8_t deviceId)
 
     DeviceMap *deviceMap = &g_devices[deviceId];
     deviceMap->TotalRetries++;
-    g_copyData.TotalRetries++;
+    _copyScreen.TotalRetries++;
 }
 
 void UIInitiatorSkippedSector(uint8_t deviceId) 
@@ -989,7 +987,7 @@ void UIInitiatorSkippedSector(uint8_t deviceId)
 
     DeviceMap *deviceMap = &g_devices[deviceId];
     deviceMap->TotalErrors++;
-    g_copyData.TotalErrors++;
+    _copyScreen.TotalErrors++;
 }
 
 void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) 
