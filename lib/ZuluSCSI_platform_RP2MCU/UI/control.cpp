@@ -778,9 +778,96 @@ extern "C" void controlLoop()
     }
 }
 
+// Create 
+void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename) 
+{
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
+    g_copyData.TotalRetries = 0;
+    g_copyData.TotalErrors  = 0;
+
+    g_copyData.DeviceType = 255;
+    g_copyData.BlockCount = blockCount;
+    g_copyData.BlockSize = blockSize;
+
+    _copyScreen.setBannerText("Create Image");
+    _copyScreen.setShowInfoText(true);
+    _copyScreen.setInfoText(filename);
+    _copyScreen.setShowRetriesAndErrors(false);
+    changeScreen(SCREEN_COPY, 255);
+}
+
+void UICreateProgress(uint32_t blockTime, uint32_t blockCopied) 
+{
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+    g_copyData.BlockTime = blockTime;
+    g_copyData.BlocksCopied = blockCopied;
+    g_copyData.BlocksInBatch = 1;
+    g_copyData.NeedsProcessing = true;
+
+   _copyScreen.tick();
+}
+
+/// Kiosk
+void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCount, uint32_t blockSize, const char *filename)
+{
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+    g_copyData.TotalRetries = 0;
+    g_copyData.TotalErrors  = 0;
+
+    g_copyData.DeviceType = 255;
+    g_copyData.BlockCount = blockCount;
+    g_copyData.BlockSize = blockSize;
+
+    char t[10];
+    char banner[MAX_PATH_LEN];
+    
+    strcpy(banner, "Kiosk Restore (");
+    itoa(deviceIndex, t, 10);
+    strcat(banner, t);
+    strcat(banner, "/");
+    itoa(totalDevices, t, 10);
+    strcat(banner, t);
+    strcat(banner, ")");
+
+    _copyScreen.setBannerText(banner);
+    
+    _copyScreen.setShowInfoText(true);
+    _copyScreen.setInfoText(filename);
+    _copyScreen.setShowRetriesAndErrors(false);
+    changeScreen(SCREEN_COPY, 255);
+}
+
+void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
+{
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+    g_copyData.BlockTime = blockTime;
+    g_copyData.BlocksCopied = blockCopied;
+    g_copyData.BlocksInBatch = 1;
+    g_copyData.NeedsProcessing = true;
+
+    _copyScreen.tick();
+}
+
 /// Rom copy
 void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, uint32_t blockSize)
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
     g_copyData.TotalRetries = 0;
     g_copyData.TotalErrors  = 0;
 
@@ -789,18 +876,23 @@ void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, ui
     g_copyData.BlockSize = blockSize;
 
     _copyScreen.setBannerText("Flashing ROM");
+    _copyScreen.setShowInfoText(false);
     _copyScreen.setShowRetriesAndErrors(false);
     changeScreen(SCREEN_COPY, deviceId);
 
 }
 void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) 
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
     g_copyData.BlockTime = blockTime;
-   g_copyData.BlocksCopied = blocksCopied;
-   g_copyData.BlocksInBatch = 1;
-   g_copyData.NeedsProcessing = true;
+    g_copyData.BlocksCopied = blocksCopied;
+    g_copyData.BlocksInBatch = 1;
+    g_copyData.NeedsProcessing = true;
 
-   _copyScreen.tick();
+    _copyScreen.tick();
 }
 
 /// Initiator
@@ -855,6 +947,7 @@ void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorC
 
     _copyScreen.setBannerText("Cloning");
     _copyScreen.setShowRetriesAndErrors(true);
+    _copyScreen.setShowInfoText(false);
     changeScreen(SCREEN_COPY, deviceId);
 }
 

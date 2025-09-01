@@ -29,4 +29,10 @@ void UIInitiatorImagingComplete(uint8_t deviceId) {}
 void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, uint32_t blockSize) {}
 void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) {}
 
+void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCount, uint32_t blockSize, const char *filename) {}
+void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied) {}
+
+void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename) {}
+void UICreateProgress(uint32_t blockTime, uint32_t blockCopied) {}
+
 #endif

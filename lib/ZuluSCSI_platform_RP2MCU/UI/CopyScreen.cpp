@@ -32,17 +32,26 @@ void CopyScreen::draw()
   _display.print(_bannerText);
   
   _iconX = 92;
+  if (g_copyData.DeviceType != 255)
+  {
+    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)g_copyData.DeviceType, true);
+    
+    drawIconFromRight(deviceIcon, 6, 0);
+  }
 
-  const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)g_copyData.DeviceType, true);
-  drawIconFromRight(deviceIcon, 6, 0);
+  if (_scsiId != 255)
+  {
+    _display.setTextSize(2);             
+    _display.setCursor(112,0);       
+    _display.print(_scsiId);           
+    _display.setTextSize(1);      
+  }
+  else
+  {
+    _iconX += 16;
+  }
 
   _display.drawLine(0,10,_iconX+11,10, 1);
-
-  _display.setTextSize(2);             
-  _display.setCursor(112,0);       
-  _display.print(_scsiId);           
-  _display.setTextSize(1);      
-
 
   // Progress and Percentage
   _progressBar.Display();
@@ -61,6 +70,11 @@ void CopyScreen::draw()
     _display.setCursor(68,32);       
     _display.print("Err: ");           
     _display.print(g_copyData.TotalErrors);      
+  }
+  if (_showInfoText)
+  {
+    _display.setCursor(0,32);       
+    _display.print(_infoText);           
   }
 
   // TIME
@@ -81,17 +95,21 @@ void CopyScreen::draw()
   _display.print(_buff);  
 
     // Speed
+  _display.setCursor(0,45);
   if (g_copyData.BlockTime > 0)
   {
     int speed_kbps = g_copyData.BlocksInBatch * g_copyData.BlockSize / g_copyData.BlockTime;
     speed_kbps *= 1000; // BlockTime is in ms
 
     makeImageSizeStr(speed_kbps , _buff);
-    
-    _display.setCursor(0,45);       
     _display.print(_buff);           
-    _display.print("Bs");
   }
+  else
+  {
+    _display.print("  0");
+  }
+  _display.print("Bs");
+  
  
   // Remaiing
   //u_int64_t copied = (g_copyData.SectorsCopied * g_copyData.BlockSize);
@@ -149,6 +167,16 @@ void CopyScreen::tick()
 void CopyScreen::setBannerText(const char *text)
 {
   strcpy(_bannerText, text);
+}
+
+void CopyScreen::setInfoText(const char *text)
+{
+  strcpy(_infoText, text);
+}
+
+void CopyScreen::setShowInfoText(bool showInfoText)
+{
+  _showInfoText = showInfoText;
 }
 
 void CopyScreen::shortUserPress()

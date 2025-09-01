@@ -42,11 +42,14 @@ public:
     void shortUserPress();
 
     void setBannerText(const char *text);
+    void setInfoText(const char *text);
     void setShowRetriesAndErrors(bool showRetriesAndErrors);
+    void setShowInfoText(bool showInfoText);
 private:
     char _bannerText[32];
+    char _infoText[MAX_PATH_LEN];
     char _buff[32];
-
+    bool _showInfoText;
     bool _showRetriesAndErrors;
 
     int _scsiId;
