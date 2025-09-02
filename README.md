@@ -1,221 +1,5 @@
-ZuluSCSI Control
-================
-
-Test cards
-----------
-A
-=
-0 - Folder - files in folder root - categories - extra long path > 64
-1 - Folder - files in folder root - long files name - 2 level folder
-2 - Folder - no files in folder root - 2 in folder
-3 - IMGx - 3 files - 0->2
-4 - Fixed ISO - root CD4_Hyper Dance.iso
-5 - Fixed HDA - root HD5_akai.hda
-
-Existing Bugs
--------------
-Bugs:
------
-*  Rotary skips clicks sometimes (flat view I think)
-
-Todo:
------
-
-*  Initiator Mode - not sure if scans starts again after imaging
-*  Initiator Mode - it used to scan all the drives, then image, why not anymore
-*  Initiator Mode - Not returning to Screen if SD remove and reinserted (stays on No SD Card screen)
-*  Initiator Mode - Deal with error cases
-
-Limitations
------------
-* Max path length for an file is currently 64 characters
--  Work out why MAX_PATH_LEN of 260 wasn't working but 64 does. Also means path len > 64 will probably crash at the moment
-  -  Change 17->18 caused the issue. Instabiliy and not loading. Seemed fixed with the above. Work out why
-
-It takes 30+ms to do a screen update which is in the main loop
-*  WORKAROUND: Don't be on a screen with scroller (i.e. browsers or info) whilst using drive
-*  IDEA: can I multithread for the UI? Need to know how on the RP
-*  IDEA: hardware accelerator for the SSD1306 (another rp2040)
-
-Improvements
-------------
-*  If no nested folders disable 'normal' (use HasDirs) and just use flat
-*  Make message box dyanmically resize
-*  Merge Browse and BrowseFlat Screens
-*  Find a way to determine when image is fully loaded after a loadImage to close the MessageBox then
-*  g_pendingLoadComplete is ugly. Think of a neater way
-*  rewrite loadImage code as it's a bit hacky
-*  If no scrolling, don't update. put checks back/in
-
-Things for others to do?
--------------------------
-*  what should "program_flash_allocation" be changed to?
-*  free more space in bootloader (specically for rp2040)
-
-Design choices to question
---------------------------
-*  If an error occurs loading an image (eg path too long) it returns you to the current loaded image after the message box
-- Should it stay on the failed load?
-
-Bug (not Zulu's fault)
-----------------------
-*  !! After swapping SDs, the Zulu freeze for a while and Akai locks up. Restart fixes it. 
-
-Current Build state:
---------------------
-* OK (disabled)				ZuluSCSIv1_0 , ZuluSCSIv1_0_mini, ZuluSCSIv1_1_plus, ZuluSCSI_RP2040_Audio, ZuluSCSI_Pico, ZuluSCSI_Pico_DaynaPORT, ZuluSCSI_Pico_2, ZuluSCSI_Pico_2_DaynaPORT
-* Bootloader overflow		ZuluSCSI_RP2040
-* OK (working and tested)	ZuluSCSI_Blaster
-
-Icons converted with:
----------------------
-https://javl.github.io/image2cpp/
-
-NEW
-====
-Initiator Todo:
----------------
-- show Initiator ID 
-
-To test
-=======
-- bin/cue with with browser
-- Images in DirN folders
-- The different device types
-- Can you browse nin removables?
-
-Future
-======
-- Extra page in info to show 
-  - vendor etc
-- -drive geometry
-- Settings page to snow settings
-- Remove glog or #define it
-- Create image file
-- Kiosk copy
-- Rom info (chip on splash)
-- use_prefix
-- Initiator Mode - Add Initiator Info screen, shows more details about cloned drive
-
-Documentation
-=============
-It will boot and show the splash screen, then loads the main screen.
-
-Main Screen
------------
-Here the rotary encoder lets you select a SCSI device (only ones that the board has recognised can be selected)
-Buttons:
-Short Rotary -> Info screen
-Short Eject -> Browser (with folders)
-Long Eject -> Browser Type
-Long User -> About screen
-
-Info Screen
------------
-Short User -> Return to Main
-
-Browser Type
-------------
-This let you pick the browser type (use the rotary):
-All (Folders) - Browser with folders
-All (flat) - Flattens all the files into a single list
-Cat: Category Name - Flattens the files and only shows ones which match the category
-
-Short Rotary -> Just to Appropraite Browser Screen
-Short User -> Return to main menu
-
-Browser (Folder)
-----------------
-Rotary -> Pick a file
-Short User -> Return to main menu
-Short Eject -> Load Image
-Long Press Eject -> Back a folder
-
-Browser (Flat)
-----------------
-Rotary -> Pick a file
-Short User -> Return to main menu
-Short Eject -> Load Image
-
-No SD Screen
-------------
-Short User -> Return to main menu
-
-To Set up categories
---------------------
-Assume this is in the config:
-
-    [SCSI0]
-    Product = "CD1"
-    Type=2 # CDROM drive
-    ImgDir = "ISO1"
-    Cat0 = "dDrums"
-    Cat1 = "aAction"
-    Cat2 = "cCats"
-    Cat3 = "bBallons"
-    Cat4 = "mMany"
-    Cat5 = "sSome"
-    Cat6 = "xX-Ray"
-
-This means SCSI ID 0 has 7 categories: Drums, Action, etc. The single character at the start is the character to put in the filename.
-So if you had the following file:
-
-    Test {dac}.iso
-
-Then it would be in categories: Drums, Action and Cats
-
-
-My Current test config:
------------------------
-
-    [SCSI]
-    Debug = 0
-    ReinsertCDOnInquiry = 1
-    EnableControlBoard = 1
-    EnableControlBoardCache = 1
-    ReverseControlBoardRotary = 0
-
-    [SCSI0]
-    Product = "CD1"
-    Type=2 # CDROM drive
-    ImgDir = "ISO1"
-    Cat0 = "dDrums"
-    Cat1 = "aAction"
-    Cat2 = "cCats"
-    Cat3 = "bBallons"
-    Cat4 = "mMany"
-    Cat5 = "sSome"
-    Cat6 = "xX-Ray"
-
-    [SCSI1]
-    Product = "CD2"
-    Type=2 # CDROM drive
-    ImgDir = "ISO2"
-
-    [SCSI2]
-    Product = "CD3"
-    Type=2 # CDROM drive
-    ImgDir = "ISO3"
-
-    [SCSI3]
-    Product = "CD4"
-    Type=2 # CDROM drive
-    IMG0 = D1.iso
-    IMG1 = D2.iso
-    IMG2 = D3.iso
-
-    [SCSI4]
-    Product = "CD5"
-    Type=2 # CDROM drive
-
-    [SCSI5]
-    Type = 0
-
-=======================================================================================================================================
-
-
 ZuluSCSI™ Firmware
-==================
+=================
 
 Hard Drive & ISO image files
 ---------------------
@@ -407,6 +191,259 @@ Restoration takes a significant amount of time, so it should be used with small 
 
 Rebooting the machine will not restore the files - you need to physically power-cycle the ZuluSCSI device.
 
+Zulu Control Board
+-------------------
+The Zulu Control Board is a small device which plugs into the I2C connector of the ZuluSCSI Blaster (Currently, that is the only supported board)
+It features an OLED screen, a rotary encoder, and two push buttons.
+This allows you to both control and visualise various aspects of the ZuluSCSI.
+Note: There are no error screens. Error must still be inspected in the log files.
+
+On power up a splash screen will display the current firmware version:
+
+![Splash](https://github.com/user-attachments/assets/64c03fdc-526e-461a-85c0-4f947cb282be)
+
+Then, depending on whether the initiator switch is on or off, it will go into either normal mode or initiator mode.
+
+Start Up
+---------
+There are various settings which can cause the ZuluSCSI to do tasks during startup. These are all long running and have dedicated progress screens.
+
+If there is .rom image on the SD, then the image will be copied into ROM, this is what the progress screen will look like:
+
+![ROM Copy](https://github.com/user-attachments/assets/aba70c61-24f7-4f89-a631-846f25ac0c7f)
+
+If there is a special create file on the SD, then an image will be created, this is what the progress screen will look like:
+
+![create](https://github.com/user-attachments/assets/d03cc8ca-aa89-4202-8680-a06d40a7b38e)
+
+If there are images with the .ori extension for Kiosk mode, then they will be copied, this is what the progress screen will look like:
+
+![kiosk](https://github.com/user-attachments/assets/d6c376d6-95dd-4f4b-9774-5c654451dd07)
+
+All these screen share common elements (from top to bottom)
+- Title showing the operation, for Kiosk mode it shows how many files are to be copied
+- The progress bar with % complete
+- The filename being copied
+- The rate of copy and the elapsed time
+- The remaining bytes and remaining time
+
+Once these have finished, the normal boot sequence will resume
+
+Normal Mode
+-----------
+Assuming the initiator switch is off, then the splash screen will display the mode:
+
+![SplashNormal](https://github.com/user-attachments/assets/90b22cfe-5f58-4377-80ba-a0667d50badf)
+
+and assuming caching is turned on, for a few seconds, the caching building screen will appear
+
+![Build Cache](https://github.com/user-attachments/assets/494e6e3b-dc4d-4628-b167-fbb48e2b5e3f)
+
+Once that is complete, the main screen will be displayed
+
+Main Screen
+----------
+
+![Main](https://github.com/user-attachments/assets/6ce8386b-d671-43f4-95f7-f2fe6e81e5d0)
+
+This screen displays an overview of the SCSI devices.
+Each item displays:
+- The SCSI ID
+- An empty circle represents nothing is loaded, a solid circle represents a loaded image
+- If an image is loaded, the type is displayed as an icon. e.g. ID 0 is a CD, IDs 1-3 and 5 are Hard Drives, and ID 6 is a Magneto-optical Disk in the picture above
+- If the image is stored in the ZuluSCSI's ROM, then chip icon is displayed (ID 6 in the picture above)
+
+Turning the `rotary wheel` will select a loaded image (a little arrow will be visible next to the image, in the above picture it's on ID 0)
+
+If a device is not browsable and the `eject` button is pressed trying to browse it, the following pop up will be displayed:
+
+![WarningBrowseNotSupported](https://github.com/user-attachments/assets/14f0b488-361d-4831-b198-d0b588976bd0)
+
+
+Info Screen
+-----------
+Clicking the `rotary button` will display info about the selected device:
+
+![Info](https://github.com/user-attachments/assets/4d8be5b4-379b-4d89-b3a5-928d1a66fbd3)
+
+The following is on the screen:
+- The type of the image is displayed as an icon, and the SCSI ID is in the top right.
+- The file name (it scrolls if it's too long for the display)
+- the folder name (it scrolls if it's too long for the display)
+- Whether it can be browsed
+- The filesize of the image
+
+Pressing the `User` button will return to the Main Screen
+
+Browser Type Screen
+-------------------
+Depending on the way images are set up for browsing, some styles can have different browse modes.
+If images are set up in config, either as:
+- An ImgDir path is specified
+- Use the standard folder naming of Device Type / SCSI ID. e.g.  CD0 for cd images for SCSI ID 0
+  
+Then the browsing type can be selected. To do this, long-press the `eject` button
+
+Other image browsing modes, i.e. `IMGx` and naming file with the Device Type / SCSI ID prefix e.g. CD0 cannot access the browser type screen or use categories
+
+![BrowserType](https://github.com/user-attachments/assets/c6b3a59b-1f2b-42bd-8a88-9944fe68d10e)
+
+The first option is for the Folder-based Browser, which displays files and folders just like the structure on the SD card
+
+The second option is for the Flat Browser, which flattens all files into a single list, removing the need to go into and out of folders (folder names are still displayed)
+
+The remaining options are also Flat browser-based, but perform filtering based on the category (see category section)
+
+Clicking either the `eject` or `rotary button` will go to the browser screen
+
+Clicking `user` will return to the main menu
+
+NOTE: The selected browse type is remembered for each SCSI ID. So, going to the browsing screen directly from the main menu will use the last selected browser type
+
+Folder-based Browser
+--------------------
+![Browser](https://github.com/user-attachments/assets/ccb18e68-2d56-43b0-b8bf-5856cebf2f13)
+
+The following is on the screen:
+- The type of the image is displayed as an icon, and the SCSI ID is in the top right.
+- The file/folder name (it scrolls if it's too long for the display)
+- the folder name (it scrolls if it's too long for the display)
+- The filesize of the image
+- The type (File or Folder) and which item number and total it is in this folder
+
+Turning the `rotary dial` with select files and folders, the last item in the list for nested folders is a folder called ".." which, if selected, goes back a folder
+
+Clicking either the `eject` or `rotary button` on a folder will go to the browser screen
+
+Clicking either the `eject`  on a file will load the image
+
+Clicking `user` or long-pressing the `rotary button` in a nested folder will go back a directory, in the root folder, it will return to the main menu
+
+During image loading, the following pop up will be displayed:
+
+![Loading Image](https://github.com/user-attachments/assets/d2fd792e-b54c-49b3-a0ed-d327937597e5)
+
+Flat Browser
+------------
+The flat browser is very similar to the Folder Browser, but without:
+- any of the folders displayed as selectable items
+- the .. folder
+
+Turning the `rotary dial` with select files
+
+Clicking  `eject` will load the image
+
+Clicking `user` will return to the main menu
+  
+Removing the SD Card
+------------------
+If the SD card is removed, the following screen will be displayed
+
+![NoSD](https://github.com/user-attachments/assets/96e44d18-69e1-4565-bba3-79ed85e43108)
+
+Re-inserting an SD Card will return to the main menu
+
+Categories
+----------
+Categories provide a way of filtering images, this can be useful for large image sets.
+There can be up to 10 categories per SCSI ID and are specifc to that SCSI ID.
+
+Assume that there are images for a sampler, and that they can be divided into various categories, eg. Drums, Synths, Vocals and Guitars.
+
+To set the categories, the following config should be added to the SCSI device (assume this is for SCSI ID 0 and the images will be in a folder called ISO1)
+
+    [SCSI0]
+    Type=2 # CDROM drive
+    ImgDir = "ISO1"
+    Cat0 = "dDrums"
+    Cat1 = "sSynths"
+    Cat2 = "vVocals"
+    Cat3 = "gGuitars"
+
+The 4 categories are defined, and the first letter of the name is the code which represents that category (i.e `Cat0`, has a code of 'd' and a name of 'Drums')
+
+Next, assume the following files are in the ISO1 folder:
+
+    Sample Disk {v}.iso
+    Drums 1 {d}.iso
+    Drums 2 {d}.iso
+    Licks {g}.iso
+    Various Samples {dsvg}.iso
+
+The letters in the {} brackets represent which categories each file belongs to. so:
+
+    Sample Disk {v}.iso - is in the vocal category
+    Drums 1 {d}.iso - is in the drums category
+    Various Samples {dsvg}.iso - is in all 4 categories
+
+So if you go to the Browser Type screen and select 'cat: drums', then the following 3 files would be browsable:
+
+    Drums 1 {d}.iso
+    Drums 2 {d}.iso
+    Various Samples {dsvg}.iso
+
+Controls Summary
+--------------
+Main Screen:
+- turning the `rotary dial` will select a SCSI device
+- click on `eject` - this loads the browser screen
+- click on the `rotary button` - this goes to the info screen
+- long click on `User` - this will display the splash screen (same as on boot)
+- long click on `eject` - this loads the browser type screen
+
+Info Screen:
+- click on `user` - returns to main screen
+
+Browse Type Screen:
+- click on `user` - returns to main screen
+- click on `eject` or `rotary button` - go to the selected Browser screen
+  
+Browser Screen (Folder Mode):
+- turning the `rotary dial` will select a folder or file
+- click on `user` in a nested folder will go back a directory, in the root folder it will return to the main menu
+- click on `eject` or `rotary button` on the folder to navigate into that folder
+- click on `eject` on a file to load the image 
+  
+Browser Screen (Flat  Mode):
+- turning the `rotary dial` will select a file
+- click on `user` - returns to main screen
+- click on `eject` on a file to load the image 
+
+No SD screen:
+- This screen has no controls.
+
+Initiator Mode
+--------------
+Assuming the initiator switch is on, then the splash screen will display the mode:
+
+![InitiatorSplash](https://github.com/user-attachments/assets/146e65af-9647-4f2d-ab39-c448f4e05191)
+
+and will the go to the scanning screen:
+
+![scanning](https://github.com/user-attachments/assets/15f79ace-d881-479d-8023-f11c0efac276)
+
+Question marks are SCSI IDs which have no been checked yet
+
+The empty circles are SCSI IDs which have been scanned
+
+Once a drive is detected it will automatically go to the cloning screen:
+
+![cloning](https://github.com/user-attachments/assets/b98c6b09-5f04-4126-a87b-37a148bdbbca)
+
+Note: this is similar to the other copy screens witht he exception that the file name is not displayed, but the total number of retires and errors (skipped sector) is displayed.
+
+Once the cloning is complete, it will return to the scanning screen and display the cloned drive:
+
+![resultaftercloning](https://github.com/user-attachments/assets/58ae95b1-6ad6-458e-8d0c-d90e0a23204d)
+
+NOTE: There are no controls in Initiator mode, it is a viewing-only mode
+
+Control Board Config
+--------------------
+- `EnableControlBoardCache` - Enables caching of images. This will greatly improve performance when there are many images. set this to 1 to enable. There is no reason not to have this on
+- `ReverseControlBoardRotary` - Some encoders work in the opposite direction, if you experience that, set this to 1
+
+
 Project structure
 -----------------
 - **src/ZuluSCSI.cpp**: Main portable SCSI implementation.
@@ -450,4 +487,3 @@ Major changes from BlueSCSI and SCSI2SD include:
 * Removal of Arduino core dependency, as it was not currently available for GD32F205.
 * Buffered log functions.
 * Simultaneous transfer between SD card and SCSI for improved performance.
-
