@@ -200,20 +200,36 @@ void buildCache()
         }
 
         DeviceMap *map = &g_devices[i];
-        if (map->IsBrowsable)
+
+        switch(map->BrowseMethod)
         {
-            strcpy(g_tmpFilepath, ".cache/cache0_.dat");
-            g_tmpFilepath[12] = (char)(i+48);
-            g_fileHandle = appendFile(g_tmpFilepath);
+            case BROWSE_METHOD_NOT_BROWSABLE:
+                break;
 
-            bool hasDirs = false;
-            scanFilesRecursiveInDir(i, map->RootFolder, hasDirs, fileCallback); 
+            case BROWSE_METHOD_IMDDIR:
+            {
+                strcpy(g_tmpFilepath, ".cache/cache0_.dat");
+                g_tmpFilepath[12] = (char)(i+48);
+                g_fileHandle = appendFile(g_tmpFilepath);
 
-            g_fileHandle.close();
-            
-            deviceMap->HasDirs = hasDirs;
-            
-            deviceMap->TotalFlatFiles = g_maxCount+1;
+                bool hasDirs = false;
+                scanFilesRecursiveInDir(i, map->RootFolder, hasDirs, fileCallback); 
+
+                g_fileHandle.close();
+                
+                deviceMap->HasDirs = hasDirs;
+                
+                deviceMap->TotalFlatFiles = g_maxCount+1;
+                break;
+            }
+            case BROWSE_METHOD_IMGX:
+                // No caching needed
+                break;
+
+            case BROWSE_METHOD_USE_PREFIX:
+                // Assumption: file will be in the root folder (Dir and Dir(0..9) appear broken)
+                // TODO - not implemented yet but is it needed? would seem like a low number of images for this style?
+                break;
         }
     }
 }

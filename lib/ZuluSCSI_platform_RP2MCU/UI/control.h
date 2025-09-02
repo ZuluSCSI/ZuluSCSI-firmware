@@ -36,7 +36,7 @@ struct DeviceMap
 {
     // Set during path checking phase
     bool Active;
-    bool UserFolder;
+    bool UserFolder; // Not used. True is an "ImgDir' folder defined, false if a named folder found e.g. 'CD0' but no "ImgDir'
     char RootFolder[MAX_PATH_LEN];
 
     // Set during patching
@@ -48,7 +48,6 @@ struct DeviceMap
 
 
     // Computed
-    bool IsBrowsable;  // to be browsable it must be removeable & have a user folder. TODO : can I get rid of this as there is now BrowseMethod?
     BROWSE_METHOD BrowseMethod;
 
     int MaxImgX;
@@ -64,7 +63,7 @@ struct DeviceMap
 
     // Used by both Normal and Initiator
     char Filename[MAX_PATH_LEN]; 
-    uint8_t DeviceType;
+    S2S_CFG_TYPE DeviceType;
 
     // Initiator
     // Reuse: uint8_t DeviceType;

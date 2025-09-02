@@ -92,38 +92,29 @@ void MainScreen::shortEjectPress()
 
   DeviceMap *map = &g_devices[_selectedDevice];
 
-  if (!map->IsBrowsable)
+  switch(map->BrowseMethod)
   {
-    _messageBox.setReturnScreen(SCREEN_MAIN);
-    _messageBox.setText("-- Warning --", "Browsing not", "Supported...");
-    changeScreen(MESSAGE_BOX, _selectedDevice);
-  }
-  else
-  { 
-    switch(map->BrowseMethod)
-    {
-      case BROWSE_METHOD_IMDDIR:
-        if (_deviceMap->BrowseScreenType == 0)
-        {
-            changeScreen(SCREEN_BROWSE, _selectedDevice);
-        }
-        else
-        {
-            changeScreen(SCREEN_BROWSE_FLAT, _selectedDevice);
-        }
-        break;
-	    case BROWSE_METHOD_IMGX:
-        changeScreen(SCREEN_BROWSE_FLAT, _selectedDevice);
-        break;
+    case BROWSE_METHOD_IMDDIR:
+      if (_deviceMap->BrowseScreenType == 0)
+      {
+          changeScreen(SCREEN_BROWSE, _selectedDevice);
+      }
+      else
+      {
+          changeScreen(SCREEN_BROWSE_FLAT, _selectedDevice);
+      }
+      break;
+    case BROWSE_METHOD_IMGX:
+    case BROWSE_METHOD_USE_PREFIX:
+      changeScreen(SCREEN_BROWSE_FLAT, _selectedDevice);
+      break;
 
-      case BROWSE_METHOD_USE_PREFIX:
-      case BROWSE_METHOD_NOT_BROWSABLE:
-        _messageBox.setReturnScreen(SCREEN_MAIN);
-        _messageBox.setText("-- Warning --", "Browsing not", "Supported...");
-        changeScreen(MESSAGE_BOX, _selectedDevice);
-        break;
-    }
     
+    case BROWSE_METHOD_NOT_BROWSABLE:
+      _messageBox.setReturnScreen(SCREEN_MAIN);
+      _messageBox.setText("-- Warning --", "Browsing not", "Supported...");
+      changeScreen(MESSAGE_BOX, _selectedDevice);
+      break;
   }
 }
 
@@ -146,42 +137,39 @@ void MainScreen::longEjectPress()
 
   DeviceMap *map = &g_devices[_selectedDevice];
 
-  if (!map->IsBrowsable)
+
+  switch(map->BrowseMethod)
   {
-    _messageBox.setReturnScreen(SCREEN_MAIN);
-    _messageBox.setText("-- Warning --", "Browsing not", "Supported...");
-    changeScreen(MESSAGE_BOX, _selectedDevice);
-  }
-  else
-  { 
-    switch(map->BrowseMethod)
-    {
-      case BROWSE_METHOD_IMDDIR:
-        if ((doesDeviceHaveAnyCategoryFiles(_selectedDevice) == 0 && !_deviceMap->HasDirs) && g_cacheActive)
-        {
-          _messageBox.setReturnScreen(SCREEN_MAIN);
-          _messageBox.setText("-- Warning --", "No folders or", "categories...");
-          changeScreen(MESSAGE_BOX, _selectedDevice);
-        }
-        else
-        {
-          changeScreen(SCREEN_BROWSE_TYPE, _selectedDevice); 
-        }
-        break;
-
-      case BROWSE_METHOD_IMGX:
+    case BROWSE_METHOD_IMDDIR:
+      if ((doesDeviceHaveAnyCategoryFiles(_selectedDevice) == 0 && !_deviceMap->HasDirs) && g_cacheActive)
+      {
         _messageBox.setReturnScreen(SCREEN_MAIN);
-        _messageBox.setText("-- Warning --", "No options", "for IMGx style");
+        _messageBox.setText("-- Warning --", "No folders or", "categories...");
         changeScreen(MESSAGE_BOX, _selectedDevice);
-        break;
+      }
+      else
+      {
+        changeScreen(SCREEN_BROWSE_TYPE, _selectedDevice); 
+      }
+      break;
 
-      case BROWSE_METHOD_USE_PREFIX:
-      case BROWSE_METHOD_NOT_BROWSABLE:
-        _messageBox.setReturnScreen(SCREEN_MAIN);
-        _messageBox.setText("-- Warning --", "Browsing not", "Supported...");
-        changeScreen(MESSAGE_BOX, _selectedDevice);
-        break;
-    }
+    case BROWSE_METHOD_IMGX:
+      _messageBox.setReturnScreen(SCREEN_MAIN);
+      _messageBox.setText("-- Warning --", "No options", "for IMGx style");
+      changeScreen(MESSAGE_BOX, _selectedDevice);
+      break;
+
+    case BROWSE_METHOD_USE_PREFIX:
+      _messageBox.setReturnScreen(SCREEN_MAIN);
+      _messageBox.setText("-- Warning --", "No options", "for prefix style");
+      changeScreen(MESSAGE_BOX, _selectedDevice);
+      break;
+
+    case BROWSE_METHOD_NOT_BROWSABLE:
+      _messageBox.setReturnScreen(SCREEN_MAIN);
+      _messageBox.setText("-- Warning --", "Browsing not", "Supported...");
+      changeScreen(MESSAGE_BOX, _selectedDevice);
+      break;
   }
 }
 
@@ -267,7 +255,7 @@ void MainScreen::drawSCSIItem(int x, int y, int index)
 
   if (map->Active)
   {
-    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)map->DeviceType, true);
+    const uint8_t *deviceIcon = getIconForType(map->DeviceType, true);
     _display.drawBitmap(x+33, y, deviceIcon, 12,12, WHITE);
 
     if (map->IsRom)

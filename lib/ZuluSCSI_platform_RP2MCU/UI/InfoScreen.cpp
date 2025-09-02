@@ -32,7 +32,7 @@ void InfoScreen::draw()
   DeviceMap &map = g_devices[_scsiId];
 
   
-  const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)map.DeviceType, true);
+  const uint8_t *deviceIcon = getIconForType(map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
 
     if (map.IsRaw)
@@ -60,7 +60,7 @@ void InfoScreen::draw()
   _display.setCursor(0,46);             
   _display.print(F("Browse: "));
   _display.setCursor(42,46);       
-  _display.print(map.IsBrowsable?"Yes":"No");      
+  _display.print((map.BrowseMethod != BROWSE_METHOD_NOT_BROWSABLE)?"Yes":"No");      
 
   _display.setCursor(0,56);             
   _display.print(F("Size: "));

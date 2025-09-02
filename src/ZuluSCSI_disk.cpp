@@ -2835,6 +2835,141 @@ extern "C" int totalObjectInDir(uint8_t id, const char *dirname)
     return totalObjectInDir(g_DiskImages[id], dirname);
 }
 
+// prefix stye
+bool startsWith(const char* str, const char* prefix) 
+{
+    // Loop until the prefix character is null or a mismatch is found
+    while (tolower(*prefix) && tolower(*str) == tolower(*prefix)) 
+    {
+        str++;
+        prefix++;
+    }
+    // If the prefix is fully matched (meaning it reached its null terminator)
+    return *prefix == '\0'; // or return *prefix == 0;
+}
+
+extern "C" int findPrefixObjectByIndex(const char* prefix, uint32_t index, char* buf, size_t buflen, u_int64_t &size)
+{
+    size = -1;
+
+    FsFile dir;
+    if (!dir.open("/"))
+    {
+        logmsg("Image directory '<root>' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '<root>', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '<root>' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    int counter = 0;
+
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '<root>' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) 
+        {
+            continue;
+        }
+
+        if (file.isDir())
+        {
+            continue;
+        }
+
+        if (!startsWith(buf, prefix))
+        {
+            continue;
+        }
+
+        if (counter == index)
+        {
+            size  = file.size();
+            return 1;
+        }
+        else
+        {
+            counter++;
+        }
+    }
+    return 0;
+}
+
+extern "C" int totalPrefixObjects(const char* prefix)
+{
+    char buf[MAX_PATH_LEN];
+    int total = 0;
+
+    FsFile dir;
+    
+    if (!dir.open("/"))
+    {
+        logmsg("Image directory '<root>' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '<root>', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '<root>' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '<root>' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) 
+        {
+            continue;
+        }
+
+        if (file.isDir())
+        {
+            continue;
+        }
+
+        if (!startsWith(buf, prefix))
+        {
+            continue;
+        }
+
+        total++;
+    }
+
+    return total;
+}
+
+
+// Recursive
+
 int totalFilesRecursiveInDir(image_config_t &img, const char* dirname)
 {
     char buf[MAX_PATH_LEN];

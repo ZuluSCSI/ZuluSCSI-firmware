@@ -359,7 +359,7 @@ void scsiInitiatorMainLoop()
                     " capacity ", (int)g_initiator_state.sectorcount,
                     " sectors x ", (int)g_initiator_state.sectorsize, " bytes");
 
-                UIInitiatorReadCapOk(g_initiator_state.target_id, g_initiator_state.device_type, g_initiator_state.sectorcount, g_initiator_state.sectorsize);
+                UIInitiatorReadCapOk(g_initiator_state.target_id, (S2S_CFG_TYPE)g_initiator_state.device_type, g_initiator_state.sectorcount, g_initiator_state.sectorsize);
                 
                 g_initiator_state.sectorcount_all = g_initiator_state.sectorcount;
 

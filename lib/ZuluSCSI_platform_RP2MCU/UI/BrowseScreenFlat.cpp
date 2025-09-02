@@ -76,6 +76,33 @@ void BrowseScreenFlat::initImgX(int index)
   }
 }
 
+void BrowseScreenFlat::initPrefix(int index)
+{
+  char pre[4];
+  strcpy(pre, typeToShortString(_deviceMap->DeviceType));
+  pre[2] = '0' + index;
+  pre[3] = 0;
+
+  _totalObjects = totalPrefixObjects(pre);
+
+  // Find the index of the file 
+  int i;
+  u_int64_t size;
+
+  strcpy(_currentObjectPath, "");
+  
+  for (i=0;i<_totalObjects;i++)
+  {
+    getImgXByIndex(_scsiId, i, g_tmpFilename, MAX_PATH_LEN, size);
+
+    if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0)
+    {
+      _currentObjectIndex = i;
+      break;
+    }
+  }
+}
+
 void BrowseScreenFlat::init(int index)
 {
   Screen::init(index);
@@ -109,6 +136,8 @@ void BrowseScreenFlat::init(int index)
       break;
 
     case BROWSE_METHOD_USE_PREFIX:
+      initPrefix(index);
+
     case BROWSE_METHOD_NOT_BROWSABLE:
       break;
   }
@@ -249,6 +278,13 @@ void BrowseScreenFlat::getCurrentFilename()
       break;
 
     case BROWSE_METHOD_USE_PREFIX:
+    {
+      char pre[4];
+      strcpy(pre, typeToShortString(_deviceMap->DeviceType));
+      pre[2] = '0' + _scsiId;
+      pre[3] = 0;
+      findPrefixObjectByIndex(pre, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
+    }
     case BROWSE_METHOD_NOT_BROWSABLE:
       break;
   }

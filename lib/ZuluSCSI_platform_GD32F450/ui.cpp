@@ -18,7 +18,7 @@ int g_pendingLoadComplete;
 bool g_initiatorMessageToProcess;
 
 void UIInitiatorScanning(uint8_t deviceId) {}
-void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorCount, uint32_t sectorSize) {}
+void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) {}
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) {}
 void UIInitiatorRetry(uint8_t deviceId) {}
 void UIInitiatorSkippedSector(uint8_t deviceId) {}
@@ -26,7 +26,7 @@ void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) {}
 void UIInitiatorFailedToTransfer(uint8_t deviceId) {}
 void UIInitiatorImagingComplete(uint8_t deviceId) {}
 
-void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, uint32_t blockSize) {}
+void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize) {}
 void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) {}
 
 void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCount, uint32_t blockSize, const char *filename) {}

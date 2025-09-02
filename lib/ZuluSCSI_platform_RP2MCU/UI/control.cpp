@@ -123,22 +123,22 @@ const char* typeToShortString(S2S_CFG_TYPE type)
             return "MO";
 
         case S2S_CFG_FLOPPY_14MB:
-            return "Flop";
+            return "FD";
 
         case S2S_CFG_ZIP100:
-            return "Zip";
+            return "ZP";
 
         case S2S_CFG_REMOVABLE:
-            return "Rem";
+            return "RE";
 
         case S2S_CFG_SEQUENTIAL:
-            return "Seq";
+            return "TP";
 
         case S2S_CFG_NETWORK:
-            return "Net";
+            return "NE";
 
         case S2S_CFG_NOT_SET:
-            return "N/A";
+            return "NA";
 
   default:
         return "Unknown";
@@ -153,12 +153,14 @@ void printDevices()
     int i;
     for (i=0;i<TOTAL_DEVICES;i++)
     {
-        logmsg("  - ", i, "  Active: ", g_devices[i].Active, " user folder ",  g_devices[i].UserFolder,  "  path " , g_devices[i].RootFolder, "  CWD: ", g_devices[i].Path);
-        logmsg("    -  Type: ", typeToShortString((S2S_CFG_TYPE)g_devices[i].DeviceType)
+        logmsg("  - ", i, "  Active: ", g_devices[i].Active, " user folder ",  g_devices[i].UserFolder,  "  root " , g_devices[i].RootFolder, "  path: ", g_devices[i].Path);
+        logmsg("    -  Type: ", typeToShortString(g_devices[i].DeviceType)
             ," CurrentFilename ",  g_devices[i].Filename
             ,"  Size  " , g_devices[i].Size
             ,"  IsRemovable " , g_devices[i].IsRemovable,
              "  IsRaw " , g_devices[i].IsRaw);
+            //" image_directory = ", g_devices[i].image_directory,
+            //" use_prefix = ", g_devices[i].use_prefix);
     }
 }
 
@@ -515,25 +517,28 @@ void patchDevice(uint8_t target_idx)
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(target_idx);
     if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
     {
-        map.DeviceType = cfg->deviceType;
+        map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;
         map.IsRemovable = isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType);
-       
-        if (img.image_directory)
+
+        if (!map.IsRom && !map.IsRaw)
         {
-            map.BrowseMethod = BROWSE_METHOD_IMDDIR;
-            map.IsBrowsable = map.IsRemovable && map.UserFolder;
-        }
-        else if (img.use_prefix)
-        {
-            map.BrowseMethod = BROWSE_METHOD_USE_PREFIX;
-            map.IsBrowsable = false;
-        }
-        else
-        {
-            map.BrowseMethod = BROWSE_METHOD_IMGX;
-            if (!map.IsRom && !map.IsRaw)
+            if (img.image_directory)
             {
-                map.IsBrowsable = true;
+                if (map.IsRemovable)
+                {
+                    map.BrowseMethod = BROWSE_METHOD_IMDDIR;
+                }
+            }
+            else if (img.use_prefix)
+            {
+                if (map.IsRemovable)
+                {
+                    map.BrowseMethod = BROWSE_METHOD_USE_PREFIX;
+                }
+            }
+            else
+            {
+                map.BrowseMethod = BROWSE_METHOD_IMGX;
             
                 // MaxImgX
                 char filename[MAX_PATH_LEN];
@@ -554,12 +559,15 @@ void patchDevice(uint8_t target_idx)
                 map.MaxImgX = j;
             }
         }
+        else
+        {
+            map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
+        }
     }
     else
     {
         map.DeviceType = S2S_CFG_NOT_SET;
         map.IsRemovable = false;
-        map.IsBrowsable = false;
         map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
     }
 
@@ -860,7 +868,7 @@ void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
 }
 
 /// Rom copy
-void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, uint32_t blockSize)
+void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize)
 {
     if (!g_controlBoardEnabled)
     {
@@ -919,7 +927,7 @@ void UIInitiatorScanning(uint8_t deviceId)
     }
 }
 
-void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorCount, uint32_t sectorSize) 
+void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) 
 {
     if (!g_controlBoardEnabled)
     {

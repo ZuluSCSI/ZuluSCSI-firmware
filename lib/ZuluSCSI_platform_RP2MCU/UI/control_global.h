@@ -20,6 +20,9 @@ extern "C" int scanFilesRecursiveInDir(uint8_t id, const char *dirname, bool &ha
 extern "C" bool getFirstFile(uint8_t id, const char *dirname, char *file);
 extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size);
 
+extern "C" int totalPrefixObjects(const char* prefix);
+extern "C" int findPrefixObjectByIndex(const char* prefix, uint32_t index, char* buf, size_t buflen, u_int64_t &size);
+
 // new in ZuluSCSI_log.h
 extern const char *g_log_short_firmwareversion;
 

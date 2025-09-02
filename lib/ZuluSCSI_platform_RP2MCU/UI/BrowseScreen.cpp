@@ -135,7 +135,7 @@ void BrowseScreen::draw()
   
   DeviceMap &map = g_devices[_scsiId];
 
-  const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)map.DeviceType, true);
+  const uint8_t *deviceIcon = getIconForType(map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
 
   _display.drawLine(0,10,_iconX+11,10, 1);

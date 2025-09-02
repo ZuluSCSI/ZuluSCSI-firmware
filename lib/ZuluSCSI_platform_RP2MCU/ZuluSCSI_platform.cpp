@@ -1251,44 +1251,46 @@ void platform_reset_mcu(uint32_t reset_in_ms)
 }
 
 
-// This method is polled
 uint8_t platform_get_buttons()
 {
-    uint8_t buttons = 0;
-    static uint8_t buttons_debounced = 0;
-
-#if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-    // pulled to VCC via resistor, sinking when pressed
-    if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
-#elif defined(GPIO_EJECT_BTN)
-    // EJECT_BTN = 1, SDA = button 2, SCL = button 4
-    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
-    if (!gpio_get(GPIO_I2C_SDA))   buttons |= 2;
-    if (!gpio_get(GPIO_I2C_SCL))   buttons |= 4;
-#elif defined(GPIO_I2C_SDA)
-
-    static uint32_t debounce;
     if (!g_controlBoardEnabled) // use legacy button pressing stuff
     {
+        uint8_t buttons = 0;
+
+    #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+        // pulled to VCC via resistor, sinking when pressed
+        if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+    #elif defined(GPIO_EJECT_BTN)
+        // EJECT_BTN = 1, SDA = button 2, SCL = button 4
+        if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
+        if (!gpio_get(GPIO_I2C_SDA))   buttons |= 2;
+        if (!gpio_get(GPIO_I2C_SCL))   buttons |= 4;
+    #elif defined(GPIO_I2C_SDA)
         // SDA = button 1, SCL = button 2
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
         if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
+    #endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
         // Simple debouncing logic: handle button releases after 100 ms delay.
-        if (buttons != 0 && buttons_debounced == 0)
+        static uint32_t debounce;
+        static uint8_t buttons_debounced = 0;
+
+        if (buttons != 0)
         {
             buttons_debounced = buttons;
             debounce = millis();
         }
-        else if ((uint32_t)(millis() - debounce) > 10 && buttons_debounced != 0)
+        else if ((uint32_t)(millis() - debounce) > 100)
         {
             buttons_debounced = 0;
         }
-    }
-   
-#endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
-    return buttons_debounced;
+        return buttons_debounced;
+    }
+    else
+    {
+        return 0;
+    }
 }
 
 bool platform_has_phy_eject_button()

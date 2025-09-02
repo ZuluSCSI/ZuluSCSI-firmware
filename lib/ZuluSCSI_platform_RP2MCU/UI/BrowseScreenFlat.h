@@ -42,6 +42,7 @@ private:
     // 
     void initImgDir(int index);
     void initImgX(int index);
+    void initPrefix(int index);
 
     // Backend
     void getCurrentFilename();

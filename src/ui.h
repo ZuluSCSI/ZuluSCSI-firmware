@@ -8,9 +8,11 @@
 // #define SCREEN_SHOTS
 
 #include <sys/endian.h>
+#include "scsi2sd.h" 
+#include "ZuluSCSI_config.h" 
 
 #define TOTAL_DEVICES 8
-#define MAX_PATH_LEN 260
+#define MAX_PATH_LEN MAX_FILE_PATH
 #define MAX_CATEGORIES 10
 #define MAX_CATEGORY_NAME_LEN 32
 
@@ -38,7 +40,7 @@ extern char g_filenameToLoad[MAX_PATH_LEN];
 extern bool g_initiatorMessageToProcess;
 
 extern void UIInitiatorScanning(uint8_t deviceId);
-extern void UIInitiatorReadCapOk(uint8_t deviceId, uint8_t deviceType, uint64_t sectorCount, uint32_t sectorSize);
+extern void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize);
 extern void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch);
 extern void UIInitiatorRetry(uint8_t deviceId);
 extern void UIInitiatorSkippedSector(uint8_t deviceId);
@@ -46,7 +48,7 @@ extern void UIInitiatorTargetFilename(uint8_t deviceId, char *filename);
 extern void UIInitiatorFailedToTransfer(uint8_t deviceId);
 extern void UIInitiatorImagingComplete(uint8_t deviceId);
 
-extern void UIRomCopyInit(uint8_t deviceId, uint8_t deviceType, uint64_t blockCount, uint32_t blockSize);
+extern void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize);
 extern void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blockCopied);
 
 extern void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCount, uint32_t blockSize, const char *filename);

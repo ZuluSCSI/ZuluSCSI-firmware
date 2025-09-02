@@ -88,7 +88,7 @@ void InitiatorMainScreen::drawSCSIItem(int x, int y, int index)
 
   if (showType)
   {
-    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)map->DeviceType, true);
+    const uint8_t *deviceIcon = getIconForType(map->DeviceType, true);
     _display.drawBitmap(x+43, y, deviceIcon, 12,12, WHITE);
   }
 }
