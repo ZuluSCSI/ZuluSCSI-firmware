@@ -1,4 +1,4 @@
-#include "..\..\src\ui.h"
+#include "ui.h"
 
 extern "C" void scsiReinitComplete() {}
 extern "C" void sdCardStateChanged(bool absent) {}

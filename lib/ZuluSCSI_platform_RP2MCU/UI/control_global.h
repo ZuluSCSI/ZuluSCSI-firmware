@@ -3,7 +3,7 @@
 #ifndef CONTROL_GLOBAL_H
 #define CONTROL_GLOBAL_H
 
-#include "..\..\..\src\ui.h"
+#include "ui.h"
 #include "ZuluSCSI_disk.h"
 
 // new in ZuluSCSI_disk.h
