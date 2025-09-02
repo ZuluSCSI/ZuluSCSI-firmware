@@ -880,7 +880,7 @@ void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
 }
 
 /// Rom copy
-void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize)
+void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize, const char *filename)
 {
     if (!g_controlBoardEnabled)
     {
@@ -894,7 +894,8 @@ void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCoun
     _copyScreen.BlockSize = blockSize;
 
     _copyScreen.setBannerText("Flashing ROM");
-    _copyScreen.setShowInfoText(false);
+     _copyScreen.setShowInfoText(true);
+    _copyScreen.setInfoText(&filename[1]);
     _copyScreen.setShowRetriesAndErrors(false);
     changeScreen(SCREEN_COPY, deviceId);
 

@@ -48,7 +48,7 @@ extern void UIInitiatorTargetFilename(uint8_t deviceId, char *filename);
 extern void UIInitiatorFailedToTransfer(uint8_t deviceId);
 extern void UIInitiatorImagingComplete(uint8_t deviceId);
 
-extern void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize);
+extern void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize, const char *filename);
 extern void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blockCopied);
 
 extern void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCount, uint32_t blockSize, const char *filename);

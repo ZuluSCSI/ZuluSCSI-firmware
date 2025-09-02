@@ -26,7 +26,7 @@ void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) {}
 void UIInitiatorFailedToTransfer(uint8_t deviceId) {}
 void UIInitiatorImagingComplete(uint8_t deviceId) {}
 
-void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize) {}
+void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize, const char *filename) {}
 void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) {}
 
 void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCount, uint32_t blockSize, const char *filename) {}

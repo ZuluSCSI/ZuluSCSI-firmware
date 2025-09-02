@@ -146,7 +146,7 @@ bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S
     // Program the drive contents
     uint32_t pages = (filesize + PLATFORM_ROMDRIVE_PAGE_SIZE - 1) / PLATFORM_ROMDRIVE_PAGE_SIZE;
 
-    UIRomCopyInit(scsi_id, type, pages, PLATFORM_ROMDRIVE_PAGE_SIZE);
+    UIRomCopyInit(scsi_id, type, pages, PLATFORM_ROMDRIVE_PAGE_SIZE, filename);
 
     for (uint32_t i = 0; i < pages; i++)
     {
