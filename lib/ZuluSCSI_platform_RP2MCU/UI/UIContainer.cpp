@@ -4,16 +4,16 @@
 
 #include "SystemMode.h"
 
-#include "UI/MainScreen.h"
-#include "UI/SplashScreen.h"
-#include "UI/NoSDScreen.h"
-#include "UI/BrowseTypeScreen.h"
-#include "UI/BrowseScreen.h"
-#include "UI/BrowseScreenFlat.h"
-#include "UI/InfoScreen.h"
-#include "UI/MessageBox.h"
-#include "UI/CopyScreen.h"
-#include "UI/InitiatorMainScreen.h"
+#include "MainScreen.h"
+#include "SplashScreen.h"
+#include "NoSDScreen.h"
+#include "BrowseTypeScreen.h"
+#include "BrowseScreen.h"
+#include "BrowseScreenFlat.h"
+#include "InfoScreen.h"
+#include "MessageBox.h"
+#include "CopyScreen.h"
+#include "InitiatorMainScreen.h"
 #include "control.h"
 
 extern Adafruit_SSD1306 g_display;

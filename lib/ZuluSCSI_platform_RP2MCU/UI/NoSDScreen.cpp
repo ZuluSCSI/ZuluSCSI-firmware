@@ -1,7 +1,7 @@
 #if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
 #include "ui.h"
-#include "NOSDScreen.h"
+#include "NoSDScreen.h"
 #include "ZuluSCSI_log.h"
 
 void NoSDScreen::draw()
