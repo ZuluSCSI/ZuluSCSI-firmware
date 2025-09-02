@@ -96,18 +96,14 @@ void CopyScreen::draw()
 
     // Speed
   _display.setCursor(0,45);
+  int speed_kbps = 0;
   if (BlockTime > 0)
   {
-    int speed_kbps = BlocksInBatch * BlockSize / BlockTime;
+    speed_kbps = BlocksInBatch * BlockSize / BlockTime;
     speed_kbps *= 1000; // BlockTime is in ms
-
-    makeImageSizeStr(speed_kbps , _buff);
-    _display.print(_buff);           
   }
-  else
-  {
-    _display.print("  0");
-  }
+  makeImageSizeStr(speed_kbps , _buff);
+  _display.print(_buff);           
   _display.print("Bs");
   
  
