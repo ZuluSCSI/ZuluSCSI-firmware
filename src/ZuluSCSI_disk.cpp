@@ -811,6 +811,7 @@ static void scsiDiskSetConfig(int target_idx)
 
     }
 
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
     g_totalCategories[target_idx] = 0;
     
     int i;
@@ -827,7 +828,8 @@ static void scsiDiskSetConfig(int target_idx)
             logmsg("Found cat '", tmp, "' for ID ", target_idx);
         }
     }
-    
+#endif
+
     g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType);
 }
 
@@ -2699,16 +2701,22 @@ static void loadImageToggleEject(uint8_t id, const char* next_filename)
 // TODO This forces a swap, the logic should use the deffered pattern
 extern "C" void setPendingImageLoad(uint8_t id, const char* next_filename)
 {
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
     strcpy(g_filenameToLoad, next_filename);
+
     g_pendingLoadIndex = id;
+#endif
 }
 
 extern "C" void loadImage()
 {
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
    loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // first will eject
    loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // secind will clode
+
    g_pendingLoadComplete = g_pendingLoadIndex;
    g_pendingLoadIndex = -1;
+#endif
 }
 
 int findObjectByIndex(image_config_t &img, const char* dirname, uint32_t index, char* buf, size_t buflen, bool &isDir, u_int64_t &size)

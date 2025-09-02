@@ -7,7 +7,6 @@
 
 // #define SCREEN_SHOTS
 
-#include <sys/endian.h>
 #include "scsi2sd.h" 
 #include "ZuluSCSI_config.h" 
 
@@ -30,11 +29,17 @@ extern "C" void initUI();
 
 extern bool g_controlBoardEnabled;
 
-extern int g_pendingLoadIndex;
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+
 extern int g_totalCategories[TOTAL_DEVICES];
 extern char g_categoryCodeAndNames[TOTAL_DEVICES][MAX_CATEGORIES][MAX_CATEGORY_NAME_LEN];
-extern int g_pendingLoadComplete;
 extern char g_filenameToLoad[MAX_PATH_LEN];
+extern int g_pendingLoadComplete;
+extern int g_pendingLoadIndex;
+
+#endif 
+
+
 
 // Initiator
 extern bool g_initiatorMessageToProcess;

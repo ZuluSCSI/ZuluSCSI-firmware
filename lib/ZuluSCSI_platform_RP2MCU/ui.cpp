@@ -11,11 +11,16 @@ extern "C" void setCurrentFolder(int target_idx, const char *path) {}
 extern "C" void initUI() {}
 
 bool g_controlBoardEnabled = false;
+
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+
 int g_pendingLoadIndex;
+int g_pendingLoadComplete;
 int g_totalCategories[8];
 char g_categoryCodeAndNames[8][10][32];
 char g_filenameToLoad[MAX_PATH_LEN];
-int g_pendingLoadComplete;
+
+#endif
 
 void UIInitiatorScanning(uint8_t deviceId) {}
 void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) {}

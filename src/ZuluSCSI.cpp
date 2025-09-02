@@ -1197,10 +1197,12 @@ extern "C" void zuluscsi_setup(void)
 
 void control_disk_swap()
 {
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
   if (g_pendingLoadIndex != -1)
   {
     loadImage();
   }
+#endif
 }
 
 extern "C" void zuluscsi_main_loop(void)
