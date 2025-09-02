@@ -7,7 +7,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-#include "..\src\ui.h"
+#include "..\..\..\src\ui.h"
 #include "ScreenType.h"
 #include "dimensions.h"
 #include "BrowseMethod.h"

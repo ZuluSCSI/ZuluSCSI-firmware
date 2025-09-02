@@ -1,6 +1,6 @@
 #if !defined(CONTROL_BOARD) || defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
-#include "..\src\ui.h"
+#include "..\..\src\ui.h"
 
 extern "C" void scsiReinitComplete() {}
 extern "C" void sdCardStateChanged(bool absent) {}
