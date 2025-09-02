@@ -54,26 +54,46 @@ void MessageBox::tick()
   }
 }
 
+void MessageBox::setBlockingMode(bool blocking)
+{
+  _blocking = blocking;
+}
 void MessageBox::shortRotaryPress()
 {
-    changeScreen(_return, _index);
-    _isActive = false;
+  if (_blocking)
+  {
+      return;
+  }
+  changeScreen(_return, _index);
+  _isActive = false;
 }
 
 void MessageBox::shortUserPress()
 {
-    changeScreen(_return, _index);
-    _isActive = false;
+  if (_blocking)
+  {
+      return;
+  }
+  changeScreen(_return, _index);
+  _isActive = false;
 }
 
 void MessageBox::shortEjectPress()
 {
-    changeScreen(_return, _index);
-    _isActive = false;
+  if (_blocking)
+  {
+      return;
+  }
+  changeScreen(_return, _index);
+  _isActive = false;
 }
 
 void MessageBox::rotaryChange(int direction)
 {
+  if (_blocking)
+  {
+      return;
+  }
   changeScreen(_return, _index);
   _isActive = false;
 }

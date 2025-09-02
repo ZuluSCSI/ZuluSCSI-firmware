@@ -30,8 +30,11 @@ public:
 
     void ShowModal(int index, const char *title, const char *line1, const char *line2);
     
+    void setBlockingMode(bool blocking);
 private:
     bool _isActive;
+
+    bool _blocking;
 
     int _index;
     bool _conditionPendingLoadComplete;

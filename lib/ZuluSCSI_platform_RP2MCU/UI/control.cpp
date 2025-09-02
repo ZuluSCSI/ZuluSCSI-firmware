@@ -403,7 +403,19 @@ void stateChange()
     else
     {
         // card removed
-        changeScreen(SCREEN_NOSD, -1);
+        switch(g_systemMode)
+        {
+            case SYSTEM_NORMAL:
+                changeScreen(SCREEN_NOSD, -1);
+                break;
+
+            case SYSTEM_INITIATOR:
+                _messageBox.setBlockingMode(true);
+                _messageBox.setText("-- Info --", "Power cycle", "to continue");
+                changeScreen(MESSAGE_BOX, 01);
+                break;
+        }
+        
     }
 }
 
@@ -942,7 +954,7 @@ void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t se
     deviceMap->SectorCount = sectorCount;
     deviceMap->SectorSize = sectorSize;
 
-    _copyScreen.DeviceType = deviceType;
+    _copyScreen.DeviceType = 255;
     _copyScreen.BlockCount = sectorCount;
     _copyScreen.BlockSize = sectorSize;
 
