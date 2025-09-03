@@ -70,7 +70,7 @@ FsFile g_logfile;
 bool g_rawdrive_active;
 static bool g_romdrive_active;
 bool g_sdcard_present;
-bool g_rebooting=false;
+bool g_rebooting = false;
 #ifndef SD_SPEED_CLASS_WARN_BELOW
 #define SD_SPEED_CLASS_WARN_BELOW 10
 #endif
@@ -962,8 +962,7 @@ static void firmware_update()
       root.remove(name);
       root.close();
       logmsg("Update extracted from package, rebooting MCU");
-      platform_reset_mcu(2000);
-      platform_reset_mcu(2000);
+      g_rebooting = true;
     }
     else
     {
@@ -1263,13 +1262,14 @@ extern "C" void zuluscsi_main_loop(void)
   // While timer for reboot is going, attempt to close SD images
   if (g_rebooting)
   {
-    while (scsiIsWriteFinished(NULL) && scsiIsReadFinished(NULL))
+    while (!scsiIsWriteFinished(NULL) || !scsiIsReadFinished(NULL))
     {
       platform_reset_watchdog();
     }
     scsiDiskCloseSDCardImages();
     save_logfile();
     g_logfile.close();
+    platform_reset_mcu(1000);
     while(1)
     {
       platform_poll();
@@ -1328,7 +1328,7 @@ extern "C" void zuluscsi_main_loop(void)
         platform_reset_watchdog();
         platform_poll();
       }
-    } while (!g_sdcard_present && !g_romdrive_active && !is_initiator);
+    } while (!g_sdcard_present && !g_romdrive_active && !is_initiator && !g_rebooting);
   }
 }
 
