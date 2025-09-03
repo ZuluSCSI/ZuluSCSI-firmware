@@ -1380,8 +1380,6 @@ static void kiosk_restore_images()
 {
   int devCount = 0;
 
-  logmsg("**** kiosk_restore_images()");
-
   FsFile root = SD.open("/");
   if (!root)
   {
@@ -1409,8 +1407,6 @@ static void kiosk_restore_images()
       }
     }
   }
-
-  logmsg("**** totalOriFound )", totalOriFound);
 
   FsFile original;
 

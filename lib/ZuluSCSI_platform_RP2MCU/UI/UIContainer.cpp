@@ -129,8 +129,6 @@ const char *GetScreenName(SCREEN_TYPE type)
 
 void changeScreen(SCREEN_TYPE type, int index)
 {
-    // logmsg("*** Change screen: ", GetScreenName(type));
-
     if (type == SCREEN_NONE)
     {
         g_activeScreen = NULL;
