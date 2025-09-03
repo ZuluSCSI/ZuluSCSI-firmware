@@ -3,7 +3,6 @@
 #include "SplashScreen.h"
 #include "SystemMode.h"
 #include "ZuluSCSI_log.h"
-#include "ZuluSCSI_Platform.h"
 
 #include "control_global.h"
 
