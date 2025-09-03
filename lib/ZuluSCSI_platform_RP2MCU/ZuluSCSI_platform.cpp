@@ -84,6 +84,7 @@ extern bool g_rawdrive_active;
 
 extern "C" {
 #include "timings_RP2MCU.h"
+extern bool g_rebooting;
 const char *g_platform_name = PLATFORM_NAME;
 bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
@@ -922,6 +923,7 @@ static void usb_input_poll()
                 if (basic_reboot_keyed || mass_storage_reboot_keyed)
                 {
                     logmsg("Rebooting", mass_storage_reboot_keyed ? " into mass storage": "");
+                    g_rebooting = true;
                     watchdog_reboot(0, 0, 2000);
                 }
                 break;

@@ -70,7 +70,7 @@ FsFile g_logfile;
 bool g_rawdrive_active;
 static bool g_romdrive_active;
 bool g_sdcard_present;
-
+bool g_rebooting=false;
 #ifndef SD_SPEED_CLASS_WARN_BELOW
 #define SD_SPEED_CLASS_WARN_BELOW 10
 #endif
@@ -1174,6 +1174,7 @@ extern "C" void zuluscsi_setup(void)
   {
     if (g_scsi_settings.getSystem()->enableUSBMassStorage
        || g_scsi_settings.getSystem()->usbMassStoragePresentImages
+       || platform_rebooted_into_mass_storage()
     )
     {
       check_mass_storage = false;
@@ -1256,6 +1257,24 @@ extern "C" void zuluscsi_main_loop(void)
     {
       save_logfile();
       last_request_time = millis();
+    }
+  }
+
+  // While timer for reboot is going, attempt to close SD images
+  if (g_rebooting)
+  {
+    while (scsiIsWriteFinished(NULL) && scsiIsReadFinished(NULL))
+    {
+      platform_reset_watchdog();
+    }
+    scsiDiskCloseSDCardImages();
+    save_logfile();
+    g_logfile.close();
+    while(1)
+    {
+      platform_poll();
+      blink_poll();
+      platform_reset_watchdog();
     }
   }
 
