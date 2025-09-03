@@ -501,8 +501,6 @@ void platform_init()
 // late_init() only runs in main application, SCSI not needed in bootloader
 void platform_late_init()
 {
-    initUI();
-
 #if defined(HAS_DIP_SWITCHES) && defined(PLATFORM_HAS_INITIATOR_MODE)
     if (g_scsi_initiator == true)
     {

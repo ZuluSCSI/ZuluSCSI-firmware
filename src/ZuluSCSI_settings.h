@@ -95,6 +95,7 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     bool disableControlBoard; // Currently not implemented
     bool reverseControlBoardRotary;
+    bool flipControlBoardDisplay;
     bool enableControlBoardCache;
 
     uint8_t maxBusWidth;

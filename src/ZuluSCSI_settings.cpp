@@ -31,6 +31,8 @@
 #include <minIni.h>
 #include <minIni_cache.h>
 
+#include "ui.h"
+
 // SCSI system and device settings
 ZuluSCSISettings g_scsi_settings;
 
@@ -314,6 +316,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.disableControlBoard = false;
     cfgSys.enableControlBoardCache = false;
     cfgSys.reverseControlBoardRotary = false;
+    cfgSys.flipControlBoardDisplay = false;
     cfgSys.useFATAllocSize = false;
 #ifdef ZULUSCSI_MCU_RP20XX
     cfgSys.enableCDAudio = false;
@@ -428,8 +431,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableParity =  ini_getbool("SCSI", "EnableParity", cfgSys.enableParity, CONFIGFILE);
     cfgSys.disableControlBoard =  ini_getbool("SCSI", "DisableControlBoard", cfgSys.disableControlBoard, CONFIGFILE);
     cfgSys.enableControlBoardCache =  ini_getbool("SCSI", "EnableControlBoardCache", cfgSys.enableControlBoardCache, CONFIGFILE);
-    cfgSys.reverseControlBoardRotary =   ini_getbool("SCSI", "ReverseControlBoardRotary", cfgSys.reverseControlBoardRotary, CONFIGFILE);
-
+    cfgSys.reverseControlBoardRotary =  ini_getbool("SCSI", "ReverseControlBoardRotary", cfgSys.reverseControlBoardRotary, CONFIGFILE);
+    cfgSys.flipControlBoardDisplay =  ini_getbool("SCSI", "FlipControlBoardDisplay", cfgSys.flipControlBoardDisplay, CONFIGFILE);
     cfgSys.useFATAllocSize = ini_getbool("SCSI", "UseFATAllocSize", cfgSys.useFATAllocSize, CONFIGFILE);
     cfgSys.enableCDAudio = ini_getbool("SCSI", "EnableCDAudio", cfgSys.enableCDAudio, CONFIGFILE);
     cfgSys.maxVolume =  ini_getl("SCSI", "MaxVolume", cfgSys.maxVolume, CONFIGFILE);
@@ -439,7 +442,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.usbMassStoragePresentImages = ini_getbool("SCSI", "USBMassStoragePresentImages", cfgSys.usbMassStoragePresentImages, CONFIGFILE);
 
     cfgSys.invertStatusLed = ini_getbool("SCSI", "InvertStatusLED", cfgSys.invertStatusLed, CONFIGFILE);
-    
+
     char tmp[32];
     ini_gets("SCSI", "SpeedGrade", "", tmp, sizeof(tmp), CONFIGFILE);
     if (tmp[0] != '\0')
@@ -455,6 +458,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     }
 
     cfgSys.maxBusWidth = ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE);
+
+    initUI();
 
     return &cfgSys;
 }

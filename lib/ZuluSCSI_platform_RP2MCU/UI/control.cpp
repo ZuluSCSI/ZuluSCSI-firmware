@@ -90,7 +90,7 @@ int g_pcaAddr = 0x3F;
 
 bool g_controlBoardEnabled = false;
 bool g_firstInitDevices = true; // For the first lots of SetFolder during start up
-
+bool hasUIBeenInitialized = false;
 
 /// Helpers
 
@@ -247,14 +247,18 @@ bool initControlBoardHardware()
         return false;
     }
     
+    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+
     g_display.setTextWrap(false);
-    g_display.setRotation(2);
+    if (cfg->flipControlBoardDisplay)
+    {
+        g_display.setRotation(2);
+    }
    
       // Clear the buffer
     g_display.clearDisplay();
     g_display.display(); 
 
-    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
     g_reverseRotary = !cfg->reverseControlBoardRotary;
 
     if (!initControlBoardI2C())
@@ -264,12 +268,14 @@ bool initControlBoardHardware()
         // Disable Control board as it couldn't be initalized
         g_controlBoardEnabled = false;
 
+        g_display.clearDisplay();
         g_display.setCursor(0,0);             
         g_display.print(F("ZuluSCSI Control"));
         g_display.drawLine(0,10,127,10, 1);
         g_display.setCursor(0,16);             
         g_display.print(F("Failed to Init I2C chip"));
-    
+        g_display.display(); 
+
         return false;
     }
 
@@ -351,6 +357,12 @@ void processButtons(uint8_t input_byte)
 
 void initUI()
 {
+    if (hasUIBeenInitialized)
+    {
+        return;
+    }
+    hasUIBeenInitialized = true;
+
     if (initControlBoardHardware())
     {
         _splashScreen.setBannerText(g_log_short_firmwareversion);
@@ -673,12 +685,12 @@ extern "C" void setCurrentFolder(int target_idx, const char *path)
 // When a card is removed or inserted. If it's removed then clear the device list
 extern "C" void sdCardStateChanged(bool absent)
 {
+    g_sdAvailable = !absent;
+
     if (!g_controlBoardEnabled)
     {
         return;
     }
-
-    g_sdAvailable = !absent;
 
     if (absent) // blank the device map
     {

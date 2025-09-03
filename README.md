@@ -442,6 +442,7 @@ Control Board Config
 --------------------
 - `EnableControlBoardCache` - Enables caching of images. This will greatly improve performance when there are many images. set this to 1 to enable. There is no reason not to have this on
 - `ReverseControlBoardRotary` - Some encoders work in the opposite direction, if you experience that, set this to 1
+- `FlipControlBoardDisplay` - Rotates the screen 180 degress. set this to 1 to flip
 
 
 Project structure
