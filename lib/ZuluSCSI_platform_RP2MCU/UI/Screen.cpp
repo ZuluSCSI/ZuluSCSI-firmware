@@ -1,6 +1,6 @@
 #if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
-#include "screen.h"
+#include "Screen.h"
 #include "ZuluSCSI_log.h"
 
 SCREEN_TYPE Screen::screenType()
