@@ -82,6 +82,9 @@ void scsiFinishWrite();
 // If data is NULL, checks if all writes have completed.
 bool scsiIsWriteFinished(const uint8_t *data);
 
+// Always returns true as reads are blocking
+// If data is NULL, checks if all reads have completed.
+bool scsiIsReadFinished(const uint8_t *data);
 
 #define s2s_getScsiRateKBs() 0
 
