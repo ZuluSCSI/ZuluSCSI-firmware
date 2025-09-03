@@ -4,7 +4,7 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_disk.h"
 #include "ZuluSCSI_settings.h"
-#include "minini.h"
+#include <minIni.h>
 #include <scsi2sd.h>
 
 #include "SystemMode.h"
