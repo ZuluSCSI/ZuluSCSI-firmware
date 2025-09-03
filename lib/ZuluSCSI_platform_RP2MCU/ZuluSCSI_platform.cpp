@@ -918,7 +918,6 @@ static void usb_input_poll()
                 {
                     logmsg("Rebooting", mass_storage_reboot_keyed ? " into mass storage": "");
                     g_rebooting = true;
-                    watchdog_reboot(0, 0, 2000);
                 }
                 break;
             case '\n':
