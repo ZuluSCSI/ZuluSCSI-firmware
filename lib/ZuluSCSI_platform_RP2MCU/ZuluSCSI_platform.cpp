@@ -19,6 +19,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
+#include "ui.h"
+
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI_log.h"
 #include <SdFat.h>
@@ -84,7 +86,7 @@ extern "C" {
 #include "timings_RP2MCU.h"
 extern bool g_rebooting;
 const char *g_platform_name = PLATFORM_NAME;
-static bool g_scsi_initiator = false;
+bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
@@ -120,6 +122,10 @@ static void gpio_conf(uint gpio, gpio_function_t fn, bool pullup, bool pulldown,
     if (fast_slew)
     {
         pads_bank0_hw->io[gpio] |= PADS_BANK0_GPIO0_SLEWFAST_BITS;
+
+#ifdef FAST_IO_DRIVE_STRENGTH
+        gpio_set_drive_strength(gpio, FAST_IO_DRIVE_STRENGTH);
+#endif
 
 #ifdef FAST_IO_DRIVE_STRENGTH
         gpio_set_drive_strength(gpio, FAST_IO_DRIVE_STRENGTH);
@@ -1056,9 +1062,59 @@ static void led_pwm_breath_poll()
     }
 }
 
+#ifdef G_LOGGER
+
+bool firstLog = true;
+
+extern "C" void WriteGLog(const char *str)
+{
+    FsFile fileHandle;
+    FsVolume *vol = SD.vol();
+    char p[64];
+    strcpy(p, "glog_run.txt");
+
+    if (SD.exists(p) && firstLog)
+    {
+        firstLog = false;
+        SD.remove(p);
+    }
+    if (SD.exists(p))
+    {
+        fileHandle= vol->open(p, O_RDWR | O_APPEND | O_AT_END);
+    }
+    else
+    {
+        fileHandle= vol->open(p, O_WRONLY | O_CREAT);
+    }
+
+    fileHandle.write(str, strlen(str));
+    fileHandle.flush();
+    fileHandle.close();
+
+    strcpy(p, "glog_all.txt");
+
+    if (SD.exists(p))
+    {
+        fileHandle= vol->open(p, O_RDWR | O_APPEND | O_AT_END);
+    }
+    else
+    {
+        fileHandle= vol->open(p, O_WRONLY | O_CREAT);
+    }
+
+    fileHandle.write(str, strlen(str));
+    fileHandle.flush();
+    fileHandle.close();
+}
+#endif
+
 // This function is called for every log message.
 void platform_log(const char *s)
 {
+#ifdef G_LOGGER
+    WriteGLog(s);
+#endif
+
     if (g_uart_initialized)
     {
         uart_puts(uart0, s);
@@ -1193,39 +1249,47 @@ void platform_reset_mcu(uint32_t reset_in_ms)
     watchdog_reboot(0, 0, reset_in_ms);
 }
 
+
 uint8_t platform_get_buttons()
 {
-    uint8_t buttons = 0;
-
-#if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-    // pulled to VCC via resistor, sinking when pressed
-    if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
-#elif defined(GPIO_EJECT_BTN)
-    // EJECT_BTN = 1, SDA = button 2, SCL = button 4
-    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
-    if (!gpio_get(GPIO_I2C_SDA))   buttons |= 2;
-    if (!gpio_get(GPIO_I2C_SCL))   buttons |= 4;
-#elif defined(GPIO_I2C_SDA)
-    // SDA = button 1, SCL = button 2
-    if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
-    if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
-#endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-
-    // Simple debouncing logic: handle button releases after 100 ms delay.
-    static uint32_t debounce;
-    static uint8_t buttons_debounced = 0;
-
-    if (buttons != 0)
+    if (!g_controlBoardEnabled) // use legacy button pressing stuff
     {
-        buttons_debounced = buttons;
-        debounce = millis();
-    }
-    else if ((uint32_t)(millis() - debounce) > 100)
-    {
-        buttons_debounced = 0;
-    }
+        uint8_t buttons = 0;
 
-    return buttons_debounced;
+    #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+        // pulled to VCC via resistor, sinking when pressed
+        if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+    #elif defined(GPIO_EJECT_BTN)
+        // EJECT_BTN = 1, SDA = button 2, SCL = button 4
+        if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
+        if (!gpio_get(GPIO_I2C_SDA))   buttons |= 2;
+        if (!gpio_get(GPIO_I2C_SCL))   buttons |= 4;
+    #elif defined(GPIO_I2C_SDA)
+        // SDA = button 1, SCL = button 2
+        if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
+        if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
+    #endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+
+        // Simple debouncing logic: handle button releases after 100 ms delay.
+        static uint32_t debounce;
+        static uint8_t buttons_debounced = 0;
+
+        if (buttons != 0)
+        {
+            buttons_debounced = buttons;
+            debounce = millis();
+        }
+        else if ((uint32_t)(millis() - debounce) > 100)
+        {
+            buttons_debounced = 0;
+        }
+
+        return buttons_debounced;
+    }
+    else
+    {
+        return 0;
+    }
 }
 
 bool platform_has_phy_eject_button()

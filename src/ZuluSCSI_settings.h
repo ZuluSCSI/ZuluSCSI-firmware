@@ -93,6 +93,11 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     uint8_t speedGrade; // memory allocation for zuluscsi_speed_grade_t enum
 
+    bool disableControlBoard; // Currently not implemented
+    bool reverseControlBoardRotary;
+    bool flipControlBoardDisplay;
+    bool enableControlBoardCache;
+
     uint8_t maxBusWidth;
 } scsi_system_settings_t;
 

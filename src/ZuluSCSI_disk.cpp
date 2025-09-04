@@ -45,11 +45,15 @@
 #include <assert.h>
 #include <SdFat.h>
 
+#include "ui.h"
+
 extern "C" {
 #include <scsi2sd_time.h>
 #include <sd.h>
 #include <mode.h>
 }
+
+
 
 #ifndef PLATFORM_MAX_SCSI_SPEED
 #define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_ASYNC_50
@@ -746,6 +750,8 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             img->deviceType = type;
             img->image_directory = true;
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
+
+            setFolder(target_idx, false, dir_name);
         }
     }
 }
@@ -755,7 +761,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
 // Otherwise keep current settings.
 static void scsiDiskSetConfig(int target_idx)
 {
-  
+    
     image_config_t &img = g_DiskImages[target_idx];
     img.scsiId = target_idx;
 
@@ -770,6 +776,8 @@ static void scsiDiskSetConfig(int target_idx)
     {
         logmsg("SCSI", target_idx, " using image directory '", tmp, "'");
         img.image_directory = true;
+
+        setFolder(target_idx, true, tmp);
     }
     else
     {
@@ -802,6 +810,26 @@ static void scsiDiskSetConfig(int target_idx)
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_ZIP100, "Iomega Zip 100");
 
     }
+
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    g_totalCategories[target_idx] = 0;
+    
+    int i;
+    for (i=0;i<MAX_CATEGORIES;i++)
+    {
+        char key[5] = "Cat0";
+        key[3] = '0' + i;
+
+        ini_gets(section, key, "", tmp, sizeof(tmp), CONFIGFILE);
+
+        if (tmp[0] != '\0')
+        {
+            strcpy(g_categoryCodeAndNames[target_idx][g_totalCategories[target_idx]++], tmp);
+            logmsg("Found cat '", tmp, "' for ID ", target_idx);
+        }
+    }
+#endif
+
     g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType);
 }
 
@@ -946,6 +974,74 @@ int findNextImageAfter(image_config_t &img,
     }
 }
 
+
+int getFirstFile(image_config_t &img, const char* dirname, char *path, char *filename)
+{
+    char buf[MAX_PATH_LEN];
+
+    FsFile dir;
+    if (dirname[0] == '\0')
+    {
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        return 0;
+    }
+    if (!dir.open(dirname))
+    {
+        logmsg("Image directory '", dirname, "' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '", dirname, "', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '", dirname, "' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        memset(buf, 0, MAX_PATH_LEN);
+        
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '", dirname, "' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) {
+            logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
+            continue;
+        }
+
+        if (!file.isDir())
+        {
+            strcpy(path, dirname);
+
+            strcpy(filename, dirname);
+            strcat(filename, "/");
+            strcat(filename, buf);
+            return 1;
+        }
+        else
+        {
+            char newPath[MAX_PATH_LEN];
+            strcpy(newPath, dirname);
+            strcat(newPath, "/");
+            strcat(newPath, buf);
+
+            return getFirstFile(img, newPath, path, filename);
+        }
+    }   
+    return 0;
+}
+
 int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 {
     int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
@@ -1008,8 +1104,21 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 
         if (nextlen == 0)
         {
-            logmsg("Image directory was empty for ID", target_idx);
-            return 0;
+            logmsg("Couldn't find file in root. Looking in subfolders");
+            char path[MAX_PATH_LEN];
+            if (getFirstFile(img, dirname, path, buf))
+            {
+                setCurrentFolder(target_idx, path); // patch the path
+
+                logmsg("Found file: ", buf);
+                img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
+                return strlen(buf);
+            }
+            else
+            {
+                logmsg("Image directory was empty for ID", target_idx);
+                return 0;
+            }
         }
         else if (buflen < nextlen + dirlen + 2)
         {
@@ -2519,3 +2628,596 @@ void scsiDiskInit()
     scsiDiskReset();
 }
 
+
+
+
+///////////// These are so LoadImage works - There is a better way
+
+
+// Eject CDROM tray if closed, close if open
+// Switch image on ejection.
+void cdromLoadImage(image_config_t &img, const char* next_filename)
+{
+    uint8_t target = img.scsiId & 7;
+#if ENABLE_AUDIO_OUTPUT
+    // terminate audio playback if active on this target (MMC-1 Annex C)
+    audio_stop(target);
+#endif
+    if (!img.ejected)
+    {
+        blink_cancel();
+        blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);
+        dbgmsg("------ CDROM open tray on ID ", (int)target);
+        img.ejected = true;
+        img.cdrom_events = 3; // Media removal
+        switchNextImage(img, next_filename); // Switch media for next time
+    }
+    else
+    {
+        cdromCloseTray(img);
+    }
+}
+
+// Eject and switch image
+static void genericLoadImage(image_config_t &img, const char* next_filename)
+{
+    uint8_t target = img.scsiId & 7;
+    if (!img.ejected)
+    {
+        blink_cancel();
+        blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
+        dbgmsg("------ Device open tray on ID ", (int)target);
+        img.ejected = true;
+        switchNextImage(img, next_filename); // Switch media for next time
+    }
+    else
+    {
+        doCloseTray(img);
+    }
+}
+
+static void loadImageToggleEject(uint8_t id, const char* next_filename)
+{
+    image_config_t &img = g_DiskImages[id];
+    if (img.deviceType == S2S_CFG_OPTICAL)
+    {
+        // found = true;
+        logmsg("Eject SCSI ID ", (int)id, " pressed, passing to CD drive SCSI", (int)id);
+        cdromLoadImage(img, next_filename);
+    }
+    else if (img.deviceType == S2S_CFG_ZIP100 
+            || img.deviceType == S2S_CFG_REMOVABLE 
+            || img.deviceType == S2S_CFG_FLOPPY_14MB 
+            || img.deviceType == S2S_CFG_MO
+            || img.deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        // found = true;
+        logmsg("Eject SCSI ID ", (int)id, " pressed, passing to SCSI device", (int)id);
+        genericLoadImage(img, next_filename);
+    }
+}
+
+
+// TODO This forces a swap, the logic should use the deffered pattern
+extern "C" void setPendingImageLoad(uint8_t id, const char* next_filename)
+{
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    strcpy(g_filenameToLoad, next_filename);
+
+    g_pendingLoadIndex = id;
+#endif
+}
+
+extern "C" void loadImage()
+{
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+   loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // first will eject
+   loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // secind will clode
+
+   g_pendingLoadComplete = g_pendingLoadIndex;
+   g_pendingLoadIndex = -1;
+#endif
+}
+
+int findObjectByIndex(image_config_t &img, const char* dirname, uint32_t index, char* buf, size_t buflen, bool &isDir, u_int64_t &size)
+{
+    size = -1;
+
+    FsFile dir;
+    if (dirname[0] == '\0')
+    {
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        return 0;
+    }
+    if (!dir.open(dirname))
+    {
+        logmsg("Image directory '", dirname, "' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '", dirname, "', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '", dirname, "' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    int counter = 0;
+    isDir = false;
+
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '", dirname, "' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) {
+            logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
+            continue;
+        }
+
+        if (counter == index)
+        {
+            if (file.isDir())
+            {
+                isDir = true;
+            }
+
+            size  = file.size();
+            return 1;
+        }
+        else
+        {
+            counter++;
+        }
+    }
+    return 0;
+}
+
+extern "C" int findObjectByIndex(uint8_t id, const char *dirname, int index, char* buf, size_t buflen, bool &isDir, u_int64_t &size)
+{
+    return findObjectByIndex(g_DiskImages[id], dirname, index, buf, buflen, isDir, size);
+}
+
+int totalObjectInDir(image_config_t &img, const char* dirname)
+{
+    char buf[MAX_PATH_LEN];
+    int total = 0;
+
+    FsFile dir;
+    if (dirname[0] == '\0')
+    {
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        return 0;
+    }
+    if (!dir.open(dirname))
+    {
+        logmsg("Image directory '", dirname, "' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '", dirname, "', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '", dirname, "' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '", dirname, "' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) {
+            logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
+            continue;
+        }
+
+        total++;
+    }
+
+    return total;
+}
+
+extern "C" int totalObjectInDir(uint8_t id, const char *dirname)
+{
+    return totalObjectInDir(g_DiskImages[id], dirname);
+}
+
+// prefix stye
+bool startsWith(const char* str, const char* prefix) 
+{
+    // Loop until the prefix character is null or a mismatch is found
+    while (tolower(*prefix) && tolower(*str) == tolower(*prefix)) 
+    {
+        str++;
+        prefix++;
+    }
+    // If the prefix is fully matched (meaning it reached its null terminator)
+    return *prefix == '\0'; // or return *prefix == 0;
+}
+
+extern "C" int findPrefixObjectByIndex(const char* prefix, uint32_t index, char* buf, size_t buflen, u_int64_t &size)
+{
+    size = -1;
+
+    FsFile dir;
+    if (!dir.open("/"))
+    {
+        logmsg("Image directory '<root>' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '<root>', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '<root>' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    int counter = 0;
+
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '<root>' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) 
+        {
+            continue;
+        }
+
+        if (file.isDir())
+        {
+            continue;
+        }
+
+        if (!startsWith(buf, prefix))
+        {
+            continue;
+        }
+
+        if (counter == index)
+        {
+            size  = file.size();
+            return 1;
+        }
+        else
+        {
+            counter++;
+        }
+    }
+    return 0;
+}
+
+extern "C" int totalPrefixObjects(const char* prefix)
+{
+    char buf[MAX_PATH_LEN];
+    int total = 0;
+
+    FsFile dir;
+    
+    if (!dir.open("/"))
+    {
+        logmsg("Image directory '<root>' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '<root>', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '<root>' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '<root>' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) 
+        {
+            continue;
+        }
+
+        if (file.isDir())
+        {
+            continue;
+        }
+
+        if (!startsWith(buf, prefix))
+        {
+            continue;
+        }
+
+        total++;
+    }
+
+    return total;
+}
+
+
+// Recursive
+
+int totalFilesRecursiveInDir(image_config_t &img, const char* dirname)
+{
+    char buf[MAX_PATH_LEN];
+    int total = 0;
+
+    FsFile dir;
+    if (dirname[0] == '\0')
+    {
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        return 0;
+    }
+    if (!dir.open(dirname))
+    {
+        logmsg("Image directory '", dirname, "' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '", dirname, "', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '", dirname, "' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        // if (file.isDir() && !scsiDiskFolderContainsCueSheet(&file)) continue;
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '", dirname, "' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) {
+            logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
+            continue;
+        }
+
+        if (!file.isDir())
+        {
+            total++;
+        }
+        else
+        {
+            char newPath[MAX_FILE_PATH];
+            strcpy(newPath, dirname);
+            strcat(newPath, "/");
+            strcat(newPath, buf);
+
+            total += totalFilesRecursiveInDir(img, newPath);
+        }
+    }
+    return total;
+}
+
+extern "C" int totalFilesRecursiveInDir(uint8_t id, const char *dirname)
+{
+    return totalFilesRecursiveInDir(g_DiskImages[id], dirname);
+}
+
+
+int ScanFilesRecursiveInDir(image_config_t &img, const char* dirname, int &counter, bool &hasDirs, void (*callback)(int, char *, char *, u_int64_t))
+{
+    char buf[MAX_PATH_LEN];
+    char path[MAX_PATH_LEN];
+    
+    memset(path, 0, MAX_PATH_LEN);
+
+    int total = 0;
+
+    FsFile dir;
+    if (dirname[0] == '\0')
+    {
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        return 0;
+    }
+    if (!dir.open(dirname))
+    {
+        logmsg("Image directory '", dirname, "' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '", dirname, "', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '", dirname, "' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        memset(buf, 0, MAX_PATH_LEN);
+        
+        if (!file.getName(buf, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '", dirname, "' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(buf)) continue;
+        if (file.isHidden()) {
+            logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
+            continue;
+        }
+
+        if (!file.isDir())
+        {
+            u_int64_t size  = file.size();
+            strcpy(path, dirname);
+            
+            callback(counter, buf, path, size);
+            
+            counter++;
+        }
+        else
+        {
+            hasDirs = true;
+            
+            char newPath[MAX_PATH_LEN];
+            strcpy(newPath, dirname);
+            strcat(newPath, "/");
+            strcat(newPath, buf);
+
+            total += ScanFilesRecursiveInDir(img, newPath, counter, hasDirs, callback);
+        }
+    }
+    return total;
+}
+
+extern "C" int scanFilesRecursiveInDir(uint8_t id, const char *dirname, bool &hasDirs, void (*callback)(int, char *, char *, u_int64_t))
+{
+    int counter = 0;
+    return ScanFilesRecursiveInDir(g_DiskImages[id], dirname, counter, hasDirs, callback);
+}
+
+int FindFilesecursiveByIndex(image_config_t &img, const char* dirname, uint32_t index, char* filename, char *path, size_t buflen, u_int64_t &size, int &counter)
+{
+    size = -1;
+
+    FsFile dir;
+    if (dirname[0] == '\0')
+    {
+        logmsg("Image directory name invalid for ID", (img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        return 0;
+    }
+    if (!dir.open(dirname))
+    {
+        logmsg("Image directory '", dirname, "' couldn't be opened");
+        return 0;
+    }
+    if (!dir.isDir())
+    {
+        logmsg("Can't find images in '", dirname, "', not a directory");
+        dir.close();
+        return 0;
+    }
+    if (dir.isHidden())
+    {
+        logmsg("Image directory '", dirname, "' is hidden, skipping");
+        dir.close();
+        return 0;
+    }
+
+    FsFile file;
+
+    while (file.openNext(&dir, O_RDONLY))
+    {
+        if (!file.getName(filename, MAX_FILE_PATH))
+        {
+            logmsg("Image directory '", dirname, "' had invalid file");
+            continue;
+        }
+
+        if (!scsiDiskFilenameValid(filename)) continue;
+        if (file.isHidden()) {
+            logmsg("Image '", dirname, "/", filename, "' is hidden, skipping file");
+            continue;
+        }
+
+        if (!file.isDir())
+        {
+            if (counter == index)
+            {
+                size  = file.size();
+                strcpy(path, dirname);
+                return 1;
+                // found it
+            }
+            
+            counter++;
+        }
+        else
+        {
+            char newPath[MAX_FILE_PATH];
+            strcpy(newPath, dirname);
+            strcat(newPath, "/");
+            strcat(newPath, filename);
+
+            if (FindFilesecursiveByIndex(img, newPath, index, filename, path, buflen, size, counter) == 1)
+            {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+
+extern "C" int findFilesecursiveByIndex(uint8_t id, const char *dirname, int index, char* buf, char *path, size_t buflen, u_int64_t &size)
+{
+    int counter = 0;
+    return FindFilesecursiveByIndex(g_DiskImages[id], dirname, index, buf, path, buflen, size, counter);
+}
+
+extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size)
+{
+    char section[6] = "SCSI0";
+    section[4] = scsiEncodeID(id);
+
+    char key[5] = "IMG0";
+    key[3] = '0' + index;
+
+    ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+
+
+    FsVolume *vol = SD.vol();
+    FsFile fHandle = vol->open(buf, O_RDONLY);
+    size = fHandle.size();
+    fHandle.close();
+}

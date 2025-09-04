@@ -33,6 +33,8 @@
 #include <minIni.h>
 #include "SdFat.h"
 
+#include "ui.h"
+
 #include <scsi2sd.h>
 extern "C" {
 #include <scsi.h>
@@ -308,6 +310,8 @@ void scsiInitiatorMainLoop()
         g_initiator_state.eject_when_done = false;
         g_initiator_state.use_read10 = false;
 
+        UIInitiatorScanning(g_initiator_state.target_id);
+        
         if (!(g_initiator_state.drives_imaged & (1 << g_initiator_state.target_id)))
         {
             delay_with_poll(1000);
@@ -355,12 +359,15 @@ void scsiInitiatorMainLoop()
                     " capacity ", (int)g_initiator_state.sectorcount,
                     " sectors x ", (int)g_initiator_state.sectorsize, " bytes");
 
+                UIInitiatorReadCapOk(g_initiator_state.target_id, (S2S_CFG_TYPE)g_initiator_state.device_type, g_initiator_state.sectorcount, g_initiator_state.sectorsize);
+                
                 g_initiator_state.sectorcount_all = g_initiator_state.sectorcount;
 
                 total_bytes = (uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize;
                 logmsg("Drive total size is ", (int)(total_bytes / (1024 * 1024)), " MiB");
                 if (total_bytes >= 0xFFFFFFFF && SD.fatType() != FAT_TYPE_EXFAT)
                 {
+                    // GT TODO
                     // Note: the FAT32 limit is 4 GiB - 1 byte
                     logmsg("Target SCSI ID ", g_initiator_state.target_id, " image size is equal or larger than 4 GiB.");
                     logmsg("This is larger than the max filesize supported by SD card's filesystem");
@@ -371,6 +378,7 @@ void scsiInitiatorMainLoop()
             }
             else if (startstopok)
             {
+                // GT TODO
                 logmsg("SCSI ID ", g_initiator_state.target_id, " responds but ReadCapacity command failed");
                 logmsg("Possibly SCSI-1 drive? Attempting to read up to 1 GB.");
                 g_initiator_state.sectorsize = 512;
@@ -421,6 +429,8 @@ void scsiInitiatorMainLoop()
                     logmsg("Type = Not Supported, trying direct access");
                 else
                     logmsg("  Type = ", ini_type);
+
+                // GT TODO - info about the drive
 
                 if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_CD)
                 {
@@ -473,6 +483,7 @@ void scsiInitiatorMainLoop()
                 {
                     if (SD.exists(filename))
                     {
+                        // GT TODO
                         logmsg("File, ", filename, ", already exists, InitiatorImageHandling set to stop if file exists.");
                         g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
                         return;
@@ -491,6 +502,7 @@ void scsiInitiatorMainLoop()
                         }
                         else if(i >= 1000)
                         {
+                            // GT TODO
                             logmsg("Max images created from SCSI ID ", g_initiator_state.target_id, ", skipping image creation");
                             g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
                             return;
@@ -517,6 +529,7 @@ void scsiInitiatorMainLoop()
                 {
                     if (SD.exists(filename))
                     {
+                        // GT TODO
                         logmsg("File, ",filename, " already exists, InitiatorImageHandling set to overwrite file");
                         SD.remove(filename);
                     }
@@ -536,6 +549,7 @@ void scsiInitiatorMainLoop()
                 uint64_t sd_card_free_bytes = (uint64_t)SD.vol()->freeClusterCount() * SD.vol()->bytesPerCluster();
                 if (sd_card_free_bytes < total_bytes)
                 {
+                    // GT TODO
                     logmsg("SD Card only has ", (int)(sd_card_free_bytes / (1024 * 1024)),
                            " MiB - not enough free space to image SCSI ID ", g_initiator_state.target_id);
                     g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
@@ -557,6 +571,8 @@ void scsiInitiatorMainLoop()
                     g_initiator_state.target_file.preAllocate((uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize);
                 }
 
+                UIInitiatorTargetFilename(g_initiator_state.target_id, filename);
+
                 logmsg("Starting to copy drive data to ", filename);
                 g_initiator_state.imaging = true;
             }
@@ -571,19 +587,25 @@ void scsiInitiatorMainLoop()
             logmsg("Finished imaging drive with id ", g_initiator_state.target_id);
             LED_OFF();
 
+            UIInitiatorImagingComplete(g_initiator_state.target_id);
+            
             if (g_initiator_state.sectorcount != g_initiator_state.sectorcount_all)
             {
+
+                // GT TODO
                 logmsg("NOTE: Image size was limited to first 4 GiB due to SD card filesystem limit");
                 logmsg("Please reformat the SD card with exFAT format to image this drive fully");
             }
 
             if(g_initiator_state.bad_sector_count != 0)
             {
+                // GT TODO
                 logmsg("NOTE: There were ",  (int) g_initiator_state.bad_sector_count, " bad sectors that could not be read off this drive.");
             }
 
             if (!g_initiator_state.eject_when_done)
             {
+                // GT TODO
                 logmsg("Marking SCSI ID, ", g_initiator_state.target_id, ", as imaged, wont ask it again.");
                 g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
             }
@@ -613,6 +635,8 @@ void scsiInitiatorMainLoop()
         {
             logmsg("Failed to transfer ", numtoread, " sectors starting at ", (int)g_initiator_state.sectors_done);
 
+            UIInitiatorFailedToTransfer(g_initiator_state.target_id);          
+
             if (g_initiator_state.retrycount < g_initiator_state.max_retry_count)
             {
                 logmsg("Retrying.. ", g_initiator_state.retrycount + 1, "/", (int) g_initiator_state.max_retry_count);
@@ -626,9 +650,12 @@ void scsiInitiatorMainLoop()
 
                 if (g_initiator_state.retrycount > 1 && numtoread > 1)
                 {
+                    // GT TODO
                     logmsg("Multiple failures, retrying sector-by-sector");
                     g_initiator_state.failposition = g_initiator_state.sectors_done + numtoread;
                 }
+
+                UIInitiatorRetry(g_initiator_state.target_id);
             }
             else
             {
@@ -637,6 +664,8 @@ void scsiInitiatorMainLoop()
                 g_initiator_state.sectors_done++;
                 g_initiator_state.bad_sector_count++;
                 g_initiator_state.target_file.seek((uint64_t)g_initiator_state.sectors_done * g_initiator_state.sectorsize);
+
+                UIInitiatorSkippedSector(g_initiator_state.target_id);
             }
         }
         else
@@ -650,6 +679,8 @@ void scsiInitiatorMainLoop()
                   (int)g_initiator_state.sectors_done, " / ", (int)g_initiator_state.sectorcount,
                   " speed ", speed_kbps, " kB/s - ", 
                   (int)(100 * (int64_t)g_initiator_state.sectors_done / g_initiator_state.sectorcount), "%");
+
+            UIInitiatorProgress(g_initiator_state.target_id, millis() - time_start, g_initiator_state.sectors_done, numtoread);
         }
     }
 }

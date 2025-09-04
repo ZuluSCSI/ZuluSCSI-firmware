@@ -29,6 +29,7 @@
 #include <stdarg.h>
 
 const char *g_log_firmwareversion = ZULU_FW_VERSION " " __DATE__ " " __TIME__;
+const char *g_log_short_firmwareversion = ZULU_FW_VERSION;
 
 bool g_log_debug = false;
 bool g_log_ignore_busy_free = false;

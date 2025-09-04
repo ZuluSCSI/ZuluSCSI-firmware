@@ -45,7 +45,46 @@ SECTIONS
         __flash_binary_start = .;
     } > FLASH
 
+    /* Discard code that is not used in bootloader mode to
+    * reduce the flash usage.
+    */
+    /DISCARD/ : {
+
+       *scanf*(*)
+       *strtod*(*)
+       *libipv4.a:*(*)
+       *libZuluSCSI_platform_RP2MCU.a:ZuluSCSI_platform_network.cpp.o*(*)
+       *libFrameworkArduino.a:cyw43_wrappers.cpp.o*(*)
+
+       /* gt */
+       *ZuluSCSI_tape.cpp.o*(*)
+       *libAdafruit*.a:*(*)
+       *libWire.a:*(*)
+       *libSPI.a:*(*)
+        
+       *libZuluSCSI_platform_RP2MCU.a:control.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:cache.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:BrowseScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:InfoScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:MainScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:MessageBox.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:NoSDScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:Screen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:scrolling_text.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:SplashScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:UIContainer.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:BrowseScreenFlat.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:BrowseTypeScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:CopyScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:InitiatorMainScreen.cpp.o*(*)
+       *libZuluSCSI_platform_RP2MCU.a:ProgressBar.cpp.o*(*)
+    }
+
     .text : {
+        cyw43_digitalWrite = 0;
+        cyw43_digitalRead = 0;
+        cyw43_pinMode = 0;
+        init_cyw43_wifi = bootloader_main;
         __logical_binary_start = .;
         KEEP (*(.btldr_vectors))
         KEEP (*(.binary_info_header))

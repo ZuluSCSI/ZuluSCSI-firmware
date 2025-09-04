@@ -63,6 +63,8 @@
 #include "ZuluSCSI_blink.h"
 #include "ROMDrive.h"
 
+#include "ui.h"
+
 SdFs SD;
 FsFile g_logfile;
 bool g_rawdrive_active;
@@ -264,12 +266,19 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
     logmsg("---- Preallocation didn't find contiguous set of clusters, continuing anyway");
   }
 
+  int blocks = size/sizeof(scsiDev.data);
+  UICreateInit(blocks, sizeof(scsiDev.data), imgname);
+
   // Write zeros to fill the file
   uint32_t start = millis();
   memset(scsiDev.data, 0, sizeof(scsiDev.data));
   uint64_t remain = size;
+
+  int block = 0;
   while (remain > 0)
   {
+    uint32_t time_start = millis();
+
     if (millis() & 128) { LED_ON(); } else { LED_OFF(); }
     platform_reset_watchdog();
 
@@ -284,7 +293,12 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
     }
 
     remain -= to_write;
+
+    UICreateProgress(millis() - time_start, block);
+    block++;
   }
+
+  UICreateProgress(0, block);
 
   file.close();
   uint32_t time = millis() - start;
@@ -809,6 +823,7 @@ static void reinitSCSI()
   }
 #endif // ZULUSCSI_NETWORK
 
+  scsiReinitComplete();
 }
 
 // Alert user that update bin file not used
@@ -915,7 +930,7 @@ static void firmware_update()
     }
   }
 
-
+  
   if (parser.FoundMatch())
   {
 
@@ -1003,6 +1018,10 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 {
   g_sdcard_present = mountSDCard();
 
+  bool orig_g_sdcard_present = g_sdcard_present;
+
+  sdCardStateChanged(!g_sdcard_present);
+
   if(!g_sdcard_present)
   {
     if (SD.sdErrorCode() == platform_no_sd_card_on_init_error_code())
@@ -1036,6 +1055,12 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
       platform_reset_watchdog();
       g_sdcard_present = mountSDCard();
+
+      if (g_sdcard_present != orig_g_sdcard_present)
+      {
+          sdCardStateChanged(!g_sdcard_present);
+      }
+  
     } while (!g_sdcard_present && wait_for_card);
     blink_cancel();
     LED_OFF();
@@ -1130,6 +1155,11 @@ extern "C" void zuluscsi_setup(void)
   platform_init();
   platform_late_init();
 
+  if (g_controlBoardEnabled)
+  {
+    controlInit();
+  }
+
   bool is_initiator = false;
 #ifdef PLATFORM_HAS_INITIATOR_MODE
   is_initiator = platform_is_initiator_mode_enabled();
@@ -1158,8 +1188,21 @@ extern "C" void zuluscsi_setup(void)
     }
   }
 #endif
+
+  
+
   logmsg("Clock set to: ", (int) platform_sys_clock_in_hz(), "Hz");
   logmsg("Initialization complete!");
+}
+
+void control_disk_swap()
+{
+#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+  if (g_pendingLoadIndex != -1)
+  {
+    loadImage();
+  }
+#endif
 }
 
 extern "C" void zuluscsi_main_loop(void)
@@ -1174,9 +1217,17 @@ extern "C" void zuluscsi_main_loop(void)
 
   platform_reset_watchdog();
   platform_poll();
+
+  control_disk_swap();
+
   if (!is_initiator)
     diskEjectButtonUpdate(true);
   blink_poll();
+
+  if (g_controlBoardEnabled)
+  {
+    controlLoop();
+  }
 
 #ifdef ZULUSCSI_NETWORK
   platform_network_poll();
@@ -1240,6 +1291,8 @@ extern "C" void zuluscsi_main_loop(void)
         {
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
+
+          sdCardStateChanged(true);
         }
       }
     }
@@ -1260,6 +1313,9 @@ extern "C" void zuluscsi_main_loop(void)
         blink_cancel();
         LED_OFF();
         logmsg("SD card reinit succeeded");
+
+        sdCardStateChanged(false);
+
         print_sd_info();
         reinitSCSI();
         init_logfile();
@@ -1322,6 +1378,8 @@ static size_t kiosk_read(FsFile& file, uint64_t current_pos, uint8_t* buffer, si
 // Kiosk mode: Restore image files from .ori backups for museum installations
 static void kiosk_restore_images()
 {
+  int devCount = 0;
+
   FsFile root = SD.open("/");
   if (!root)
   {
@@ -1329,11 +1387,30 @@ static void kiosk_restore_images()
     return;
   }
 
-  FsFile original;
+  FsFile originalTotal;
   char ori_name[MAX_FILE_PATH + 1];
   char tgt_name[MAX_FILE_PATH + 1];
   int restored_count = 0;
 
+  // Scan for .ori files
+  int totalOriFound = 0;
+
+  while (originalTotal.openNext(&root, O_RDONLY))
+  {
+    if (originalTotal.isFile() && originalTotal.getName(ori_name, sizeof(ori_name)))
+    {
+      // Check if this is a .ori file
+      size_t len = strlen(ori_name);
+      if (len > 4 && strcasecmp(ori_name + len - 4, ".ori") == 0)
+      {
+        totalOriFound++;
+      }
+    }
+  }
+
+  FsFile original;
+
+  root = SD.open("/");
   // Scan for .ori files
   while (original.openNext(&root, O_RDONLY))
   {
@@ -1354,10 +1431,11 @@ static void kiosk_restore_images()
         bool target_valid = false;
 
         // Check if target file already exists with correct size
+        uint64_t target_size = 0;
         FsFile target = SD.open(tgt_name, O_RDONLY);
         if (target.isOpen())
         {
-          uint64_t target_size = target.size();
+          target_size = target.size();
           target.close();
 
           if (target_size == ori_size)
@@ -1416,14 +1494,19 @@ static void kiosk_restore_images()
         uint32_t last_progress_mb = 0;
         bool copy_success = true;
 
+        UIKioskCopyInit(devCount+1, totalOriFound, target_size/BUFFER_SIZE, BUFFER_SIZE, tgt_name);
+
         original.rewind();
+        int block = 0;
         while (bytes_copied < ori_size && copy_success)
         {
+          uint32_t time_start = millis();
+
           size_t to_read = ori_size - bytes_copied;
           to_read = to_read > BUFFER_SIZE ? BUFFER_SIZE : to_read;
 
           size_t bytes_read = kiosk_read(original, bytes_copied, buffer, to_read);
-
+          
           if (bytes_read != to_read)
           {
             logmsg("Kiosk restore: ERROR - Read failed at offset ", (int)bytes_copied, " (", (int)to_read, " bytes requested, ", (int)bytes_read, " bytes read)");
@@ -1452,7 +1535,13 @@ static void kiosk_restore_images()
           // Set LED based on current state with pattern [ON, OFF, ON, OFF, OFF]
           int led_state = progress_mb % 5;
           platform_write_led(led_state == 0 || led_state == 2);
+
+          UIKioskCopyProgress(millis() - time_start, block);
+          block++;
         }
+        
+        UIKioskCopyProgress(0, block);
+        devCount++;
 
         target.close();
         LED_OFF();
