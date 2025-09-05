@@ -158,7 +158,7 @@ bool setup_msc_initiator()
     {
         // We can use the device mode buffer for prefetching data in initiator mode
         g_msc_initiator_state.prefetch_buffer = scsiDev.data;
-        g_msc_initiator_state.prefetch_bufsize = sizeof(scsiDev.data);
+        g_msc_initiator_state.prefetch_bufsize = scsiDev.dataBufLen;
     }
 
     g_msc_initiator_state.status_interval = ini_getl("SCSI", "InitiatorMSCStatusInterval", 5000, CONFIGFILE);

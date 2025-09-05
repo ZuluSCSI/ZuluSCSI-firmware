@@ -126,7 +126,7 @@ void s2s_scsiInquiry()
 				s2s_getStandardInquiry(
 					config,
 					scsiDev.data,
-					sizeof(scsiDev.data));
+					scsiDev.dataBufLen);
 			scsiDev.phase = DATA_IN;
 		}
 	}

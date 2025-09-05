@@ -10,7 +10,6 @@
 #include "scsi2sd.h" 
 #include "ZuluSCSI_config.h" 
 
-#define TOTAL_DEVICES 8
 #define MAX_PATH_LEN MAX_FILE_PATH
 #define MAX_CATEGORIES 10
 #define MAX_CATEGORY_NAME_LEN 32
@@ -27,12 +26,14 @@ extern "C" void setCurrentFolder(int target_idx, const char *path);
 
 extern "C" void initUI(bool cardPresent);
 
+extern "C" bool initScreens();
+
 extern bool g_controlBoardEnabled;
 
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
 
-extern int g_totalCategories[TOTAL_DEVICES];
-extern char g_categoryCodeAndNames[TOTAL_DEVICES][MAX_CATEGORIES][MAX_CATEGORY_NAME_LEN];
+extern int g_totalCategories[S2S_MAX_TARGETS];
+extern char g_categoryCodeAndNames[S2S_MAX_TARGETS][MAX_CATEGORIES][MAX_CATEGORY_NAME_LEN];
 extern char g_filenameToLoad[MAX_PATH_LEN];
 extern int g_pendingLoadComplete;
 extern int g_pendingLoadIndex;

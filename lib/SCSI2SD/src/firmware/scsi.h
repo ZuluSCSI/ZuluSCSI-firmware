@@ -21,6 +21,7 @@
 #include "sense.h"
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef enum
 {
@@ -125,6 +126,11 @@ typedef struct
 	// Must be aligned for DMA
 	// 65536 bytes is the DMA limit
 	uint8_t data[SCSI2SD_BUFFER_SIZE];
+	// The buffer length for SCSI operations, reduced to the nearest 32bit multiple
+	size_t dataBufLen;
+	// The position of the start of the most recent object that
+	// reserved space from the end of the data buffer
+	size_t dataBufLeft;
 
 	TargetState targets[S2S_MAX_TARGETS];
 	TargetState* target;

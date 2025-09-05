@@ -12,16 +12,6 @@ bool g_controlBoardEnabled = false;
 
 bool g_initiatorMessageToProcess;
 
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-
-int g_pendingLoadIndex;
-int g_pendingLoadComplete;
-int g_totalCategories[8];
-char g_categoryCodeAndNames[8][10][32];
-char g_filenameToLoad[MAX_PATH_LEN];
-
-#endif 
-
 void UIInitiatorScanning(uint8_t deviceId) {}
 void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) {}
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) {}

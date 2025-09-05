@@ -76,7 +76,7 @@ SECTIONS
 
 /* =============================================================== */
     /* Exclude as much code from flash as possible as the RP2350 series has twice as much SRAM */
-        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *libZuluIDE_platform_RPMCU.a:  *libSdFat.a: *libSCSI2SD.a: *CUEParser.a: *minIni.a: *.cpp.o) .text*)
+        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *libZuluSCSI_platform_RP2MCU.a: *libZuluSCSI_UI_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *CUEParser.a: *minIni.a: *.cpp.o)  .text*)
 
     /* ---------------------------------------------------------
     Uncomment the EXCLUDE_FILE line below and comment the EXCLUDE_FILE line above for debug to work properly,
@@ -152,7 +152,7 @@ SECTIONS
     .rodata : {
         /* Exclude as many constants as possible from flash as corresponding to the code that has been removed from flash
             to keep the MCU from having to hit flash while it is executing in SRAM */
-        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:  *libZuluIDE_platform_RPMCU.a:  *libSdFat.a: *libSCSI2SD.a: *CUEParser.a: *minIni.a: *.cpp.o) .rodata*)
+        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:  *libZuluSCSI_platform_RP2MCU.a: *libZuluSCSI_UI_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *CUEParser.a: *minIni.a: *.cpp.o) .rodata*)
 /* Uncomment below and comment above lines for debugging */
         /* *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .rodata*) */
 

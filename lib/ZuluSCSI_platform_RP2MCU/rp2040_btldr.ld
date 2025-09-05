@@ -44,7 +44,31 @@ SECTIONS
         __flash_binary_start = .;
     } > FLASH
 
+    /* Discard code that is not used in bootloader mode to
+    * reduce the flash usage.
+    */
+    /DISCARD/ : {
+
+       *scanf*(*)
+       *strtod*(*)
+       *libipv4.a:*(*)
+       *libZuluSCSI_platform_RP2MCU.a:ZuluSCSI_platform_network.cpp.o*(*)
+       *libFrameworkArduino.a:cyw43_wrappers.cpp.o*(*)
+
+       /* gt */
+       *ZuluSCSI_tape.cpp.o*(*)
+       *libAdafruit*.a:*(*)
+       *libWire.a:*(*)
+       *libSPI.a:*(*)
+        
+       *libZuluSCSI_UI_RP2MCU.a:*(*)
+    }
+
     .text : {
+        cyw43_digitalWrite = 0;
+        cyw43_digitalRead = 0;
+        cyw43_pinMode = 0;
+        init_cyw43_wifi = bootloader_main;
         __logical_binary_start = .;
         KEEP (*(.btldr_vectors))
         KEEP (*(.binary_info_header))
