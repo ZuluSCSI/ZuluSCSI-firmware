@@ -1,6 +1,16 @@
 #if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
 
 #include "control_global.h"
+#include "SDNavigator.h"
+
+TotalFilesSDNavigator SDNavTotalFiles;
+ItemByIndexSDNavigator SDNavItemByIndex;
+TotalPrefixFilesSDNavigator SDNavTotalPrefixFiles;
+PrefixFileByIndexSDNavigator SDNavPrefixFileByIndex;
+TotalFilesRecursiveSDNavigator SDNavTotalFilesRecursive;
+FileByIndexRecursiveSDNavigator SDNavFileByIndexRecursive;
+ScanFilesRecursiveSDNavigator SDNavScanFilesRecursive;
+
 
 // Categories
 int g_totalCategories[8];

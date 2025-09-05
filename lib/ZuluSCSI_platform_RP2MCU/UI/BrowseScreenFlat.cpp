@@ -19,7 +19,7 @@ void BrowseScreenFlat::initImgDir(int index)
     }
     else
     {
-      _totalObjects = totalFilesRecursiveInDir(_scsiId, _deviceMap->RootFolder);
+      SDNavTotalFilesRecursive.TotalItemsRecursive(_deviceMap->RootFolder, _totalObjects);
     }
   }
   else
@@ -43,7 +43,7 @@ void BrowseScreenFlat::initImgDir(int index)
     }
     else
     {
-      findFilesecursiveByIndex(_scsiId, _deviceMap->RootFolder, i, g_tmpFilename, g_tmpFilepath, MAX_PATH_LEN, size);
+      SDNavFileByIndexRecursive.GetObjectByIndexRecursive(_deviceMap->RootFolder, i, g_tmpFilename, g_tmpFilepath, MAX_PATH_LEN, size);
     }
     
     if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0 && strcmp(_deviceMap->Path, g_tmpFilepath) == 0)
@@ -83,22 +83,23 @@ void BrowseScreenFlat::initPrefix(int index)
   pre[2] = '0' + index;
   pre[3] = 0;
 
-  _totalObjects = totalPrefixObjects(pre);
-
-  // Find the index of the file 
-  int i;
-  u_int64_t size;
-
-  strcpy(_currentObjectPath, "");
-  
-  for (i=0;i<_totalObjects;i++)
+  if (SDNavTotalPrefixFiles.TotalItems(pre, _totalObjects))
   {
-    getImgXByIndex(_scsiId, i, g_tmpFilename, MAX_PATH_LEN, size);
+    // Find the index of the file 
+    int i;
+    u_int64_t size;
 
-    if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0)
+    strcpy(_currentObjectPath, "");
+    
+    for (i=0;i<_totalObjects;i++)
     {
-      _currentObjectIndex = i;
-      break;
+      getImgXByIndex(_scsiId, i, g_tmpFilename, MAX_PATH_LEN, size);
+
+      if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0)
+      {
+        _currentObjectIndex = i;
+        break;
+      }
     }
   }
 }
@@ -268,7 +269,7 @@ void BrowseScreenFlat::getCurrentFilename()
           }
           else
           {
-            findFilesecursiveByIndex(_scsiId, _deviceMap->RootFolder, _currentObjectIndex, _currentObjectName, _currentObjectPath, 64, _currentObjectSize);
+            SDNavFileByIndexRecursive.GetObjectByIndexRecursive(_deviceMap->RootFolder, _currentObjectIndex, _currentObjectName, _currentObjectPath, 64, _currentObjectSize);
           }
       }  
       break;
@@ -283,8 +284,8 @@ void BrowseScreenFlat::getCurrentFilename()
       strcpy(pre, typeToShortString(_deviceMap->DeviceType));
       pre[2] = '0' + _scsiId;
       pre[3] = 0;
-      findPrefixObjectByIndex(pre, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
-    }
+      SDNavPrefixFileByIndex.GetFileByIndex(pre, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
+    } 
     case BROWSE_METHOD_NOT_BROWSABLE:
       break;
   }

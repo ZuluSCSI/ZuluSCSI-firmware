@@ -42,7 +42,7 @@ FsFile appendFile(const char*filenamne)
     return vol->open(filenamne, O_WRONLY | O_CREAT);
 }
 
-void fileCallback(int count, char *file, char *path, u_int64_t size)
+void fileCallback(int count, const char *file, const char *path, u_int64_t size)
 {
     DeviceMap *deviceMap = &g_devices[g_currentID];
 
@@ -80,7 +80,7 @@ void fileCallback(int count, char *file, char *path, u_int64_t size)
             }
             if (!found)
             {
-                logmsg("Unmatched category in filename '", file, "': ", *lastOpen);
+                logmsg("Unmatched category in filename '", file, "': ", (char)*lastOpen);
             }
 
             lastOpen++;
@@ -213,7 +213,7 @@ void buildCache()
                 g_fileHandle = appendFile(g_tmpFilepath);
 
                 bool hasDirs = false;
-                scanFilesRecursiveInDir(i, map->RootFolder, hasDirs, fileCallback); 
+                SDNavScanFilesRecursive.ScanFilesRecursive(map->RootFolder, hasDirs, fileCallback); 
 
                 g_fileHandle.close();
                 

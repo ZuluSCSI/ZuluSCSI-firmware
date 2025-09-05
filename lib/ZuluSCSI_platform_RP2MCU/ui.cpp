@@ -8,7 +8,7 @@ extern "C" void controlInit() {}
 extern "C" void controlLoop() {}
 extern "C" void setFolder(int target_idx, bool userSet, const char *path) {}
 extern "C" void setCurrentFolder(int target_idx, const char *path) {}
-extern "C" void initUI() {}
+extern "C" void initUI(bool cardPresent) {}
 
 bool g_controlBoardEnabled = false;
 

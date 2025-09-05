@@ -25,7 +25,7 @@ extern "C" void loadImage();      // in ZuluSCSI_disk used in ZuluSCSI
 extern "C" void setFolder(int target_idx, bool userSet, const char *path);
 extern "C" void setCurrentFolder(int target_idx, const char *path);
 
-extern "C" void initUI();
+extern "C" void initUI(bool cardPresent);
 
 extern bool g_controlBoardEnabled;
 
