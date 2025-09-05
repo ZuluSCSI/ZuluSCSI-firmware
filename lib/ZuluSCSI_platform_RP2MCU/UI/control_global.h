@@ -26,6 +26,7 @@ extern TotalPrefixFilesSDNavigator SDNavTotalPrefixFiles;
 extern PrefixFileByIndexSDNavigator SDNavPrefixFileByIndex;
 extern TotalFilesRecursiveSDNavigator SDNavTotalFilesRecursive;
 extern FileByIndexRecursiveSDNavigator SDNavFileByIndexRecursive;
+extern FindItemIndexByNameAndPathRecursiveSDNavigator SDNavFindItemIndexByNameAndPathRecursive;
 extern ScanFilesRecursiveSDNavigator SDNavScanFilesRecursive;
 
 #endif

@@ -322,6 +322,34 @@ bool FileByIndexRecursiveSDNavigator::GetObjectByIndexRecursive(const char *dirn
     return false;
 }
 
+// FileByIndexRecursiveSDNavigator
+///////////////////////////////////
+PROCESS_DIR_ITEM_RESULT FindItemIndexByNameAndPathRecursiveSDNavigator::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)
+{
+    if ((strcmp(filename, _filename) == 0) && (strcmp(path, _path) == 0))
+    {
+        return PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING;    
+    }
+
+    _counter++;
+    return PROCESS_DIR_ITEM_RESULT_PROCEED;
+}
+
+int FindItemIndexByNameAndPathRecursiveSDNavigator::FindItemIndexByNameAndPathRecursive(const char *dirname, char* filename, const char *path)
+{
+    _counter = 0;
+    _hasSubDirs = false;
+    _filename = filename;
+    _path = path;
+
+    if (WalkDirectory(dirname, true) == WALK_DIR_ITEM_RESULT_STOP_PROCESSING)
+    {
+        return _counter;
+    }
+
+    return -1;
+}
+
 
 // ScanFilesRecursiveSDNavigator
 ////////////////////////////////

@@ -32,26 +32,18 @@ void BrowseScreenFlat::initImgDir(int index)
   }
 
   // Find the index of the file 
-  int i;
-  u_int64_t size;
-
   if (g_cacheActive)
   {
-    _currentObjectIndex = findCacheFile(_scsiId, _catChar, g_tmpFilename, g_tmpFilepath);
+    _currentObjectIndex = findCacheFile(_scsiId, _catChar, _currentObjectName, _currentObjectPath);
   }
   else
   {
-    for (i=0;i<_totalObjects;i++)
+    _currentObjectIndex = SDNavFindItemIndexByNameAndPathRecursive.FindItemIndexByNameAndPathRecursive(_deviceMap->RootFolder, _currentObjectName, _currentObjectPath);
+    if (_currentObjectIndex == -1)
     {
-      SDNavFileByIndexRecursive.GetObjectByIndexRecursive(_deviceMap->RootFolder, i, g_tmpFilename, g_tmpFilepath, MAX_PATH_LEN, size);
-      
-      if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0 && strcmp(_deviceMap->Path, g_tmpFilepath) == 0)
-      {
-        _currentObjectIndex = i;
-        break;
-      }
+      _currentObjectIndex = 0;
     }
-}
+  }
 }
 
 void BrowseScreenFlat::initImgX(int index)
@@ -216,8 +208,10 @@ void BrowseScreenFlat::shortUserPress()
 
 void BrowseScreenFlat::shortEjectPress()
 {
+  logmsg("void BrowseScreenFlat::shortEjectPress() start");
   resetScrollerDelay();
   loadSelectedImage();
+  logmsg("void BrowseScreenFlat::shortEjectPress() end");
 }
 
 void BrowseScreenFlat::rotaryChange(int direction)

@@ -126,6 +126,21 @@ protected:
     const char *_path;
 };
 
+class FindItemIndexByNameAndPathRecursiveSDNavigator : public SDNavigator
+{
+public:
+    int FindItemIndexByNameAndPathRecursive(const char *dirname, char* filename, const char *path);
+
+protected:	
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+
+    int _counter;
+
+    const char *_filename;
+    const char *_path;
+};
+
+
 class ScanFilesRecursiveSDNavigator : public SDNavigator
 {
 public:
