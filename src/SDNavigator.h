@@ -57,6 +57,19 @@ protected:
     const char *_filename;
 };
 
+class FindItemIndexByNameAndPathSDNavigator : public SDNavigator
+{
+public:
+    int FindItemByNameAndPath(const char *dirname, const char *filename, bool &isDir);
+
+protected:	
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+
+    bool _isDir;
+    int _counter;
+    const char *_filename;
+};
+
 class TotalPrefixFilesSDNavigator : public SDNavigator
 {
 public:

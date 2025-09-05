@@ -9,7 +9,7 @@
 class BrowseScreenFlat : public Screen
 {
 public:
-    BrowseScreenFlat(Adafruit_SSD1306 &display) : Screen(display) {}
+    BrowseScreenFlat(Adafruit_SSD1306 &display) : Screen(display) { _currntBrowseScreenType = -1; }
 
     SCREEN_TYPE screenType() { return SCREEN_BROWSE_FLAT; }
 
@@ -20,6 +20,8 @@ public:
     void shortUserPress();
     void shortEjectPress();
     void rotaryChange(int direction);
+
+    void virtual sdCardStateChange(bool cardIsPresent);
 
 private:
     int _scsiId;
@@ -32,6 +34,7 @@ private:
     int _currentObjectIndex; // index into _totalObjects
     int _totalObjects;  // Real file total - doesn't include ".." if not root
     char _catChar;
+    int _currntBrowseScreenType;
 
     // UI
     int navigateToNextObject();

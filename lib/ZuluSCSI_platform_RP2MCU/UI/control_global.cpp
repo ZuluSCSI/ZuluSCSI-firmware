@@ -5,6 +5,7 @@
 
 TotalFilesSDNavigator SDNavTotalFiles;
 ItemByIndexSDNavigator SDNavItemByIndex;
+FindItemIndexByNameAndPathSDNavigator SDNavFindItemIndexByNameAndPath;
 TotalPrefixFilesSDNavigator SDNavTotalPrefixFiles;
 PrefixFileByIndexSDNavigator SDNavPrefixFileByIndex;
 TotalFilesRecursiveSDNavigator SDNavTotalFilesRecursive;

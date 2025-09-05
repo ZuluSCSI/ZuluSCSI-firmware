@@ -527,6 +527,9 @@ void initDevices()
         g_devices[i].Size = 0;
         g_devices[i].IsRemovable = false;
         g_devices[i].IsRaw = false;
+
+        // UI Runtime
+        g_devices[i].BrowseScreenType = 0;
     }
 }
 

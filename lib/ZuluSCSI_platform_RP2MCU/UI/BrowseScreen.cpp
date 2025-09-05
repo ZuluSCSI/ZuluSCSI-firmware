@@ -5,6 +5,7 @@
 #include "ZuluSCSI_disk.h"
 #include "MessageBox.h"
 #include "control_global.h"
+#include "SDNavigator.h"
 
 void BrowseScreen::init(int index)
 {
@@ -29,44 +30,25 @@ void BrowseScreen::init(int index)
   setFolderAndUpdateScrollers(_deviceMap->Path, 0 );
 
   // Find the index of the file 
-  int i;
-  bool dir;
-  u_int64_t size;
-  for (i=0;i<_totalObjects;i++)
+  bool isDir;
+  _currentObjectIndex = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(_currentObjectPath, _deviceMap->Filename, isDir);
+  if (_currentObjectIndex == -1)
   {
-    if (!SDNavItemByIndex.GetObjectByIndex(_currentObjectPath, i,  g_tmpFilename, (size_t)MAX_PATH_LEN, dir, size))
-    {
-      // error
-      logmsg("Error searching for filename : ", _deviceMap->Filename);
-      _currentObjectIndex = 0;
-      break;
-    }
-    else
-    {
-      if (!dir)
-      {
-        if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0)
-        {
-          _currentObjectIndex = i;
-          break;
-        }
-      }
-    }
+    _currentObjectIndex = 0;
   }
+  
 
   // Need to recreate the stack
   // e.g. ISO3/folder  needs a stack of 1, where element 0 is the position of 'folder'
   bool done = false;
   char folderToCheck[MAX_PATH_LEN];
   char folderToLookFor[MAX_PATH_LEN];
-  char tmpFilename[MAX_PATH_LEN];
-
+  
   char *start = _currentObjectPath;
   while(!done)
   {
     char *firstSlash = strchr(start, (char)'/');
     
-    u_int64_t size;
     bool isDir;
 
     if (firstSlash == NULL) // End of the list
@@ -99,30 +81,12 @@ void BrowseScreen::init(int index)
       // logmsg("--- folderToCheck = '", folderToCheck, "'");
       // logmsg("   --- folderToLookFor = '", folderToLookFor, "'");
 
-      int totalObjects;
-      if (SDNavTotalFiles.TotalItems(folderToCheck, totalObjects))
+
+      int index = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(folderToCheck, folderToLookFor, isDir);
+      if (isDir)
       {
-        for (i=0;i<totalObjects;i++)
-        {
-          if (!SDNavItemByIndex.GetObjectByIndex(folderToCheck, i,  tmpFilename, (size_t)MAX_PATH_LEN, isDir, size))
-          {
-            // error
-            logmsg("Error searching for filename : ", _deviceMap->Filename);
-            break;
-          }
-          else
-          {
-            if (isDir)
-            {
-              if (strcmp(folderToLookFor, tmpFilename) == 0)
-              {
-                _returnStack[_stackDepth++] = i;
-                break;
-              }
-            }
-          }
-        }
-      }
+        _returnStack[_stackDepth++] = index;
+      }  
     }
   } 
      

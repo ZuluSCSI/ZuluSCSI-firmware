@@ -172,6 +172,35 @@ bool ItemByIndexSDNavigator::GetObjectByIndex(const char *dirname, int index, ch
     return false;
 }
 
+// FindItemIndexByNameAndPathSDNavigator
+///////////////////////////////
+PROCESS_DIR_ITEM_RESULT FindItemIndexByNameAndPathSDNavigator::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)
+{
+    if (strcmp(filename, _filename) == 0)
+    {
+        _isDir = file.isDir();
+        return PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING;    
+    }
+
+    _counter++;
+    return PROCESS_DIR_ITEM_RESULT_PROCEED;
+}
+
+int FindItemIndexByNameAndPathSDNavigator::FindItemByNameAndPath(const char *dirname,  const char *filename, bool &isDir)
+{
+    _filename = filename;
+    _counter = 0;
+    _isDir = false;
+
+    if (WalkDirectory(dirname, false) == WALK_DIR_ITEM_RESULT_STOP_PROCESSING)
+    {
+        isDir = _isDir;
+        return _counter;
+    }
+
+    return -1;
+}
+
 // TotalPrefixFilesSDNavigator
 ///////////////////////////////
 PROCESS_DIR_ITEM_RESULT TotalPrefixFilesSDNavigator::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)
