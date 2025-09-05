@@ -144,7 +144,9 @@ void BrowseTypeScreen::drawCategory(int x, int y, int index)
     }
     else
     {
-      _display.print(totalFilesRecursiveInDir(_scsiId, _deviceMap->RootFolder)); 
+      int tot;
+      SDNavTotalFilesRecursive.TotalItemsRecursive(_deviceMap->RootFolder, tot);
+      _display.print(tot); 
     }
   }
   if (index > 1)

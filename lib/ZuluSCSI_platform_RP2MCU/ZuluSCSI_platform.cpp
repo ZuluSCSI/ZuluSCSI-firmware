@@ -339,15 +339,28 @@ void platform_init()
     gpio_conf(DIP_DBGLOG,     GPIO_FUNC_SIO, false, false, false, false, false);
     gpio_conf(DIP_TERM,       GPIO_FUNC_SIO, false, false, false, false, false);
 
+#if defined(ZULUSCSI_BLASTER) 
+    gpio_conf(GPIO_INT,       GPIO_FUNC_SIO, true,  false, false, false, false);
+#endif
+    
 #ifdef ZULUSCSI_MCU_RP23XX
     /* RP2350-E9 errata workaround for excessive input pin leakage */
     gpio_set_input_enabled(DIP_INITIATOR, false);
     gpio_set_input_enabled(DIP_DBGLOG, false);
     gpio_set_input_enabled(DIP_TERM, false);
+
+#if defined(ZULUSCSI_BLASTER) 
+    gpio_set_input_enabled(GPIO_INT, false);
+#endif
+
     delay(10);
     gpio_set_input_enabled(DIP_INITIATOR, true);
     gpio_set_input_enabled(DIP_DBGLOG, true);
     gpio_set_input_enabled(DIP_TERM, true);
+
+#if defined(ZULUSCSI_BLASTER) 
+    gpio_set_input_enabled(GPIO_INT, true);
+#endif
 #endif
     // In case of a firmware update the USB connection fails and needs to be restarted
     tud_disconnect();

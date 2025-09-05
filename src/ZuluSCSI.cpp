@@ -1036,6 +1036,10 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       {
         logmsg("No SD card detected, please check SD card slot to make sure it is in correctly");
       }
+
+      // if booting and no card found, we want to init the display here as it usually gets inited
+      // from readint the config
+      initUI(false);
     }
     dbgmsg("SD card init failed, sdErrorCode: ", (int)SD.sdErrorCode(),
            " sdErrorData: ", (int)SD.sdErrorData());

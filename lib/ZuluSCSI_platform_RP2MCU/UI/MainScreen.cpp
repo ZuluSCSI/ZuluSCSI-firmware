@@ -30,7 +30,16 @@ void MainScreen::init(int index)
   {
     _selectedDevice = index;
   }
-  _deviceMap = &g_devices[_selectedDevice];
+
+  if (_selectedDevice != -1)
+  {
+    _deviceMap = &g_devices[_selectedDevice];
+  }
+  else
+  {
+    _deviceMap = NULL;
+  }
+
 }
 
 void MainScreen::draw()
@@ -85,14 +94,12 @@ void MainScreen::shortUserPress()
 
 void MainScreen::shortEjectPress()
 {
-  if (_selectedDevice == -1)
+  if (_selectedDevice == -1 || _deviceMap == NULL)
   {
     return;
   }
 
-  DeviceMap *map = &g_devices[_selectedDevice];
-
-  switch(map->BrowseMethod)
+  switch(_deviceMap->BrowseMethod)
   {
     case BROWSE_METHOD_IMDDIR:
       if (_deviceMap->BrowseScreenType == 0)
@@ -130,15 +137,12 @@ void MainScreen::longUserPress()
 
 void MainScreen::longEjectPress()
 {
-  if (_selectedDevice == -1)
+  if (_selectedDevice == -1 || _deviceMap == NULL)
   {
     return;
   }
 
-  DeviceMap *map = &g_devices[_selectedDevice];
-
-
-  switch(map->BrowseMethod)
+  switch(_deviceMap->BrowseMethod)
   {
     case BROWSE_METHOD_IMDDIR:
       if ((doesDeviceHaveAnyCategoryFiles(_selectedDevice) == 0 && !_deviceMap->HasDirs) && g_cacheActive)
@@ -236,7 +240,8 @@ void MainScreen::rotaryChange(int direction)
 
   if (found)
   {
-      forceDraw();
+    _deviceMap = &g_devices[_selectedDevice];
+    forceDraw();
   }
 }
 

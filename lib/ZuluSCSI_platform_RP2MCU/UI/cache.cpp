@@ -42,7 +42,7 @@ FsFile appendFile(const char*filenamne)
     return vol->open(filenamne, O_WRONLY | O_CREAT);
 }
 
-void fileCallback(int count, char *file, char *path, u_int64_t size)
+void fileCallback(int count, const char *file, const char *path, u_int64_t size)
 {
     DeviceMap *deviceMap = &g_devices[g_currentID];
 
@@ -80,7 +80,7 @@ void fileCallback(int count, char *file, char *path, u_int64_t size)
             }
             if (!found)
             {
-                logmsg("Unmatched category in filename '", file, "': ", *lastOpen);
+                logmsg("Unmatched category in filename '", file, "': ", (char)*lastOpen);
             }
 
             lastOpen++;
@@ -123,6 +123,67 @@ void purgeCacheFolder()
         }
         file.close();
     }
+}
+
+int GetIndexFromCategoryCode(int scsiId, char cat)
+{
+    int i;
+    for (i=0; i<g_totalCategories[scsiId]; i++)
+    {
+        if (g_categoryCodeAndNames[scsiId][i][0] == cat)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+
+extern "C" int findCacheFile(int scsiId, char cat, char *file, char *path)
+{
+    int total = 0;
+    DeviceMap *deviceMap = &g_devices[scsiId];
+
+    if (cat == '_')
+    {
+        total = deviceMap->TotalFlatFiles;
+    }
+    else
+    {
+        int catIndex  = GetIndexFromCategoryCode(scsiId, cat);
+        total = deviceMap->TotalFilesInCategory[catIndex];
+    }
+
+    strcpy(g_tmpCacheFilepath, ".cache/cache0_.dat");
+    g_tmpCacheFilepath[13] = cat;
+    g_tmpCacheFilepath[12] = (char)(scsiId+48);
+
+    FsVolume *vol = SD.vol();
+    FsFile fHandle = vol->open(g_tmpCacheFilepath, O_RDONLY);
+
+    int i;
+    int blockSize = ((MAX_PATH_LEN + MAX_PATH_LEN) + sizeof(u_int64_t));
+
+    for (i=0;i<total;i++)
+    {
+        int offset = blockSize * i;
+        u_int64_t size;
+
+        fHandle.seek(offset);
+
+        fHandle.read(file, MAX_PATH_LEN);
+        fHandle.read(path, MAX_PATH_LEN);
+        fHandle.read(&size, sizeof(u_int64_t));
+
+        if (strcmp(deviceMap->Filename, file) == 0 && strcmp(deviceMap->Path, path) == 0)
+        {
+            fHandle.close();
+            return i;
+        }
+    }
+
+    fHandle.close();
+    return -1;
 }
 
 extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *path, u_int64_t &size)
@@ -213,10 +274,10 @@ void buildCache()
                 g_fileHandle = appendFile(g_tmpFilepath);
 
                 bool hasDirs = false;
-                scanFilesRecursiveInDir(i, map->RootFolder, hasDirs, fileCallback); 
+                SDNavScanFilesRecursive.ScanFilesRecursive(map->RootFolder, hasDirs, fileCallback); 
 
                 g_fileHandle.close();
-                
+
                 deviceMap->HasDirs = hasDirs;
                 
                 deviceMap->TotalFlatFiles = g_maxCount+1;

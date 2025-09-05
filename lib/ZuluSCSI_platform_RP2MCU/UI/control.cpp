@@ -250,7 +250,11 @@ bool initControlBoardHardware()
     scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
 
     g_display.setTextWrap(false);
+#if defined(ZULUSCSI_BLASTER) 
+    if (cfg->flipControlBoardDisplay || !gpio_get(GPIO_INT))
+#else
     if (cfg->flipControlBoardDisplay)
+#endif
     {
         g_display.setRotation(2);
     }
@@ -355,7 +359,7 @@ void processButtons(uint8_t input_byte)
     }
 }
 
-void initUI()
+void initUI(bool cardPresent)
 {
     if (hasUIBeenInitialized)
     {
@@ -368,6 +372,12 @@ void initUI()
         _splashScreen.setBannerText(g_log_short_firmwareversion);
         changeScreen(SCREEN_SPLASH, -1);
         delay(1500);
+
+        if (!cardPresent)
+        {
+            changeScreen(SCREEN_NOSD, -1);
+            g_activeScreen->tick();
+        }
     }
 
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
@@ -517,6 +527,9 @@ void initDevices()
         g_devices[i].Size = 0;
         g_devices[i].IsRemovable = false;
         g_devices[i].IsRaw = false;
+
+        // UI Runtime
+        g_devices[i].BrowseScreenType = 0;
     }
 }
 
