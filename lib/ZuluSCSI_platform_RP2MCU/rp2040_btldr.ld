@@ -60,8 +60,8 @@ SECTIONS
        *libAdafruit*.a:*(*)
        *libWire.a:*(*)
        *libSPI.a:*(*)
-        
        *libZuluSCSI_UI_RP2MCU.a:*(*)
+       *libZuluSCSI_audio_RP2MCU:*(*)
     }
 
     .text : {

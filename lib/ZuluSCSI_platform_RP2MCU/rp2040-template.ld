@@ -94,6 +94,7 @@ SECTIONS
         *libminIni.a:(.text .text*)
         *libCUEParser.a:(.text .text*)
         *libZuluSCSI_UI_RP2MCU.a:(.text .text*)
+        *libZuluSCSI_audio_RP2MCU:(.text .text*)
 
         /* RP2040 breakpoints in RAM code don't always work very well
          * because the boot routine tends to overwrite them.

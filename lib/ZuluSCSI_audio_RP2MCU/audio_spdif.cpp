@@ -28,7 +28,10 @@
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_platform.h"
-
+#include "ZuluSCSI_buffer_control.h"
+#ifdef CONTROL_BOARD
+#include "ui.h"
+#endif
 extern SdFs SD;
 
 // Table with the number of '1' bits for each index.
@@ -112,8 +115,9 @@ static dma_channel_config snd_dma_a_cfg;
 static dma_channel_config snd_dma_b_cfg;
 
 // some chonky buffers to store audio samples
-static uint8_t sample_buf_a[AUDIO_BUFFER_SIZE];
-static uint8_t sample_buf_b[AUDIO_BUFFER_SIZE];
+static uint8_t* sample_buf_a;
+static uint8_t* sample_buf_b;
+static const size_t sample_buf_len = AUDIO_BUFFER_SIZE;
 
 // tracking for the state of the above buffers
 enum bufstate { STALE, FILLING, READY };
@@ -127,8 +131,9 @@ static uint8_t sbufswap = 0;
 // buffers for storing biphase patterns
 #define SAMPLE_CHUNK_SIZE 1024 // ~5.8ms
 #define WIRE_BUFFER_SIZE (SAMPLE_CHUNK_SIZE * 2)
-static uint16_t wire_buf_a[WIRE_BUFFER_SIZE];
-static uint16_t wire_buf_b[WIRE_BUFFER_SIZE];
+static uint16_t* wire_buf_a;
+static uint16_t* wire_buf_b;
+static const size_t wire_buf_len WIRE_BUFFER_SIZE;
 
 // tracking for audio playback
 static uint8_t audio_owner; // SCSI ID or 0xFF when idle
@@ -342,7 +347,7 @@ void audio_dma_irq() {
         dma_channel_configure(SOUND_DMA_CHA,
                 &snd_dma_a_cfg,
                 &(spi_get_hw(AUDIO_SPI)->dr),
-                &wire_buf_a,
+                wire_buf_a,
                 WIRE_BUFFER_SIZE,
                 false);
     } else if (dma_hw->intr & (1 << SOUND_DMA_CHB)) {
@@ -354,7 +359,7 @@ void audio_dma_irq() {
         dma_channel_configure(SOUND_DMA_CHB,
                 &snd_dma_b_cfg,
                 &(spi_get_hw(AUDIO_SPI)->dr),
-                &wire_buf_b,
+                wire_buf_b,
                 WIRE_BUFFER_SIZE,
                 false);
     }
@@ -369,9 +374,16 @@ bool audio_is_playing(uint8_t id) {
 }
 
 void audio_setup() {
+#ifdef CONTROL_BOARD
+    if (!g_scsi_settings.getSystem()->enableCDAudio || g_controlBoardEnabled)
+#else
     if (!g_scsi_settings.getSystem()->enableCDAudio)
+#endif
+    {
         return;
-    logmsg("ZuluSCSI CD Audio Enabled - Connect DAC to ZuluSCSI or use SPDIF on I2C SCL pin");
+    }
+        
+    logmsg("ZuluSCSI CD Audio Enabled - use SPDIF on I2C SCL pin");
     gpio_put(GPIO_EXP_AUDIO, true);
     gpio_set_dir(GPIO_EXP_AUDIO, false);
     gpio_set_pulls(GPIO_EXP_AUDIO, true, false);
@@ -382,6 +394,12 @@ void audio_setup() {
     gpio_set_dir(GPIO_EXP_SPARE, false);
     gpio_set_pulls(GPIO_EXP_SPARE, true, false);
     gpio_set_function(GPIO_EXP_SPARE, GPIO_FUNC_SIO);
+
+    // Reserve buffers
+    wire_buf_a = (uint16_t*) reserve_buffer(sizeof(wire_buf_a[0]) * wire_buf_len);
+    wire_buf_b = (uint16_t*) reserve_buffer(sizeof(wire_buf_a[0]) * wire_buf_len);
+    sample_buf_a = reserve_buffer(sizeof(sample_buf_a[0]) * sample_buf_len);
+    sample_buf_b = reserve_buffer(sizeof(sample_buf_b[0]) * sample_buf_len);
 
     // setup SPI to blast S/PDIF data over the TX pin
     spi_set_baudrate(AUDIO_SPI, 5644800); // will be slightly wrong, ~0.03% slow
@@ -541,7 +559,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
     // version of pico-sdk lacks channel_config_set_high_priority()
     snd_dma_a_cfg.ctrl |= DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_BITS;
 	dma_channel_configure(SOUND_DMA_CHA, &snd_dma_a_cfg, &(spi_get_hw(AUDIO_SPI)->dr),
-			&wire_buf_a, WIRE_BUFFER_SIZE, false);
+			wire_buf_a, WIRE_BUFFER_SIZE, false);
     dma_channel_set_irq0_enabled(SOUND_DMA_CHA, true);
 	snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
 	channel_config_set_transfer_data_size(&snd_dma_b_cfg, DMA_SIZE_16);
@@ -550,7 +568,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
 	channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHA);
     snd_dma_b_cfg.ctrl |= DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_BITS;
 	dma_channel_configure(SOUND_DMA_CHB, &snd_dma_b_cfg, &(spi_get_hw(AUDIO_SPI)->dr),
-			&wire_buf_b, WIRE_BUFFER_SIZE, false);
+			wire_buf_b, WIRE_BUFFER_SIZE, false);
     dma_channel_set_irq0_enabled(SOUND_DMA_CHB, true);
 
     // ready to go

@@ -243,6 +243,7 @@ bool initControlBoardHardware()
     if (g_wire.endTransmission() != 0)
     {
         dbgmsg("Could not find Display on I2C bus");
+        g_wire.end();
         return false;
     }
 
