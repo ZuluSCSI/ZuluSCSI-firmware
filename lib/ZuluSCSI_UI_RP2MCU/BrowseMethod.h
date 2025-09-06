@@ -1,0 +1,16 @@
+#if defined(CONTROL_BOARD)
+
+#ifndef BROWSEMETHOD_H
+#define BROWSEMETHOD_H
+
+typedef enum
+{
+    BROWSE_METHOD_NOT_BROWSABLE,
+    BROWSE_METHOD_IMDDIR,
+	BROWSE_METHOD_IMGX,
+    BROWSE_METHOD_USE_PREFIX // TODO not supported yet
+} BROWSE_METHOD; 
+
+#endif
+
+#endif
