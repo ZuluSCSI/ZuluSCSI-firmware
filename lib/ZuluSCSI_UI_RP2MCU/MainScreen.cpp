@@ -42,11 +42,22 @@ void MainScreen::init(int index)
 
 }
 
+extern bool g_sdAvailable;
+
 void MainScreen::draw()
 {
   _display->setCursor(0,0);             
   _display->print(F("SCSI Map"));
-  _display->drawLine(0,10,127,10, 1);
+  _display->drawLine(0,10,112,10, 1);
+
+  if (g_sdAvailable)
+  {
+    _display->drawBitmap(115, 0, icon_sd, 12,12, WHITE);
+  }
+  else
+  {
+    _display->drawBitmap(115, 0, icon_nosd, 12,12, WHITE);
+  }
 
   int yOffset = 13;
   int xOffset = 0;

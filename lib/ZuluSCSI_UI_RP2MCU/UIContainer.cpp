@@ -6,7 +6,6 @@
 
 #include "MainScreen.h"
 #include "SplashScreen.h"
-#include "NoSDScreen.h"
 #include "BrowseTypeScreen.h"
 #include "BrowseScreen.h"
 #include "BrowseScreenFlat.h"
@@ -23,7 +22,6 @@ extern int g_prevousIndex;
 
 SplashScreen *_splashScreen;
 MainScreen *_mainScreen;
-NoSDScreen *_noSDScreen;
 InfoScreen *_infoScreen;
 BrowseScreen *_browseScreen;
 BrowseTypeScreen *_browseTypeScreen;
@@ -37,7 +35,6 @@ bool initScreens()
 {
     _splashScreen = new (reserve_buffer(sizeof(SplashScreen))) SplashScreen(g_display);
     _mainScreen = new (reserve_buffer(sizeof(MainScreen))) MainScreen(g_display);
-    _noSDScreen = new (reserve_buffer(sizeof(NoSDScreen))) NoSDScreen(g_display);
     _infoScreen = new (reserve_buffer(sizeof(InfoScreen))) InfoScreen(g_display);
     _browseScreen = new (reserve_buffer(sizeof(BrowseScreen))) BrowseScreen(g_display);
     _browseTypeScreen = new (reserve_buffer(sizeof(BrowseTypeScreen))) BrowseTypeScreen(g_display);
@@ -53,7 +50,6 @@ void sendSDCardStateChangedToScreens(bool cardIsPresent)
 {
     _splashScreen->sdCardStateChange(cardIsPresent);
     _mainScreen->sdCardStateChange(cardIsPresent);
-    _noSDScreen->sdCardStateChange(cardIsPresent);
     _infoScreen->sdCardStateChange(cardIsPresent);
     _browseScreen->sdCardStateChange(cardIsPresent);
     _browseTypeScreen->sdCardStateChange(cardIsPresent);
@@ -76,9 +72,6 @@ Screen *GetScreen(SCREEN_TYPE type)
             
         case SCREEN_MAIN:
             return _mainScreen;
-            
-        case SCREEN_NOSD:
-            return _noSDScreen;
             
         case SCREEN_INFO:
             return _infoScreen;
@@ -116,9 +109,6 @@ const char *GetScreenName(SCREEN_TYPE type)
             
         case SCREEN_MAIN:
             return "Main";
-            
-        case SCREEN_NOSD:
-            return "NoSD";
             
         case SCREEN_INFO:
             return "Info";

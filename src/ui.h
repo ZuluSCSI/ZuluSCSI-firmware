@@ -15,9 +15,8 @@
 #define MAX_CATEGORY_NAME_LEN 32
 
 extern "C" void scsiReinitComplete();
-extern "C" void sdCardStateChanged(bool absent);
+extern "C" void sdCardStateChanged(bool sdAvailable);
 
-extern "C" void controlInit();
 extern "C" void controlLoop();
 extern "C" void loadImage();      // in ZuluSCSI_disk used in ZuluSCSI
 

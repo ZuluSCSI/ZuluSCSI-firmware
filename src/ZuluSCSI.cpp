@@ -1020,7 +1020,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
   bool orig_g_sdcard_present = g_sdcard_present;
 
-  sdCardStateChanged(!g_sdcard_present);
+  sdCardStateChanged(g_sdcard_present);
 
   if(!g_sdcard_present)
   {
@@ -1062,7 +1062,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
       if (g_sdcard_present != orig_g_sdcard_present)
       {
-          sdCardStateChanged(!g_sdcard_present);
+          sdCardStateChanged(g_sdcard_present);
       }
   
     } while (!g_sdcard_present && wait_for_card);
@@ -1160,11 +1160,6 @@ extern "C" void zuluscsi_setup(void)
   scsiDev.dataBufLen  = SCSI2SD_BUFFER_SIZE;
   scsiDev.dataBufLeft = SCSI2SD_BUFFER_SIZE;
   platform_late_init();
-
-  if (g_controlBoardEnabled)
-  {
-    controlInit();
-  }
 
   bool is_initiator = false;
 #ifdef PLATFORM_HAS_INITIATOR_MODE
@@ -1300,7 +1295,7 @@ extern "C" void zuluscsi_main_loop(void)
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
 
-          sdCardStateChanged(true);
+          sdCardStateChanged(false);
         }
       }
     }
@@ -1322,7 +1317,7 @@ extern "C" void zuluscsi_main_loop(void)
         LED_OFF();
         logmsg("SD card reinit succeeded");
 
-        sdCardStateChanged(false);
+        sdCardStateChanged(true);
 
         print_sd_info();
         reinitSCSI();

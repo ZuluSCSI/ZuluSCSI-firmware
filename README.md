@@ -246,7 +246,12 @@ Main Screen
 
 ![Main](https://github.com/user-attachments/assets/6ce8386b-d671-43f4-95f7-f2fe6e81e5d0)
 
+(TODO: update image)
+
 This screen displays an overview of the SCSI devices.
+
+Top righr will show an SD card icon. (if the card is removed, the icon will have a little cross in it)
+
 Each item displays:
 - The SCSI ID
 - An empty circle represents nothing is loaded, a solid circle represents a loaded image
@@ -334,14 +339,6 @@ Turning the `rotary dial` with select files
 Clicking  `eject` will load the image
 
 Clicking `user` will return to the main menu
-  
-Removing the SD Card
-------------------
-If the SD card is removed, the following screen will be displayed
-
-![NoSD](https://github.com/user-attachments/assets/96e44d18-69e1-4565-bba3-79ed85e43108)
-
-Re-inserting an SD Card will return to the main menu
 
 Categories
 ----------
@@ -440,8 +437,10 @@ NOTE: There are no controls in Initiator mode, it is a viewing-only mode
 
 Control Board Config
 --------------------
-- `EnableControlBoardCache` - Enables caching of images. This will greatly improve performance when there are many images. set this to 1 to enable. There is no reason not to have this on
+- `EnableControlBoardCache` - Enables caching of images. This will greatly improve performance when there are many images. set this to 1 to enable. Enabling will cause some wear on the SD card as the cache is built every time the card is inserted, and there is a slight delay on load (generally 1-2secs for large file sets). So if browsing is laggy, enable this
+
 - `ReverseControlBoardRotary` - Some encoders work in the opposite direction, if you experience that, set this to 1
+
 - `FlipControlBoardDisplay` - Rotates the screen 180 degress. set this to 1 to flip
 
 

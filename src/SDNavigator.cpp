@@ -63,7 +63,9 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive)
         }
         if (file.isHidden()) 
         {
-            logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
+            // This is commented out as 'Image '//System Volume Information' is hidden, skipping file'
+            // was spamming the log
+            // logmsg("Image '", dirname, "/", buf, "' is hidden, skipping file");
             continue;
         }
 
@@ -253,7 +255,8 @@ bool PrefixFileByIndexSDNavigator::GetFileByIndex(const char *prefix, int index,
     _counter = 0;
     _index = index;
     _hasSubDirs = false;
-
+    _prefix = prefix;
+    
     if (WalkDirectory("/", false) != WALK_DIR_ITEM_RESULT_FAIL)
     {
         strcpy(buf, _filename);
