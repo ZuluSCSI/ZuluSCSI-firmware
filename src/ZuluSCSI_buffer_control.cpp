@@ -20,51 +20,53 @@
 **/
 
 #include <scsi.h>
+#include <assert.h>
 #include <ZuluSCSI_buffer_control.h>
-
-static bool g_overflow = false;
+#include <ZuluSCSI_log.h>
 
 #ifdef ZULUSCSI_MCU_RP23XX
 
 static uint8_t buffer[ZULUSCSI_RESERVED_SRAM_LEN];
 static size_t  buffer_length =  sizeof(buffer);
 
-uint8_t *reserve_buffer(size_t length)
+uint8_t *reserve_buffer_align(size_t length, uint32_t bytes)
 {
-    if (length >= buffer_length)
-    {
-        g_overflow = true;
+    if (length == 0)
         return nullptr;
-    }
+
+    uintptr_t mask = ~(bytes - 1);
+
+    assert(length <= buffer_length);
     buffer_length -= length;
-    return &buffer[buffer_length];
+
+    uint8_t *new_address = (uint8_t*)(((uintptr_t) &buffer[buffer_length]) & mask);
+    uint32_t adjustment = &buffer[buffer_length] - new_address;
+
+    assert(adjustment <= buffer_length);
+    buffer_length -= adjustment;
+
+    return new_address;
 }
 
-void reserve_buffer_recover_last(size_t length)
-{
-    buffer_length += length;
-}
 #elif defined(ZULUSCSI_MCU_RP20XX)
-uint8_t *reserve_buffer(size_t length)
-{
-    if (length >= scsiDev.dataBufLeft)
-    {
-        g_overflow = true;
-        return nullptr;
-    }
-    scsiDev.dataBufLeft -= length;
-    scsiDev.dataBufLen = scsiDev.dataBufLeft & ~((size_t)0x3); // nearest 32bit boundary
-    return &scsiDev.data[scsiDev.dataBufLeft];
-}
 
-void reserve_buffer_recover_last(size_t length)
+uint8_t *reserve_buffer_align(size_t length, uint32_t bytes)
 {
-    scsiDev.dataBufLeft += length;
-    scsiDev.dataBufLen = scsiDev.dataBufLeft & ~((size_t)0x3);
+    assert(length <= scsiDev.dataBufLeft);
+    scsiDev.dataBufLeft -= length;
+
+    uintptr_t mask = ~(bytes - 1);
+
+    uint8_t *new_address = (uint8_t*)(((uintptr_t) &scsiDev.data[scsiDev.dataBufLeft]) & mask);
+    uint32_t adjustment = &scsiDev.data[scsiDev.dataBufLeft] - new_address;
+
+    assert(adjustment <= scsiDev.dataBufLeft);
+    scsiDev.dataBufLeft -= adjustment;
+
+    // Align the end of the scsiDev.data buffer to ZULUSCSI_BUFFER_CONTROL_BOUNDARY_MASK
+    scsiDev.dataBufLen = scsiDev.dataBufLeft & ~((uintptr_t)ZULUSCSI_BUFFER_CONTROL_BOUNDARY_MASK);
+    assert(scsiDev.dataBufLen > 0);
+
+    return new_address;
 }
 #endif
-
-bool reserve_buffer_failed()
-{
-    return g_overflow;
-}

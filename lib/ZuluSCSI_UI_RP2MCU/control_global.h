@@ -21,7 +21,7 @@ extern bool g_scsi_initiator;
 
 extern TotalFilesSDNavigator SDNavTotalFiles;
 extern ItemByIndexSDNavigator SDNavItemByIndex;
-extern FindItemIndexByNameAndPathSDNavigator SDNavFindItemIndexByNameAndPath;;
+extern FindItemIndexByNameAndPathSDNavigator SDNavFindItemIndexByNameAndPath;
 extern TotalPrefixFilesSDNavigator SDNavTotalPrefixFiles;
 extern PrefixFileByIndexSDNavigator SDNavPrefixFileByIndex;
 extern TotalFilesRecursiveSDNavigator SDNavTotalFilesRecursive;

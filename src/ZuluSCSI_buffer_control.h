@@ -34,21 +34,17 @@
 # endif
 #endif
 
+// This will align the scsiDev.data boundary usable by the SCSI interface
+#ifndef ZULUSCSI_BUFFER_CONTROL_BOUNDARY_MASK
+# define ZULUSCSI_BUFFER_CONTROL_BOUNDARY_MASK (32/8 - 1) // 32-bit boundary
+#endif
+
 /**
-  * Allocate part of the SCSI buffer for other uses
+  * Allocate part of the SCSI buffer for other uses, align starting address to number of bytes
+  * If the length with all the with boundary adjustments ever goes passed the buffer's
+  * starting address a fail assertion will occur
   * \param length size of the object to allocate
-  * \returns the memory location of the buffer allocated for an object
+  * \param bytes number of bytes to align the returned memory address
+  * \returns the memory location of the buffer allocated for an object of size length or nullptr if the length is 0
   *  */
-uint8_t *reserve_buffer(size_t length);
-
-/**
- * Recover the last allocation of memory
- * \param length size of the last allocation
- */
-void reserve_buffer_recover_last(size_t length);
-
- /**
-  * Checks if reserving buffer ran out of space at any point
-  * \returns true if at any point a reserve buffer ran out of buffer space
-  */
-bool reserve_buffer_failed();
+uint8_t *reserve_buffer_align(size_t length, uint32_t bytes);

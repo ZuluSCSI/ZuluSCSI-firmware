@@ -15,8 +15,8 @@ ScanFilesRecursiveSDNavigator SDNavScanFilesRecursive;
 
 
 // Categories
-int g_totalCategories[8];
-char g_categoryCodeAndNames[8][10][32];
+int g_totalCategories[S2S_MAX_TARGETS];
+char g_categoryCodeAndNames[S2S_MAX_TARGETS][MAX_CATEGORIES][MAX_CATEGORY_NAME_LEN];
 
 // Image Loading
 char g_filenameToLoad[MAX_PATH_LEN];

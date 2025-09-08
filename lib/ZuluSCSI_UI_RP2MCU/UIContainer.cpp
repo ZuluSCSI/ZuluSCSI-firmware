@@ -33,16 +33,16 @@ InitiatorMainScreen *_initiatorMainScreen;
 
 bool initScreens()
 {
-    _splashScreen = new (reserve_buffer(sizeof(SplashScreen))) SplashScreen(g_display);
-    _mainScreen = new (reserve_buffer(sizeof(MainScreen))) MainScreen(g_display);
-    _infoScreen = new (reserve_buffer(sizeof(InfoScreen))) InfoScreen(g_display);
-    _browseScreen = new (reserve_buffer(sizeof(BrowseScreen))) BrowseScreen(g_display);
-    _browseTypeScreen = new (reserve_buffer(sizeof(BrowseTypeScreen))) BrowseTypeScreen(g_display);
-    _browseScreenFlat = new (reserve_buffer(sizeof(BrowseScreenFlat))) BrowseScreenFlat(g_display);
-    _messageBox = new (reserve_buffer(sizeof(MessageBox))) MessageBox(g_display);
-    _copyScreen = new (reserve_buffer(sizeof(CopyScreen))) CopyScreen(g_display);
-    _initiatorMainScreen = new (reserve_buffer(sizeof(InitiatorMainScreen))) InitiatorMainScreen(g_display);
-    return !reserve_buffer_failed();
+    _splashScreen = new (reserve_buffer_align(sizeof(SplashScreen), 4)) SplashScreen(g_display);
+    _mainScreen = new (reserve_buffer_align(sizeof(MainScreen), 4)) MainScreen(g_display);
+    _infoScreen = new (reserve_buffer_align(sizeof(InfoScreen), 4)) InfoScreen(g_display);
+    _browseScreen = new (reserve_buffer_align(sizeof(BrowseScreen), 4)) BrowseScreen(g_display);
+    _browseTypeScreen = new (reserve_buffer_align(sizeof(BrowseTypeScreen), 4)) BrowseTypeScreen(g_display);
+    _browseScreenFlat = new (reserve_buffer_align(sizeof(BrowseScreenFlat), 4)) BrowseScreenFlat(g_display);
+    _messageBox = new (reserve_buffer_align(sizeof(MessageBox), 4)) MessageBox(g_display);
+    _copyScreen = new (reserve_buffer_align(sizeof(CopyScreen), 4)) CopyScreen(g_display);
+    _initiatorMainScreen = new (reserve_buffer_align(sizeof(InitiatorMainScreen), 4)) InitiatorMainScreen(g_display);
+    return true;
 }
 
 // Call new card method on all screens

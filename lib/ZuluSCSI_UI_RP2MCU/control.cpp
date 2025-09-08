@@ -246,7 +246,7 @@ bool initControlBoardHardware()
         return false;
     }
 
-    uint8_t *object_addr = reserve_buffer(sizeof(Adafruit_SSD1306));
+    uint8_t *object_addr = reserve_buffer_align(sizeof(Adafruit_SSD1306), 4);
     if (object_addr == nullptr)
     {
         logmsg("Could not reserve space for Display data in buffer");
@@ -592,9 +592,8 @@ void initDevices()
 {
     if (g_devices == nullptr)
     {
-        g_devices = (DeviceMap*) reserve_buffer(sizeof(DeviceMap) * S2S_MAX_TARGETS);
+        g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
     }
-
     int i;
     for (i = 0; i < S2S_MAX_TARGETS; i++)
     {
