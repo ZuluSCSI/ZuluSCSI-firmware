@@ -72,7 +72,7 @@ struct DeviceMap
     int TotalErrors;
 
     int SectorSize;
-    u_int64_t SectorCount;
+    uint64_t SectorCount;
 };
 
 extern char g_tmpFilename[MAX_PATH_LEN];
