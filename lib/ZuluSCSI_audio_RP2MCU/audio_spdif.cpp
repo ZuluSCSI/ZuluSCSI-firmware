@@ -396,10 +396,10 @@ void audio_setup() {
     gpio_set_function(GPIO_EXP_SPARE, GPIO_FUNC_SIO);
 
     // Reserve buffers
-    wire_buf_a = (uint16_t*) reserve_buffer(sizeof(wire_buf_a[0]) * wire_buf_len);
-    wire_buf_b = (uint16_t*) reserve_buffer(sizeof(wire_buf_a[0]) * wire_buf_len);
-    sample_buf_a = reserve_buffer(sizeof(sample_buf_a[0]) * sample_buf_len);
-    sample_buf_b = reserve_buffer(sizeof(sample_buf_b[0]) * sample_buf_len);
+    wire_buf_a = (uint16_t*) reserve_buffer_align(sizeof(wire_buf_a[0]) * wire_buf_len, 4);
+    wire_buf_b = (uint16_t*) reserve_buffer_align(sizeof(wire_buf_a[0]) * wire_buf_len, 4);
+    sample_buf_a = reserve_buffer_align(sizeof(sample_buf_a[0]) * sample_buf_len, 4);
+    sample_buf_b = reserve_buffer_align(sizeof(sample_buf_b[0]) * sample_buf_len, 4);
 
     // setup SPI to blast S/PDIF data over the TX pin
     spi_set_baudrate(AUDIO_SPI, 5644800); // will be slightly wrong, ~0.03% slow
