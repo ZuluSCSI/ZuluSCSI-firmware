@@ -726,6 +726,8 @@ extern "C" void sdCardStateChanged(bool absent)
 {
     g_sdAvailable = !absent;
 
+    initDevices();
+
     if (!g_controlBoardEnabled)
     {
         return;
@@ -733,8 +735,6 @@ extern "C" void sdCardStateChanged(bool absent)
 
     if (absent) // blank the device map
     {
-        initDevices();
-
         stateChange();
     }
 }
