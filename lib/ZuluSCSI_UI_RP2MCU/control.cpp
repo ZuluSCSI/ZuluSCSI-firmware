@@ -80,7 +80,7 @@ bool g_waitingForButton3Release[TOTAL_CONTROL_BOARD_BUTTONS];
 static TwoWire g_wire(i2c1, GPIO_I2C_SDA, GPIO_I2C_SCL);
 Adafruit_SSD1306 *g_display;
 
-DeviceMap *g_devices;
+DeviceMap *g_devices = nullptr;
 Screen *g_activeScreen;
 
 int g_prevousIndex = -1;
@@ -90,7 +90,6 @@ SYSTEM_MODE g_systemMode = SYSTEM_NORMAL;
 int g_pcaAddr = 0x3F;
 
 bool g_controlBoardEnabled = false;
-bool g_firstInitDevices = true; // For the first lots of SetFolder during start up
 bool hasUIBeenInitialized = false;
 
 /// Helpers
@@ -385,6 +384,24 @@ void processButtons(uint8_t input_byte)
     }
 }
 
+bool initiatorInitialized = false;
+
+void startInitiator()
+{
+    if (!initiatorInitialized)
+    {
+        initiatorInitialized = true;
+
+        int i;
+        for (i=0;i<S2S_MAX_TARGETS;i++)
+        {
+            DeviceMap *deviceMap = &g_devices[i];
+            deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_UNKNOWN;
+        }
+        changeScreen(SCREEN_INITIATOR_MAIN, -1);
+    }
+}
+
 void initUI(bool cardPresent)
 {
     if (hasUIBeenInitialized)
@@ -392,16 +409,56 @@ void initUI(bool cardPresent)
         return;
     }
     hasUIBeenInitialized = true;
+
+    if (g_scsi_initiator)
+    {
+      g_systemMode = SYSTEM_INITIATOR;  
+    }
+    
     if (initControlBoardHardware())
     {
+        g_tick_count = 0;
+        g_going_cw = true;
+        g_number_of_ticks = 1;
+        g_rotary_state = ROTARY_TICK_000; 
+
+        int i;
+        for (i=0;i<TOTAL_CONTROL_BOARD_BUTTONS;i++)
+        {
+            g_button3StartTime[i] = -1;
+            g_button3Press[i] = false;
+            g_waitingForButton3Release[i] = false;
+
+            g_shortPressed[i] = false;
+            g_longPressed[i] = false;
+        }
+
         _splashScreen->setBannerText(g_log_short_firmwareversion);
         changeScreen(SCREEN_SPLASH, -1);
         delay(1500);
 
+        _splashScreen->setBannerText(systemModeToString(g_systemMode));
+        changeScreen(SCREEN_SPLASH, -1);
+
         if (!cardPresent)
         {
-            changeScreen(SCREEN_NOSD, -1);
-            g_activeScreen->tick();
+            delay(1000);
+
+            switch(g_systemMode)
+            {
+                case SYSTEM_NORMAL:
+                    changeScreen(SCREEN_MAIN, -1);
+                    g_activeScreen->tick();
+                    break;
+
+                case SYSTEM_INITIATOR:
+                    _messageBox->setBlockingMode(true);
+                    _messageBox->setText("-- Warning --", "MSC Mode not", "supported yet");
+                    changeScreen(MESSAGE_BOX, -1);
+                    g_activeScreen->tick();
+                    break;
+            }
+            
         }
     }
 
@@ -427,15 +484,13 @@ void updateRotary(int dir)
 void stateChange()
 {
     // printDevices();
-
     sendSDCardStateChangedToScreens(g_sdAvailable);
-
-    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-    g_cacheActive = cfg->enableControlBoardCache;
 
     if (g_sdAvailable)
     {
-        // either boot or valid card change
+        scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+        g_cacheActive = cfg->enableControlBoardCache;
+
         if (g_cacheActive)
         {
             buildCache();
@@ -444,25 +499,21 @@ void stateChange()
         {
             clearCacheData();
         }
-        
-        changeScreen(SCREEN_MAIN, -1);
     }
-    else
-    {
-        // card removed
-        switch(g_systemMode)
-        {
-            case SYSTEM_NORMAL:
-                changeScreen(SCREEN_NOSD, -1);
-                break;
 
-            case SYSTEM_INITIATOR:
-                _messageBox->setBlockingMode(true);
-                _messageBox->setText("-- Info --", "Power cycle", "to continue");
-                changeScreen(MESSAGE_BOX, 01);
-                break;
-        }
-        
+    switch(g_systemMode)
+    {
+        case SYSTEM_NORMAL:
+            changeScreen(SCREEN_MAIN, -1);
+            g_activeScreen->tick();
+            break;
+            
+        case SYSTEM_INITIATOR:
+            _messageBox->setBlockingMode(true);
+            _messageBox->setText("-- Warning --", "MSC Mode not", "supported yet");
+            changeScreen(MESSAGE_BOX, -1);
+            g_activeScreen->tick();
+            break;
     }
 }
 
@@ -539,7 +590,10 @@ void devicesUpdated()
 // This clear the list of devices, used at startup and on card removal
 void initDevices()
 {
-    g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
+    if (g_devices == nullptr)
+    {
+        g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
+    }
     int i;
     for (i = 0; i < S2S_MAX_TARGETS; i++)
     {
@@ -572,13 +626,13 @@ void patchDevice(uint8_t target_idx)
     map.IsRom = img.file.isRom();
     map.IsWritable =  img.file.isWritable();
     
-    if (!map.Active)  // If it wasn't discover in the folder setting phase, it might be a fixed drive or something else, set it here
-    {
-        map.Active = img.file.isOpen();
-    }
+    map.Active = (g_sdAvailable && img.file.isOpen()) || (!g_sdAvailable &&  img.file.isRom());
 
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(target_idx);
-    if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
+    // logmsg("*** g_sdAvailable = ", g_sdAvailable, "  SCSI ", target_idx, "   img.file.isOpen() = ", img.file.isOpen(), " cfg->scsiId & S2S_CFG_TARGET_ENABLED = ", cfg->scsiId & S2S_CFG_TARGET_ENABLED, " img.file.isRom() = ", img.file.isRom(), "   map.Active = ", map.Active);
+
+    //if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
+    if (map.Active)
     {
         map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;
         map.IsRemovable = isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType);
@@ -637,7 +691,7 @@ void patchDevice(uint8_t target_idx)
     /*
     // ASSUMPTION: isOpen() is a good indictor of if a SCSI ID is active
 
-    logmsg("*** g_DiskImages: ", i);
+    logmsg("*** g_DiskImages: ", target_idx);
 
     logmsg("   ejectButton: ", img.ejectButton);
     logmsg("   ejected: ", img.ejected);
@@ -657,6 +711,10 @@ void patchDevice(uint8_t target_idx)
 
     
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(i);
+    if (cfg->scsiId & S2S_CFG_TARGET_ENABLED)
+    {
+        logmsg("  ***** IS ENABLED!");
+    }
     if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
     {
         int capacity_kB = ((uint64_t)cfg->scsiSectors * cfg->bytesPerSector) / 1024;
@@ -664,17 +722,17 @@ void patchDevice(uint8_t target_idx)
         if (cfg->deviceType == S2S_CFG_NETWORK)
         {
             logmsg("SCSI ID: ", (int)(cfg->scsiId & 7),
-                ", Type: ", TypeToString((S2S_CFG_TYPE)cfg->deviceType),
+                ", Type: ", typeToShortString((S2S_CFG_TYPE)cfg->deviceType),
                 ", Quirks: ", (int)cfg->quirks);
         }
         else
         {
             logmsg("SCSI ID: ", (int)(cfg->scsiId & S2S_CFG_TARGET_ID_BITS),
                 ", BlockSize: ", (int)cfg->bytesPerSector,
-                ", Type: ", TypeToString((S2S_CFG_TYPE)cfg->deviceType),
+                ", Type: ", typeToShortString((S2S_CFG_TYPE)cfg->deviceType),
                 ", Quirks: ", (int)cfg->quirks,
                 ", Size: ", capacity_kB, "kB",
-                IsTypeRemovable((S2S_CFG_TYPE)cfg->deviceType) ? ", Removable" : ""
+                isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType) ? ", Removable" : ""
                 );
         }
     }
@@ -702,12 +760,6 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
         return;
     }
 
-    if (g_firstInitDevices)
-    {
-        g_firstInitDevices = false;
-        initDevices();
-    }
-
     DeviceMap &map = g_devices[target_idx];
     map.Active = true;
     map.UserFolder = userSet;
@@ -722,9 +774,9 @@ extern "C" void setCurrentFolder(int target_idx, const char *path)
 }
 
 // When a card is removed or inserted. If it's removed then clear the device list
-extern "C" void sdCardStateChanged(bool absent)
+extern "C" void sdCardStateChanged(bool sdAvailable)
 {
-    g_sdAvailable = !absent;
+    g_sdAvailable = sdAvailable;
 
     initDevices();
 
@@ -733,8 +785,11 @@ extern "C" void sdCardStateChanged(bool absent)
         return;
     }
 
-    if (absent) // blank the device map
+    if (!sdAvailable) // blank the device map
     {
+        patchDevices();
+        // printDevices();
+
         stateChange();
     }
 }
@@ -748,59 +803,7 @@ extern "C" void scsiReinitComplete()
     }
 
     patchDevices();
-
     devicesUpdated();
-}
-
-extern "C" void controlInit()
-{
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
-    if (g_scsi_initiator)
-    {
-      g_systemMode = SYSTEM_INITIATOR;  
-    }
-
-    g_tick_count = 0;
-    g_going_cw = true;
-    g_number_of_ticks = 1;
-    g_rotary_state = ROTARY_TICK_000; 
-
-    int i;
-    for (i=0;i<TOTAL_CONTROL_BOARD_BUTTONS;i++)
-    {
-        g_button3StartTime[i] = -1;
-        g_button3Press[i] = false;
-        g_waitingForButton3Release[i] = false;
-
-        g_shortPressed[i] = false;
-        g_longPressed[i] = false;
-    }
-    
-    _splashScreen->setBannerText(systemModeToString(g_systemMode));
-    changeScreen(SCREEN_SPLASH, -1);
-
-    // printDevices();
-    
-    switch(g_systemMode)
-    {
-        default:
-        case SYSTEM_NORMAL:
-            break;
-
-        case SYSTEM_INITIATOR:
-
-            for (i = 0; i < S2S_MAX_TARGETS; i++)
-            {
-                DeviceMap *deviceMap = &g_devices[i];
-                deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_UNKNOWN;
-            }
-            changeScreen(SCREEN_INITIATOR_MAIN, -1);
-            break;
-    }
 }
 
 extern "C" void controlLoop()
@@ -975,6 +978,8 @@ void UIInitiatorScanning(uint8_t deviceId)
     {
         return;
     }
+
+    startInitiator();
 
     g_initiatorMessageToProcess = true;
 

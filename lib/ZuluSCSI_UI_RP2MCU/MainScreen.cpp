@@ -8,6 +8,10 @@
 
 #include "cache.h"
 
+#define DEVICES_PER_PAGE 8
+#define DEVICES_PER_COLUMN 4
+extern bool g_sdAvailable;
+
 void MainScreen::init(int index)
 {
   Screen::init(index);
@@ -39,28 +43,54 @@ void MainScreen::init(int index)
   {
     _deviceMap = NULL;
   }
-
 }
 
 void MainScreen::draw()
 {
   _display->setCursor(0,0);             
   _display->print(F("SCSI Map"));
-  _display->drawLine(0,10,127,10, 1);
 
-  int yOffset = 13;
-  int xOffset = 0;
-
-  int i;
-  for (i=0;i<8;i++)
+  int page = 0;
+  int deviceOffset = 0;
+  if (_selectedDevice > -1)
   {
-    if (i == 4)
+    page = (_selectedDevice/DEVICES_PER_PAGE);
+    deviceOffset = page * DEVICES_PER_PAGE;
+  }
+  
+  int totalPages = S2S_MAX_TARGETS / DEVICES_PER_PAGE;
+  if (totalPages > 1)
+  {
+    _display->print(" (");
+    _display->print((page+1));
+    _display->print("/");
+    _display->print(totalPages);
+    _display->print(")");
+  }
+
+  _display->drawLine(0,10,112,10, 1);
+
+  if (g_sdAvailable)
+  {
+    _display->drawBitmap(115, 0, icon_sd, 12,12, WHITE);
+  }
+  else
+  {
+    _display->drawBitmap(115, 0, icon_nosd, 12,12, WHITE);
+  }
+
+  int xOffset = 0;
+  int yOffset = 13;
+  int i;
+  for (i=0;i<DEVICES_PER_PAGE;i++)
+  {
+    if (i == DEVICES_PER_COLUMN)
     {
       xOffset = 64;
-      yOffset = 12;
+      yOffset = 13;
     }
 
-    drawSCSIItem(xOffset, yOffset, i);
+    drawSCSIItem(xOffset, yOffset, i + deviceOffset);
 
     yOffset+=13;
   }
@@ -249,49 +279,35 @@ void MainScreen::drawSCSIItem(int x, int y, int index)
 {
   DeviceMap *map = &g_devices[index];
 
-  _display->setCursor(x+10, y+1);             
+  _display->setCursor(x+10, y+2);             
   _display->print((int)index); 
-
 
   if (_selectedDevice == index)
   {
-    _display->drawBitmap(x, y, select, 8,8, WHITE);
+    _display->drawBitmap(x, y+1, select, 8,8, WHITE);
   }
 
   if (map->Active)
   {
     const uint8_t *deviceIcon = getIconForType(map->DeviceType, true);
-    _display->drawBitmap(x+33, y, deviceIcon, 12,12, WHITE);
+    _display->drawBitmap(x+36, y, deviceIcon, 12,12, WHITE);
 
     if (map->IsRom)
     {
-      _display->drawBitmap(x+48, y, icon_rom, 12,12, WHITE);  
+      _display->drawBitmap(x+51, y, icon_rom, 12,12, WHITE);  
     }
     else if (map->IsRaw)
     {
-      _display->drawBitmap(x+48, y, icon_raw, 12,12, WHITE);  
+      _display->drawBitmap(x+51, y, icon_raw, 12,12, WHITE);  
     }
 
-    _display->drawBitmap(x+18, y, icon_ledon, 12,12, WHITE);
+    _display->drawBitmap(x+22, y, icon_ledon, 12,12, WHITE);
     
   }
   else
   {
-    _display->drawBitmap(x+18, y, icon_ledoff, 12,12, WHITE);
+    _display->drawBitmap(x+22, y, icon_ledoff, 12,12, WHITE);
   }
-
-  /*if (map->Active)
-  {
-    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)map->DeviceType, true);
-    _display->drawBitmap(x+43, y, deviceIcon, 12,12, WHITE);
-
-    _display->drawBitmap(x+25, y, icon_ledon, 12,12, WHITE);
-    
-  }
-  else
-  {
-    _display->drawBitmap(x+25, y, icon_ledoff, 12,12, WHITE);
-  } */
 }
 
 #endif

@@ -85,7 +85,7 @@ void BrowseScreenFlat::initPrefix(int index)
     
     for (i=0;i<_totalObjects;i++)
     {
-      getImgXByIndex(_scsiId, i, g_tmpFilename, MAX_PATH_LEN, size);
+      SDNavPrefixFileByIndex.GetFileByIndex(pre, i, g_tmpFilename, MAX_PATH_LEN, size);
 
       if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0)
       {
