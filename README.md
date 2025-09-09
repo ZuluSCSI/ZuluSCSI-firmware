@@ -437,11 +437,22 @@ NOTE: There are no controls in Initiator mode, it is a viewing-only mode
 
 Control Board Config
 --------------------
-- `EnableControlBoardCache` - Enables caching of images. This will greatly improve performance when there are many images. set this to 1 to enable. Enabling will cause some wear on the SD card as the cache is built every time the card is inserted, and there is a slight delay on load (generally 1-2secs for large file sets). So if browsing is laggy, enable this
+- `ControlBoardCache` - Enables caching of images. This will greatly improve performance when there are many images. set this to 1 to enable. Enabling will cause some wear on the SD card as the cache is built every time the card is inserted, and there is a slight delay on load (generally 1-2secs for large file sets). So if browsing is laggy, enable this
 
-- `ReverseControlBoardRotary` - Some encoders work in the opposite direction, if you experience that, set this to 1
+- `ControlBoardReverseRotary` - Some encoders work in the opposite direction, if you experience that, set this to 1
 
-- `FlipControlBoardDisplay` - Rotates the screen 180 degress. set this to 1 to flip
+- `ControlBoardFlipDisplay` - Rotates the screen 180 degress. set this to 1 to flip
+
+- `ControlBoardDimDisplay` - if set to 1, then the screen will be a bit dimmer
+
+- `ControlBoardScreenSaverTimeSec` - Sets the seconds before the screen savers starts. 0 means screen saver is disabled
+
+- `controlBoardScreenSaverStyle` - There are several screen savers, each ones uses more resources, so if you see a performace drop try a lower numbered one:
+
+- 0 - Blank screen
+- 1 - Random ZuluSCSI logo
+- 2 - Floating ZuluSCSI logo
+- 3 - Gliding Icons
 
 
 Project structure
