@@ -79,8 +79,13 @@ bool g_waitingForButton3Release[TOTAL_CONTROL_BOARD_BUTTONS];
 
 static TwoWire g_wire(i2c1, GPIO_I2C_SDA, GPIO_I2C_SCL);
 Adafruit_SSD1306 *g_display;
-
 DeviceMap *g_devices = nullptr;
+
+#if ZULUSCSI_RESERVED_SRAM_LEN == 0
+Adafruit_SSD1306 allocated_g_display(SCREEN_WIDTH, SCREEN_HEIGHT, &g_wire, OLED_RESET);
+static DeviceMap static_g_devices[S2S_MAX_TARGETS];
+#endif
+
 Screen *g_activeScreen;
 
 int g_prevousIndex = -1;
@@ -246,14 +251,12 @@ bool initControlBoardHardware()
         return false;
     }
 
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
     uint8_t *object_addr = reserve_buffer_align(sizeof(Adafruit_SSD1306), 4);
-    if (object_addr == nullptr)
-    {
-        logmsg("Could not reserve space for Display data in buffer");
-        return false;
-    }
     g_display = new (object_addr) Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &g_wire, OLED_RESET);
-
+#else
+    g_display = &allocated_g_display;
+#endif
 
 
     // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
@@ -267,10 +270,7 @@ bool initControlBoardHardware()
         return false;
     }
 
-    if (!initScreens())
-    {
-        logmsg("Failed to initialize Display. Ran out of SRAM");
-    }
+    initScreens();
 
     scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
 
@@ -590,10 +590,15 @@ void devicesUpdated()
 // This clear the list of devices, used at startup and on card removal
 void initDevices()
 {
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
     if (g_devices == nullptr)
     {
         g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
     }
+#else
+    g_devices = static_g_devices;
+#endif
+
     int i;
     for (i = 0; i < S2S_MAX_TARGETS; i++)
     {

@@ -590,7 +590,7 @@ static bool loadCueSheet(image_config_t &img, CUEParser &parser)
     }
 
     // Use second half of scsiDev.data as the buffer for cue sheet text
-    size_t halfbufsize = scsiDev.dataBufLen / 2;
+    size_t halfbufsize = sizeof(scsiDev.data) / 2;
     char *cuebuf = (char*)&scsiDev.data[halfbufsize];
     img.cuesheetfile.seek(0);
     int len = img.cuesheetfile.read(cuebuf, halfbufsize);

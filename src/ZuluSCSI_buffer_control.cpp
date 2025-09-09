@@ -24,8 +24,6 @@
 #include <ZuluSCSI_buffer_control.h>
 #include <ZuluSCSI_log.h>
 
-#ifdef ZULUSCSI_MCU_RP23XX
-
 static uint8_t buffer[ZULUSCSI_RESERVED_SRAM_LEN];
 static size_t  buffer_length =  sizeof(buffer);
 
@@ -36,37 +34,25 @@ uint8_t *reserve_buffer_align(size_t length, uint32_t bytes)
 
     uintptr_t mask = ~(bytes - 1);
 
-    assert(length <= buffer_length);
+    if(length > buffer_length)
+    {
+        logmsg("Buffer Control ran out of space by ", (int)(length - buffer_length)," bytes increase ZULUSCSI_RESERVED_SRAM_LEN and recompile");
+        assert(false);
+    }
     buffer_length -= length;
 
     uint8_t *new_address = (uint8_t*)(((uintptr_t) &buffer[buffer_length]) & mask);
-    uint32_t adjustment = &buffer[buffer_length] - new_address;
-
-    assert(adjustment <= buffer_length);
+    size_t adjustment = &buffer[buffer_length] - new_address;
+    if (adjustment > buffer_length)
+    {
+        logmsg("Buffer Control ran out of space after alignment by ", (int)(adjustment - buffer_length)," bytes , increase ZULUSCSI_RESERVED_SRAM_LEN and recompile");
+        assert(false);
+    }
     buffer_length -= adjustment;
-
     return new_address;
 }
 
-#elif defined(ZULUSCSI_MCU_RP20XX)
-
-uint8_t *reserve_buffer_align(size_t length, uint32_t bytes)
+size_t reserve_buffer_left()
 {
-    assert(length <= scsiDev.dataBufLeft);
-    scsiDev.dataBufLeft -= length;
-
-    uintptr_t mask = ~(bytes - 1);
-
-    uint8_t *new_address = (uint8_t*)(((uintptr_t) &scsiDev.data[scsiDev.dataBufLeft]) & mask);
-    uint32_t adjustment = &scsiDev.data[scsiDev.dataBufLeft] - new_address;
-
-    assert(adjustment <= scsiDev.dataBufLeft);
-    scsiDev.dataBufLeft -= adjustment;
-
-    // Align the end of the scsiDev.data buffer to ZULUSCSI_BUFFER_CONTROL_BOUNDARY_MASK
-    scsiDev.dataBufLen = scsiDev.dataBufLeft & ~((uintptr_t)ZULUSCSI_BUFFER_CONTROL_BOUNDARY_MASK);
-    assert(scsiDev.dataBufLen > 0);
-
-    return new_address;
+    return buffer_length;
 }
-#endif

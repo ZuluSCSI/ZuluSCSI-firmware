@@ -70,6 +70,8 @@ SECTIONS
         cyw43_digitalRead = 0;
         cyw43_pinMode = 0;
         init_cyw43_wifi = bootloader_main;
+        setPendingImageLoad = 0;
+
         __logical_binary_start = .;
         KEEP (*(.btldr_vectors))
         KEEP (*(.binary_info_header))

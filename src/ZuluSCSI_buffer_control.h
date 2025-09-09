@@ -27,16 +27,11 @@
 // This is for MCUs that don't need to share their scsiDev.data buffer other objects,
 // but need to put the objects in some other memory location, like the control board class objects
 #ifndef ZULUSCSI_RESERVED_SRAM_LEN
-# ifdef CONTROL_BOARD
-#   define ZULUSCSI_RESERVED_SRAM_LEN (48*1024)
+# if defined(ZULUSCSI_MCU_RP20XX) && defined(CONTROL_BOARD) && defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#   define ZULUSCSI_RESERVED_SRAM_LEN (36*1024)
 # else
 #   define ZULUSCSI_RESERVED_SRAM_LEN (0)
 # endif
-#endif
-
-// This will align the scsiDev.data boundary usable by the SCSI interface
-#ifndef ZULUSCSI_BUFFER_CONTROL_BOUNDARY_MASK
-# define ZULUSCSI_BUFFER_CONTROL_BOUNDARY_MASK (32/8 - 1) // 32-bit boundary
 #endif
 
 /**
@@ -48,3 +43,9 @@
   * \returns the memory location of the buffer allocated for an object of size length or nullptr if the length is 0
   *  */
 uint8_t *reserve_buffer_align(size_t length, uint32_t bytes);
+
+/**
+ * Returns how much of the buffer is left
+ * \returns buffer left in bytes
+ */
+size_t reserve_buffer_left();

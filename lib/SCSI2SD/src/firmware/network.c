@@ -236,7 +236,7 @@ int scsiNetworkCommand()
 	case 0x09:
 		// read mac address and stats
 		memcpy(scsiDev.data, scsiDev.boardCfg.wifiMACAddress, sizeof(scsiDev.boardCfg.wifiMACAddress));
-		memset(scsiDev.data + sizeof(scsiDev.boardCfg.wifiMACAddress), 0, scsiDev.dataBufLen - sizeof(scsiDev.boardCfg.wifiMACAddress));
+		memset(scsiDev.data + sizeof(scsiDev.boardCfg.wifiMACAddress), 0, sizeof(scsiDev.data) - sizeof(scsiDev.boardCfg.wifiMACAddress));
 
 		// three 32-bit counters expected to follow, just return zero for all
 		scsiDev.dataLen = 18;
@@ -251,7 +251,7 @@ int scsiNetworkCommand()
 			size += 8;
 		}
 
-		memset(scsiDev.data, 0, scsiDev.dataBufLen);
+		memset(scsiDev.data, 0, sizeof(scsiDev.data));
 
 		scsiEnterPhase(DATA_OUT);
 		parityError = 0;
@@ -288,7 +288,7 @@ int scsiNetworkCommand()
 
 	case 0x0d:
 		// add multicast addr to network filter
-		memset(scsiDev.data, 0, scsiDev.dataBufLen);
+		memset(scsiDev.data, 0, sizeof(scsiDev.data));
 		scsiEnterPhase(DATA_OUT);
 		parityError = 0;
 		scsiRead(scsiDev.data, size, &parityError);
@@ -373,10 +373,10 @@ int scsiNetworkCommand()
 
 			if (nets) {
 				int size = sizeof(struct wifi_network_entry) * nets;
-				if (size + 2 > scsiDev.dataBufLen)
+				if (size + 2 > sizeof(scsiDev.data))
 				{
 					LOGMSG_F("WARNING: wifi_network_list is bigger than scsiDev.data, truncating", 0);
-					size = scsiDev.dataBufLen - 2;
+					size = sizeof(scsiDev.data) - 2;
 					size -= (size % (sizeof(struct wifi_network_entry)));
 				}
 				scsiDev.data[0] = (size >> 8) & 0xff;
@@ -445,7 +445,7 @@ int scsiNetworkCommand()
 		case SCSI_NETWORK_WIFI_CMD_GETMACADDRESS:
 			// Update for the gvpscsi.device on the Amiga as it doesn't like 0x09 command being called! - NOTE this only sends 6 bytes back
 			memcpy(scsiDev.data, scsiDev.boardCfg.wifiMACAddress, sizeof(scsiDev.boardCfg.wifiMACAddress));
-			memset(scsiDev.data + sizeof(scsiDev.boardCfg.wifiMACAddress), 0, scsiDev.dataBufLen - sizeof(scsiDev.boardCfg.wifiMACAddress));
+			memset(scsiDev.data + sizeof(scsiDev.boardCfg.wifiMACAddress), 0, sizeof(scsiDev.data) - sizeof(scsiDev.boardCfg.wifiMACAddress));
 
 			scsiDev.dataLen = 6;
 			scsiDev.phase = DATA_IN;

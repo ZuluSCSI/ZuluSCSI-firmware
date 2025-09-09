@@ -25,7 +25,7 @@ extern "C" void setCurrentFolder(int target_idx, const char *path);
 
 extern "C" void initUI(bool cardPresent);
 
-extern "C" bool initScreens();
+extern "C" void initScreens();
 
 extern bool g_controlBoardEnabled;
 
