@@ -311,7 +311,7 @@ void scsiInitiatorMainLoop()
         g_initiator_state.eject_when_done = false;
         g_initiator_state.use_read10 = false;
 
-        UIInitiatorScanning(g_initiator_state.target_id);
+        UIInitiatorScanning(g_initiator_state.target_id, g_initiator_state.initiator_id);
         
         if (!(g_initiator_state.drives_imaged & (1 << g_initiator_state.target_id)))
         {

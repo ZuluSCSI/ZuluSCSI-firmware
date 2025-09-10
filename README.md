@@ -419,6 +419,8 @@ and will the go to the scanning screen:
 
 ![scanning](https://github.com/user-attachments/assets/15f79ace-d881-479d-8023-f11c0efac276)
 
+A circle with an X through it is the SCSI ID currently being scanned
+
 Question marks are SCSI IDs which have no been checked yet
 
 The empty circles are SCSI IDs which have been scanned
@@ -441,13 +443,13 @@ Control Board Config
 
 - `ControlBoardReverseRotary` - Some encoders work in the opposite direction, if you experience that, set this to 1
 
-- `ControlBoardFlipDisplay` - Rotates the screen 180 degress. set this to 1 to flip
+- `ControlBoardFlipDisplay` - Rotates the screen 180 degrees. set this to 1 to flip
 
 - `ControlBoardDimDisplay` - if set to 1, then the screen will be a bit dimmer
 
 - `ControlBoardScreenSaverTimeSec` - Sets the seconds before the screen savers starts. 0 means screen saver is disabled
 
-- `controlBoardScreenSaverStyle` - There are several screen savers, each ones uses more resources, so if you see a performace drop try a lower numbered one:
+- `ControlBoardScreenSaverStyle` - There are several screen savers, each ones uses more resources, so if you see a performance drop try a lower numbered one:
 
 - 0 - Random selection (each time the screen saver starts, a random one will be selected)
 - 1 - Blank screen

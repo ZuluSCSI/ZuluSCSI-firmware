@@ -465,7 +465,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     }
 
     cfgSys.maxBusWidth = ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE);
-    initUI(true);
+    initUIPostSDInit(true);
 
     return &cfgSys;
 }

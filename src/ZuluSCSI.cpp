@@ -1040,7 +1040,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
       // if booting and no card found, we want to init the display here as it usually gets inited
       // from readint the config
-      initUI(false);
+      initUIPostSDInit(false);
     }
     dbgmsg("SD card init failed, sdErrorCode: ", (int)SD.sdErrorCode(),
            " sdErrorData: ", (int)SD.sdErrorData());
@@ -1125,7 +1125,10 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       delay(boot_delay_ms);
     }
     platform_post_sd_card_init();
-    kiosk_restore_images();
+#ifdef PLATFORM_HAS_INITIATOR_MODE
+    if (!platform_is_initiator_mode_enabled())
+#endif
+      kiosk_restore_images();
     reinitSCSI();
 
     boot_delay_ms = cfg->initPostDelay;
@@ -1502,10 +1505,12 @@ static void kiosk_restore_images()
         uint32_t last_progress_mb = 0;
         bool copy_success = true;
 
-        UIKioskCopyInit(devCount+1, totalOriFound, target_size/BUFFER_SIZE, BUFFER_SIZE, tgt_name);
+        UIKioskCopyInit(devCount+1, totalOriFound, ori_size/BUFFER_SIZE, BUFFER_SIZE, tgt_name);
 
         original.rewind();
-        int block = 0;
+        uint32_t block = 0;
+        uint32_t block_time = 0;
+        uint32_t ui_update_start = millis();
         while (bytes_copied < ori_size && copy_success)
         {
           uint32_t time_start = millis();
@@ -1543,12 +1548,17 @@ static void kiosk_restore_images()
           // Set LED based on current state with pattern [ON, OFF, ON, OFF, OFF]
           int led_state = progress_mb % 5;
           platform_write_led(led_state == 0 || led_state == 2);
+          block_time += (uint32_t)(millis() - time_start);
+          if ((uint32_t)(millis() - ui_update_start) > 250)
+          {
+            UIKioskCopyProgress(block_time, block);
+            ui_update_start  = millis();
+            block_time = 0;
 
-          UIKioskCopyProgress(millis() - time_start, block);
+          }
           block++;
         }
         
-        UIKioskCopyProgress(0, block);
         devCount++;
 
         target.close();

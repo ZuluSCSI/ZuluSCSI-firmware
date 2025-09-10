@@ -37,6 +37,7 @@
 #include "MessageBox.h"
 #include "SplashScreen.h"
 #include "CopyScreen.h"
+#include "InitiatorMainScreen.h"
 #include "ScreenSaver.h"
 
 #define TOTAL_CONTROL_BOARD_BUTTONS 3
@@ -45,6 +46,8 @@
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+
+extern bool g_sdcard_present;
 
 enum rotary_direction_t {
     ROTARY_DIR_NONE = 0,
@@ -61,6 +64,13 @@ enum rotary_direction_t {
     ROTARY_LAST_CCW_101,
     ROTARY_CONT_CCW_110,
   };
+
+typedef enum
+{
+    ZULUSCSI_UI_START_SPLASH_VERSION,
+    ZULUSCSI_UI_START_SPLASH_SYS_MODE,
+    ZULUSCSI_UI_START_DONE
+} ZULUSCSI_UI_START;
 
 const uint8_t rotary_transition_lut[7][4] = 
 {
@@ -110,15 +120,18 @@ static DeviceMap static_g_devices[S2S_MAX_TARGETS];
 
 Screen *g_activeScreen;
 
-int g_prevousIndex = -1;
+int g_previousIndex = -1;
 
 SYSTEM_MODE g_systemMode = SYSTEM_NORMAL;
+
+static ZULUSCSI_UI_START g_uiStart = ZULUSCSI_UI_START_SPLASH_VERSION;
+static uint32_t g_uiStartTime = 0;
 
 int g_pcaAddr = 0x3F;
 
 bool g_controlBoardEnabled = false;
-bool hasUIBeenInitialized = false;
-
+bool hasScreenBeenInitialized = false;
+bool hasControlBeenInitialized = false;
 
 /// Helpers
 
@@ -191,6 +204,87 @@ void printDevices()
             //" use_prefix = ", g_devices[i].use_prefix);
     }
 }
+
+/**
+ * \returns false when init is done, true if still in process
+ */
+static bool splashScreenInit()
+{
+    if (g_uiStart != ZULUSCSI_UI_START_DONE)
+    {
+        if (g_uiStart == ZULUSCSI_UI_START_SPLASH_VERSION && (uint32_t)(millis() - g_uiStartTime) > 1500)
+        {
+            _splashScreen->setBannerText(systemModeToString(g_systemMode));
+            changeScreen(SCREEN_SPLASH, -1);
+            g_uiStart = ZULUSCSI_UI_START_SPLASH_SYS_MODE;
+            g_uiStartTime = millis();
+        }
+        else if (g_uiStart == ZULUSCSI_UI_START_SPLASH_SYS_MODE && (uint32_t)(millis() - g_uiStartTime) > 1000)
+        {
+            g_uiStart = ZULUSCSI_UI_START_DONE;
+
+            if (!g_sdcard_present)
+            {
+                switch(g_systemMode)
+                {
+                    case SYSTEM_NORMAL:
+                        changeScreen(SCREEN_MAIN, -1);
+                        g_activeScreen->tick();
+                        break;
+
+                    case SYSTEM_INITIATOR:
+                        _messageBox->setBlockingMode(true);
+                        _messageBox->setText("-- Warning --", "MSC Mode not", "supported yet");
+                        changeScreen(MESSAGE_BOX, -1);
+                        g_activeScreen->tick();
+                        break;
+                }
+            }
+            else if(g_systemMode == SYSTEM_NORMAL)
+            {
+                changeScreen(SCREEN_MAIN, -1);
+                g_activeScreen->tick();
+            }
+
+        }
+        g_activeScreen->tick();
+        return true;
+    }
+    return false;
+}
+/**
+ * Skip changeScreen if splash screen is still visible
+ * Otherwise change s   creen if the same screen isn't already loaded or if force_change is true
+ * \param screen screen type to change 
+ * \param deviceId the device ID
+ * \param force_change don't check if the screen is already loaded
+ * \returns true if the splash screen is still on going
+ */
+static bool deferredScreenLoad(SCREEN_TYPE screen, int deviceId, bool force_change = false)
+{
+    if (splashScreenInit())
+    {
+        return true;
+    }
+    else if (force_change || g_activeScreen->screenType() != screen || g_activeScreen->getOriginalIndex() != deviceId)
+    {
+        changeScreen(screen, deviceId);
+    }
+    return false;
+}
+
+/**
+ * Stops splash screen and then change screen
+ * \param screen screen type to change
+ * \param deviceId the device ID
+ * \returns true if the screen was changed, false if the screen was already loaded
+ */
+static void overrideSplashScreenLoad(SCREEN_TYPE screen, int deviceId)
+{
+    g_uiStart = ZULUSCSI_UI_START_DONE;
+    changeScreen(screen, deviceId);
+}
+
 
 bool loadImageDeferred(uint8_t id, const char* next_filename, SCREEN_TYPE returnScreen, int returnIndex)
 {
@@ -268,7 +362,7 @@ void enableScreen(bool state)
     g_display->ssd1306_command(state ? brightness : 0);
 }
 
-bool initControlBoardHardware()
+bool initScreenHardware()
 {
     g_wire.setClock(100000);
 
@@ -286,7 +380,6 @@ bool initControlBoardHardware()
         g_wire.end();
         return false;
     }
-
 #if ZULUSCSI_RESERVED_SRAM_LEN > 0
     uint8_t *object_addr = reserve_buffer_align(sizeof(Adafruit_SSD1306), 4);
     g_display = new (object_addr) Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &g_wire, OLED_RESET);
@@ -305,6 +398,19 @@ bool initControlBoardHardware()
 
         return false;
     }
+        // Clear the buffer
+    g_display->clearDisplay();
+    g_display->display();
+
+    return true;
+}
+
+bool initControlBoardHardware()
+{
+    // System clock may have changed
+    g_wire.end();
+    g_wire.setClock(100000);
+    g_wire.begin();
 
     initScreens();
 
@@ -319,10 +425,6 @@ bool initControlBoardHardware()
     {
         g_display->setRotation(2);
     }
-   
-      // Clear the buffer
-    g_display->clearDisplay();
-    g_display->display(); 
 
     g_reverseRotary = !cfg->controlBoardReverseRotary;
 
@@ -424,7 +526,7 @@ void processButtons(uint8_t input_byte)
 
 bool initiatorInitialized = false;
 
-void startInitiator()
+void startInitiator(uint8_t initiatorId)
 {
     if (!initiatorInitialized)
     {
@@ -434,25 +536,37 @@ void startInitiator()
         for (i=0;i<S2S_MAX_TARGETS;i++)
         {
             DeviceMap *deviceMap = &g_devices[i];
-            deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_UNKNOWN;
+            deviceMap->InitiatorDriveStatus = i == initiatorId ? INITIATOR_DRIVE_HOST : INITIATOR_DRIVE_UNKNOWN;
         }
-        changeScreen(SCREEN_INITIATOR_MAIN, -1);
     }
+    deferredScreenLoad(SCREEN_INITIATOR_MAIN, -1);
 }
 
-void initUI(bool cardPresent)
+void initUIDisplay()
 {
-    if (hasUIBeenInitialized)
-    {
+    static bool initDisplayRun = false;
+    if (initDisplayRun)
         return;
-    }
-    hasUIBeenInitialized = true;
+    else
+        initDisplayRun = true;
 
     if (g_scsi_initiator)
     {
       g_systemMode = SYSTEM_INITIATOR;  
     }
     
+    hasScreenBeenInitialized = initScreenHardware();
+}
+
+
+
+void initUIPostSDInit(bool sd_card_present)
+{
+    if (!hasScreenBeenInitialized || hasControlBeenInitialized)
+    {
+        return;
+    }
+    hasControlBeenInitialized = true;
     if (initControlBoardHardware())
     {
         g_tick_count = 0;
@@ -473,31 +587,9 @@ void initUI(bool cardPresent)
 
         _splashScreen->setBannerText(g_log_short_firmwareversion);
         changeScreen(SCREEN_SPLASH, -1);
-        delay(1500);
-
-        _splashScreen->setBannerText(systemModeToString(g_systemMode));
-        changeScreen(SCREEN_SPLASH, -1);
-
-        if (!cardPresent)
-        {
-            delay(1000);
-
-            switch(g_systemMode)
-            {
-                case SYSTEM_NORMAL:
-                    changeScreen(SCREEN_MAIN, -1);
-                    g_activeScreen->tick();
-                    break;
-
-                case SYSTEM_INITIATOR:
-                    _messageBox->setBlockingMode(true);
-                    _messageBox->setText("-- Warning --", "MSC Mode not", "supported yet");
-                    changeScreen(MESSAGE_BOX, -1);
-                    g_activeScreen->tick();
-                    break;
-            }
-            
-        }
+        g_activeScreen->tick();
+        g_uiStart = ZULUSCSI_UI_START_SPLASH_VERSION;
+        g_uiStartTime = millis();
     }
 
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
@@ -550,6 +642,8 @@ void stateChange()
         enableScreen(true); // In case there was a brightness level change
     }
 
+    if (g_uiStart != ZULUSCSI_UI_START_DONE)
+        return;
     switch(g_systemMode)
     {
         case SYSTEM_NORMAL:
@@ -802,7 +896,7 @@ void patchDevices()
 }
 
 //////////////////////////////////////
-// Externs called by orignal ZULU code
+// Externs called by original ZULU code
 //////////////////////////////////////
 
 // When Zulu is determing if drives are folder based, once it works it out, it calls this
@@ -848,7 +942,7 @@ extern "C" void sdCardStateChanged(bool sdAvailable)
     }
 }
 
-// On startup on when a card has finished been reinserted, this is call. Used to call 2nd pass of device seup
+// On startup on when a card has finished been reinserted, this is call. Used to call 2nd pass of device setup
 extern "C" void scsiReinitComplete()
 {
     if (!g_controlBoardEnabled)
@@ -864,7 +958,7 @@ extern "C" void scsiReinitComplete()
 
 extern "C" void controlLoop()
 {
-    if (!g_controlBoardEnabled)
+    if (!g_controlBoardEnabled || splashScreenInit())
     {
         return;
     }
@@ -963,7 +1057,7 @@ void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename)
     _copyScreen->setShowInfoText(true);
     _copyScreen->setInfoText(filename);
     _copyScreen->setShowRetriesAndErrors(false);
-    changeScreen(SCREEN_COPY, 255);
+    overrideSplashScreenLoad(SCREEN_COPY, 255);
 }
 
 void UICreateProgress(uint32_t blockTime, uint32_t blockCopied) 
@@ -976,8 +1070,7 @@ void UICreateProgress(uint32_t blockTime, uint32_t blockCopied)
     _copyScreen->BlocksCopied = blockCopied;
     _copyScreen->BlocksInBatch = 1;
     _copyScreen->NeedsProcessing = true;
-
-   _copyScreen->tick();
+    _copyScreen->tick();
 }
 
 /// Kiosk
@@ -993,6 +1086,7 @@ void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCo
     _copyScreen->DeviceType = 255;
     _copyScreen->BlockCount = blockCount;
     _copyScreen->BlockSize = blockSize;
+
 
     char t[10];
     char banner[MAX_PATH_LEN];
@@ -1010,7 +1104,8 @@ void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCo
     _copyScreen->setShowInfoText(true);
     _copyScreen->setInfoText(filename);
     _copyScreen->setShowRetriesAndErrors(false);
-    changeScreen(SCREEN_COPY, 255);
+
+    overrideSplashScreenLoad(SCREEN_COPY, 255);
 }
 
 void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
@@ -1045,8 +1140,7 @@ void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCoun
      _copyScreen->setShowInfoText(true);
     _copyScreen->setInfoText(&filename[1]);
     _copyScreen->setShowRetriesAndErrors(false);
-    changeScreen(SCREEN_COPY, deviceId);
-
+    overrideSplashScreenLoad(SCREEN_COPY, deviceId);
 }
 void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) 
 {
@@ -1066,20 +1160,20 @@ void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopi
 INITIATOR_MODE g_initiatorMode = INITIATOR_SCANNING;
 bool g_initiatorMessageToProcess;
 
-void UIInitiatorScanning(uint8_t deviceId)
+void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId)
 {
     if (!g_controlBoardEnabled)
     {
         return;
     }
 
-    startInitiator();
+    startInitiator(initiatorId);
 
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
 
-    if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_UNKNOWN)
+    if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_UNKNOWN || deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_SCANNED)
     {
         deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_PROBING;
         deviceMap->TotalRetries = 0;
@@ -1088,6 +1182,16 @@ void UIInitiatorScanning(uint8_t deviceId)
         _copyScreen->TotalRetries = 0;
         _copyScreen->TotalErrors  = 0;
     }
+
+    for (uint8_t i = 0 ; i < S2S_MAX_TARGETS; i++)
+    {
+        if (i != deviceId && g_devices[i].InitiatorDriveStatus == INITIATOR_DRIVE_PROBING)
+        {
+            g_devices[i].InitiatorDriveStatus = INITIATOR_DRIVE_SCANNED;
+        }
+    }
+    if (!deferredScreenLoad(SCREEN_INITIATOR_MAIN, -1))
+        _initiatorMainScreen->tick();
 }
 
 void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) 
@@ -1109,7 +1213,7 @@ void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t se
     _copyScreen->BlockCount = sectorCount;
     _copyScreen->BlockSize = sectorSize;
 
-    if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_UNKNOWN)
+    if (deviceMap->InitiatorDriveStatus == INITIATOR_DRIVE_SCANNED)
     {
         deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_CLONABLE;
     }
@@ -1117,7 +1221,8 @@ void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t se
     _copyScreen->setBannerText("Cloning");
     _copyScreen->setShowRetriesAndErrors(true);
     _copyScreen->setShowInfoText(false);
-    changeScreen(SCREEN_COPY, deviceId);
+
+    deferredScreenLoad(SCREEN_COPY, deviceId, true);
 }
 
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) 
@@ -1126,11 +1231,12 @@ void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsC
     {
         return;
     }
+    _copyScreen->BlockTime = blockTime;
+    _copyScreen->BlocksCopied = sectorsCopied;
+    _copyScreen->BlocksInBatch = sectorInBatch;
+    _copyScreen->NeedsProcessing = true;
 
-   _copyScreen->BlockTime = blockTime;
-   _copyScreen->BlocksCopied = sectorsCopied;
-   _copyScreen->BlocksInBatch = sectorInBatch;
-   _copyScreen->NeedsProcessing = true;
+    deferredScreenLoad(SCREEN_COPY, deviceId);
 }
 
 void UIInitiatorRetry(uint8_t deviceId) 
@@ -1145,6 +1251,7 @@ void UIInitiatorRetry(uint8_t deviceId)
     DeviceMap *deviceMap = &g_devices[deviceId];
     deviceMap->TotalRetries++;
     _copyScreen->TotalRetries++;
+    deferredScreenLoad(SCREEN_COPY, deviceId);
 }
 
 void UIInitiatorSkippedSector(uint8_t deviceId) 
@@ -1159,6 +1266,7 @@ void UIInitiatorSkippedSector(uint8_t deviceId)
     DeviceMap *deviceMap = &g_devices[deviceId];
     deviceMap->TotalErrors++;
     _copyScreen->TotalErrors++;
+    deferredScreenLoad(SCREEN_COPY, deviceId);
 }
 
 void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) 
@@ -1196,8 +1304,7 @@ void UIInitiatorImagingComplete(uint8_t deviceId)
     DeviceMap *deviceMap = &g_devices[deviceId];
 
     deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_CLONED;
-
-    changeScreen(SCREEN_INITIATOR_MAIN, -1);
+    deferredScreenLoad(SCREEN_INITIATOR_MAIN, -1, true);
 }
 
 

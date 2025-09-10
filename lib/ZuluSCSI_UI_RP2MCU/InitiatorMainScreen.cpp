@@ -75,6 +75,11 @@ void InitiatorMainScreen::tick()
   }
   
   Screen::tick();
+
+#ifdef SCREEN_SHOTS
+    saveScreenShot();
+#endif 
+
 }
 
 void InitiatorMainScreen::drawSCSIItem(int x, int y, int index)
@@ -93,8 +98,13 @@ void InitiatorMainScreen::drawSCSIItem(int x, int y, int index)
       break;
 
     case INITIATOR_DRIVE_PROBING:
+      _display->drawBitmap(x+25, y, icon_scanning, 12,12, WHITE);
+      break;
+
+    case INITIATOR_DRIVE_SCANNED:
       _display->drawBitmap(x+25, y, icon_ledoff, 12,12, WHITE);
       break;
+
 
     case INITIATOR_DRIVE_CLONABLE:
       _display->drawBitmap(x+25, y, icon_ledsemi, 12,12, WHITE);
@@ -104,6 +114,10 @@ void InitiatorMainScreen::drawSCSIItem(int x, int y, int index)
     case INITIATOR_DRIVE_CLONED:
       _display->drawBitmap(x+25, y, icon_ledon, 12,12, WHITE);
       showType = true;
+      break;
+
+    case INITIATOR_DRIVE_HOST:
+      _display->drawBitmap(x+25, y, icon_host, 12,12, WHITE);
       break;
   }
 

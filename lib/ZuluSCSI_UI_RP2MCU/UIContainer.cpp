@@ -39,7 +39,7 @@
 
 
 extern Screen *g_activeScreen;
-extern int g_prevousIndex;
+extern int g_previousIndex;
 
 SplashScreen *_splashScreen;
 MainScreen *_mainScreen;
@@ -193,18 +193,18 @@ void changeScreen(SCREEN_TYPE type, int index)
     // Make the new screen active
     g_activeScreen = GetScreen(type);
 
-    // If no index, set it to the previos one. This is used to restore state to the previous sceen.
+    // If no index, set it to the previous one. This is used to restore state to the previous screen.
     // e.g. going back to main with restore the selected SCSI id item in the main view
     if (index == -1)
     {
-        index = g_prevousIndex;
+        index = g_previousIndex;
     }
 
     // Init the Screen
     g_activeScreen->init(index);
 
     // Store the index, incase the next screen change index is a -1
-    g_prevousIndex = index;
+    g_previousIndex = index;
 }
 
 #endif
