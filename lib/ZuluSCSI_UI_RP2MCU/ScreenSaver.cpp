@@ -19,6 +19,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
+#if defined(CONTROL_BOARD)
+
 #include "ScreenSaver.h"
 
 #include <Adafruit_SSD1306.h>
@@ -72,7 +74,6 @@ Vec2D points[MAX_OBJECT_MANY]; // position
 #endif // ENABLE_HIGHER_LOAD_SCREEN_SAVERS
 
 
-
 const uint8_t *GetIconByIndex(int index)
 {
     switch(index)
@@ -118,9 +119,7 @@ void drawScreenSaver()
 {
     if (millis() > nextScreenSaverChange)
     {
-        scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-
-        if (currentSelection != 1) // i.e. not blank
+        if (currentSelection != SCREENSAVER_BLANK) // i.e. not blank
         {
             g_display->clearDisplay();
 
@@ -342,7 +341,7 @@ void enterScreenSaver()
 
     scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
     currentSelection = cfg->controlBoardScreenSaverStyle;
-    if (currentSelection == SCREENSAVER_RANDOM) // i.e. Random
+    if (currentSelection == SCREENSAVER_RANDOM)
     {
         currentSelection = random(TOTAL_SCREEN_SAVER)+1;
     }
@@ -410,3 +409,5 @@ void screenSaverLoop()
         }
     }
 }
+
+#endif

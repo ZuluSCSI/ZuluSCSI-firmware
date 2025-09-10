@@ -449,12 +449,12 @@ Control Board Config
 
 - `controlBoardScreenSaverStyle` - There are several screen savers, each ones uses more resources, so if you see a performace drop try a lower numbered one:
 
-- 0 - Random selection
+- 0 - Random selection (each time the screen saver starts, a random one will be selected)
 - 1 - Blank screen
-- 2 - Random ZuluSCSI logo
-- 3 - Floating ZuluSCSI logo
-- 4 - Horizontal Gliding Icons
-- 5 - Vertical Gliding Icons
+- 2 - DVD Style Random ZuluSCSI logo
+- 3 - DVD Style Bouncing ZuluSCSI logo
+- 4 - Horizontal Scrolling Icons
+- 5 - Vertical Raining Icons
 - 6 - Light speed
 
 
