@@ -319,7 +319,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.controlBoardFlipDisplay = false;
     cfgSys.controlBoardDimDisplay = false;
     cfgSys.controlBoardScreenSaverTimeSec = 300; // 5 mins
-    cfgSys.controlBoardScreenSaverStyle = 0; // blank screen
+    cfgSys.controlBoardScreenSaverStyle = 2; // Slow Random ZuluSCSI logo. Very low load.
     cfgSys.useFATAllocSize = false;
 #ifdef ZULUSCSI_MCU_RP20XX
     cfgSys.enableCDAudio = false;

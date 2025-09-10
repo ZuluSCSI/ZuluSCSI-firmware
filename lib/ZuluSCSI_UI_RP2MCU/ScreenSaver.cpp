@@ -1,3 +1,24 @@
+/**
+ * Copyright (c) 2025 Guy Taylor
+ *
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
+ *
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 #include "ScreenSaver.h"
 
 #include <Adafruit_SSD1306.h>
@@ -28,14 +49,16 @@ int scrY = 5;
 bool dirX = true;
 bool dirY = true;
 
+#ifdef ENABLE_HIGHER_LOAD_SCREEN_SAVERS
 
-#ifdef ENABLE_LIGHTSPEED
+#ifdef ENABLE_LIGHTSPEED_SCREEN_SAVERS
 #define MAX_OBJECT_MANY 32
 #define TOTAL_SCREEN_SAVER 6
 #else
 #define MAX_OBJECT_MANY 8
 #define TOTAL_SCREEN_SAVER 5
 #endif
+
 #define MAX_OBJECT_FEW 8
 
 uint8_t sT[MAX_OBJECT_MANY];  // Icon Type
@@ -43,6 +66,12 @@ uint8_t size[MAX_OBJECT_MANY]; // start size
 bool sA[MAX_OBJECT_MANY]; // Active?
 Vec2D vectors[MAX_OBJECT_MANY]; // direction
 Vec2D points[MAX_OBJECT_MANY]; // position
+
+#else // !ENABLE_HIGHER_LOAD_SCREEN_SAVERS
+#define TOTAL_SCREEN_SAVER 3
+#endif // ENABLE_HIGHER_LOAD_SCREEN_SAVERS
+
+
 
 const uint8_t *GetIconByIndex(int index)
 {
@@ -97,14 +126,15 @@ void drawScreenSaver()
 
             switch(currentSelection)
             {
-                case SCREENSAVER_RANDOM_LOGO:
+                case SCREENSAVER_RANDOM_DVDSTYLE_LOGO:
+                {
                     scrX = random(64);
                     scrY = random(33);
                     g_display->drawBitmap(scrX,scrY, icon_zuluscsi_mini,64,31 , WHITE);
-            
                     break;
-
-                case SCREENSAVER_FLOATING_LOGO:
+                }
+                case SCREENSAVER_BOUNCING_DVDSTYLE_LOGO:
+                {
                     scrX += dirX?1:-1;
                     scrY += dirY?1:-1;
                     if (scrX > 62  || scrX<1)
@@ -117,9 +147,10 @@ void drawScreenSaver()
                     }
                     g_display->drawBitmap(scrX,scrY, icon_zuluscsi_mini,64,31 , WHITE);
                     break;
-
-                case SCREENSAVER_HORIZONTAL_SCROLL:
-                case SCREENSAVER_VERTICAL_SCROLL:
+                }
+#ifdef ENABLE_HIGHER_LOAD_SCREEN_SAVERS
+                case SCREENSAVER_HORIZONTAL_SCROLLING_ICONS:
+                case SCREENSAVER_VERTICAL_RAINING_ICONS:
                 {
                     int i;
                     int index = -1;
@@ -140,7 +171,7 @@ void drawScreenSaver()
                         {
                             sA[index] = true;
 
-                            if (currentSelection == SCREENSAVER_HORIZONTAL_SCROLL)
+                            if (currentSelection == SCREENSAVER_HORIZONTAL_SCROLLING_ICONS)
                             {
                                 points[index].set(-12, random(54));
                                 vectors[index].set(random(3)+1, 0);
@@ -160,7 +191,7 @@ void drawScreenSaver()
                      {
                         points[i] += vectors[i];
 
-                        if (currentSelection == SCREENSAVER_HORIZONTAL_SCROLL)
+                        if (currentSelection == SCREENSAVER_HORIZONTAL_SCROLLING_ICONS)
                         {
                             if (points[i].x > 127)
                             {
@@ -186,7 +217,7 @@ void drawScreenSaver()
                     }
                     break;
                 }
-#ifdef ENABLE_LIGHTSPEED
+#ifdef ENABLE_LIGHTSPEED_SCREEN_SAVERS
                 case SCREENSAVER_LIGHTSPEED:
                 {
                     int i;
@@ -263,6 +294,7 @@ void drawScreenSaver()
                     break;
                 }
 #endif
+#endif
                 default:
                     break;
             }
@@ -273,24 +305,26 @@ void drawScreenSaver()
         int delay = 0;
         switch(currentSelection)
         {
-            case SCREENSAVER_RANDOM_LOGO:
+            case SCREENSAVER_RANDOM_DVDSTYLE_LOGO:
                 delay = 5000;
                 break;
             
-            case SCREENSAVER_FLOATING_LOGO:
+            case SCREENSAVER_BOUNCING_DVDSTYLE_LOGO:
                 delay = 200;
                 break;
 
-            case SCREENSAVER_HORIZONTAL_SCROLL:
-            case SCREENSAVER_VERTICAL_SCROLL:
-                delay = 30;
+#ifdef ENABLE_HIGHER_LOAD_SCREEN_SAVERS
+            case SCREENSAVER_HORIZONTAL_SCROLLING_ICONS:
+            case SCREENSAVER_VERTICAL_RAINING_ICONS:
+                delay = 40;
                 break;
 
-#ifdef ENABLE_LIGHTSPEED
+#ifdef ENABLE_LIGHTSPEED_SCREEN_SAVERS
             case SCREENSAVER_LIGHTSPEED:
-                delay = 30;
+                delay = 40;
                 break;
 #endif        
+#endif
         }
         nextScreenSaverChange = millis() + delay;
     }
@@ -298,11 +332,13 @@ void drawScreenSaver()
 
 void enterScreenSaver()
 {
+#ifdef ENABLE_HIGHER_LOAD_SCREEN_SAVERS
     int i;
     for (i=0;i<MAX_OBJECT_MANY;i++)
     {
         sA[i] = false;
     }
+#endif
 
     scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
     currentSelection = cfg->controlBoardScreenSaverStyle;
