@@ -233,9 +233,9 @@ static void process_DataIn()
 {
 	uint32_t len;
 
-	if (scsiDev.dataLen > scsiDev.dataBufLen)
+	if (scsiDev.dataLen > sizeof(scsiDev.data))
 	{
-		scsiDev.dataLen = scsiDev.dataBufLen;
+		scsiDev.dataLen = sizeof(scsiDev.data);
 	}
 
 	len = scsiDev.dataLen - scsiDev.dataPtr;
@@ -257,9 +257,9 @@ static void process_DataOut()
 {
 	uint32_t len;
 
-	if (scsiDev.dataLen > scsiDev.dataBufLen)
+	if (scsiDev.dataLen > sizeof(scsiDev.data))
 	{
-		scsiDev.dataLen = scsiDev.dataBufLen;
+		scsiDev.dataLen = sizeof(scsiDev.data);
 	}
 
 	len = scsiDev.dataLen - scsiDev.dataPtr;

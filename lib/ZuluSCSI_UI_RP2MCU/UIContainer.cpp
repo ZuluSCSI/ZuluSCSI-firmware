@@ -1,3 +1,24 @@
+/**
+ * Copyright (c) 2025 Guy Taylor
+ *
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
+ *
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 #if defined(CONTROL_BOARD)
 
 #include "ZuluSCSI_log.h"
@@ -16,7 +37,7 @@
 #include "control.h"
 #include <ZuluSCSI_buffer_control.h>
 
-extern Adafruit_SSD1306 *g_display;
+
 extern Screen *g_activeScreen;
 extern int g_prevousIndex;
 
@@ -30,8 +51,36 @@ MessageBox *_messageBox;
 CopyScreen *_copyScreen;
 InitiatorMainScreen *_initiatorMainScreen;
 
+#if ZULUSCSI_RESERVED_SRAM_LEN == 0
+extern Adafruit_SSD1306 allocated_g_display;
 
-bool initScreens()
+static SplashScreen static_splashScreen(&allocated_g_display);
+static MainScreen static_mainScreen(&allocated_g_display);
+static InfoScreen static_infoScreen(&allocated_g_display);
+static BrowseScreen static_browseScreen(&allocated_g_display);
+static BrowseTypeScreen static_browseTypeScreen(&allocated_g_display);
+static BrowseScreenFlat static_browseScreenFlat(&allocated_g_display);
+static MessageBox static_messageBox(&allocated_g_display);
+static CopyScreen static_copyScreen(&allocated_g_display);
+static InitiatorMainScreen static_initiatorMainScreen(&allocated_g_display);
+
+void initScreens()
+{
+    _splashScreen = &static_splashScreen;
+    _mainScreen = &static_mainScreen;
+    _infoScreen = &static_infoScreen;
+    _browseScreen = &static_browseScreen;
+    _browseTypeScreen = &static_browseTypeScreen;
+    _browseScreenFlat = &static_browseScreenFlat;
+    _messageBox = &static_messageBox;
+    _copyScreen = &static_copyScreen;
+    _initiatorMainScreen = &static_initiatorMainScreen;
+}
+
+#else
+extern Adafruit_SSD1306 *g_display;
+
+void initScreens()
 {
     _splashScreen = new (reserve_buffer_align(sizeof(SplashScreen), 4)) SplashScreen(g_display);
     _mainScreen = new (reserve_buffer_align(sizeof(MainScreen), 4)) MainScreen(g_display);
@@ -42,9 +91,8 @@ bool initScreens()
     _messageBox = new (reserve_buffer_align(sizeof(MessageBox), 4)) MessageBox(g_display);
     _copyScreen = new (reserve_buffer_align(sizeof(CopyScreen), 4)) CopyScreen(g_display);
     _initiatorMainScreen = new (reserve_buffer_align(sizeof(InitiatorMainScreen), 4)) InitiatorMainScreen(g_display);
-    return true;
 }
-
+#endif
 // Call new card method on all screens
 void sendSDCardStateChangedToScreens(bool cardIsPresent)
 {

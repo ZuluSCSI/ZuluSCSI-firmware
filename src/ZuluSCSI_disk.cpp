@@ -209,7 +209,7 @@ uint32_t image_config_t::get_capacity_lba()
 {
     if (bin_container.isOpen() && cuesheetfile.isOpen())
     {
-        size_t halfbufsize = scsiDev.dataBufLen / 2;
+        size_t halfbufsize = sizeof(scsiDev.data) / 2;
         char *cuebuf = (char*)&scsiDev.data[halfbufsize];
         cuesheetfile.seekSet(0);
         int len = cuesheetfile.read(cuebuf, halfbufsize);
@@ -1845,7 +1845,7 @@ void diskDataOut_callback(uint32_t bytes_complete)
         uint32_t len = remain;
 
         // Split read so that it doesn't wrap around buffer edge
-        uint32_t bufsize = scsiDev.dataBufLen;
+        uint32_t bufsize = sizeof(scsiDev.data);
         uint32_t start = (g_disk_transfer.bytes_scsi_started % bufsize);
         if (start + len > bufsize)
             len = bufsize - start;
@@ -1890,9 +1890,9 @@ void diskDataOut()
     // If we are using non-power-of-two sector size, wrapping around
     // the buffer edge doesn't work out. Instead limit the transfer
     // to a smaller section and re-enter diskDataOut().
-    uint32_t blocksPerBuffer = scsiDev.dataBufLen / bytesPerSector;
+    uint32_t blocksPerBuffer = sizeof(scsiDev.data) / bytesPerSector;
     if (blockcount > blocksPerBuffer &&
-        blocksPerBuffer * bytesPerSector != scsiDev.dataBufLen)
+        blocksPerBuffer * bytesPerSector != sizeof(scsiDev.data))
     {
         blockcount = blocksPerBuffer;
     }
@@ -1912,7 +1912,7 @@ void diskDataOut()
         diskEjectButtonUpdate(false);
 
         // Figure out how many contiguous bytes are available for writing to SD card.
-        uint32_t bufsize = scsiDev.dataBufLen;
+        uint32_t bufsize = sizeof(scsiDev.data);
         uint32_t start = g_disk_transfer.bytes_sd % bufsize;
         uint32_t len = 0;
 
@@ -2191,7 +2191,7 @@ static void diskDataIn()
 {
     // Figure out how many blocks we can fit in buffer
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-    uint32_t maxblocks = scsiDev.dataBufLen / bytesPerSector;
+    uint32_t maxblocks = sizeof(scsiDev.data) / bytesPerSector;
     uint32_t maxblocks_half = maxblocks / 2;
 
     // Start transfer in first half of buffer

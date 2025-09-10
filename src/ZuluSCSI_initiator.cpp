@@ -1197,7 +1197,7 @@ static void initiatorReadSDCallback(uint32_t bytes_complete)
         }
 
         // Split read so that it doesn't wrap around buffer edge
-        uint32_t bufsize = scsiDev.dataBufLen;
+        uint32_t bufsize = sizeof(scsiDev.data);
         uint32_t start = (g_initiator_transfer.bytes_scsi_done % bufsize);
         if (start + len > bufsize)
             len = bufsize - start;
@@ -1240,7 +1240,7 @@ static void initiatorReadSDCallback(uint32_t bytes_complete)
 static void scsiInitiatorWriteDataToSd(FsFile &file, bool use_callback)
 {
     // Figure out longest continuous block in buffer
-    uint32_t bufsize = scsiDev.dataBufLen;
+    uint32_t bufsize = sizeof(scsiDev.data);
     uint32_t start = g_initiator_transfer.bytes_sd % bufsize;
     uint32_t len = g_initiator_transfer.bytes_scsi_done - g_initiator_transfer.bytes_sd;
     if (start + len > bufsize) len = bufsize - start;

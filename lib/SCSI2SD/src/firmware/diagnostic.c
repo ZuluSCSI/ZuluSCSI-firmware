@@ -154,7 +154,7 @@ void scsiReadBuffer()
 
 	if (mode == 0)
 	{
-		uint32_t maxSize = scsiDev.dataBufLen - 4;
+		uint32_t maxSize = sizeof(scsiDev.data) - 4;
 		// 4 byte header
 		scsiDev.data[0] = 0;
 		scsiDev.data[1] = (maxSize >> 16) & 0xff;
@@ -162,19 +162,19 @@ void scsiReadBuffer()
 		scsiDev.data[3] = maxSize & 0xff;
 
 		scsiDev.dataLen =
-			(allocLength > scsiDev.dataBufLen) ? scsiDev.dataBufLen : allocLength;
+			(allocLength > sizeof(scsiDev.data)) ? sizeof(scsiDev.data) : allocLength;
 		scsiDev.phase = DATA_IN;
 	}
 	else if (mode == 0x2 && (scsiDev.cdb[2] == 0))
 	{
 		// TODO support BUFFER OFFSET fields in CDB
 		scsiDev.dataLen =
-			(allocLength > scsiDev.dataBufLen) ? scsiDev.dataBufLen : allocLength;
+			(allocLength > sizeof(scsiDev.data)) ? sizeof(scsiDev.data) : allocLength;
 		scsiDev.phase = DATA_IN;
 	}
 	else if (mode == 0x3)
 	{
-		uint32_t maxSize = scsiDev.dataBufLen - 4;
+		uint32_t maxSize = sizeof(scsiDev.data) - 4;
 		// 4 byte header
 		scsiDev.data[0] = 0;
 		scsiDev.data[1] = (maxSize >> 16) & 0xff;
@@ -218,7 +218,7 @@ void scsiWriteBuffer()
 		(((uint32_t) scsiDev.cdb[7]) << 8) +
 		scsiDev.cdb[8];
 
-	if ((mode == 0 || mode == 2) && allocLength <= scsiDev.dataBufLen)
+	if ((mode == 0 || mode == 2) && allocLength <= sizeof(scsiDev.data))
 	{
 		scsiDev.dataLen = allocLength;
 		scsiDev.phase = DATA_OUT;

@@ -1,3 +1,24 @@
+/**
+ * Copyright (c) 2025 Guy Taylor
+ *
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
+ *
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 #if defined(CONTROL_BOARD)
 
 #include "ZuluSCSI_platform.h"
@@ -80,8 +101,13 @@ bool g_waitingForButton3Release[TOTAL_CONTROL_BOARD_BUTTONS];
 
 static TwoWire g_wire(i2c1, GPIO_I2C_SDA, GPIO_I2C_SCL);
 Adafruit_SSD1306 *g_display;
-
 DeviceMap *g_devices = nullptr;
+
+#if ZULUSCSI_RESERVED_SRAM_LEN == 0
+Adafruit_SSD1306 allocated_g_display(SCREEN_WIDTH, SCREEN_HEIGHT, &g_wire, OLED_RESET);
+static DeviceMap static_g_devices[S2S_MAX_TARGETS];
+#endif
+
 Screen *g_activeScreen;
 
 int g_prevousIndex = -1;
@@ -261,14 +287,12 @@ bool initControlBoardHardware()
         return false;
     }
 
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
     uint8_t *object_addr = reserve_buffer_align(sizeof(Adafruit_SSD1306), 4);
-    if (object_addr == nullptr)
-    {
-        logmsg("Could not reserve space for Display data in buffer");
-        return false;
-    }
     g_display = new (object_addr) Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &g_wire, OLED_RESET);
-
+#else
+    g_display = &allocated_g_display;
+#endif
 
 
     // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
@@ -282,10 +306,7 @@ bool initControlBoardHardware()
         return false;
     }
 
-    if (!initScreens())
-    {
-        logmsg("Failed to initialize Display. Ran out of SRAM");
-    }
+    initScreens();
 
     scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
 
@@ -618,10 +639,15 @@ void devicesUpdated()
 // This clear the list of devices, used at startup and on card removal
 void initDevices()
 {
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
     if (g_devices == nullptr)
     {
         g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
     }
+#else
+    g_devices = static_g_devices;
+#endif
+
     int i;
     for (i = 0; i < S2S_MAX_TARGETS; i++)
     {

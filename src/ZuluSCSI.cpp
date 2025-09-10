@@ -61,6 +61,7 @@
 #include "ZuluSCSI_msc_initiator.h"
 #include "ZuluSCSI_msc.h"
 #include "ZuluSCSI_blink.h"
+#include "ZuluSCSI_buffer_control.h"
 #include "ROMDrive.h"
 
 #include "ui.h"
@@ -266,12 +267,12 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
     logmsg("---- Preallocation didn't find contiguous set of clusters, continuing anyway");
   }
 
-  int blocks = size/scsiDev.dataBufLen;
-  UICreateInit(blocks, scsiDev.dataBufLen, imgname);
+  int blocks = size/sizeof(scsiDev.data);
+  UICreateInit(blocks, sizeof(scsiDev.data), imgname);
 
   // Write zeros to fill the file
   uint32_t start = millis();
-  memset(scsiDev.data, 0, scsiDev.dataBufLen);
+  memset(scsiDev.data, 0, sizeof(scsiDev.data));
   uint64_t remain = size;
 
   int block = 0;
@@ -282,7 +283,7 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
     if (millis() & 128) { LED_ON(); } else { LED_OFF(); }
     platform_reset_watchdog();
 
-    size_t to_write = scsiDev.dataBufLen;
+    size_t to_write = sizeof(scsiDev.data);
     if (to_write > remain) to_write = remain;
     if (file.write(scsiDev.data, to_write) != to_write)
     {
@@ -1157,8 +1158,6 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 extern "C" void zuluscsi_setup(void)
 {
   platform_init();
-  scsiDev.dataBufLen  = SCSI2SD_BUFFER_SIZE;
-  scsiDev.dataBufLeft = SCSI2SD_BUFFER_SIZE;
   platform_late_init();
 
   bool is_initiator = false;
@@ -1193,9 +1192,10 @@ extern "C" void zuluscsi_setup(void)
   
 
   logmsg("Clock set to: ", (int) platform_sys_clock_in_hz(), "Hz");
-  if (scsiDev.dataBufLen != SCSI2SD_BUFFER_SIZE)
-    logmsg("SCSI buffer is now ", (int)scsiDev.dataBufLen, " bytes from ", (int)SCSI2SD_BUFFER_SIZE, " bytes");
-  logmsg("Initialization complete!");
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
+    dbgmsg("Shared buffer has ", (int) reserve_buffer_left(), " bytes left out of ", (int) ZULUSCSI_RESERVED_SRAM_LEN, " bytes total");
+#endif
+    logmsg("Initialization complete!");
 }
 
 void control_disk_swap()
@@ -1495,7 +1495,7 @@ static void kiosk_restore_images()
         }
 
         // Use the shared SCSI buffer for copying
-        size_t BUFFER_SIZE = scsiDev.dataBufLen;
+        size_t BUFFER_SIZE = sizeof(scsiDev.data);
         uint8_t *buffer = scsiDev.data;
 
         uint64_t bytes_copied = 0;
