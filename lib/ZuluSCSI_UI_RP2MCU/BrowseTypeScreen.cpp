@@ -182,7 +182,7 @@ void BrowseTypeScreen::drawCategory(int x, int y, int index)
 
   if (_selectedDevice == index)
   {
-    _display->drawBitmap(x, y, select, 8,8, WHITE);
+    _display->drawBitmap(x, y, icon_select, 8,8, WHITE);
   }
 }
 

@@ -38,6 +38,7 @@
 #include "SplashScreen.h"
 #include "CopyScreen.h"
 #include "InitiatorMainScreen.h"
+#include "ScreenSaver.h"
 
 #define TOTAL_CONTROL_BOARD_BUTTONS 3
 
@@ -348,6 +349,19 @@ uint8_t getValue()
   return input_byte;
 }
 
+uint8_t getBrightness()
+{
+    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+    return cfg->controlBoardDimDisplay ? 1 : 0x8f;
+}
+
+void enableScreen(bool state)
+{
+    g_display->ssd1306_command(SSD1306_SETCONTRAST);
+    uint8_t brightness = getBrightness();
+    g_display->ssd1306_command(state ? brightness : 0);
+}
+
 bool initScreenHardware()
 {
     g_wire.setClock(100000);
@@ -404,15 +418,15 @@ bool initControlBoardHardware()
 
     g_display->setTextWrap(false);
 #if defined(ZULUSCSI_BLASTER) 
-    if (cfg->flipControlBoardDisplay || !gpio_get(GPIO_INT))
+    if (cfg->controlBoardFlipDisplay || !gpio_get(GPIO_INT))
 #else
-    if (cfg->flipControlBoardDisplay)
+    if (cfg->controlBoardFlipDisplay)
 #endif
     {
         g_display->setRotation(2);
     }
 
-    g_reverseRotary = !cfg->reverseControlBoardRotary;
+    g_reverseRotary = !cfg->controlBoardReverseRotary;
 
     if (!initControlBoardI2C())
     {
@@ -431,6 +445,8 @@ bool initControlBoardHardware()
 
         return false;
     }
+
+    enableScreen(true);
 
     g_controlBoardEnabled = true;
     return true;
@@ -588,7 +604,14 @@ void updateRotary(int dir)
 
     if (g_activeScreen != NULL)
     {
-        g_activeScreen->rotaryChange(dir);
+        if (dir != 0)
+        {
+            g_userInputDetected = true;
+        }
+        if (!g_screenSaverActive)
+        {
+            g_activeScreen->rotaryChange(dir);
+        }
     }
 }
 
@@ -597,13 +620,15 @@ void updateRotary(int dir)
 // Called on sd remove and Device Chnages
 void stateChange()
 {
+    g_userInputDetected = true;  // Something changed, so assume the user did interact
+
     // printDevices();
     sendSDCardStateChangedToScreens(g_sdAvailable);
 
     if (g_sdAvailable)
     {
         scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-        g_cacheActive = cfg->enableControlBoardCache;
+        g_cacheActive = cfg->controlBoardCache;
 
         if (g_cacheActive)
         {
@@ -613,6 +638,8 @@ void stateChange()
         {
             clearCacheData();
         }
+
+        enableScreen(true); // In case there was a brightness level change
     }
 
     if (g_uiStart != ZULUSCSI_UI_START_DONE)
@@ -927,6 +954,8 @@ extern "C" void scsiReinitComplete()
     devicesUpdated();
 }
 
+
+
 extern "C" void controlLoop()
 {
     if (!g_controlBoardEnabled || splashScreenInit())
@@ -944,31 +973,69 @@ extern "C" void controlLoop()
     {
         if (g_shortPressed[2])
         {
-            g_activeScreen->shortRotaryPress();
+            if (!g_screenSaverActive)
+            {
+                g_activeScreen->shortRotaryPress();
+            }
+            g_userInputDetected = true;
         }
         if (g_longPressed[2])
         {
-            g_activeScreen->longRotaryPress();
+            if (!g_screenSaverActive)
+            {
+                g_activeScreen->longRotaryPress();
+            }
+            g_userInputDetected = true;
         }
         if (g_shortPressed[0])
         {
-            g_activeScreen->shortUserPress();
+            if (!g_screenSaverActive)
+            {
+                g_activeScreen->shortUserPress();
+            }
+            g_userInputDetected = true;
         }
         if (g_longPressed[0])
         {
-            g_activeScreen->longUserPress();
+            if (!g_screenSaverActive)
+            {   
+                g_activeScreen->longUserPress();
+            }
+            g_userInputDetected = true;
         }
         if (g_shortPressed[1])
         {
-            g_activeScreen->shortEjectPress();
+            if (!g_screenSaverActive)
+            {
+                g_activeScreen->shortEjectPress();
+            }
+            g_userInputDetected = true;
         }
         if (g_longPressed[1])
         {
-            g_activeScreen->longEjectPress();
+            if (!g_screenSaverActive)
+            {
+                g_activeScreen->longEjectPress();
+            }
+            g_userInputDetected = true;
         }
 
-        g_activeScreen->tick();
+        screenSaverLoop();
+
+        if (!g_screenSaverActive)
+        {
+            if (g_activeScreen != NULL)
+            {
+                g_activeScreen->tick();
+            }
+        }
+        else
+        {
+            drawScreenSaver();
+        }
     }
+
+    g_userInputDetected = false;
 }
 
 // Create 

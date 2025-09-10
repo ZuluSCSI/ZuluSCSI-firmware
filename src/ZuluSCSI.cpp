@@ -1314,6 +1314,11 @@ extern "C" void zuluscsi_main_loop(void)
     {
       g_sdcard_present = mountSDCard();
 
+      if (g_controlBoardEnabled)
+      {
+        controlLoop();
+      }
+      
       if (g_sdcard_present)
       {
         blink_cancel();

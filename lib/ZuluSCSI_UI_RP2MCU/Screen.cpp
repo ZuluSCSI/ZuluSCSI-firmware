@@ -158,7 +158,7 @@ const uint8_t *Screen::getIconForType(S2S_CFG_TYPE deviceType, bool loaded)
       return icon_removable;
     
     case S2S_CFG_SEQUENTIAL:
-      return icon_sequential2;
+      return icon_tape;
     
     case S2S_CFG_NETWORK:
       return icon_network;
