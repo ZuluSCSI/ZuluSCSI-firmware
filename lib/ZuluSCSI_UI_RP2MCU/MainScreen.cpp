@@ -305,7 +305,7 @@ void MainScreen::drawSCSIItem(int x, int y, int index)
 
   if (_selectedDevice == index)
   {
-    _display->drawBitmap(x, y+1, select, 8,8, WHITE);
+    _display->drawBitmap(x, y+1, icon_select, 8,8, WHITE);
   }
 
   if (map->Active)
