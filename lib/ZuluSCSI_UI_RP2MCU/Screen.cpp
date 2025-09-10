@@ -34,6 +34,12 @@ void Screen::init(int index)
     _nextRefresh = make_timeout_time_ms(360);
     _hasDrawn = false;
     _halted = false;
+    _init_index = index;
+}
+
+int Screen::getOriginalIndex()
+{
+  return _init_index;
 }
 
 void Screen::draw()

@@ -23,8 +23,8 @@
 #define UI_H
 
 // #define G_LOGGER // This is a hack. I needed to see logs even when it wasn't meant to be logging. 
-                 // Not sure how logs are disabled when in RAW SD mode, but a better appoach would be a #define
-                 // to prevent the supression of logs
+                 // Not sure how logs are disabled when in RAW SD mode, but a better approach would be a #define
+                 // to prevent the suppression of logs
 
 // #define SCREEN_SHOTS
 
@@ -43,8 +43,8 @@ extern "C" void loadImage();      // in ZuluSCSI_disk used in ZuluSCSI
 
 extern "C" void setFolder(int target_idx, bool userSet, const char *path);
 extern "C" void setCurrentFolder(int target_idx, const char *path);
-
-extern "C" void initUI(bool cardPresent);
+extern "C" void initUIDisplay();
+extern "C" void initUIPostSDInit(bool cardPresent);
 
 extern "C" void initScreens();
 
@@ -65,7 +65,7 @@ extern int g_pendingLoadIndex;
 // Initiator
 extern bool g_initiatorMessageToProcess;
 
-extern void UIInitiatorScanning(uint8_t deviceId);
+extern void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId);
 extern void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize);
 extern void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch);
 extern void UIInitiatorRetry(uint8_t deviceId);

@@ -28,16 +28,16 @@
 #include "scrolling_text.h"
 
 #define MAX_SCOLLERS 4
-
+#define INDEX_UNINITIALIZED -100
 class Screen
 {
 protected:
     Adafruit_SSD1306 *_display;
     
 public:
-    Screen(Adafruit_SSD1306 *display) : _display(display) {}
+    Screen(Adafruit_SSD1306 *display) : _display(display), _init_index(INDEX_UNINITIALIZED) {}
     
-    void virtual init(int index); // Called when swicthed to the screen
+    void virtual init(int index); // Called when switched to the screen
 	void virtual tick(); // Called on ever main loop cycle
     
 	// Called to draw the screen by tick(). Doesn't need to be called.
@@ -69,6 +69,8 @@ public:
 
 	SCREEN_TYPE virtual screenType();
 
+	int getOriginalIndex();
+
 protected:
 	//SCREEN_TYPE _type;
 	bool _hasDrawn;
@@ -92,7 +94,8 @@ protected:
 	FsFile createFile();
 	void saveScreenShot();
 
-private:	
+private:
+	int _init_index;
 	bool _halted;
 	absolute_time_t _nextRefresh;
     int _totalScrollers;
@@ -161,6 +164,16 @@ protected:
 	const uint8_t  icon_ledoff[24] = {
 		0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x10, 0x80, 0x20, 0x40, 0x20, 0x40, 0x20, 0x40, 0x20, 0x40, 
 		0x10, 0x80, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00
+	};
+
+	const uint8_t  icon_scanning[24] = {
+		0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x10, 0x80, 0x29, 0x40, 0x26, 0x40, 0x26, 0x40, 0x29, 0x40, 
+		0x10, 0x80, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00
+	};
+
+	const uint8_t  icon_host[24] = {
+		0xcb, 0xf0, 0xcb, 0x30, 0xfb, 0x30, 0xcb, 0x30, 0xcb, 0xf0, 0x00, 0x00, 0xfb, 0xf0, 0x83, 0xf0, 
+		0xf8, 0xc0, 0x08, 0xc0, 0x88, 0xc0, 0xf8, 0xc0
 	};
 
 	const uint8_t select[8] = {

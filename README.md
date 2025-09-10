@@ -419,6 +419,8 @@ and will the go to the scanning screen:
 
 ![scanning](https://github.com/user-attachments/assets/15f79ace-d881-479d-8023-f11c0efac276)
 
+A circle with an X through it is the SCSI ID currently being scanned
+
 Question marks are SCSI IDs which have no been checked yet
 
 The empty circles are SCSI IDs which have been scanned

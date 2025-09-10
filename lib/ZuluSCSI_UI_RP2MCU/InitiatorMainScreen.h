@@ -44,6 +44,7 @@ private:
     void drawSCSIItem(int x, int y, int index);
 };
 
+extern InitiatorMainScreen *_initiatorMainScreen;
 #endif
 
 #endif

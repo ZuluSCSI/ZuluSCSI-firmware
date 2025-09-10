@@ -25,13 +25,14 @@ extern "C" void scsiReinitComplete() {}
 extern "C" void controlLoop() {}
 extern "C" void setFolder(int target_idx, bool userSet, const char *path) {}
 extern "C" void setCurrentFolder(int target_idx, const char *path) {}
-extern "C" void initUI(bool cardPresent) {}
+extern "C" void initUIDisplay() {}
+extern "C" void initUIPostSDInit(bool cardPresent) {}
 
 bool g_controlBoardEnabled = false;
 
 bool g_initiatorMessageToProcess;
 
-void UIInitiatorScanning(uint8_t deviceId) {}
+void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId) {}
 void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) {}
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) {}
 void UIInitiatorRetry(uint8_t deviceId) {}

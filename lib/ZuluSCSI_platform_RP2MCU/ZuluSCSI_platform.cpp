@@ -565,6 +565,8 @@ void platform_late_init()
     mutex_init(&g_core1_mutex);
     multicore_launch_core1(core1_handler);
 
+    initUIDisplay();
+
     if (!g_scsi_initiator)
     {
         // Act as SCSI device / target
