@@ -16,6 +16,7 @@
 #include "MessageBox.h"
 #include "SplashScreen.h"
 #include "CopyScreen.h"
+#include "ScreenSaver.h"
 
 #define TOTAL_CONTROL_BOARD_BUTTONS 3
 
@@ -92,25 +93,6 @@ int g_pcaAddr = 0x3F;
 bool g_controlBoardEnabled = false;
 bool hasUIBeenInitialized = false;
 
-// Screen saver
-bool screenSaverEnabled = false;
-long screenSaverStartTime = -1;
-bool screenSaverTimerStarted = false;
-bool screenSaverActive  = false;
-bool userInputDetected = false;
-
-long nextScreenSaverChange;
-int scrX = 5;
-int scrY = 5;
-bool dirX = true;
-bool dirY = true;
-
-#define MAX_OBJECT 8
-int sX[MAX_OBJECT];
-uint8_t sY[MAX_OBJECT];
-uint8_t sT[MAX_OBJECT];
-uint8_t sS[MAX_OBJECT];
-bool sA[MAX_OBJECT];
 
 /// Helpers
 
@@ -511,9 +493,9 @@ void updateRotary(int dir)
     {
         if (dir != 0)
         {
-            userInputDetected = true;
+            g_userInputDetected = true;
         }
-        if (!screenSaverActive)
+        if (!g_screenSaverActive)
         {
             g_activeScreen->rotaryChange(dir);
         }
@@ -525,7 +507,7 @@ void updateRotary(int dir)
 // Called on sd remove and Device Chnages
 void stateChange()
 {
-    userInputDetected = true;  // Something changed, so assume the user did interact
+    g_userInputDetected = true;  // Something changed, so assume the user did interact
 
     // printDevices();
     sendSDCardStateChangedToScreens(g_sdAvailable);
@@ -852,178 +834,7 @@ extern "C" void scsiReinitComplete()
     devicesUpdated();
 }
 
-const uint8_t *GetIconByIndex(int index)
-{
-    switch(index)
-    {
-        case 0:
-            return icon_cd;
 
-        case 1:
-            return icon_floppy;
-
-        case 2:
-            return icon_removable;
-
-        case 3:
-            return icon_fixed;
-
-        case 4:
-            return icon_mo;
-
-        case 5:
-            return icon_network;
-
-        case 6:
-            return icon_tape;
-
-        case 7:
-            return icon_zip;
-        
-        case 8:
-            return icon_rom;
-
-        case 9:
-            return icon_sd;
-
-        case 10:
-            return icon_nosd;
-
-    }
-    return icon_cd;
-}
-
-void drawScreenSaver()
-{
-    if (millis() > nextScreenSaverChange)
-    {
-        scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-
-        if (cfg->controlBoardScreenSaverStyle != 0)
-        {
-            g_display->clearDisplay();
-
-            switch(cfg->controlBoardScreenSaverStyle)
-            {
-                case 1:
-                    scrX = random(64);
-                    scrY = random(33);
-                    g_display->drawBitmap(scrX,scrY, icon_zuluscsi_mini,64,31 , WHITE);
-            
-                    break;
-
-                case 2:
-                    scrX += dirX?1:-1;
-                    scrY += dirY?1:-1;
-                    if (scrX > 62  || scrX<1)
-                    {
-                        dirX = !dirX;
-                    }
-                    if (scrY > 30  || scrY<1)
-                    {
-                        dirY = !dirY;
-                    }
-                    g_display->drawBitmap(scrX,scrY, icon_zuluscsi_mini,64,31 , WHITE);
-                    break;
-
-                case 3:
-                {
-                    int i;
-                    int index = -1;
-                    // look for inactive
-                    for (i=0;i<MAX_OBJECT;i++)
-                    {
-                        if (!sA[i])
-                        {
-                            index = i;
-                            break;
-                        }
-                    }
-
-                    // Found an inactive
-                    if (index > -1)
-                    {
-                        if (random(10) == 0)
-                        {
-                            sA[index] = true;
-                            sX[index] = -12;
-                            sY[index] = random(54);
-                            sS[index] = random(3)+1;
-                            sT[index] = random(11);
-                        }
-                    }
-
-                    for (i=0;i<MAX_OBJECT;i++)
-                    {
-                     if (sA[i])
-                     {
-                        sX[i] += sS[i];
-                        if (sX[i] > 127)
-                        {
-                            sA[i] = false;
-                        }
-                     }
-                    }
-
-                    for (i=0;i<MAX_OBJECT;i++)
-                    {
-                     if (sA[i])
-                     {
-                        g_display->drawBitmap(sX[i], sY[i], GetIconByIndex(sT[i]),12,12 , WHITE);
-                     }
-                    }
-                    break;
-                }
-                default:
-                    break;
-            }
-            
-            g_display->display();
-        }
-
-        int delay = 0;
-        switch(cfg->controlBoardScreenSaverStyle)
-        {
-            case 1:
-                delay = 5000;
-                break;
-            
-            case 2:
-                delay = 200;
-                break;
-
-            case 3:
-                delay = 30;
-                break;
-        
-            }
-        nextScreenSaverChange = millis() + delay;
-        
-    }
-}
-
-void enterScreenSaver()
-{
-    int i;
-    for (i=0;i<MAX_OBJECT;i++)
-    {
-        sA[i] = false;
-    }
-
-    scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-    enableScreen(cfg->controlBoardScreenSaverStyle != 0);
-    
-    nextScreenSaverChange = 0;
-}
-
-void exitScreenSaver()
-{
-    enableScreen(true);
-    if (g_activeScreen != NULL)
-    {
-        g_activeScreen->forceDraw();
-    }
-}
 
 extern "C" void controlLoop()
 {
@@ -1042,102 +853,56 @@ extern "C" void controlLoop()
     {
         if (g_shortPressed[2])
         {
-            if (!screenSaverActive)
+            if (!g_screenSaverActive)
             {
                 g_activeScreen->shortRotaryPress();
             }
-            userInputDetected = true;
+            g_userInputDetected = true;
         }
         if (g_longPressed[2])
         {
-            if (!screenSaverActive)
+            if (!g_screenSaverActive)
             {
                 g_activeScreen->longRotaryPress();
             }
-            userInputDetected = true;
+            g_userInputDetected = true;
         }
         if (g_shortPressed[0])
         {
-            if (!screenSaverActive)
+            if (!g_screenSaverActive)
             {
                 g_activeScreen->shortUserPress();
             }
-            userInputDetected = true;
+            g_userInputDetected = true;
         }
         if (g_longPressed[0])
         {
-            if (!screenSaverActive)
+            if (!g_screenSaverActive)
             {   
                 g_activeScreen->longUserPress();
             }
-            userInputDetected = true;
+            g_userInputDetected = true;
         }
         if (g_shortPressed[1])
         {
-            if (!screenSaverActive)
+            if (!g_screenSaverActive)
             {
                 g_activeScreen->shortEjectPress();
             }
-            userInputDetected = true;
+            g_userInputDetected = true;
         }
         if (g_longPressed[1])
         {
-            if (!screenSaverActive)
+            if (!g_screenSaverActive)
             {
                 g_activeScreen->longEjectPress();
             }
-            userInputDetected = true;
+            g_userInputDetected = true;
         }
 
-        scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-        if (g_systemMode == SYSTEM_NORMAL && cfg->controlBoardScreenSaverTimeSec > 0)
-        {
-            if (!screenSaverActive)
-            {
-                // Screen saver timer hasn't been started
-                if (!screenSaverTimerStarted)
-                {
-                    if (!userInputDetected)
-                    {
-                        screenSaverTimerStarted = true;
-                        screenSaverStartTime = millis();
-                    }
-                }
-                else // Screen saver timer has started
-                {
-                    if (userInputDetected) // but there was user input
-                    {
-                        // So cancel the timer
-                        screenSaverTimerStarted = false;
-                    }
-                    else
-                    {
-                        // no user input, so check timers
-                        long elaFromScreenSaverStartTime = millis() - screenSaverStartTime;
-                        if (elaFromScreenSaverStartTime > (cfg->controlBoardScreenSaverTimeSec * 1000)) 
-                        {
-                            // Screen saver activated
-                            screenSaverActive = true;
-                            screenSaverTimerStarted = false;
+        screenSaverLoop();
 
-                            enterScreenSaver();
-                        }
-                    }
-                }
-            }
-            else // screen saver is active
-            {
-                if (userInputDetected)
-                {
-                    // Screen saver deactivated
-                    screenSaverActive = false;
-                    exitScreenSaver();
-                    
-                }
-            }
-        }
-
-        if (!screenSaverActive)
+        if (!g_screenSaverActive)
         {
             if (g_activeScreen != NULL)
             {
@@ -1150,7 +915,7 @@ extern "C" void controlLoop()
         }
     }
 
-    userInputDetected = false;
+    g_userInputDetected = false;
 }
 
 // Create 
