@@ -19,24 +19,25 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-#include "ZuluSCSI_disk.h"
-#include "ZuluSCSI_log.h"
-#include <minIni.h>
+#if defined(CONTROL_BOARD)
 
-#include "ui.h"
+#ifndef SCREENTYPE_H
+#define SCREENTYPE_H
 
-extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size)
+typedef enum
 {
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(id);
+    SCREEN_NONE,
+	SCREEN_SPLASH,
+    SCREEN_MAIN,
+    SCREEN_INFO,
+    SCREEN_BROWSE_TYPE,
+    SCREEN_BROWSE,
+    SCREEN_BROWSE_FLAT,
+    MESSAGE_BOX,
+    SCREEN_COPY,
+    SCREEN_INITIATOR_MAIN
+} SCREEN_TYPE;
 
-    char key[5] = "IMG0";
-    key[3] = '0' + index;
+#endif
 
-    ini_gets(section, key, "", buf, buflen, CONFIGFILE);
-
-    FsVolume *vol = SD.vol();
-    FsFile fHandle = vol->open(buf, O_RDONLY);
-    size = fHandle.size();
-    fHandle.close();
-}
+#endif

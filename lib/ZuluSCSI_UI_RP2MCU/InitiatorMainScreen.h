@@ -19,24 +19,31 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-#include "ZuluSCSI_disk.h"
-#include "ZuluSCSI_log.h"
-#include <minIni.h>
+#if defined(CONTROL_BOARD)
 
-#include "ui.h"
+#ifndef INITIATORMAINSCREEN_H
+#define INITIATORMAINSCREEN_H
 
-extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size)
+#include "Screen.h"
+#include "scrolling_text.h"
+
+class InitiatorMainScreen : public Screen
 {
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(id);
+public:
+    InitiatorMainScreen(Adafruit_SSD1306 *display) : Screen(display) {}
 
-    char key[5] = "IMG0";
-    key[3] = '0' + index;
+    SCREEN_TYPE screenType() { return SCREEN_INITIATOR_MAIN; }
 
-    ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+    void tick();
+    void init(int index);
+    void draw();
 
-    FsVolume *vol = SD.vol();
-    FsFile fHandle = vol->open(buf, O_RDONLY);
-    size = fHandle.size();
-    fHandle.close();
-}
+private:
+    int _scsiId;
+
+    void drawSCSIItem(int x, int y, int index);
+};
+
+#endif
+
+#endif

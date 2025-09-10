@@ -812,7 +812,7 @@ static void scsiDiskSetConfig(int target_idx)
 
     }
 
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
     g_totalCategories[target_idx] = 0;
     
     int i;
@@ -1037,7 +1037,7 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 
         if (nextlen == 0)
         {
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
             logmsg("Couldn't find file in root. Looking in subfolders");
 
             char path[MAX_PATH_LEN];
@@ -1054,7 +1054,7 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 #endif
                 logmsg("Image directory was empty for ID", target_idx);
                 return 0;
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
             }
 #endif
         }
@@ -2650,7 +2650,7 @@ static void loadImageToggleEject(uint8_t id, const char* next_filename)
 // TODO This forces a swap, the logic should use the deffered pattern
 extern "C" void setPendingImageLoad(uint8_t id, const char* next_filename)
 {
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
     strcpy(g_filenameToLoad, next_filename);
 
     g_pendingLoadIndex = id;
@@ -2659,7 +2659,7 @@ extern "C" void setPendingImageLoad(uint8_t id, const char* next_filename)
 
 extern "C" void loadImage()
 {
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
    loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // first will eject
    loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // secind will clode
 

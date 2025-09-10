@@ -61,6 +61,7 @@
 #include "ZuluSCSI_msc_initiator.h"
 #include "ZuluSCSI_msc.h"
 #include "ZuluSCSI_blink.h"
+#include "ZuluSCSI_buffer_control.h"
 #include "ROMDrive.h"
 
 #include "ui.h"
@@ -1020,7 +1021,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
   bool orig_g_sdcard_present = g_sdcard_present;
 
-  sdCardStateChanged(!g_sdcard_present);
+  sdCardStateChanged(g_sdcard_present);
 
   if(!g_sdcard_present)
   {
@@ -1062,7 +1063,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
       if (g_sdcard_present != orig_g_sdcard_present)
       {
-          sdCardStateChanged(!g_sdcard_present);
+          sdCardStateChanged(g_sdcard_present);
       }
   
     } while (!g_sdcard_present && wait_for_card);
@@ -1159,11 +1160,6 @@ extern "C" void zuluscsi_setup(void)
   platform_init();
   platform_late_init();
 
-  if (g_controlBoardEnabled)
-  {
-    controlInit();
-  }
-
   bool is_initiator = false;
 #ifdef PLATFORM_HAS_INITIATOR_MODE
   is_initiator = platform_is_initiator_mode_enabled();
@@ -1196,12 +1192,15 @@ extern "C" void zuluscsi_setup(void)
   
 
   logmsg("Clock set to: ", (int) platform_sys_clock_in_hz(), "Hz");
-  logmsg("Initialization complete!");
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
+    dbgmsg("Shared buffer has ", (int) reserve_buffer_left(), " bytes left out of ", (int) ZULUSCSI_RESERVED_SRAM_LEN, " bytes total");
+#endif
+    logmsg("Initialization complete!");
 }
 
 void control_disk_swap()
 {
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
   if (g_pendingLoadIndex != -1)
   {
     loadImage();
@@ -1296,7 +1295,7 @@ extern "C" void zuluscsi_main_loop(void)
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
 
-          sdCardStateChanged(true);
+          sdCardStateChanged(false);
         }
       }
     }
@@ -1318,7 +1317,7 @@ extern "C" void zuluscsi_main_loop(void)
         LED_OFF();
         logmsg("SD card reinit succeeded");
 
-        sdCardStateChanged(false);
+        sdCardStateChanged(true);
 
         print_sd_info();
         reinitSCSI();

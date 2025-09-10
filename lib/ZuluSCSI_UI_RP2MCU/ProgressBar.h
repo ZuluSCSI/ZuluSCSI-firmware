@@ -19,24 +19,38 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-#include "ZuluSCSI_disk.h"
-#include "ZuluSCSI_log.h"
-#include <minIni.h>
+#if defined(CONTROL_BOARD)
 
-#include "ui.h"
+#ifndef PROGRESSBAR_H
+#define PROGRESSBAR_H
 
-extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size)
-{
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(id);
+#include <Adafruit_SSD1306.h>
+#include "dimensions.h"
+#include "control_global.h"
 
-    char key[5] = "IMG0";
-    key[3] = '0' + index;
+class ProgressBar {
+  public:
+    ProgressBar();
 
-    ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+    bool SetPercent(float percentage);
+    
+    void Display();
 
-    FsVolume *vol = SD.vol();
-    FsFile fHandle = vol->open(buf, O_RDONLY);
-    size = fHandle.size();
-    fHandle.close();
-}
+    Rectangle bounds;
+    Adafruit_SSD1306 *graph;
+    int _font;
+
+    int _displayDP;
+    float _minUpdate;
+    
+  private:
+    char to_display[10];
+    float _percent;
+    Size toDispSize;
+
+  };
+
+
+#endif
+
+#endif

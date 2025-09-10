@@ -19,24 +19,44 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-#include "ZuluSCSI_disk.h"
+#if defined(CONTROL_BOARD)
+
+#include "SplashScreen.h"
+#include "SystemMode.h"
 #include "ZuluSCSI_log.h"
-#include <minIni.h>
 
-#include "ui.h"
+#include "control_global.h"
 
-extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size)
+void SplashScreen::shortUserPress()
 {
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(id);
-
-    char key[5] = "IMG0";
-    key[3] = '0' + index;
-
-    ini_gets(section, key, "", buf, buflen, CONFIGFILE);
-
-    FsVolume *vol = SD.vol();
-    FsFile fHandle = vol->open(buf, O_RDONLY);
-    size = fHandle.size();
-    fHandle.close();
+  changeScreen(SCREEN_MAIN, -1);
 }
+
+void SplashScreen::draw()
+{
+  _display->setTextSize(1);             
+  _display->setTextColor(SSD1306_WHITE);        
+  _display->drawBitmap(6,0, icon_zuluscsi, 115,56, WHITE);
+  printCenteredText(_bannerText, 56);
+}
+
+void SplashScreen::setBannerText(const char *text)
+{
+  strcpy(_bannerText, text);
+}
+void SplashScreen::init(int index)
+{
+  Screen::init(index);
+
+  _display->clearDisplay();
+
+  draw();
+  
+  _display->display();
+
+#ifdef SCREEN_SHOTS
+    saveScreenShot();
+#endif 
+}
+
+#endif

@@ -19,24 +19,42 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-#include "ZuluSCSI_disk.h"
-#include "ZuluSCSI_log.h"
-#include <minIni.h>
+#if defined(CONTROL_BOARD)
 
-#include "ui.h"
+#ifndef BROWSETYPESCREEN_H
+#define BROWSETYPESCREEN_H
 
-extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size)
+#include "Screen.h"
+
+class BrowseTypeScreen : public Screen
 {
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(id);
+public:
+    BrowseTypeScreen(Adafruit_SSD1306 *display) : Screen(display) {}
 
-    char key[5] = "IMG0";
-    key[3] = '0' + index;
+    SCREEN_TYPE screenType() { return SCREEN_BROWSE_TYPE; }
 
-    ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+    void init(int index);
+    void draw();
 
-    FsVolume *vol = SD.vol();
-    FsFile fHandle = vol->open(buf, O_RDONLY);
-    size = fHandle.size();
-    fHandle.close();
-}
+    void rotaryChange(int direction);
+    void shortRotaryPress();
+    void shortUserPress();
+    void shortEjectPress();
+
+private:
+    int _selectedDevice;
+    int _cursorPos;
+    int _screenOffset;
+
+    int _scsiId;
+    DeviceMap *_deviceMap;
+    int _totCats;
+
+    bool _showFolder;
+
+    void drawCategory(int x, int y, int index);
+};
+
+#endif
+
+#endif
