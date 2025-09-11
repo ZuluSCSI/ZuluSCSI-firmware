@@ -208,7 +208,7 @@ void printDevices()
 /**
  * \returns false when init is done, true if still in process
  */
-static bool splashScreenInit()
+static bool splashScreenPoll()
 {
     if (g_uiStart != ZULUSCSI_UI_START_DONE)
     {
@@ -247,7 +247,6 @@ static bool splashScreenInit()
             }
 
         }
-        g_activeScreen->tick();
         return true;
     }
     return false;
@@ -260,9 +259,9 @@ static bool splashScreenInit()
  * \param force_change don't check if the screen is already loaded
  * \returns true if the splash screen is still on going
  */
-static bool deferredScreenLoad(SCREEN_TYPE screen, int deviceId, bool force_change = false)
+static bool deferredChangeScreen(SCREEN_TYPE screen, int deviceId, bool force_change = false)
 {
-    if (splashScreenInit())
+    if (splashScreenPoll())
     {
         return true;
     }
@@ -539,7 +538,7 @@ void startInitiator(uint8_t initiatorId)
             deviceMap->InitiatorDriveStatus = i == initiatorId ? INITIATOR_DRIVE_HOST : INITIATOR_DRIVE_UNKNOWN;
         }
     }
-    deferredScreenLoad(SCREEN_INITIATOR_MAIN, -1);
+    deferredChangeScreen(SCREEN_INITIATOR_MAIN, -1);
 }
 
 void initUIDisplay()
@@ -593,14 +592,6 @@ void initUIPostSDInit(bool sd_card_present)
     }
 
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
-
-    if (!sd_card_present)
-    {
-        delay(1000);
-        changeScreen(SCREEN_MAIN, -1);
-        g_activeScreen->tick();
-        g_uiStart = ZULUSCSI_UI_START_DONE;
-    }
 }
 
 void updateRotary(int dir)
@@ -1028,7 +1019,7 @@ extern "C" void mscMode()
 
 extern "C" void controlLoop()
 {
-    if (!g_controlBoardEnabled || splashScreenInit())
+    if (!g_controlBoardEnabled || splashScreenPoll())
     {
         return;
     }
@@ -1260,7 +1251,7 @@ void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId)
             g_devices[i].InitiatorDriveStatus = INITIATOR_DRIVE_SCANNED;
         }
     }
-    if (!deferredScreenLoad(SCREEN_INITIATOR_MAIN, -1))
+    if (!deferredChangeScreen(SCREEN_INITIATOR_MAIN, -1))
         _initiatorMainScreen->tick();
 }
 
@@ -1292,7 +1283,7 @@ void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t se
     _copyScreen->setShowRetriesAndErrors(true);
     _copyScreen->setShowInfoText(false);
 
-    deferredScreenLoad(SCREEN_COPY, deviceId, true);
+    deferredChangeScreen(SCREEN_COPY, deviceId, true);
 }
 
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) 
@@ -1306,7 +1297,7 @@ void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsC
     _copyScreen->BlocksInBatch = sectorInBatch;
     _copyScreen->NeedsProcessing = true;
 
-    deferredScreenLoad(SCREEN_COPY, deviceId);
+    deferredChangeScreen(SCREEN_COPY, deviceId);
 }
 
 void UIInitiatorRetry(uint8_t deviceId) 
@@ -1321,7 +1312,7 @@ void UIInitiatorRetry(uint8_t deviceId)
     DeviceMap *deviceMap = &g_devices[deviceId];
     deviceMap->TotalRetries++;
     _copyScreen->TotalRetries++;
-    deferredScreenLoad(SCREEN_COPY, deviceId);
+    deferredChangeScreen(SCREEN_COPY, deviceId);
 }
 
 void UIInitiatorSkippedSector(uint8_t deviceId) 
@@ -1336,7 +1327,7 @@ void UIInitiatorSkippedSector(uint8_t deviceId)
     DeviceMap *deviceMap = &g_devices[deviceId];
     deviceMap->TotalErrors++;
     _copyScreen->TotalErrors++;
-    deferredScreenLoad(SCREEN_COPY, deviceId);
+    deferredChangeScreen(SCREEN_COPY, deviceId);
 }
 
 void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) 
@@ -1374,7 +1365,7 @@ void UIInitiatorImagingComplete(uint8_t deviceId)
     DeviceMap *deviceMap = &g_devices[deviceId];
 
     deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_CLONED;
-    deferredScreenLoad(SCREEN_INITIATOR_MAIN, -1, true);
+    deferredChangeScreen(SCREEN_INITIATOR_MAIN, -1, true);
 }
 
 

@@ -1058,6 +1058,14 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     do
     {
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
+      if (g_controlBoardEnabled)
+      {
+        uint32_t input_wait_start = millis();
+        while ((uint32_t)(millis() - input_wait_start) < 500)
+        {
+          controlLoop();
+        }
+      }
       platform_reset_watchdog();
       g_sdcard_present = mountSDCard();
 
@@ -1066,7 +1074,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
           sdCardStateChanged(g_sdcard_present);
       }
   
-    } while (!g_sdcard_present && wait_for_card);
+    } while (!g_sdcard_present && wait_for_card && !g_rebooting);
     blink_cancel();
     LED_OFF();
 
@@ -1172,7 +1180,7 @@ extern "C" void zuluscsi_setup(void)
 
 #ifdef PLATFORM_MASS_STORAGE
   static bool check_mass_storage = true;
-  if ((check_mass_storage || platform_rebooted_into_mass_storage()) && !is_initiator)
+  if ((check_mass_storage || platform_rebooted_into_mass_storage()) && !is_initiator && g_sdcard_present)
   {
     if (g_scsi_settings.getSystem()->enableUSBMassStorage
        || g_scsi_settings.getSystem()->usbMassStoragePresentImages
@@ -1213,6 +1221,26 @@ void control_disk_swap()
 
 extern "C" void zuluscsi_main_loop(void)
 {
+    // While timer for reboot is going, attempt to close SD images
+  if (g_rebooting)
+  {
+    while (!scsiIsWriteFinished(NULL) || !scsiIsReadFinished(NULL))
+    {
+      platform_reset_watchdog();
+    }
+    scsiDiskCloseSDCardImages();
+    save_logfile();
+    g_logfile.close();
+    SD.card()->syncDevice();
+    platform_reset_mcu(1000);
+    while(1)
+    {
+      platform_poll();
+      blink_poll();
+      platform_reset_watchdog();
+    }
+  }
+
   static uint32_t sd_card_check_time = 0;
   static uint32_t last_request_time = 0;
 
@@ -1265,24 +1293,7 @@ extern "C" void zuluscsi_main_loop(void)
     }
   }
 
-  // While timer for reboot is going, attempt to close SD images
-  if (g_rebooting)
-  {
-    while (!scsiIsWriteFinished(NULL) || !scsiIsReadFinished(NULL))
-    {
-      platform_reset_watchdog();
-    }
-    scsiDiskCloseSDCardImages();
-    save_logfile();
-    g_logfile.close();
-    platform_reset_mcu(1000);
-    while(1)
-    {
-      platform_poll();
-      blink_poll();
-      platform_reset_watchdog();
-    }
-  }
+
 
   if (g_sdcard_present)
   {
@@ -1314,11 +1325,6 @@ extern "C" void zuluscsi_main_loop(void)
     {
       g_sdcard_present = mountSDCard();
 
-      if (g_controlBoardEnabled)
-      {
-        controlLoop();
-      }
-      
       if (g_sdcard_present)
       {
         blink_cancel();
@@ -1338,6 +1344,15 @@ extern "C" void zuluscsi_main_loop(void)
         blinkStatus(BLINK_ERROR_NO_SD_CARD);
         platform_reset_watchdog();
         platform_poll();
+        if (g_controlBoardEnabled)
+        {
+          uint32_t input_wait_start = millis();
+          while ((uint32_t)(millis() - input_wait_start) < 500)
+          {
+            controlLoop();
+          }
+        }
+
       }
     } while (!g_sdcard_present && !g_romdrive_active && !is_initiator && !g_rebooting);
   }
