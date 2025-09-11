@@ -814,12 +814,9 @@ void patchDevice(uint8_t target_idx)
     map.IsRom = img.file.isRom();
     map.IsWritable =  img.file.isWritable();
     
-    map.Active = (g_sdAvailable && img.file.isOpen()) || (!g_sdAvailable &&  img.file.isRom());
+    map.Active = img.file.isOpen();
 
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(target_idx);
-    // logmsg("*** g_sdAvailable = ", g_sdAvailable, "  SCSI ", target_idx, "   img.file.isOpen() = ", img.file.isOpen(), " cfg->scsiId & S2S_CFG_TARGET_ENABLED = ", cfg->scsiId & S2S_CFG_TARGET_ENABLED, " img.file.isRom() = ", img.file.isRom(), "   map.Active = ", map.Active);
-
-    //if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
     if (map.Active)
     {
         map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;

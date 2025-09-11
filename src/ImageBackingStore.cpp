@@ -23,6 +23,7 @@
 #include "ImageBackingStore.h"
 #include <SdFat.h>
 #include <ZuluSCSI_platform.h>
+#include "ZuluSCSI.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
@@ -168,14 +169,25 @@ bool ImageBackingStore::_internal_open(const char *filename)
 
 bool ImageBackingStore::isOpen()
 {
-    if (m_iscontiguous)
-        return (m_blockdev != NULL);
-    else if (m_isrom)
-        return (m_romhdr.imagesize > 0);
-    else if (m_isfolder)
-        return m_foldername[0] != '\0';
+    if (!g_sdcard_present)
+    { 
+        if (m_isrom)
+        {
+            return (m_romhdr.imagesize > 0);
+        }
+        return false;
+    }
     else
-        return m_fsfile.isOpen();
+    {
+        if (m_iscontiguous)
+            return (m_blockdev != NULL);
+        else if (m_isrom)
+            return (m_romhdr.imagesize > 0);
+        else if (m_isfolder)
+            return m_foldername[0] != '\0';
+        else
+            return m_fsfile.isOpen();
+    }
 }
 
 bool ImageBackingStore::isWritable()
