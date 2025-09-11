@@ -59,4 +59,9 @@ void SplashScreen::init(int index)
 #endif 
 }
 
+void SplashScreen::rotaryChange(int direction)
+{
+  
+}
+
 #endif

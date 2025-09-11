@@ -32,7 +32,7 @@ class InfoPage3Screen : public Screen
 public:
     InfoPage3Screen(Adafruit_SSD1306 *display) : Screen(display) {}
 
-    SCREEN_TYPE screenType() { return SCREEN_INFO; }
+    SCREEN_TYPE screenType() { return SCREEN_INFO_PAGE3; }
 
     void init(int index);
     void draw();

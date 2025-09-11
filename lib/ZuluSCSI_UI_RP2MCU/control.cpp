@@ -593,6 +593,14 @@ void initUIPostSDInit(bool sd_card_present)
     }
 
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
+
+    if (!sd_card_present)
+    {
+        delay(1000);
+        changeScreen(SCREEN_MAIN, -1);
+        g_activeScreen->tick();
+        g_uiStart = ZULUSCSI_UI_START_DONE;
+    }
 }
 
 void updateRotary(int dir)
@@ -644,6 +652,7 @@ void stateChange()
 
     if (g_uiStart != ZULUSCSI_UI_START_DONE)
         return;
+
     switch(g_systemMode)
     {
         case SYSTEM_NORMAL:
@@ -1004,6 +1013,18 @@ extern "C" void scsiReinitComplete()
 }
 
 
+bool mscModeMessageDisplayed =false;
+extern "C" void mscMode() 
+{
+    if (mscModeMessageDisplayed)
+    {
+        return;
+    }
+    mscModeMessageDisplayed = true;
+    _messageBox->setText("-- Info --", "MSC Mode", "Enabled");
+    changeScreen(MESSAGE_BOX, -1);
+    _messageBox->tick(); // During boot, there is no loop, so manually trigger the tick, to draw the screen
+}
 
 extern "C" void controlLoop()
 {

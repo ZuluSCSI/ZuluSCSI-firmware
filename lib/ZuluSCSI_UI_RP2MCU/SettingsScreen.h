@@ -21,32 +21,38 @@
 
 #if defined(CONTROL_BOARD)
 
-#ifndef SPLASHSCREEN_H
-#define SPLASHSCREEN_H
+#ifndef SETTINGSSCREEN_H
+#define SETTINGSSCREEN_H
 
 #include "Screen.h"
-#include "SystemMode.h"
 
-class SplashScreen : public Screen
+class SettingsScreen : public Screen
 {
 public:
-    SplashScreen(Adafruit_SSD1306 *display) : Screen(display) {}
+    SettingsScreen(Adafruit_SSD1306 *display) : Screen(display) 
+    {
+    }
 
-    SCREEN_TYPE screenType() { return SCREEN_SPLASH; }
+    SCREEN_TYPE screenType() { return SCREEN_SETTINGS; }
 
-    void draw();
     void init(int index);
-    void showMode(SYSTEM_MODE mode);
+    void draw();
+
+    void action();
+
+    void sdCardStateChange(bool cardIsPresent);
 
     void shortUserPress();
+
+    void shortRotaryPress();
+    void shortEjectPress();
+    void longUserPress();
+    void longEjectPress();
     void rotaryChange(int direction);
 
-    void setBannerText(const char *text);
 private:
-    char _bannerText[32];
+    int _selectedIndex;
 };
-
-extern SplashScreen *_splashScreen;
 
 #endif
 

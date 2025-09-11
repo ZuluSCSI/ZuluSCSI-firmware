@@ -26,6 +26,7 @@
 #include "SystemMode.h"
 
 #include "MainScreen.h"
+#include "SettingsScreen.h"
 #include "SplashScreen.h"
 #include "BrowseTypeScreen.h"
 #include "BrowseScreen.h"
@@ -45,6 +46,7 @@ extern int g_previousIndex;
 
 SplashScreen *_splashScreen;
 MainScreen *_mainScreen;
+SettingsScreen *_settingsScreen;
 InfoScreen *_infoScreen;
 InfoPage2Screen *_infoPage2Screen;
 InfoPage3Screen *_infoPage3Screen;
@@ -60,6 +62,7 @@ extern Adafruit_SSD1306 allocated_g_display;
 
 static SplashScreen static_splashScreen(&allocated_g_display);
 static MainScreen static_mainScreen(&allocated_g_display);
+static SettingsScreen static_settingsScreen(&allocated_g_display);
 static InfoScreen static_infoScreen(&allocated_g_display);
 static InfoPage2Screen static_infoPage2Screen(&allocated_g_display);
 static InfoPage3Screen static_infoPage3Screen(&allocated_g_display);
@@ -74,6 +77,7 @@ void initScreens()
 {
     _splashScreen = &static_splashScreen;
     _mainScreen = &static_mainScreen;
+    _settingsScreen = &static_settingsScreen;
     _infoScreen = &static_infoScreen;
     _infoPage2Screen = &static_infoPage2Screen;
     _infoPage3Screen = &static_infoPage3Screen;
@@ -92,6 +96,7 @@ void initScreens()
 {
     _splashScreen = new (reserve_buffer_align(sizeof(SplashScreen), 4)) SplashScreen(g_display);
     _mainScreen = new (reserve_buffer_align(sizeof(MainScreen), 4)) MainScreen(g_display);
+    _settingScreen = new (reserve_buffer_align(sizeof(SettingsScreen), 4)) SettingsScreen(g_display);
     _infoScreen = new (reserve_buffer_align(sizeof(InfoScreen), 4)) InfoScreen(g_display);
     _infoPage2Screen = new (reserve_buffer_align(sizeof(InfoPage2Screen), 4)) InfoPage2Screen(g_display);
     _infoPage3Screen = new (reserve_buffer_align(sizeof(InfoPage3Screen), 4)) InfoPage3Screen(g_display);
@@ -108,6 +113,7 @@ void sendSDCardStateChangedToScreens(bool cardIsPresent)
 {
     _splashScreen->sdCardStateChange(cardIsPresent);
     _mainScreen->sdCardStateChange(cardIsPresent);
+    _settingsScreen->sdCardStateChange(cardIsPresent);
     _infoScreen->sdCardStateChange(cardIsPresent);
     _infoPage2Screen->sdCardStateChange(cardIsPresent);
     _infoPage3Screen->sdCardStateChange(cardIsPresent);
@@ -132,6 +138,9 @@ Screen *GetScreen(SCREEN_TYPE type)
             
         case SCREEN_MAIN:
             return _mainScreen;
+
+        case SCREEN_SETTINGS:
+            return _settingsScreen;
             
         case SCREEN_INFO:
             return _infoScreen;
@@ -175,6 +184,9 @@ const char *GetScreenName(SCREEN_TYPE type)
             
         case SCREEN_MAIN:
             return "Main";
+
+        case SCREEN_SETTINGS:
+            return "Settings";
         
         case SCREEN_INFO:
             return "Info (1/3)";

@@ -101,7 +101,11 @@ void fileCallback(int count, const char *file, const char *path, u_int64_t size)
             }
             if (!found)
             {
-                logmsg("Unmatched category in filename '", file, "': ", (char)*lastOpen);
+                char disp[2];
+                disp[0] = *lastOpen;
+                disp[1] = 0;
+
+                logmsg("Unmatched category in filename '", file, "': ", disp);
             }
 
             lastOpen++;
