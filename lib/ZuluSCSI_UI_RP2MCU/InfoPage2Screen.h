@@ -21,32 +21,28 @@
 
 #if defined(CONTROL_BOARD)
 
-#ifndef SPLASHSCREEN_H
-#define SPLASHSCREEN_H
+#ifndef INFOPAGE2SCREEN_H
+#define INFOPAGE2SCREEN_H
 
 #include "Screen.h"
-#include "SystemMode.h"
+#include "scrolling_text.h"
 
-class SplashScreen : public Screen
+class InfoPage2Screen : public Screen
 {
 public:
-    SplashScreen(Adafruit_SSD1306 *display) : Screen(display) {}
+    InfoPage2Screen(Adafruit_SSD1306 *display) : Screen(display) {}
 
-    SCREEN_TYPE screenType() { return SCREEN_SPLASH; }
+    SCREEN_TYPE screenType() { return SCREEN_INFO_PAGE2; }
 
-    void draw();
     void init(int index);
-    void showMode(SYSTEM_MODE mode);
+    void draw();
 
     void shortUserPress();
     void rotaryChange(int direction);
 
-    void setBannerText(const char *text);
 private:
-    char _bannerText[32];
+    int _scsiId;
 };
-
-extern SplashScreen *_splashScreen;
 
 #endif
 

@@ -38,6 +38,7 @@ public:
     void draw();
 
     void shortUserPress();
+    void rotaryChange(int direction);
 
 private:
     int _scsiId;

@@ -27,6 +27,8 @@
 #include "ZuluSCSI_msc.h"
 #include "ZuluSCSI_settings.h"
 
+#include "ui.h"
+
 // external global SD variable
 extern SdFs SD;
 
@@ -96,6 +98,11 @@ void zuluscsi_msc_loop() {
     MSC_LEDMode = LED_SOLIDON;
 	  LED_ON(); 
     delay(30);
+
+    if (g_controlBoardEnabled)
+    {
+      mscMode();
+    }
   }
 
   // turn the LED off to indicate exiting MSC

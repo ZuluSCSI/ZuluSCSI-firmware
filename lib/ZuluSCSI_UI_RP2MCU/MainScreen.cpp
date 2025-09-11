@@ -182,8 +182,7 @@ void MainScreen::longUserPress()
   Screen::longUserPress(); //TODO just for screensjjot
 #endif
 
-  _splashScreen->setBannerText(g_log_short_firmwareversion);
-  changeScreen(SCREEN_SPLASH, -1);
+  changeScreen(SCREEN_SETTINGS, -1);
 }
 
 void MainScreen::longEjectPress()

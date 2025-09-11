@@ -21,10 +21,10 @@
 
 #if defined(CONTROL_BOARD)
 
-#include "InfoScreen.h"
+#include "InfoPage2Screen.h"
 #include "ZuluSCSI_log.h"
 
-void InfoScreen::init(int index)
+void InfoPage2Screen::init(int index)
 {
   Screen::init(index);
 
@@ -33,24 +33,24 @@ void InfoScreen::init(int index)
   // Init the scroller
   initScrollers(2);
 
-  setupScroller(0, 52, 22, 88, 8, 1);
-  setupScroller(1, 52, 36, 88, 8, 1);
+  setupScroller(0, 52, 32, 88, 8, 1);
+  setupScroller(1, 52, 52, 88, 8, 1);
 
   // Set the scroller text
   DeviceMap &map = g_devices[_scsiId];
-  setScrollerText(0, map.Filename);
-  setScrollerText(1, map.Path);
+  setScrollerText(0, map.ProdId);
+  setScrollerText(1, map.Serial);
 }
 
-void InfoScreen::draw()
+void InfoPage2Screen::draw()
 { 
   _display->setCursor(0,0);             
-  _display->print(F("Info (1/3)"));
+  _display->print(F("Info (2/3)"));
   
   _iconX = 92;
 
   DeviceMap &map = g_devices[_scsiId];
-
+  
   const uint8_t *deviceIcon = getIconForType(map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
 
@@ -68,41 +68,39 @@ void InfoScreen::draw()
   _display->setTextSize(2);             
   _display->setCursor(112,0);       
   _display->print(_scsiId);           
-  _display->setTextSize(1);   
+  _display->setTextSize(1);             
 
   _display->setCursor(0,22);             
-  _display->print(F("File: "));
+  _display->print(F("Vendor:"));
+  _display->setCursor(52,22);       
+  _display->print(map.Vendor);    
 
-  _display->setCursor(0,36);             
-  _display->print(F("Folder: "));
+  _display->setCursor(0,32);             
+  _display->print(F("ProdId:")); 
 
-  _display->setCursor(0,46);             
-  _display->print(F("Browse: "));
-  _display->setCursor(52,46);       
-  _display->print((map.BrowseMethod != BROWSE_METHOD_NOT_BROWSABLE)?"Yes":"No");      
+  _display->setCursor(0,42);             
+  _display->print(F("Rev:"));
+  _display->setCursor(52,42);       
+  _display->print(map.Revision);    
 
-  _display->setCursor(0,56);             
-  _display->print(F("Size: "));
-  _display->setCursor(52,56);    
-  
-  makeImageSizeStr(map.Size, _sizeBuffer);
-  _display->print(_sizeBuffer);
+  _display->setCursor(0,52);             
+  _display->print(F("Serial:"));
 }
 
-void InfoScreen::shortUserPress()
+void InfoPage2Screen::shortUserPress()
 {
   changeScreen(SCREEN_MAIN, -1);
 }
 
-void InfoScreen::rotaryChange(int direction)
+void InfoPage2Screen::rotaryChange(int direction)
 {
   if (direction == 1)
   {
-    changeScreen(SCREEN_INFO_PAGE2, _scsiId);
+    changeScreen(SCREEN_INFO_PAGE3, _scsiId);
   }
   else if (direction == -1)
   {
-    changeScreen(SCREEN_INFO_PAGE3, _scsiId);
+    changeScreen(SCREEN_INFO, _scsiId);
   }
 }
 

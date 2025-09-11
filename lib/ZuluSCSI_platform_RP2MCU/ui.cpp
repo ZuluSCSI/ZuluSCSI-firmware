@@ -27,6 +27,7 @@ bool g_controlBoardEnabled = false;
 extern "C" void scsiReinitComplete() {}
 extern "C" void sdCardStateChanged(bool sdAvailable) {}
 extern "C" void controlLoop() {}
+extern "C" void mscMode() {}
 extern "C" void setFolder(int target_idx, bool userSet, const char *path) {}
 extern "C" void setCurrentFolder(int target_idx, const char *path) {}
 extern "C" void initUIDisplay() {}
