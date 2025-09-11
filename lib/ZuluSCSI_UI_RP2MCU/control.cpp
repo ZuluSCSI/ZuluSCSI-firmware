@@ -120,7 +120,7 @@ static DeviceMap static_g_devices[S2S_MAX_TARGETS];
 
 Screen *g_activeScreen;
 
-int g_previousIndex = -1;
+int g_previousIndex = SCREEN_ID_NO_PREVIOUS;
 
 SYSTEM_MODE g_systemMode = SYSTEM_NORMAL;
 
@@ -215,7 +215,7 @@ static bool splashScreenPoll()
         if (g_uiStart == ZULUSCSI_UI_START_SPLASH_VERSION && (uint32_t)(millis() - g_uiStartTime) > 1500)
         {
             _splashScreen->setBannerText(systemModeToString(g_systemMode));
-            changeScreen(SCREEN_SPLASH, -1);
+            changeScreen(SCREEN_SPLASH, SCREEN_ID_NO_PREVIOUS);
             g_uiStart = ZULUSCSI_UI_START_SPLASH_SYS_MODE;
             g_uiStartTime = millis();
         }
@@ -228,21 +228,21 @@ static bool splashScreenPoll()
                 switch(g_systemMode)
                 {
                     case SYSTEM_NORMAL:
-                        changeScreen(SCREEN_MAIN, -1);
+                        changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
                         g_activeScreen->tick();
                         break;
 
                     case SYSTEM_INITIATOR:
                         _messageBox->setBlockingMode(true);
                         _messageBox->setText("-- Warning --", "MSC Mode not", "supported yet");
-                        changeScreen(MESSAGE_BOX, -1);
+                        changeScreen(MESSAGE_BOX, SCREEN_ID_NO_PREVIOUS);
                         g_activeScreen->tick();
                         break;
                 }
             }
             else if(g_systemMode == SYSTEM_NORMAL)
             {
-                changeScreen(SCREEN_MAIN, -1);
+                changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
                 g_activeScreen->tick();
             }
 
@@ -290,7 +290,7 @@ bool loadImageDeferred(uint8_t id, const char* next_filename, SCREEN_TYPE return
     _messageBox->setReturnScreen(returnScreen);
     _messageBox->setReturnConditionPendingLoadComplete();
         
-    if (strlen(next_filename) > (MAX_PATH_LEN-1))
+    if (strlen(next_filename) > (MAX_PATH_LEN - 1))
     {
         _messageBox->setText("-- Warning --", "Filepath", "too long...");
         changeScreen(MESSAGE_BOX, returnIndex);
@@ -538,7 +538,7 @@ void startInitiator(uint8_t initiatorId)
             deviceMap->InitiatorDriveStatus = i == initiatorId ? INITIATOR_DRIVE_HOST : INITIATOR_DRIVE_UNKNOWN;
         }
     }
-    deferredChangeScreen(SCREEN_INITIATOR_MAIN, -1);
+    deferredChangeScreen(SCREEN_INITIATOR_MAIN, SCREEN_ID_NO_PREVIOUS);
 }
 
 void initUIDisplay()
@@ -585,7 +585,7 @@ void initUIPostSDInit(bool sd_card_present)
         }
 
         _splashScreen->setBannerText(g_log_short_firmwareversion);
-        changeScreen(SCREEN_SPLASH, -1);
+        changeScreen(SCREEN_SPLASH, SCREEN_ID_NO_PREVIOUS);
         g_activeScreen->tick();
         g_uiStart = ZULUSCSI_UI_START_SPLASH_VERSION;
         g_uiStartTime = millis();
@@ -647,14 +647,14 @@ void stateChange()
     switch(g_systemMode)
     {
         case SYSTEM_NORMAL:
-            changeScreen(SCREEN_MAIN, -1);
+            changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
             g_activeScreen->tick();
             break;
             
         case SYSTEM_INITIATOR:
             _messageBox->setBlockingMode(true);
             _messageBox->setText("-- Warning --", "MSC Mode not", "supported yet");
-            changeScreen(MESSAGE_BOX, -1);
+            changeScreen(MESSAGE_BOX, SCREEN_ID_NO_PREVIOUS);
             g_activeScreen->tick();
             break;
     }
@@ -1010,7 +1010,7 @@ extern "C" void mscMode()
     }
     mscModeMessageDisplayed = true;
     _messageBox->setText("-- Info --", "MSC Mode", "Enabled");
-    changeScreen(MESSAGE_BOX, -1);
+    changeScreen(MESSAGE_BOX, SCREEN_ID_NO_PREVIOUS);
     _messageBox->tick(); // During boot, there is no loop, so manually trigger the tick, to draw the screen
 }
 
@@ -1115,7 +1115,7 @@ void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename)
     _copyScreen->setShowInfoText(true);
     _copyScreen->setInfoText(filename);
     _copyScreen->setShowRetriesAndErrors(false);
-    overrideSplashScreenLoad(SCREEN_COPY, 255);
+    overrideSplashScreenLoad(SCREEN_COPY, SCREEN_ID_OTHER);
 }
 
 void UICreateProgress(uint32_t blockTime, uint32_t blockCopied) 
@@ -1163,7 +1163,7 @@ void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCo
     _copyScreen->setInfoText(filename);
     _copyScreen->setShowRetriesAndErrors(false);
 
-    overrideSplashScreenLoad(SCREEN_COPY, 255);
+    overrideSplashScreenLoad(SCREEN_COPY, SCREEN_ID_OTHER);
 }
 
 void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
@@ -1248,7 +1248,7 @@ void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId)
             g_devices[i].InitiatorDriveStatus = INITIATOR_DRIVE_SCANNED;
         }
     }
-    if (!deferredChangeScreen(SCREEN_INITIATOR_MAIN, -1))
+    if (!deferredChangeScreen(SCREEN_INITIATOR_MAIN, SCREEN_ID_NO_PREVIOUS))
         _initiatorMainScreen->tick();
 }
 
@@ -1362,7 +1362,7 @@ void UIInitiatorImagingComplete(uint8_t deviceId)
     DeviceMap *deviceMap = &g_devices[deviceId];
 
     deviceMap->InitiatorDriveStatus = INITIATOR_DRIVE_CLONED;
-    deferredChangeScreen(SCREEN_INITIATOR_MAIN, -1, true);
+    deferredChangeScreen(SCREEN_INITIATOR_MAIN, SCREEN_ID_NO_PREVIOUS, true);
 }
 
 

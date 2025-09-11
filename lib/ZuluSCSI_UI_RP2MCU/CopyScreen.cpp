@@ -52,24 +52,24 @@ void CopyScreen::draw()
   _display->setCursor(0,0);             
   _display->print(_bannerText);
   
-  _iconX = 92;
-  if (DeviceType != 255)
-  {
-    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)DeviceType, true);
-    
-    drawIconFromRight(deviceIcon, 6, 0);
-  }
+  _iconX = _display->width();
 
-  if (_scsiId != 255)
+
+  if (_scsiId != SCREEN_ID_OTHER)
   {
-    _display->setTextSize(2);             
-    _display->setCursor(112,0);       
-    _display->print(_scsiId);           
-    _display->setTextSize(1);      
+    _display->setTextSize(2);
+    printNumberFromTheRight(_scsiId, 6, 0);
+    _display->setTextSize(1);
   }
   else
   {
     _iconX += 16;
+  }
+
+  if (DeviceType != 255)
+  {
+    const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)DeviceType, true);
+    drawIconFromRight(deviceIcon, 6, 0);
   }
 
   _display->drawLine(0,10,_iconX+11,10, 1);
@@ -198,7 +198,7 @@ void CopyScreen::setShowInfoText(bool showInfoText)
 
 void CopyScreen::shortUserPress()
 {
-  // changeScreen(SCREEN_MAIN, -1);
+  // changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
 }
 
 #endif

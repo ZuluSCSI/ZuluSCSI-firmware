@@ -180,19 +180,18 @@ void BrowseScreenFlat::draw()
   _display->setCursor(0,0);             
   _display->print(F("Flat Browser"));
 
-  _iconX = 92;
+  _iconX = _display->width();
   
   DeviceMap &map = g_devices[_scsiId];
+
+  _display->setTextSize(2);
+  printNumberFromTheRight(_scsiId, 6, 0);
+  _display->setTextSize(1);
 
   const uint8_t *deviceIcon = getIconForType((S2S_CFG_TYPE)map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
 
- _display->drawLine(0,10,_iconX+11,10, 1);       
-
-   _display->setTextSize(2);             
-  _display->setCursor(112,0);       
-  _display->print(_scsiId);           
-  _display->setTextSize(1);            
+  _display->drawLine(0,10,_iconX+11,10, 1);
 
   _display->setCursor(0,36);             
   _display->print(F("Path: "));     
@@ -224,7 +223,7 @@ void BrowseScreenFlat::shortRotaryPress()
 void BrowseScreenFlat::shortUserPress()
 {
   resetScrollerDelay();
-  changeScreen(SCREEN_MAIN, -1);
+  changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
 }
 
 void BrowseScreenFlat::shortEjectPress()
@@ -313,8 +312,11 @@ void BrowseScreenFlat::getCurrentFilename()
     {
       char pre[4];
       strcpy(pre, typeToShortString(_deviceMap->DeviceType));
-      pre[2] = '0' + _scsiId;
-      pre[3] = 0;
+      if (_scsiId >= 0 && _scsiId <= 9)
+        pre[2] = '0' + _scsiId;
+      else if (_scsiId >= 10  && _scsiId <= 15)
+        pre[2] = 'A' + (_scsiId - 10);
+      pre[3] = '\0';
       SDNavPrefixFileByIndex.GetFileByIndex(pre, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
     } 
     case BROWSE_METHOD_NOT_BROWSABLE:

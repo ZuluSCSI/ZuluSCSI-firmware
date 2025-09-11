@@ -119,21 +119,20 @@ void BrowseScreen::draw()
   _display->setCursor(0,0);             
   _display->print(F("Browser"));
 
-  _iconX = 92; // Inital offset from right (leave space for the SCSI ID)
-  
+   _iconX = _display->width();
+
   DeviceMap &map = g_devices[_scsiId];
+
+  _display->setTextSize(2);
+  printNumberFromTheRight(_scsiId, 6, 0);
+  _display->setTextSize(1);
 
   const uint8_t *deviceIcon = getIconForType(map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
 
   _display->drawLine(0,10,_iconX+11,10, 1);
 
-  _display->setTextSize(2);             
-  _display->setCursor(112,0);       
-  _display->print(_scsiId);           
-  _display->setTextSize(1);            
-
-  _display->setCursor(0,36);             
+  _display->setCursor(0,36);
   _display->print(F("Path: "));     
 
   _display->setCursor(0,22);             
@@ -189,7 +188,7 @@ void BrowseScreen::shortUserPress()
   if (!goBackADirectory())
   {
     resetScrollerDelay();
-    changeScreen(SCREEN_MAIN, -1);
+    changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
   }
 }
 

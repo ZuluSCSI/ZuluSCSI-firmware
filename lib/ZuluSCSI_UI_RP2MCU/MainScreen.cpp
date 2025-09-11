@@ -31,6 +31,9 @@
 
 #define DEVICES_PER_PAGE 8
 #define DEVICES_PER_COLUMN 4
+
+#define NO_DEVICE_SELECTED -1
+
 extern bool g_sdAvailable;
 
 void MainScreen::init(int index)
@@ -38,11 +41,11 @@ void MainScreen::init(int index)
   Screen::init(index);
 
   // Find first active scsi ID
-  if (index == -1 || _selectedDevice == -1) // TODO just a test: _selectedDevice == -1? does it do anything when StateChange() called?
+  if (index == SCREEN_ID_NO_PREVIOUS || index == SCREEN_ID_UNINITIALIZED || _selectedDevice == NO_DEVICE_SELECTED) // TODO just a test: _selectedDevice == -1? does it do anything when StateChange() called?
   {
-    _selectedDevice = -1;
+    _selectedDevice = NO_DEVICE_SELECTED;
     int i;
-    for (i=0;i<8;i++)
+    for (i = 0; i < S2S_MAX_TARGETS; i++)
     {
       if (g_devices[i].Active)
       {
@@ -56,7 +59,7 @@ void MainScreen::init(int index)
     _selectedDevice = index;
   }
 
-  if (_selectedDevice != -1)
+  if (_selectedDevice != NO_DEVICE_SELECTED)
   {
     _deviceMap = &g_devices[_selectedDevice];
   }
@@ -73,7 +76,7 @@ void MainScreen::draw()
 
   int page = 0;
   int deviceOffset = 0;
-  if (_selectedDevice > -1)
+  if (_selectedDevice > NO_DEVICE_SELECTED)
   {
     page = (_selectedDevice/DEVICES_PER_PAGE);
     deviceOffset = page * DEVICES_PER_PAGE;
@@ -83,7 +86,7 @@ void MainScreen::draw()
   if (totalPages > 1)
   {
     _display->print(" (");
-    _display->print((page+1));
+    _display->print((page + 1));
     _display->print("/");
     _display->print(totalPages);
     _display->print(")");
@@ -103,7 +106,7 @@ void MainScreen::draw()
   int xOffset = 0;
   int yOffset = 13;
   int i;
-  for (i=0;i<DEVICES_PER_PAGE;i++)
+  for (i = 0; i < DEVICES_PER_PAGE; i++)
   {
     if (i == DEVICES_PER_COLUMN)
     {
@@ -124,13 +127,13 @@ void MainScreen::tick()
 
 void MainScreen::sdCardStateChange(bool cardIsPresent)
 {
-  _selectedDevice = -1; // reset it, so it's recalced
+  _selectedDevice = NO_DEVICE_SELECTED; // reset it, so it's recalced
   _deviceMap = NULL;
 }
 
 void MainScreen::shortRotaryPress()
 {
-  if (_selectedDevice == -1)
+  if (_selectedDevice == NO_DEVICE_SELECTED)
   {
     return;
   }
@@ -145,7 +148,7 @@ void MainScreen::shortUserPress()
 
 void MainScreen::shortEjectPress()
 {
-  if (_selectedDevice == -1 || _deviceMap == NULL)
+  if (_selectedDevice == NO_DEVICE_SELECTED || _deviceMap == NULL)
   {
     return;
   }
@@ -182,12 +185,12 @@ void MainScreen::longUserPress()
   Screen::longUserPress(); //TODO just for screensjjot
 #endif
 
-  changeScreen(SCREEN_SETTINGS, -1);
+  changeScreen(SCREEN_SETTINGS, SCREEN_ID_NO_PREVIOUS);
 }
 
 void MainScreen::longEjectPress()
 {
-  if (_selectedDevice == -1 || _deviceMap == NULL)
+  if (_selectedDevice == NO_DEVICE_SELECTED || _deviceMap == NULL)
   {
     return;
   }
@@ -229,7 +232,7 @@ void MainScreen::longEjectPress()
 
 void MainScreen::rotaryChange(int direction)
 {
-  if (_selectedDevice == -1) // there aren't any, so just return (it would have been set to something other than -1 if there were)
+  if (_selectedDevice == NO_DEVICE_SELECTED) // there aren't any, so just return (it would have been set to something other than -1 if there were)
   {
     return;
   }
@@ -240,7 +243,7 @@ void MainScreen::rotaryChange(int direction)
   if (direction == 1)
   {
     // Find next valid scsi id
-    for (i=_selectedDevice+1; i<8;i++)    
+    for (i = _selectedDevice + 1; i < S2S_MAX_TARGETS; i++)
     {
       if (g_devices[i].Active)
       {
@@ -251,7 +254,7 @@ void MainScreen::rotaryChange(int direction)
     }
     if (!found)
     {
-      for (i=0; i<_selectedDevice;i++)    
+      for (i = 0; i < _selectedDevice; i++)
       {
         if (g_devices[i].Active)
         {
@@ -265,7 +268,7 @@ void MainScreen::rotaryChange(int direction)
   else // dir -1
   {
     // Find next valid scsi id
-    for (i=_selectedDevice-1; i>=0;i--)    
+    for (i=_selectedDevice - 1; i >=0; i--)
     {
       if (g_devices[i].Active)
       {
@@ -276,7 +279,7 @@ void MainScreen::rotaryChange(int direction)
     }
     if (!found)
     {
-      for (i=7; i>=_selectedDevice;i--)    
+      for (i = S2S_MAX_TARGETS - 1; i >= _selectedDevice; i--)
       {
         if (g_devices[i].Active)
         {
