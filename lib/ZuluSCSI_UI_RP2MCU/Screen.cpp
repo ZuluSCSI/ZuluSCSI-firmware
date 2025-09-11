@@ -206,13 +206,28 @@ void Screen::resetScrollerDelay()
 void Screen::printCenteredText(const char *text, int y)
 {
    int16_t lx = 0, ly = 0;
-   Size toDispSize;;
+   Size toDispSize;
   
    _display->getTextBounds(text, 0 ,0, &lx, &ly, &toDispSize.width, &toDispSize.height);
     int x = 64 - (toDispSize.width/2);
 
   _display->setCursor(x, y);
   _display->print(text);
+}
+
+void Screen::printNumberFromTheRight(int number, int extraSpace, int y)
+{
+  int16_t lx = 0, ly = 0;
+  Size toDispSize;
+
+  char number_text[13];
+  itoa(number, number_text, 10);
+  _display->getTextBounds(number_text, 0 ,0, &lx, &ly, &toDispSize.width, &toDispSize.height);
+  _iconX -= toDispSize.width;
+  _display->setCursor(_iconX, y);
+  _display->print(number_text);
+  _iconX -= 14;
+  _iconX -= extraSpace;
 }
 
 void Screen::drawIconFromRight(const uint8_t *icon, int extraSpace, int y)

@@ -28,14 +28,17 @@
 #include "scrolling_text.h"
 
 #define MAX_SCOLLERS 4
-#define INDEX_UNINITIALIZED -100
+#define SCREEN_ID_UNINITIALIZED -100
+#define SCREEN_ID_OTHER 255
+#define SCREEN_ID_NO_PREVIOUS -1
+
 class Screen
 {
 protected:
     Adafruit_SSD1306 *_display;
     
 public:
-    Screen(Adafruit_SSD1306 *display) : _display(display), _init_index(INDEX_UNINITIALIZED) {}
+    Screen(Adafruit_SSD1306 *display) : _display(display), _init_index(SCREEN_ID_UNINITIALIZED) {}
     
     void virtual init(int index); // Called when switched to the screen
 	void virtual tick(); // Called on ever main loop cycle
@@ -90,6 +93,8 @@ protected:
 	void makeTimeStr(int seconds, char *buffer) ;
 
 	void printCenteredText(const char *text, int y);
+
+	void printNumberFromTheRight(int number, int extraSpace, int y);
 
 	FsFile createFile();
 	void saveScreenShot();

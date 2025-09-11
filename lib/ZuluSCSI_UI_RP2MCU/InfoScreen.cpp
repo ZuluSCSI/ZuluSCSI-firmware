@@ -47,9 +47,14 @@ void InfoScreen::draw()
   _display->setCursor(0,0);             
   _display->print(F("Info (1/3)"));
   
-  _iconX = 92;
+  _iconX = _display->width();
 
   DeviceMap &map = g_devices[_scsiId];
+
+  _display->setTextSize(2);
+  printNumberFromTheRight(_scsiId, 6, 0);
+  _display->setTextSize(1);
+
 
   const uint8_t *deviceIcon = getIconForType(map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
@@ -65,10 +70,6 @@ void InfoScreen::draw()
 
     _display->drawLine(0,10,_iconX+11,10, 1);
 
-  _display->setTextSize(2);             
-  _display->setCursor(112,0);       
-  _display->print(_scsiId);           
-  _display->setTextSize(1);   
 
   _display->setCursor(0,22);             
   _display->print(F("File: "));
@@ -91,7 +92,7 @@ void InfoScreen::draw()
 
 void InfoScreen::shortUserPress()
 {
-  changeScreen(SCREEN_MAIN, -1);
+  changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
 }
 
 void InfoScreen::rotaryChange(int direction)

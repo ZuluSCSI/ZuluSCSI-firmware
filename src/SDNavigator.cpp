@@ -5,14 +5,10 @@
 
 bool SDNavigator::startsWith(const char* str, const char* prefix) 
 {
-    // Loop until the prefix character is null or a mismatch is found
-    while (tolower(*prefix) && tolower(*str) == tolower(*prefix)) 
-    {
-        str++;
-        prefix++;
-    }
-    // If the prefix is fully matched (meaning it reached its null terminator)
-    return *prefix == '\0'; // or return *prefix == 0;
+    size_t prefix_len = strlen(prefix);
+    if (strlen(str) < prefix_len)
+        return false;
+    return strncasecmp(prefix, str, prefix_len) == 0;
 }
 
 PROCESS_DIR_ITEM_RESULT SDNavigator::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)

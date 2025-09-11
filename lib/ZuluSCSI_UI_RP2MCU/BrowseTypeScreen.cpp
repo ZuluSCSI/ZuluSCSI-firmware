@@ -29,6 +29,7 @@
 #include "control_global.h"
 
 #define MAX_LINES 5
+#define NO_DEVICE_SELECTED -1
 
 void BrowseTypeScreen::init(int index)
 {
@@ -69,7 +70,7 @@ void BrowseTypeScreen::draw()
 
 void BrowseTypeScreen::shortUserPress()
 {
-  changeScreen(SCREEN_MAIN, -1);
+  changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
 }
 
 void BrowseTypeScreen::shortEjectPress()
@@ -102,7 +103,7 @@ void BrowseTypeScreen::shortRotaryPress()
 
 void BrowseTypeScreen::rotaryChange(int direction)
 {
-  if (_selectedDevice == -1) // there aren't any, so just return (it would have been set to something other than -1 if there were)
+  if (_selectedDevice == NO_DEVICE_SELECTED) // there aren't any, so just return (it would have been set to something other than -1 if there were)
   {
     return;
   }
@@ -129,7 +130,7 @@ void BrowseTypeScreen::rotaryChange(int direction)
   else // dir -1
   {
     _selectedDevice--;
-    if (_selectedDevice == -1)
+    if (_selectedDevice == NO_DEVICE_SELECTED)
     {
       _selectedDevice++;
     }
