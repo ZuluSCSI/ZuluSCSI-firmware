@@ -96,7 +96,7 @@ void initScreens()
 {
     _splashScreen = new (reserve_buffer_align(sizeof(SplashScreen), 4)) SplashScreen(g_display);
     _mainScreen = new (reserve_buffer_align(sizeof(MainScreen), 4)) MainScreen(g_display);
-    _settingScreen = new (reserve_buffer_align(sizeof(SettingsScreen), 4)) SettingsScreen(g_display);
+    _settingsScreen = new (reserve_buffer_align(sizeof(SettingsScreen), 4)) SettingsScreen(g_display);
     _infoScreen = new (reserve_buffer_align(sizeof(InfoScreen), 4)) InfoScreen(g_display);
     _infoPage2Screen = new (reserve_buffer_align(sizeof(InfoPage2Screen), 4)) InfoPage2Screen(g_display);
     _infoPage3Screen = new (reserve_buffer_align(sizeof(InfoPage3Screen), 4)) InfoPage3Screen(g_display);
