@@ -21,16 +21,16 @@
 
 #if defined(CONTROL_BOARD)
 
-#ifndef INFOSCREEN_H
-#define INFOSCREEN_H
+#ifndef INFOPAGE2SCREEN_H
+#define INFOPAGE2SCREEN_H
 
 #include "Screen.h"
 #include "scrolling_text.h"
 
-class InfoScreen : public Screen
+class InfoPage2Screen : public Screen
 {
 public:
-    InfoScreen(Adafruit_SSD1306 *display) : Screen(display) {}
+    InfoPage2Screen(Adafruit_SSD1306 *display) : Screen(display) {}
 
     SCREEN_TYPE screenType() { return SCREEN_INFO; }
 

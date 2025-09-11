@@ -69,6 +69,15 @@ struct DeviceMap
     bool IsRom;
     bool IsWritable;
 
+    uint32_t LBA;
+    uint16_t BytesPerSector;
+    uint16_t SectorsPerTrack;
+	uint16_t HeadsPerCylinder;
+
+    char Vendor[9];
+	char ProdId[17];
+	char Revision[5];
+	char Serial[17];
 
     // Computed
     BROWSE_METHOD BrowseMethod;

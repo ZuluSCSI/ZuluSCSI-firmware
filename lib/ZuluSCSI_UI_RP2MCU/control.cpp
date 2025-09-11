@@ -761,6 +761,46 @@ void initDevices()
     }
 }
 
+void safeCopyString(const char *src, char *dst, uint8_t size)
+{
+    int i, co = 0;;
+    bool zeros = true;
+    for (i=0;i<size;i++)
+    {
+
+        bool skip = false;
+        if (zeros)
+        {
+            if (src[i] == 32)
+            {
+                skip = true;
+            }
+            else
+            {
+                zeros = false;
+            }
+        }
+        if (!skip)
+        {
+            dst[co++] = src[i];
+        }
+    }
+    dst[co] =0;
+
+    for (i=co;i>=0;i--)
+    {
+        if (dst[i] == 0 || dst[i] == 32)
+        {
+            dst[i] = 0;
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+
 // This is the 2nd pass of setting device info (Active/UserFolder/RootFolder will already be set from 1st pass)
 void patchDevice(uint8_t target_idx)
 {
@@ -784,6 +824,16 @@ void patchDevice(uint8_t target_idx)
     {
         map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;
         map.IsRemovable = isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType);
+
+        map.LBA = img.get_capacity_lba();
+        map.BytesPerSector = cfg->bytesPerSector;
+        map.SectorsPerTrack = cfg->sectorsPerTrack;
+        map.HeadsPerCylinder = cfg->headsPerCylinder;
+
+        safeCopyString(cfg->vendor, map.Vendor, 8);
+        safeCopyString(cfg->prodId, map.ProdId, 16);
+        safeCopyString(cfg->revision, map.Revision, 4);
+        safeCopyString(cfg->serial, map.Serial, 16);
 
         if (!map.IsRom && !map.IsRaw)
         {
@@ -858,7 +908,6 @@ void patchDevice(uint8_t target_idx)
     logmsg("      size() ", img.file.size());
 
     
-    const S2S_TargetCfg* cfg = s2s_getConfigByIndex(i);
     if (cfg->scsiId & S2S_CFG_TARGET_ENABLED)
     {
         logmsg("  ***** IS ENABLED!");
