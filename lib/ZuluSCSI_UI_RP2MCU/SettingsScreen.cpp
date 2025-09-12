@@ -64,29 +64,29 @@ void SettingsScreen::drawItem(int x, int y, int index)
   switch(index)
   {
     case 0:
-      _display->print(F("Reboot"));
+      _display->print(F("About"));
       break;
 
     case 1:
-      _display->print(F("Mass SD Mode"));
-      break;
-
-    case 2:
-      _display->print(F("Mass Image Mode"));
-      break;
-
-    case 3:
       _display->print(F("Debug log: "));
       _display->print(g_log_debug ? "On" : "Off");
       break;
 
-    case 4:
+    case 2:
       _display->print(F("SD log: "));  
       _display->print(g_log_to_sd  ? "On" : "Off");
       break;
 
+    case 3:
+      _display->print(F("Reboot"));
+      break;
+
+    case 4:
+      _display->print(F("Mass SD Mode"));
+      break;
+
     case 5:
-      _display->print(F("About"));
+      _display->print(F("Mass Image Mode"));
       break;
   }
 
@@ -133,7 +133,6 @@ void SettingsScreen::sdCardStateChange(bool cardIsPresent)
 {
 }
 
-
 void SettingsScreen::action()
 {
   volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
@@ -142,9 +141,31 @@ void SettingsScreen::action()
   {
     case 0:
     {
+      _splashScreen->setBannerText(g_log_short_firmwareversion);
+      changeScreen(SCREEN_SPLASH, _selectedIndex);
+      break;
+    }
+
+    case 1:
+    {
+      *scratch0 = 0;
+      g_log_debug = !g_log_debug;
+      forceDraw();
+      break;
+    }
+
+    case 2:
+    {
+      *scratch0 = 0;
+      g_log_to_sd  = !g_log_to_sd ;
+      forceDraw();
+      break;
+    }
+
+    case 3:
+    {
       *scratch0 = 0;
       g_rebooting = true;
-
 
       _messageBox->setBlockingMode(true);
       _messageBox->setText("-- Info --", "Rebooting...", "");
@@ -153,7 +174,7 @@ void SettingsScreen::action()
       break;
     }
 
-    case 1:
+    case 4:
     {
       *scratch0 = REBOOT_INTO_MASS_STORAGE_MAGIC_NUM;
       g_rebooting = true;
@@ -165,7 +186,7 @@ void SettingsScreen::action()
       break;
     }
 
-    case 2:
+    case 5:
     {
      *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
       g_rebooting = true;
@@ -176,32 +197,14 @@ void SettingsScreen::action()
       g_activeScreen->tick();
       break;
     }
-
-    case 3:
-    {
-      *scratch0 = 0;
-      g_log_debug = !g_log_debug;
-      forceDraw();
-      break;
-    }
-
-    case 4:
-    {
-      *scratch0 = 0;
-      g_log_to_sd  = !g_log_to_sd ;
-      forceDraw();
-      break;
-    }
-
-    case 5:
-    {
-      _splashScreen->setBannerText(g_log_short_firmwareversion);
-      changeScreen(SCREEN_SPLASH, _selectedIndex);
-      break;
-    }
   }
 }
 void SettingsScreen::shortRotaryPress()
+{
+  action();
+}
+
+void SettingsScreen::shortEjectPress()
 {
   action();
 }
@@ -210,14 +213,6 @@ void SettingsScreen::shortUserPress()
 {
   changeScreen(SCREEN_MAIN, -1);
 }
-
-void SettingsScreen::shortEjectPress()
-{
-  action();
-}
-
-
-
 
 void SettingsScreen::rotaryChange(int direction)
 {
