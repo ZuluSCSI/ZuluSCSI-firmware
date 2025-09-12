@@ -37,6 +37,13 @@ typedef enum
     SPEED_GRADE_BASE_155MHZ,
 } zuluscsi_speed_grade_t;
 
+
+typedef enum {
+    MASS_STORAGE_MODE_NONE,
+    MASS_STORAGE_MODE_SD,
+    MASS_STORAGE_MODE_IMAGES
+} mass_storage_mode;
+
 #ifdef __cplusplus
 
 #include <stdint.h>
@@ -103,6 +110,8 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
     uint16_t controlBoardScreenSaverStyle;
 
     uint8_t maxBusWidth;
+
+    bool logToSDCard;
 } scsi_system_settings_t;
 
 // This struct should only have new setting added to the end

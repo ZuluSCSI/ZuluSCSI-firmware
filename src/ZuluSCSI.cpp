@@ -72,6 +72,7 @@ bool g_rawdrive_active;
 static bool g_romdrive_active;
 bool g_sdcard_present;
 bool g_rebooting = false;
+bool g_log_to_sd;
 #ifndef SD_SPEED_CLASS_WARN_BELOW
 #define SD_SPEED_CLASS_WARN_BELOW 10
 #endif
@@ -90,6 +91,9 @@ void save_logfile(bool always = false)
     return;
 #endif
 
+if (!g_log_to_sd)
+  return;
+  
   static uint32_t prev_log_pos = 0;
   static uint32_t prev_log_len = 0;
   static uint32_t prev_log_save = 0;
@@ -1106,8 +1110,9 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     char presetName[32];
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
     scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName);
+    g_log_to_sd = g_scsi_settings.getSystem()->logToSDCard;
 
-#ifdef RECLOCKING_SUPPORTED
+    #ifdef RECLOCKING_SUPPORTED
     zuluscsi_speed_grade_t speed_grade = (zuluscsi_speed_grade_t) g_scsi_settings.getSystem()->speedGrade;
     if (speed_grade != zuluscsi_speed_grade_t::SPEED_GRADE_DEFAULT)
     { 
@@ -1180,11 +1185,11 @@ extern "C" void zuluscsi_setup(void)
 
 #ifdef PLATFORM_MASS_STORAGE
   static bool check_mass_storage = true;
-  if ((check_mass_storage || platform_rebooted_into_mass_storage()) && !is_initiator && g_sdcard_present)
+  if ((check_mass_storage || (platform_rebooted_into_mass_storage() != MASS_STORAGE_MODE_NONE)) && !is_initiator && g_sdcard_present)
   {
     if (g_scsi_settings.getSystem()->enableUSBMassStorage
        || g_scsi_settings.getSystem()->usbMassStoragePresentImages
-       || platform_rebooted_into_mass_storage()
+       || platform_rebooted_into_mass_storage() != MASS_STORAGE_MODE_NONE
     )
     {
       check_mass_storage = false;

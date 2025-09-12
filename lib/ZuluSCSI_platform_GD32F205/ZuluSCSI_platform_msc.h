@@ -56,6 +56,9 @@ void platform_set_msc_image_mode(bool image_mode);
 /* return true if we should remain in card reader mode. called in a loop. */
 bool platform_run_msc();
 
+/* return true if a request to stop is issued, not implemented for the GD32F205 */
+inline bool platform_stop_msc(){ return false; }
+
 /* perform any cleanup tasks for the MSC-specific functionality */
 void platform_exit_msc();
 
