@@ -46,11 +46,14 @@ public:
 
     void shortRotaryPress();
     void shortEjectPress();
-    void longUserPress();
-    void longEjectPress();
     void rotaryChange(int direction);
 
 private:
+    int _cursorPos;
+    int _screenOffset;
+
+    void drawItem(int x, int y, int index);
+
     int _selectedIndex;
 };
 

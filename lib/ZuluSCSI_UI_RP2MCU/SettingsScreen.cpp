@@ -28,19 +28,74 @@
 #include "ZuluSCSI_log.h"
 
 
-#define DEVICES_PER_PAGE 8
-#define DEVICES_PER_COLUMN 4
+
 extern bool g_sdAvailable;
 extern bool g_rebooting;
 extern Screen *g_activeScreen;
+extern bool g_log_to_sd;
+
+#define MAX_LINES 5
+#define TOTAL_SETTINGS 6
 
 void SettingsScreen::init(int index)
 {
   Screen::init(index);
 
   // Find first active scsi ID
-  _selectedIndex = 0;
+  _selectedIndex = index;
+  if (_selectedIndex == -1)
+  {
+    _selectedIndex = 0;
+  }
+
+  _cursorPos = _selectedIndex;
+  _screenOffset = 0;
+  int diff = MAX_LINES - (_selectedIndex+1);
+  if (diff < 0)
+  {
+    _cursorPos  += diff;
+    _screenOffset -= diff;
+  }
 }
+
+void SettingsScreen::drawItem(int x, int y, int index)
+{
+  _display->setCursor(x+10,y);  
+  switch(index)
+  {
+    case 0:
+      _display->print(F("Reboot"));
+      break;
+
+    case 1:
+      _display->print(F("Mass SD Mode"));
+      break;
+
+    case 2:
+      _display->print(F("Mass Image Mode"));
+      break;
+
+    case 3:
+      _display->print(F("Debug log: "));
+      _display->print(g_log_debug ? "On" : "Off");
+      break;
+
+    case 4:
+      _display->print(F("SD log: "));  
+      _display->print(g_log_to_sd  ? "On" : "Off");
+      break;
+
+    case 5:
+      _display->print(F("About"));
+      break;
+  }
+
+  if (_selectedIndex == index)
+  {
+    _display->drawBitmap(x, y, icon_select, 8,8, WHITE);
+  }
+}
+
 
 void SettingsScreen::draw()
 {
@@ -58,18 +113,20 @@ void SettingsScreen::draw()
     _display->drawBitmap(115, 0, icon_nosd, 12,12, WHITE);
   }
 
-  _display->setCursor(16,22);             
-  _display->print(F("Reboot"));
+  
+  int yOffset = 14;
+  int xOffset = 0;
 
-  _display->setCursor(16,32);             
-  _display->print(F("Mass Storage Mode"));
-
-  _display->setCursor(16,42);             
-  _display->print(F("About"));
-
-  int yOffset = 22 + (_selectedIndex * 10);
-
-  _display->drawBitmap(0, yOffset, icon_select, 8,8, WHITE);
+  int i;
+  for (i=0;i<MAX_LINES;i++)
+  {
+    int ind = i + _screenOffset;
+    if (ind < TOTAL_SETTINGS)
+    {
+      drawItem(xOffset, yOffset, ind);
+      yOffset+=10;
+    }
+  }
 }
 
 void SettingsScreen::sdCardStateChange(bool cardIsPresent)
@@ -79,11 +136,16 @@ void SettingsScreen::sdCardStateChange(bool cardIsPresent)
 
 void SettingsScreen::action()
 {
+  volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+
   switch(_selectedIndex)
   {
     case 0:
     {
+      *scratch0 = 0;
       g_rebooting = true;
+
+
       _messageBox->setBlockingMode(true);
       _messageBox->setText("-- Info --", "Rebooting...", "");
       changeScreen(MESSAGE_BOX, -1);
@@ -93,12 +155,11 @@ void SettingsScreen::action()
 
     case 1:
     {
-      volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
       *scratch0 = REBOOT_INTO_MASS_STORAGE_MAGIC_NUM;
       g_rebooting = true;
 
       _messageBox->setBlockingMode(true);
-      _messageBox->setText("-- Info --", "Rebooting into", "MSC Mode...");
+      _messageBox->setText("-- Info --", "Rebooting into", "MSC SD...");
       changeScreen(MESSAGE_BOX, -1);
       g_activeScreen->tick();
       break;
@@ -106,8 +167,36 @@ void SettingsScreen::action()
 
     case 2:
     {
+     *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
+      g_rebooting = true;
+
+      _messageBox->setBlockingMode(true);
+      _messageBox->setText("-- Info --", "Rebooting into", "MSC Image...");
+      changeScreen(MESSAGE_BOX, -1);
+      g_activeScreen->tick();
+      break;
+    }
+
+    case 3:
+    {
+      *scratch0 = 0;
+      g_log_debug = !g_log_debug;
+      forceDraw();
+      break;
+    }
+
+    case 4:
+    {
+      *scratch0 = 0;
+      g_log_to_sd  = !g_log_to_sd ;
+      forceDraw();
+      break;
+    }
+
+    case 5:
+    {
       _splashScreen->setBannerText(g_log_short_firmwareversion);
-      changeScreen(SCREEN_SPLASH, -1);
+      changeScreen(SCREEN_SPLASH, _selectedIndex);
       break;
     }
   }
@@ -127,34 +216,48 @@ void SettingsScreen::shortEjectPress()
   action();
 }
 
-void SettingsScreen::longUserPress()
-{
 
-}
 
-void SettingsScreen::longEjectPress()
-{
-  
-}
 
 void SettingsScreen::rotaryChange(int direction)
 {
+  int totalLines = TOTAL_SETTINGS;
+
   if (direction == 1)
   {
     _selectedIndex++;
-    if (_selectedIndex == 3)
+    if (_selectedIndex == totalLines)
     {
-      _selectedIndex =0;
+      _selectedIndex--;
+    }
+    else
+    {
+      _cursorPos++;
+      if (_cursorPos == MAX_LINES)
+      {
+        _cursorPos--;
+        _screenOffset++;
+      }
     }
   }
-  else if (direction == -1)
+  else // dir -1
   {
     _selectedIndex--;
     if (_selectedIndex == -1)
     {
-      _selectedIndex =2;
+      _selectedIndex++;
+    }
+    else
+    {
+      _cursorPos--;
+      if (_cursorPos < 0)
+      {
+        _cursorPos++;
+        _screenOffset--;
+      }
     }
   }
+
   forceDraw();
 }
 

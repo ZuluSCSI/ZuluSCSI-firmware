@@ -39,7 +39,7 @@ extern "C" void scsiReinitComplete();
 extern "C" void sdCardStateChanged(bool sdAvailable);
 
 extern "C" void controlLoop();
-extern "C" void mscMode();
+extern "C" bool mscMode();
 extern "C" void loadImage();      // in ZuluSCSI_disk used in ZuluSCSI
 
 extern "C" void setFolder(int target_idx, bool userSet, const char *path);

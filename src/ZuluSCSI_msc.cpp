@@ -103,7 +103,8 @@ void zuluscsi_msc_loop() {
 
     if (g_controlBoardEnabled)
     {
-      mscMode();
+      if (mscMode())
+        break;
     }
 
     if (platform_stop_msc())
