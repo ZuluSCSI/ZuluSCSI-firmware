@@ -1002,16 +1002,32 @@ extern "C" void scsiReinitComplete()
 
 
 bool mscModeMessageDisplayed =false;
-extern "C" void mscMode() 
+extern "C" bool mscMode() 
 {
     if (mscModeMessageDisplayed)
     {
-        return;
+        // Check the raw I2C input, any chance, exit
+        uint8_t input_byte = getValue();
+        if (input_byte != 0xFF)
+        {
+            volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+            *scratch0 = 0;
+
+            _messageBox->setText("-- Info --", "Exiting...", "");
+            changeScreen(MESSAGE_BOX, SCREEN_ID_NO_PREVIOUS);
+            _messageBox->tick();
+    
+            return true;
+        }
+        return false;
     }
+
     mscModeMessageDisplayed = true;
-    _messageBox->setText("-- Info --", "MSC Mode", "Enabled");
+    _messageBox->setText("-- Info --", "MSC Mode", "Click to exit");
     changeScreen(MESSAGE_BOX, SCREEN_ID_NO_PREVIOUS);
-    _messageBox->tick(); // During boot, there is no loop, so manually trigger the tick, to draw the screen
+    _messageBox->tick();
+
+    return false;
 }
 
 extern "C" void controlLoop()

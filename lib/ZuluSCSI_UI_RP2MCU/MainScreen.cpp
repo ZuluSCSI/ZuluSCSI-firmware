@@ -185,7 +185,8 @@ void MainScreen::longUserPress()
   Screen::longUserPress(); //TODO just for screensjjot
 #endif
 
-  changeScreen(SCREEN_SETTINGS, SCREEN_ID_NO_PREVIOUS);
+  // Always start on the first item
+  changeScreen(SCREEN_SETTINGS, 0);
 }
 
 void MainScreen::longEjectPress()

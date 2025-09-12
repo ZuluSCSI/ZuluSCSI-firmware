@@ -29,7 +29,7 @@
 
 void SplashScreen::shortUserPress()
 {
-  changeScreen(SCREEN_MAIN, -1);
+  changeScreen(SCREEN_SETTINGS, -1);
 }
 
 void SplashScreen::draw()

@@ -23,7 +23,7 @@
 
 extern "C" void scsiReinitComplete() {}
 extern "C" void controlLoop() {}
-extern "C" void mscMode() {}
+extern "C" bool mscMode() { return false; }
 extern "C" void setFolder(int target_idx, bool userSet, const char *path) {}
 extern "C" void setCurrentFolder(int target_idx, const char *path) {}
 extern "C" void initUIDisplay() {}
