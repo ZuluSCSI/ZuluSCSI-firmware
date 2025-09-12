@@ -340,6 +340,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.maxBusWidth = 0;
 #endif
 
+    cfgSys.logToSDCard = true;
     // setting set for all or specific devices
     cfgDev.deviceType = S2S_CFG_NOT_SET;
     cfgDev.deviceTypeModifier = 0;
@@ -465,6 +466,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     }
 
     cfgSys.maxBusWidth = ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE);
+    cfgSys.logToSDCard = ini_getbool("SCSI", "LogToSDCard", cfgSys.logToSDCard, CONFIGFILE);
+
     initUIPostSDInit(true);
 
     return &cfgSys;

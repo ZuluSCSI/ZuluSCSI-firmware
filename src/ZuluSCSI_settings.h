@@ -110,6 +110,8 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
     uint16_t controlBoardScreenSaverStyle;
 
     uint8_t maxBusWidth;
+
+    bool logToSDCard;
 } scsi_system_settings_t;
 
 // This struct should only have new setting added to the end
