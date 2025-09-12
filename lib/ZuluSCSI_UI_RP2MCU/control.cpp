@@ -1013,7 +1013,7 @@ extern "C" bool mscMode()
             volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
             *scratch0 = 0;
 
-            _messageBox->setText("-- Info --", "Rebooting...", "");
+            _messageBox->setText("-- Info --", "Exiting...", "");
             changeScreen(MESSAGE_BOX, SCREEN_ID_NO_PREVIOUS);
             _messageBox->tick();
     
