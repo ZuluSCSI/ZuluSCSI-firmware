@@ -28,6 +28,7 @@
 #include <gd32f20x_gpio.h>
 #include <scsi2sd.h>
 #include <ZuluSCSI_config.h>
+#include <ZuluSCSI_settings.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -126,7 +127,7 @@ uint32_t platform_sys_clock_in_hz();
 inline bool platform_reclock_supported(){return false;}
 
 // Returns true if reboot was for mass storage - unsupported
-inline bool platform_rebooted_into_mass_storage() {return false;}
+inline mass_storage_mode platform_rebooted_into_mass_storage() {return MASS_STORAGE_MODE_NONE;}
 
 // Reinitialize SD card connection and save log from interrupt context.
 // This can be used in crash handlers.

@@ -100,6 +100,18 @@ static struct {
     uint32_t period;
 } g_led_pwm = {0};
 
+typedef enum
+{
+    USB_INPUT_NONE,
+    USB_INPUT_EXIT_MSC,
+    USB_INPUT_REBOOT_MSC,
+    USB_INPUT_REBOOT_IMAGES_MSC,
+    USB_INPUT_REBOOT,
+    USB_INPUT_TOGGLE_DEBUG
+}
+usb_input_type_t;
+
+
 static void usb_log_poll();
 
 #ifdef PLATFORM_AUTH_CHECK_ENABLE
@@ -224,15 +236,23 @@ bool platform_reclock(zuluscsi_speed_grade_t speed_grade)
     return do_reclock;
 }
 
-bool platform_rebooted_into_mass_storage()
+// reads the mode from the scratch0 location and then clears it, keeping the set value for later calls 
+mass_storage_mode platform_rebooted_into_mass_storage()
 {
+    static mass_storage_mode mode = MASS_STORAGE_MODE_NONE;
+    if (mode != MASS_STORAGE_MODE_NONE)
+        return mode;
     volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
     if (*scratch0 == REBOOT_INTO_MASS_STORAGE_MAGIC_NUM)
     {
-        *scratch0 = 0;
-        return true;
+        mode = MASS_STORAGE_MODE_SD;
     }
-    return false;
+    else if (*scratch0 == REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM)
+    {
+        mode = MASS_STORAGE_MODE_IMAGES;
+    }   
+    *scratch0 = 0;
+    return mode;
 }
 
 #ifdef HAS_DIP_SWITCHES
@@ -911,8 +931,7 @@ static void usb_input_poll()
 #endif
 
     // Caputure reboot key sequence
-    static bool mass_storage_reboot_keyed = false;
-    static bool basic_reboot_keyed = false;
+    static usb_input_type_t input_type = USB_INPUT_NONE;
     volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
     int32_t available = Serial.available();
     if(available > 0)
@@ -922,33 +941,76 @@ static void usb_input_poll()
         {
             case 'R':
             case 'r':
-                basic_reboot_keyed = true;
-                mass_storage_reboot_keyed = false;
+                input_type = USB_INPUT_REBOOT;
                 logmsg("Basic reboot requested, press 'y' to engage or any key to clear");
+                *scratch0 = 0;
                 break;
             case 'M':
             case 'm':
-                mass_storage_reboot_keyed = true;
-                basic_reboot_keyed = false;
-                logmsg("Boot into mass storage requested, press 'y' to engage or any key to clear");
+                input_type = USB_INPUT_REBOOT_MSC;
+                logmsg("Boot into the SD card as a USB drive requested, press 'y' to engage or any key to clear");
                 *scratch0 = REBOOT_INTO_MASS_STORAGE_MAGIC_NUM;
+                break;
+            case 'I':
+            case 'i':
+                input_type = USB_INPUT_REBOOT_IMAGES_MSC;
+                logmsg("Boot into all images as USB drives requested, press 'y' to engage or any key to clear");
+                *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
+                break;
+            case 'D':
+            case 'd':
+                *scratch0 = 0;
+                input_type = USB_INPUT_TOGGLE_DEBUG;
+                logmsg("Turn debug ", g_log_debug ? "off" : "on", ", press 'y' to engage or any key to clear");
                 break;
             case 'Y':
             case 'y':
-                if (basic_reboot_keyed || mass_storage_reboot_keyed)
+                if (input_type ==  USB_INPUT_REBOOT ||
+                    input_type ==  USB_INPUT_REBOOT_MSC ||
+                    input_type ==  USB_INPUT_REBOOT_IMAGES_MSC
+                )
                 {
-                    logmsg("Rebooting", mass_storage_reboot_keyed ? " into mass storage": "");
+                    logmsg("Rebooting", 
+                        input_type ==  USB_INPUT_REBOOT_MSC ? " with the SD card as USB drive" : 
+                        input_type ==  USB_INPUT_REBOOT_IMAGES_MSC ? " with all images all images as USB drives" : 
+                        "");
                     g_rebooting = true;
+                    return;
+                }
+                else if(input_type == USB_INPUT_TOGGLE_DEBUG)
+                {
+                    *scratch0 = 0;
+                    logmsg("Toggling debug ", g_log_debug ? "off": "on");
+                    g_log_debug = !g_log_debug;
+                }
+                else
+                {
+                    *scratch0 = 0;
                 }
                 break;
             case '\n':
                 break;
-
             default:
-                if (basic_reboot_keyed || mass_storage_reboot_keyed)
+                if (input_type ==  USB_INPUT_REBOOT ||
+                    input_type ==  USB_INPUT_REBOOT_MSC ||
+                    input_type ==  USB_INPUT_REBOOT_IMAGES_MSC
+                )
                     logmsg("Cleared reboot setting");
-                mass_storage_reboot_keyed = false;
-                basic_reboot_keyed = false;
+                else if(input_type == USB_INPUT_TOGGLE_DEBUG)
+                    logmsg("Skipped toggling debug ", g_log_debug ? "off": "on");
+                input_type = USB_INPUT_NONE;
+                *scratch0 = 0;
+                logmsg(
+                    "\r\n"
+                    "  Menu Options (Press a following key to select):\r\n"
+                    "  ===================================================\r\n"
+                    "    'R' - reboot device normally\r\n"
+                    "    'M' - reboot with SD card as USB drive\r\n"
+                    "    'I' - reboot with images presented as USB drives\r\n"
+                    "    'D' - toggle debug, currently ", g_log_debug ? "on" : "off", "\r\n",
+                    "  press 'Y' after to execute the selected option"
+                );
+
         }
     }
 #endif // PIO_FRAMEWORK_ARDUINO_NO_USB
@@ -1560,6 +1622,120 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 #endif
 
 } /* extern "C" */
+
+#ifdef PLATFORM_MASS_STORAGE
+
+bool platform_stop_msc()
+{
+#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+
+if (!usb_serial_connected()) return false;
+
+    if (platform_msc_lock_get()) return false; // Avoid re-entrant USB events
+
+    // Capture reboot key sequence
+    static usb_input_type_t input_type = USB_INPUT_NONE;
+    volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+    int32_t available = Serial.available();
+    if(available > 0)
+    {
+        int32_t read = Serial.read();
+        switch((char) read)
+        {
+            case 'X':
+            case 'x':
+                input_type = USB_INPUT_EXIT_MSC;
+                logmsg("Exit mass storage mode, press 'y' to engage or any key to clear");
+                break;
+            case 'R':
+            case 'r':
+                input_type = USB_INPUT_REBOOT;
+                logmsg("Basic reboot requested, press 'y' to engage or any key to clear");
+                *scratch0 = 0;
+                break;
+            case 'M':
+            case 'm':
+                input_type = USB_INPUT_REBOOT_MSC;
+                logmsg("Boot into SD card as USB drive requested, press 'y' to engage or any key to clear");
+                *scratch0 = REBOOT_INTO_MASS_STORAGE_MAGIC_NUM;
+                break;
+            case 'I':
+            case 'i':
+                input_type = USB_INPUT_REBOOT_IMAGES_MSC;
+                logmsg("Boot into all images as USB drives requested, press 'y' to engage or any key to clear");
+                *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
+                break;
+            case 'D':
+            case 'd':
+                *scratch0 = 0;
+                input_type = USB_INPUT_TOGGLE_DEBUG;
+                logmsg("Turn debug ", g_log_debug ? "off" : "on", ", press 'y' to engage or any key to clear");
+                break;
+            case 'Y':
+            case 'y':
+                if (input_type ==  USB_INPUT_REBOOT ||
+                    input_type ==  USB_INPUT_REBOOT_MSC ||
+                    input_type ==  USB_INPUT_REBOOT_IMAGES_MSC
+                )
+                {
+                    logmsg("Rebooting", 
+                        input_type ==  USB_INPUT_REBOOT_MSC ? " back into mass storage" : 
+                        input_type ==  USB_INPUT_REBOOT_IMAGES_MSC ? " in load all image as mass storage" : 
+                        "");
+                    g_rebooting = true;
+                    return true;
+                }
+                else if (input_type ==  USB_INPUT_EXIT_MSC)
+                {
+                    logmsg("Exiting mass storage");
+                    *scratch0 = 0;
+                    return true;
+                    
+                }
+                else if(input_type == USB_INPUT_TOGGLE_DEBUG)
+                {
+                    *scratch0 = 0;
+                    logmsg("Toggling debug ", g_log_debug ? "off": "on");
+                    g_log_debug = !g_log_debug;
+                }
+                else
+                {
+                    *scratch0 = 0;
+                }
+                break;
+            case '\n':
+                break;
+            default:
+                if (input_type ==  USB_INPUT_REBOOT ||
+                    input_type ==  USB_INPUT_REBOOT_MSC ||
+                    input_type ==  USB_INPUT_REBOOT_IMAGES_MSC
+                )
+                    logmsg("Cleared reboot setting");
+                else if(input_type ==  USB_INPUT_EXIT_MSC)
+                    logmsg("Cleared exiting mass storage");
+                else if(input_type == USB_INPUT_TOGGLE_DEBUG)
+                    logmsg("Skipped toggling debug ", g_log_debug ? "off": "on");
+                input_type = USB_INPUT_NONE;
+                *scratch0 = 0;
+                char menu_buffer[10*64];
+                logmsg(
+                    "\r\n"                
+                    "  Menu Options: (Press a following key to select):\r\n"
+                    "  ===================================================\r\n"
+                    "    'X' - exit from mass storage mode, eject USB drive(s)\r\n"
+                    "    'R' - reboot device normally\r\n"
+                    "    'M' - reboot with SD card as USB drive\r\n"
+                    "    'I' - reboot with images presented as USB drives\r\n"
+                    "    'D' - toggle debug, currently ", g_log_debug ? "on" : "off", "\r\n",
+                    "  press 'Y' after an option to execute"
+                );
+        }
+    }
+
+#endif // PIO_FRAMEWORK_ARDUINO_NO_USB
+    return false;
+}
+#endif
 
 
 #ifdef SD_USE_SDIO

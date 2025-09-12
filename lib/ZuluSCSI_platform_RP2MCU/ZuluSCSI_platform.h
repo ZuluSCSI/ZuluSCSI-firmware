@@ -151,7 +151,7 @@ bool platform_reclock(zuluscsi_speed_grade_t speed_grade);
 #endif
 
 // Returns true if reboot was for mass storage
-bool platform_rebooted_into_mass_storage();
+mass_storage_mode platform_rebooted_into_mass_storage();
 
 // Set callback that will be called during data transfer to/from SD card.
 // This can be used to implement simultaneous transfer to SCSI bus.

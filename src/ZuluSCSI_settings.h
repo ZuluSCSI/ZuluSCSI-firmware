@@ -37,6 +37,13 @@ typedef enum
     SPEED_GRADE_BASE_155MHZ,
 } zuluscsi_speed_grade_t;
 
+
+typedef enum {
+    MASS_STORAGE_MODE_NONE,
+    MASS_STORAGE_MODE_SD,
+    MASS_STORAGE_MODE_IMAGES
+} mass_storage_mode;
+
 #ifdef __cplusplus
 
 #include <stdint.h>

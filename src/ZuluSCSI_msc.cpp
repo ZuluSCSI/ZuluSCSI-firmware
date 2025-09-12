@@ -51,7 +51,9 @@ void zuluscsi_msc_loop() {
   platform_set_blink_status(0);
 
   // pull in the setting for presenting images as USB devices
-  platform_set_msc_image_mode(g_scsi_settings.getSystem()->usbMassStoragePresentImages);
+  platform_set_msc_image_mode(
+      g_scsi_settings.getSystem()->usbMassStoragePresentImages 
+      || platform_rebooted_into_mass_storage() == MASS_STORAGE_MODE_IMAGES);
 
   platform_enter_msc();
   
@@ -103,6 +105,9 @@ void zuluscsi_msc_loop() {
     {
       mscMode();
     }
+
+    if (platform_stop_msc())
+      break;
   }
 
   // turn the LED off to indicate exiting MSC

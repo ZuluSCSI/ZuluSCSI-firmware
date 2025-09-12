@@ -139,4 +139,5 @@
 
 // Settings for rebooting
 #define REBOOT_INTO_MASS_STORAGE_MAGIC_NUM 0x5eeded
+#define REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM 0xde1ce5
 

@@ -1180,11 +1180,11 @@ extern "C" void zuluscsi_setup(void)
 
 #ifdef PLATFORM_MASS_STORAGE
   static bool check_mass_storage = true;
-  if ((check_mass_storage || platform_rebooted_into_mass_storage()) && !is_initiator && g_sdcard_present)
+  if ((check_mass_storage || platform_rebooted_into_mass_storage()) != MASS_STORAGE_MODE_NONE && !is_initiator && g_sdcard_present)
   {
     if (g_scsi_settings.getSystem()->enableUSBMassStorage
        || g_scsi_settings.getSystem()->usbMassStoragePresentImages
-       || platform_rebooted_into_mass_storage()
+       || platform_rebooted_into_mass_storage() != MASS_STORAGE_MODE_NONE
     )
     {
       check_mass_storage = false;
