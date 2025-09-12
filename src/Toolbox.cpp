@@ -41,7 +41,7 @@ extern "C" int8_t scsiToolboxEnabled()
     if (enabled == -1)
     {
         enabled = ini_getbool("SCSI", "EnableToolbox", 0, CONFIGFILE);
-        logmsg("Toolbox enabled = ", enabled);
+        logmsg("Toolbox ", enabled == 1 ? "enabled" : "disabled");
     }
     return enabled == 1;
 }
