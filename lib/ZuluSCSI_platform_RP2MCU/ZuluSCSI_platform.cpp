@@ -1609,7 +1609,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
             *scratch0 = 0;
             logmsg(
                 "\r\n"                
-                "  Menu Options: (Press a following key to select):\r\n"
+                "  Available ZuluSCSI Console Commands:\r\n"
                 "  ===================================================\r\n"
                 , context == MENU_CONTEXT_TARGET_MSC ?
                 "    'x' - exit from mass storage mode, eject USB drive(s)\r\n" : 
@@ -1618,9 +1618,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'r' - reboot device normally\r\n"
                 "    's' - reboot with SD card as USB drive\r\n"
                 "    'i' - reboot with images presented as USB drives\r\n"
-                "    'd' - toggle debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
+                "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
-                "  press 'y' after an option to execute"
+                "  press 'y' after a command to confirm and execute"
             );
         }
         else if (yes_keyed)
@@ -1638,7 +1638,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     g_rebooting = true;
                     break;
                 case USB_INPUT_REBOOT_IMAGES_MSC:
-                    logmsg("Reboot and exposing images as USB drives");
+                    logmsg("Reboot and exposing image files as USB drives");
                     *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
                     g_rebooting = true;
                     break;
