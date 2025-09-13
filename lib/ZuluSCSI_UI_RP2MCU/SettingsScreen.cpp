@@ -27,40 +27,24 @@
 #include "SplashScreen.h"
 #include "ZuluSCSI_log.h"
 
-
-
 extern bool g_sdAvailable;
 extern bool g_rebooting;
 extern Screen *g_activeScreen;
 extern bool g_log_to_sd;
 
-#define MAX_LINES 5
 #define TOTAL_SETTINGS 6
 
 void SettingsScreen::init(int index)
 {
-  Screen::init(index);
+  ScreenList::init(index);
 
-  // Find first active scsi ID
-  _selectedIndex = index;
-  if (_selectedIndex == -1)
-  {
-    _selectedIndex = 0;
-  }
-
-  _cursorPos = _selectedIndex;
-  _screenOffset = 0;
-  int diff = MAX_LINES - (_selectedIndex+1);
-  if (diff < 0)
-  {
-    _cursorPos  += diff;
-    _screenOffset -= diff;
-  }
+  _totalItems = TOTAL_SETTINGS;
 }
+
 
 void SettingsScreen::drawItem(int x, int y, int index)
 {
-  _display->setCursor(x+10,y);  
+    _display->setCursor(x+10, y+1);
   switch(index)
   {
     case 0:
@@ -90,10 +74,7 @@ void SettingsScreen::drawItem(int x, int y, int index)
       break;
   }
 
-  if (_selectedIndex == index)
-  {
-    _display->drawBitmap(x, y, icon_select, 8,8, WHITE);
-  }
+  ScreenList::drawItem(x, y, index);
 }
 
 
@@ -113,36 +94,19 @@ void SettingsScreen::draw()
     _display->drawBitmap(115, 0, icon_nosd, 12,12, WHITE);
   }
 
-  
-  int yOffset = 14;
-  int xOffset = 0;
-
-  int i;
-  for (i=0;i<MAX_LINES;i++)
-  {
-    int ind = i + _screenOffset;
-    if (ind < TOTAL_SETTINGS)
-    {
-      drawItem(xOffset, yOffset, ind);
-      yOffset+=10;
-    }
-  }
-}
-
-void SettingsScreen::sdCardStateChange(bool cardIsPresent)
-{
+  ScreenList::draw();
 }
 
 void SettingsScreen::action()
 {
   volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
 
-  switch(_selectedIndex)
+  switch(_selectedItem)
   {
     case 0:
     {
       _splashScreen->setBannerText(g_log_short_firmwareversion);
-      changeScreen(SCREEN_SPLASH, _selectedIndex);
+      changeScreen(SCREEN_SPLASH, _selectedItem);
       break;
     }
 
@@ -212,48 +176,6 @@ void SettingsScreen::shortEjectPress()
 void SettingsScreen::shortUserPress()
 {
   changeScreen(SCREEN_MAIN, -1);
-}
-
-void SettingsScreen::rotaryChange(int direction)
-{
-  int totalLines = TOTAL_SETTINGS;
-
-  if (direction == 1)
-  {
-    _selectedIndex++;
-    if (_selectedIndex == totalLines)
-    {
-      _selectedIndex--;
-    }
-    else
-    {
-      _cursorPos++;
-      if (_cursorPos == MAX_LINES)
-      {
-        _cursorPos--;
-        _screenOffset++;
-      }
-    }
-  }
-  else // dir -1
-  {
-    _selectedIndex--;
-    if (_selectedIndex == -1)
-    {
-      _selectedIndex++;
-    }
-    else
-    {
-      _cursorPos--;
-      if (_cursorPos < 0)
-      {
-        _cursorPos++;
-        _screenOffset--;
-      }
-    }
-  }
-
-  forceDraw();
 }
 
 #endif

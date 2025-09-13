@@ -99,16 +99,6 @@ protected:
     const char *_filename;
 };
 
-class TotalFilesRecursiveSDNavigator : public SDNavigator
-{
-public:
-    bool TotalItemsRecursive(const char* dirname, int &total);
-
-protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
-
-    int _total;
-};
 
 class FileByIndexRecursiveSDNavigator : public SDNavigator
 {

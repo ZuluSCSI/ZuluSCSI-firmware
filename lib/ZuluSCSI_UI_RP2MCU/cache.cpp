@@ -240,7 +240,7 @@ void clearCacheData()
     {
         DeviceMap *deviceMap = &g_devices[i];
 
-        deviceMap->BrowseScreenType = 0;
+        deviceMap->BrowseScreenType = SCREEN_BROWSETYPE_FOLDERS;
         deviceMap->TotalFlatFiles = 0;
 
         int j;
@@ -276,7 +276,7 @@ void buildCache()
         DeviceMap *deviceMap = &g_devices[i];
 
         g_currentID = i;
-        deviceMap->BrowseScreenType = 0;
+        deviceMap->BrowseScreenType = SCREEN_BROWSETYPE_FOLDERS;
         deviceMap->TotalFlatFiles = 0;
 
         int j;
@@ -285,9 +285,7 @@ void buildCache()
             deviceMap->TotalFilesInCategory[j] = 0;
         }
 
-        DeviceMap *map = &g_devices[i];
-
-        switch(map->BrowseMethod)
+        switch(deviceMap->BrowseMethod)
         {
             case BROWSE_METHOD_NOT_BROWSABLE:
                 break;
@@ -299,13 +297,19 @@ void buildCache()
                 g_fileHandle = appendFile(g_tmpFilepath);
 
                 bool hasDirs = false;
-                SDNavScanFilesRecursive.ScanFilesRecursive(map->RootFolder, hasDirs, fileCallback); 
+                SDNavScanFilesRecursive.ScanFilesRecursive(deviceMap->RootFolder, hasDirs, fileCallback); 
 
                 g_fileHandle.close();
 
                 deviceMap->HasDirs = hasDirs;
                 
                 deviceMap->TotalFlatFiles = g_maxCount+1;
+
+                if (!deviceMap->HasDirs)
+                {
+                    // default to flat browser if no sub folders
+                    deviceMap->BrowseScreenType = SCREEN_BROWSETYPE_FLAT;
+                }
                 break;
             }
             case BROWSE_METHOD_IMGX:

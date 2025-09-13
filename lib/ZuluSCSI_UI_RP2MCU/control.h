@@ -55,6 +55,13 @@ typedef enum
 
 } INITIATOR_DRIVE_STATUS;
 
+typedef enum
+{
+    SCREEN_BROWSETYPE_FOLDERS,
+    SCREEN_BROWSETYPE_FLAT,
+    SCREEN_BROWSETYPE_CATEGORY
+} SCREEN_BROWSETYPES;
+
 struct DeviceMap
 {
     // Set during path checking phase
@@ -87,11 +94,13 @@ struct DeviceMap
     // Runtime for browsing
     char Path[MAX_PATH_LEN];
   
-    // Cache
+    // Both of these are set on load for both cahced and non cached
     int TotalFlatFiles;
     int HasDirs;
+
+    // Cache
     int TotalFilesInCategory[MAX_CATEGORIES];
-    int BrowseScreenType; // GT TODO This is really a UI concept - move?
+    SCREEN_BROWSETYPES BrowseScreenType; // GT TODO This is really a UI concept - move?
 
     // Used by both Normal and Initiator
     char Filename[MAX_PATH_LEN]; 
