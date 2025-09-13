@@ -24,35 +24,30 @@
 #ifndef BROWSETYPESCREEN_H
 #define BROWSETYPESCREEN_H
 
-#include "Screen.h"
+#include "ScreenList.h"
 
-class BrowseTypeScreen : public Screen
+class BrowseTypeScreen : public ScreenList
 {
 public:
-    BrowseTypeScreen(Adafruit_SSD1306 *display) : Screen(display) {}
+    BrowseTypeScreen(Adafruit_SSD1306 *display) : ScreenList(display) {}
 
     SCREEN_TYPE screenType() { return SCREEN_BROWSE_TYPE; }
 
     void init(int index);
     void draw();
 
-    void rotaryChange(int direction);
+    //void rotaryChange(int direction);
     void shortRotaryPress();
     void shortUserPress();
     void shortEjectPress();
 
 private:
-    int _selectedDevice;
-    int _cursorPos;
-    int _screenOffset;
-
     int _scsiId;
     DeviceMap *_deviceMap;
-    int _totCats;
 
     bool _showFolder;
 
-    void drawCategory(int x, int y, int index);
+    void drawItem(int x, int y, int index);
 };
 
 #endif

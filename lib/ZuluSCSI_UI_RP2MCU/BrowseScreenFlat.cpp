@@ -31,7 +31,7 @@
 
 void BrowseScreenFlat::initImgDir(int index)
 {
-  if (_deviceMap->BrowseScreenType == 1) // Not a category screen (they are > 1)
+  if (_deviceMap->BrowseScreenType == SCREEN_BROWSETYPE_FLAT) // Not a category screen (they are > 1)
   {
     if (g_cacheActive)
     {
@@ -40,13 +40,13 @@ void BrowseScreenFlat::initImgDir(int index)
     }
     else
     {
-      SDNavTotalFilesRecursive.TotalItemsRecursive(_deviceMap->RootFolder, _totalObjects);
+      _totalObjects = _deviceMap->TotalFlatFiles;
     }
   }
   else
   {
     // Note, if cache is not active, we can't get here as categoies will be empty
-    int catCategory = _deviceMap->BrowseScreenType-2;
+    int catCategory = _deviceMap->BrowseScreenType-SCREEN_BROWSETYPE_CATEGORY;
     _totalObjects = _deviceMap->TotalFilesInCategory[catCategory];
      
     _catChar = g_categoryCodeAndNames[_scsiId][catCategory][0];

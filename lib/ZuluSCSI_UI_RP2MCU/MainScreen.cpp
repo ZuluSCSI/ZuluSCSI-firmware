@@ -156,7 +156,7 @@ void MainScreen::shortEjectPress()
   switch(_deviceMap->BrowseMethod)
   {
     case BROWSE_METHOD_IMDDIR:
-      if (_deviceMap->BrowseScreenType == 0)
+      if (_deviceMap->HasDirs && ((g_cacheActive && _deviceMap->BrowseScreenType == 0) || (!g_cacheActive)))
       {
           changeScreen(SCREEN_BROWSE, _selectedDevice);
       }
@@ -199,7 +199,7 @@ void MainScreen::longEjectPress()
   switch(_deviceMap->BrowseMethod)
   {
     case BROWSE_METHOD_IMDDIR:
-      if ((doesDeviceHaveAnyCategoryFiles(_selectedDevice) == 0 && !_deviceMap->HasDirs) && g_cacheActive)
+      if ((doesDeviceHaveAnyCategoryFiles(_selectedDevice) == 0 && !_deviceMap->HasDirs))
       {
         _messageBox->setReturnScreen(SCREEN_MAIN);
         _messageBox->setText("-- Warning --", "No folders or", "categories...");

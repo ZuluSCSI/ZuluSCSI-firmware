@@ -19,6 +19,7 @@ PROCESS_DIR_ITEM_RESULT SDNavigator::ProcessDirectoryItem(FsFile &file, const ch
 WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive)
 {
     char buf[MAX_PATH_LEN];
+    memset(buf, 0, MAX_FILE_PATH);
 
     FsFile dir;
     if (dirname[0] == '\0')
@@ -80,6 +81,7 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive)
             else
             {
                 char newPath[MAX_FILE_PATH];
+                memset(newPath, 0, MAX_FILE_PATH);
                 strcpy(newPath, dirname);
                 strcat(newPath, "/");
                 strcat(newPath, buf);
@@ -260,30 +262,6 @@ bool PrefixFileByIndexSDNavigator::GetFileByIndex(const char *prefix, int index,
         return true;
     }
 
-    return false;
-}
-
-
-// TotalFilesRecursiveSDNavigator
-/////////////////////////////////
-PROCESS_DIR_ITEM_RESULT TotalFilesRecursiveSDNavigator::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)
-{
-    _total++;
-    return PROCESS_DIR_ITEM_RESULT_PROCEED;
-}
-
-bool TotalFilesRecursiveSDNavigator::TotalItemsRecursive(const char* dirname, int &total)
-{
-    _total = 0;
-    _hasSubDirs = false;
-
-    if (WalkDirectory(dirname, true) != WALK_DIR_ITEM_RESULT_FAIL)
-    {
-        total =  _total;
-        return true;
-    }
-
-    total = -1;
     return false;
 }
 

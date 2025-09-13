@@ -21,32 +21,35 @@
 
 #if defined(CONTROL_BOARD)
 
-#ifndef SETTINGSSCREEN_H
-#define SETTINGSSCREEN_H
+#ifndef SCREENLIST_H
+#define SCREENLIST_H
 
-#include "ScreenList.h"
+#include "control.h"
+#include "Screen.h"
 
-class SettingsScreen : public ScreenList
+#define MAX_LINES 5
+
+class ScreenList : public Screen
 {
+ 
 public:
-    SettingsScreen(Adafruit_SSD1306 *display) : ScreenList(display) 
-    {
-    }
+    ScreenList(Adafruit_SSD1306 *display) : Screen(display) {}
+    
+protected:
+	void virtual rotaryChange(int direction);
+	
+	void virtual init(int index);
+	void virtual draw();
 
-    SCREEN_TYPE screenType() { return SCREEN_SETTINGS; }
+	void virtual drawItem(int x, int y, int index);
 
-    void init(int index);
-    void draw();
-
-    void action();
-
-    void shortUserPress();
-
-    void shortRotaryPress();
-    void shortEjectPress();
+	int _selectedItem;
+	int _totalItems;
 
 private:
-    void drawItem(int x, int y, int index);
+	int _cursorPos;
+    int _screenOffset;
+	
 };
 
 #endif
