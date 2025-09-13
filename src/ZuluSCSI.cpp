@@ -816,14 +816,27 @@ static void reinitSCSI()
   scsiInit();
 
 #ifdef ZULUSCSI_NETWORK
+
   if (scsiDiskCheckAnyNetworkDevicesConfigured() && platform_network_supported())
   {
-    platform_network_init(scsiDev.boardCfg.wifiMACAddress);
     if (scsiDev.boardCfg.wifiSSID[0] != '\0')
+    {
+      platform_network_init(scsiDev.boardCfg.wifiMACAddress);
       platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+    }
+    else
+    {
+      logmsg("Wi-Fi device enabled, but no WiFi SSID specified."); 
+      logmsg("Please define \"WiFiSSID\" in the config file: ", CONFIGFILE, " under the heading \"[SCSI]\"");
+    }
   }
   else
   {
+    if (platform_network_supported() && scsiDev.boardCfg.wifiSSID[0] != '\0')
+    {
+      logmsg("Wi-Fi SSID specified as \"", scsiDev.boardCfg.wifiSSID, "\", but no SCSI ID assigned to a network device");
+      logmsg("Please create an empty file \"NEx.img\", where x is the SCSI ID of the network device, on the SD card");
+    }
     platform_network_deinit();
   }
 #endif // ZULUSCSI_NETWORK
@@ -1211,7 +1224,7 @@ extern "C" void zuluscsi_setup(void)
 #if ZULUSCSI_RESERVED_SRAM_LEN > 0
     dbgmsg("Shared buffer has ", (int) reserve_buffer_left(), " bytes left out of ", (int) ZULUSCSI_RESERVED_SRAM_LEN, " bytes total");
 #endif
-    logmsg("Initialization complete!");
+    logmsg("Firmware initialization complete!");
 }
 
 void control_disk_swap()
