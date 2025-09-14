@@ -48,8 +48,8 @@ void MessageBox::draw()
     Rectangle bounds = Rectangle{{15,10}, {98, 44}};
 
     _display->fillRect(bounds.topLeft.x,   bounds.topLeft.y,   bounds.size.width,  bounds.size.height, 0);
-    _display->drawRect(bounds.topLeft.x+2, bounds.topLeft.y+2, bounds.size.width-4, bounds.size.height-4, 1);
-    _display->drawRect(bounds.topLeft.x+3, bounds.topLeft.y+3, bounds.size.width-6, bounds.size.height-6, 1);
+    _display->drawRoundRect(bounds.topLeft.x+2, bounds.topLeft.y+2, bounds.size.width-4, bounds.size.height-4, 3, 1);
+    _display->drawRoundRect(bounds.topLeft.x+3, bounds.topLeft.y+3, bounds.size.width-6, bounds.size.height-6, 3, 1);
 
     drawText(bounds, bounds.topLeft.y + 6, _title);
     _display->drawLine(bounds.topLeft.x+2, bounds.topLeft.y + 15, bounds.topLeft.x+bounds.size.width-4, bounds.topLeft.y + 15, 1);
