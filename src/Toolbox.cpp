@@ -222,6 +222,7 @@ static void onListDevices()
         }
     }
     scsiDev.dataLen = S2S_MAX_TARGETS;
+    scsiDev.phase = DATA_IN;
 }
 
 static void onSetNextCD(const char * img_dir)
