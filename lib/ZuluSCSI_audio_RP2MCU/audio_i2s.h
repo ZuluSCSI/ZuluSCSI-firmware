@@ -47,6 +47,11 @@ bool audio_is_active();
 void audio_setup();
 
 /**
+ * Reclocks the I2S interface
+ */
+void audio_reclock();
+
+/**
  * Called from platform_poll() to fill sample buffer(s) if needed.
  */
 void audio_poll();

@@ -380,7 +380,7 @@ void platform_init()
         termination = !gpio_get(DIP_TERM);
 
     }
-# elif defined(ZULUSCSI_V2_0)
+# elif defined(ZULUSCSI_RP2040)
     pin_setup_state_t dip_state = read_setup_ack_pin();
     if (dip_state == SETUP_UNDETERMINED)
     {
@@ -679,10 +679,15 @@ void platform_late_init()
 
 void platform_post_sd_card_init() 
 {
-#if defined(ENABLE_AUDIO_OUTPUT) && !defined(ZULUSCSI_BLASTER)
-        // one-time control setup for DMA channels and second core
-        audio_setup();
+#if defined(ENABLE_AUDIO_OUTPUT)
+# ifdef ENABLE_AUDIO_OUTPUT_I2S
+    audio_reclock();
+# elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    // one-time control setup for DMA channels and second core
+    audio_setup();
+# endif
 #endif // ENABLE_AUDIO_OUTPUT
+
 }
 
 bool platform_is_initiator_mode_enabled()

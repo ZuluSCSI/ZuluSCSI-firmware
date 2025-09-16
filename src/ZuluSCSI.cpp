@@ -1120,7 +1120,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     }
     else
     {
-#ifndef ENABLE_AUDIO_OUTPUT // if audio is enabled, skip message because reclocking ocurred earlier
+#ifndef ENABLE_AUDIO_OUTPUT // if audio is enabled, skip message because reclocking occurred earlier
       logmsg("Speed grade set to Default, skipping reclocking");
 #endif
     }
