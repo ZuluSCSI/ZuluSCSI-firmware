@@ -44,6 +44,7 @@ private:
     uint8_t _div_frac;
     int _bps;
     bool _running;
+    int _offset;
 
     PIOProgram *_i2s;
     PIO _pio;

@@ -33,6 +33,7 @@ I2S::I2S() {
     _sm = 1;
     _pinBCLK = 26;
     _pinDOUT = 28;
+    _offset = 0;
 }
 
 I2S::~I2S() {
@@ -84,10 +85,9 @@ bool I2S::begin(PIO pio, uint sm) {
     _pio = pio;
     _sm = sm;
     _running = true;
-    int off = 0;
     pio_sm_claim(_pio, _sm);
-    off = pio_add_program(_pio, &pio_i2s_out_program);
-    pio_i2s_out_program_init(_pio, _sm, off, _pinDOUT, _pinBCLK, _bps);
+    _offset = pio_add_program(_pio, &pio_i2s_out_program);
+    pio_i2s_out_program_init(_pio, _sm, _offset, _pinDOUT, _pinBCLK, _bps);
     pio_sm_set_clkdiv_int_frac(_pio, _sm, _div_int, _div_frac);
     pio_sm_set_enabled(_pio, _sm, true);
     return true;
@@ -96,6 +96,7 @@ bool I2S::begin(PIO pio, uint sm) {
 void I2S::end() {
     if (_running) {
         pio_sm_set_enabled(_pio, _sm, false);
+        pio_remove_program_and_unclaim_sm(&pio_i2s_out_program, _pio, _sm, _offset);
         _running = false;
     }
 }

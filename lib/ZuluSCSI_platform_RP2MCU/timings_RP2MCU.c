@@ -338,7 +338,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
         .audio =
         {
             // Divider for 44.1KHz to the nearest integer with a sys clk divided by 2 x 16-bit samples with the pio clock running 2x I2S clock
-            // 200.4Mhz / 16 / 2 / 2 / 44.1KHz = 71.003 ~= 71
+            // 250Mhz / 16 / 2 / 2 / 44.1KHz = 88.577 ~= 89
             .clk_div_pio = 89,
             .audio_clocked = false,
         }
@@ -602,7 +602,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
         .audio =
         {
             // Divider for 44.1KHz to the nearest integer with a sys clk divided by 2 x 16-bit samples with the pio clock running 2x I2S clock
-            // 200.4Mhz / 16 / 2 / 2 / 44.1KHz = 71.003 ~= 71
+            // 251.2Mhz / 16 / 2 / 2 / 44.1KHz = 89.00 ~= 89
             .clk_div_pio = 89,
             .audio_clocked = true,
         }
@@ -743,16 +743,42 @@ bool set_timings(zuluscsi_speed_grade_t speed_grade)
     case SPEED_GRADE_BASE_155MHZ:
         timings_index = 5;
         break;
+#elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    case SPEED_GRADE_MAX:
+    case SPEED_GRADE_A:
+        timings_index = 8;
+        break;
+    case SPEED_GRADE_B:
+        timings_index = 4;
+        break;
+    case SPEED_GRADE_C:
+        timings_index = 2;
+        break;
+    case SPEED_GRADE_AUDIO_SPDIF:
+        timings_index = 9;
+        break;
+    case SPEED_GRADE_AUDIO_I2S:
+        timings_index = 5;
+        break;
+    case SPEED_GRADE_WIFI_RM2:
+        timings_index = 3;
+        break;
+    case SPEED_GRADE_BASE_203MHZ:
+        timings_index = 9;
+        break;
+    case SPEED_GRADE_BASE_155MHZ:
+        timings_index = 5;
+        break;
 #else
     case SPEED_GRADE_MAX:
     case SPEED_GRADE_A:
-        timings_index = 4;
+        timings_index = 8;
         break;
     case SPEED_GRADE_B:
-        timings_index = 3;
+        timings_index = 4;
         break;
     case SPEED_GRADE_C:
-        timings_index  = 1;
+        timings_index = 1;
         break;
     case SPEED_GRADE_AUDIO_SPDIF:
         timings_index = 9;

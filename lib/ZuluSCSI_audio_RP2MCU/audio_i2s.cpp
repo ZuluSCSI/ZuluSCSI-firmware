@@ -435,6 +435,14 @@ void audio_setup() {
     irq_clear(I2S_DMA_IRQ_NUM);
 }
 
+void audio_reclock()
+{
+    i2s.end();
+    i2s.setDivider(g_zuluscsi_timings->audio.clk_div_pio, 0);
+    i2s.begin(I2S_PIO_HW, I2S_PIO_SM);
+}
+
+
 void audio_poll() {
     if (audio_idle) return;
 
