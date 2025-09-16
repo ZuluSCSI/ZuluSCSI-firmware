@@ -39,6 +39,7 @@
 #include "CopyScreen.h"
 #include "InitiatorMainScreen.h"
 #include "ScreenSaver.h"
+#include "SDNavigator.h"
 
 #define TOTAL_CONTROL_BOARD_BUTTONS 3
 
@@ -615,6 +616,59 @@ void updateRotary(int dir)
 }
 
 
+int g_fileCount;
+
+void scanFileCallback(int count, const char *file, const char *path, u_int64_t size)
+{
+    g_fileCount = count;
+}
+
+void scanForNestedFolders()
+{
+    _messageBox->setText("-- Busy --", "Scanning", "Files...");
+    changeScreen(MESSAGE_BOX, -1);
+    _messageBox->tick(); // During boot, there is no loop, so manually trigger the tick, to draw the screen
+
+    int i;
+    for (i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        DeviceMap *deviceMap = &g_devices[i];
+
+        deviceMap->BrowseScreenType = SCREEN_BROWSETYPE_FOLDERS;
+        deviceMap->TotalFlatFiles = 0;
+
+        switch(deviceMap->BrowseMethod)
+        {
+            case BROWSE_METHOD_NOT_BROWSABLE:
+                break;
+
+            case BROWSE_METHOD_IMDDIR:
+            {
+                bool hasDirs = false;
+                SDNavScanFilesRecursive.ScanFilesRecursive(deviceMap->RootFolder, hasDirs, scanFileCallback); 
+                deviceMap->HasDirs = hasDirs;
+                deviceMap->TotalFlatFiles = g_fileCount+1;
+
+                if (!deviceMap->HasDirs)
+                {
+                    // default to flat browser if no sub folders
+                    deviceMap->BrowseScreenType = SCREEN_BROWSETYPE_FLAT;
+                }
+
+                break;
+            }
+            case BROWSE_METHOD_IMGX:
+                // No caching needed
+                break;
+
+            case BROWSE_METHOD_USE_PREFIX:
+                // Assumption: file will be in the root folder (Dir and Dir(0..9) appear broken)
+                // TODO - not implemented yet but is it needed? would seem like a low number of images for this style?
+                break;
+        }
+    }
+}
+
 /////// THIS IS WHERE WE CAN INIT, THE DEVICE LIST IS VALID HERE
 // Called on sd remove and Device Chnages
 void stateChange()
@@ -636,6 +690,8 @@ void stateChange()
         else
         {
             clearCacheData();
+
+            scanForNestedFolders();
         }
 
         enableScreen(true); // In case there was a brightness level change
@@ -757,7 +813,7 @@ void initDevices()
         g_devices[i].IsRaw = false;
 
         // UI Runtime
-        g_devices[i].BrowseScreenType = 0;
+        g_devices[i].BrowseScreenType = SCREEN_BROWSETYPE_FOLDERS;
     }
 }
 
