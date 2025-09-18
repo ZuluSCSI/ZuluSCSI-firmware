@@ -29,6 +29,7 @@
 #include "MessageBox.h"
 #include "cache.h"
 #include "control_global.h"
+#include "UISDNavigator.h"
 
 extern SdFs SD;
 FsFile g_fileHandle;

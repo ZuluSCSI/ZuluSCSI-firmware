@@ -26,7 +26,7 @@
 #include "ZuluSCSI_disk.h"
 #include "MessageBox.h"
 #include "control_global.h"
-#include "SDNavigator.h"
+#include "UISDNavigator.h"
 
 void BrowseScreen::init(int index)
 {
@@ -381,6 +381,8 @@ void BrowseScreen::loadSelectedImage()
       strcpy(g_tmpFilepath, _currentObjectPath);
       strcat(g_tmpFilepath, "/");
       strcat(g_tmpFilepath, _currentObjectName);
+      
+      logmsg("Loading Image file: ", g_tmpFilepath);
       
       haltUIUpdates();
       if (loadImageDeferred(_scsiId, g_tmpFilepath, SCREEN_BROWSE, _scsiId))

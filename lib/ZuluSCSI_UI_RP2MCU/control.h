@@ -116,8 +116,7 @@ struct DeviceMap
     uint64_t SectorCount;
 };
 
-extern char g_tmpFilename[MAX_PATH_LEN];
-extern char g_tmpFilepath[MAX_PATH_LEN];
+
 extern DeviceMap *g_devices;
 
 extern const char* typeToShortString(S2S_CFG_TYPE type);
@@ -137,6 +136,7 @@ extern INITIATOR_MODE g_initiatorMode;
 extern void sendSDCardStateChangedToScreens(bool cardIsPresent);
 extern void changeScreen(SCREEN_TYPE type, int index);
 
+extern bool isFolderACueBinSet(const char *folder, char *cueFile);
 
 #endif
 

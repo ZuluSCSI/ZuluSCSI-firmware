@@ -28,6 +28,7 @@
 
 #include "cache.h"
 #include "control_global.h"
+#include "UISDNavigator.h"
 
 void BrowseScreenFlat::initImgDir(int index)
 {

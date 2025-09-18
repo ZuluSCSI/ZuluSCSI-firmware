@@ -39,7 +39,7 @@
 #include "CopyScreen.h"
 #include "InitiatorMainScreen.h"
 #include "ScreenSaver.h"
-#include "SDNavigator.h"
+#include "UISDNavigator.h"
 
 #define TOTAL_CONTROL_BOARD_BUTTONS 3
 
@@ -91,8 +91,7 @@ const uint8_t rotary_transition_lut[7][4] =
   {ROTARY_CONT_CCW_110,  ROTARY_LAST_CCW_101,   ROTARY_START_CCW_100,  ROTARY_TICK_000},
 };
 
-char g_tmpFilename[MAX_PATH_LEN];
-char g_tmpFilepath[MAX_PATH_LEN];
+
 
 // Device state tracking
 bool g_sdAvailable = false;
@@ -133,6 +132,10 @@ int g_pcaAddr = 0x3F;
 bool g_controlBoardEnabled = false;
 bool hasScreenBeenInitialized = false;
 bool hasControlBeenInitialized = false;
+
+
+
+
 
 /// Helpers
 

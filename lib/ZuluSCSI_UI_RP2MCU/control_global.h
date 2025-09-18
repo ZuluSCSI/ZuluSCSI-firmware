@@ -40,15 +40,6 @@ extern const char *g_log_short_firmwareversion;
 // new in ZuluSCSI_platform.h
 extern bool g_scsi_initiator;
 
-extern TotalFilesSDNavigator SDNavTotalFiles;
-extern ItemByIndexSDNavigator SDNavItemByIndex;
-extern FindItemIndexByNameAndPathSDNavigator SDNavFindItemIndexByNameAndPath;
-extern TotalPrefixFilesSDNavigator SDNavTotalPrefixFiles;
-extern PrefixFileByIndexSDNavigator SDNavPrefixFileByIndex;
-extern FileByIndexRecursiveSDNavigator SDNavFileByIndexRecursive;
-extern FindItemIndexByNameAndPathRecursiveSDNavigator SDNavFindItemIndexByNameAndPathRecursive;
-extern ScanFilesRecursiveSDNavigator SDNavScanFilesRecursive;
-
 #endif
 
 #endif

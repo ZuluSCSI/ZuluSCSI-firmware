@@ -54,7 +54,7 @@ extern "C" {
 }
 
 #include "SDNavigator.h"
-GetFirstFileRecursiveSDNavigator SDNavGetFirstFileRecursive;
+
 
 #ifndef PLATFORM_MAX_SCSI_SPEED
 #define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_ASYNC_50

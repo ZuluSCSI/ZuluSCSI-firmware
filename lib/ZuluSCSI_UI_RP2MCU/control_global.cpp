@@ -24,14 +24,7 @@
 #include "control_global.h"
 #include "SDNavigator.h"
 
-TotalFilesSDNavigator SDNavTotalFiles;
-ItemByIndexSDNavigator SDNavItemByIndex;
-FindItemIndexByNameAndPathSDNavigator SDNavFindItemIndexByNameAndPath;
-TotalPrefixFilesSDNavigator SDNavTotalPrefixFiles;
-PrefixFileByIndexSDNavigator SDNavPrefixFileByIndex;
-FileByIndexRecursiveSDNavigator SDNavFileByIndexRecursive;
-FindItemIndexByNameAndPathRecursiveSDNavigator SDNavFindItemIndexByNameAndPathRecursive;
-ScanFilesRecursiveSDNavigator SDNavScanFilesRecursive;
+
 
 
 // Categories

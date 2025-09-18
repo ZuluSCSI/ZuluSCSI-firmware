@@ -141,9 +141,21 @@ void MainScreen::shortRotaryPress()
   changeScreen(SCREEN_INFO, _selectedDevice);
 }
 
+
 void MainScreen::shortUserPress()
 {
-  
+  char tmp[128];
+
+  const char *path = "/ISO/bin-bad";
+  bool isGood = isFolderACueBinSet(path, tmp);
+  if (isGood)
+  {
+    logmsg("isFolderACueBinSet '", path, "' good = ", tmp);
+  }
+  else
+  {
+    logmsg("isFolderACueBinSet '", path, "' bad");
+  }
 }
 
 void MainScreen::shortEjectPress()
