@@ -53,7 +53,7 @@ void BrowseScreen::init(int index)
 
   // Find the index of the file 
   NAV_OBJECT_TYPE navObjectType;
-  _currentObjectIndex = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(_currentObjectPath, _deviceMap->SelectedObject, navObjectType);
+  _currentObjectIndex = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(_currentObjectPath, _deviceMap->LoadedObject, navObjectType);
   if (_currentObjectIndex == -1)
   {
     _currentObjectIndex = 0;
@@ -98,10 +98,8 @@ void BrowseScreen::init(int index)
 
     if (!done)
     {
-      // Here folderToCheck is the partial path
       // logmsg("--- folderToCheck = '", folderToCheck, "'");
       // logmsg("   --- folderToLookFor = '", folderToLookFor, "'");
-
 
       int index = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(folderToCheck, folderToLookFor, navObjectType);
       if (navObjectType == NAV_OBJECT_DIR)
@@ -171,7 +169,7 @@ void BrowseScreen::draw()
 void BrowseScreen::sdCardStateChange(bool cardIsPresent)
 {
   _stackDepth = 0;
-  strcpy(_deviceMap->SelectedObject, "");
+  strcpy(_deviceMap->LoadedObject, "");
 }
 
 void BrowseScreen::shortRotaryPress()
@@ -397,7 +395,7 @@ void BrowseScreen::loadSelectedImage()
       strcat(g_tmpFilepath, "/");
       strcat(g_tmpFilepath, _currentObjectName);
 
-      strcpy(_deviceMap->SelectedObject, _currentObjectName);
+      strcpy(_deviceMap->LoadedObject, _currentObjectName);
       _deviceMap->NavObjectType  = _currentObjectType;
 
       logmsg("Loading Image file: ", g_tmpFilepath);

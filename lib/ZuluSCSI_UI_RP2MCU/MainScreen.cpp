@@ -144,7 +144,7 @@ void MainScreen::shortRotaryPress()
 
 void MainScreen::shortUserPress()
 {
-  //printDevices();;
+   // printDevices();;
 }
 
 void MainScreen::shortEjectPress()

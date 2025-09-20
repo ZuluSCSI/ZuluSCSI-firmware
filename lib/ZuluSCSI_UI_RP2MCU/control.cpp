@@ -200,7 +200,7 @@ void printDevices()
         logmsg(" User Folder:    ", g_devices[i].UserFolder);
         logmsg(" Root:           ", g_devices[i].RootFolder);
         logmsg(" Path:           ", g_devices[i].Path);
-        logmsg(" SelectedObject: ", g_devices[i].SelectedObject);
+        logmsg(" LoadedObject:   ", g_devices[i].LoadedObject);
         logmsg(" Filename:       ", g_devices[i].Filename);
         logmsg(" Type:           ", g_devices[i].DeviceType);
         logmsg(" Size:           ", g_devices[i].Size);
@@ -581,7 +581,7 @@ void initDevices()
         g_devices[i].UserFolder = false;
         g_devices[i].NavObjectType = NAV_OBJECT_NONE;
         strcpy(g_devices[i].RootFolder, "");
-        strcpy(g_devices[i].SelectedObject, "");
+        strcpy(g_devices[i].LoadedObject, "");
         strcpy(g_devices[i].Path, g_devices[i].RootFolder);
 
         g_devices[i].DeviceType = S2S_CFG_NOT_SET;
@@ -626,8 +626,6 @@ void initUIPostSDInit(bool sd_card_present)
         g_uiStart = ZULUSCSI_UI_START_SPLASH_VERSION;
         g_uiStartTime = millis();
     }
-
-    initDevices();
 
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
 }
@@ -710,31 +708,6 @@ void scanForNestedFolders()
 // Called on sd remove and Device Chnages
 void stateChange()
 {
-   
-    // We could be here due to init or an sd card change
-    // Patch should have occured
-    // But some of the meta data might not exist. i.e. on DeviceMap
-    // NavObjectType
-    // SelectedObject
-    int i;
-    for (i = 0; i < S2S_MAX_TARGETS; i++)
-    {
-        if (g_devices[i].Active)
-        {
-            // 1. If SelectedObject is blank, then it was never overriden
-            if (strcmp(g_devices[i].SelectedObject, "") == 0)
-            {
-               strcpy(g_devices[i].SelectedObject, g_devices[i].Filename);
-            }
-                        
-            // 2. If the type was never set, assume it's a normal image (not a bin cue)
-            if (g_devices[i].NavObjectType == NAV_OBJECT_NONE)
-            {
-                g_devices[i].NavObjectType = NAV_OBJECT_FILE;
-            }
-        }
-    }
-
     // printDevices();
 
     g_userInputDetected = true;  // Something changed, so assume the user did interact
@@ -905,10 +878,23 @@ void patchDevice(uint8_t target_idx)
     map.IsWritable =  img.file.isWritable();
     
     map.Active = img.file.isOpen();
+    map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
 
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(target_idx);
     if (map.Active)
     {
+        // 1. A bincue will have set this via binCueInUse(), for all others set it to the filename
+        if (strcmp(map.LoadedObject, "") == 0)
+        {
+            strcpy(map.LoadedObject, map.Filename);
+        }
+                    
+        // 2.  bincue will have set this via binCueInUse(), for all others default to a normal file
+        if (map.NavObjectType == NAV_OBJECT_NONE)
+        {
+            map.NavObjectType = NAV_OBJECT_FILE;
+        }
+        
         map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;
         map.IsRemovable = isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType);
 
@@ -917,6 +903,7 @@ void patchDevice(uint8_t target_idx)
         map.SectorsPerTrack = cfg->sectorsPerTrack;
         map.HeadsPerCylinder = cfg->headsPerCylinder;
 
+        map.Quirks = cfg->quirks;
         safeCopyString(cfg->vendor, map.Vendor, 8);
         safeCopyString(cfg->prodId, map.ProdId, 16);
         safeCopyString(cfg->revision, map.Revision, 4);
@@ -961,16 +948,11 @@ void patchDevice(uint8_t target_idx)
                 map.MaxImgX = j;
             }
         }
-        else
-        {
-            map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
-        }
     }
     else
     {
         map.DeviceType = S2S_CFG_NOT_SET;
         map.IsRemovable = false;
-        map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
     }
 
     /*
@@ -1051,13 +1033,36 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
     strcpy(map.Path, path); // Default Cwd to the root
 }
 
-// If the system loads an image (i.e. on sd insert or boot, these properties need to be set)
-extern "C" void setInitialFullPath(int target_idx, const char *path, const char *file, NAV_OBJECT_TYPE navObjectType)
+void splitPath(const char *full, char *path, char *file)
+{
+    const char *lastSlash = strrchr(full, '/');
+    if (!lastSlash)
+    {
+        strcpy(path, full);
+        strcpy(file, "");
+    }
+    else
+    {
+        int len = lastSlash - full;
+        strncpy(path, full, len);
+        path[len] = 0;
+
+        strcpy(file, lastSlash+1);
+    }
+}
+
+extern "C" void binCueInUse(int target_idx, const char *foldername) 
 {
     DeviceMap &map = g_devices[target_idx];
-    strcpy(map.Path, path); // Default Cwd to the root
-    strcpy(map.SelectedObject, file); // Default Cwd to the root
-    map.NavObjectType = navObjectType;
+    map.NavObjectType = NAV_OBJECT_CUE;
+
+    char path[MAX_FILE_PATH];
+    char file[MAX_FILE_PATH];
+
+    splitPath(foldername, path, file);
+
+    strcpy(map.Path, path); 
+    strcpy(map.LoadedObject, file);
 }
 
 // When a card is removed or inserted. If it's removed then clear the device list

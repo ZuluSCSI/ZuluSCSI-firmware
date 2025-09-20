@@ -54,28 +54,22 @@ void BrowseScreenFlat::initImgDir(int index)
     _catChar = g_categoryCodeAndNames[_scsiId][catCategory][0];
   }
 
-
   // Find the index of the file 
   if (g_cacheActive)
   {
-    NAV_OBJECT_TYPE type;
-    char cueFile[MAX_FILE_PATH];
-
-    _currentObjectIndex = findCacheFile(_scsiId, _catChar, _deviceMap->SelectedObject, _deviceMap->Path, _currentObjectName, _currentObjectPath, _currentObjectSize, _currentObjectType, _currentObjectDisplayName);
-    if (_currentObjectIndex == -1)
-    {
-      _currentObjectIndex = 0;
-    }
+    _currentObjectIndex = findCacheFile(_scsiId, _catChar, _deviceMap->LoadedObject, _deviceMap->Path);
   }
   else
   {
-    _currentObjectIndex = SDNavFindItemIndexByNameAndPathRecursive.FindItemIndexByNameAndPathRecursive(_deviceMap->RootFolder, _deviceMap->SelectedObject, _deviceMap->Path);
-
-    if (_currentObjectIndex == -1)
-    {
-      _currentObjectIndex = 0;
-    }
+    _currentObjectIndex = SDNavFindItemIndexByNameAndPathRecursive.FindItemIndexByNameAndPathRecursive(_deviceMap->RootFolder, _deviceMap->LoadedObject, _deviceMap->Path);
   }
+
+  // If none was found, just select the first
+  if (_currentObjectIndex == -1)
+  {
+    _currentObjectIndex = 0;
+  }
+  
 }
 
 void BrowseScreenFlat::initImgX(int index)
@@ -95,7 +89,6 @@ void BrowseScreenFlat::initImgX(int index)
     if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0)
     {
       _currentObjectIndex = i;
-      strcpy(_currentObjectDisplayName, g_tmpFilename);
       break;
     }
   }
@@ -123,7 +116,6 @@ void BrowseScreenFlat::initPrefix(int index)
       if (strcmp(_deviceMap->Filename, g_tmpFilename) == 0)
       {
         _currentObjectIndex = i;
-        strcpy(_currentObjectDisplayName, g_tmpFilename);
         break;
       }
     }
@@ -133,7 +125,7 @@ void BrowseScreenFlat::initPrefix(int index)
 void BrowseScreenFlat::sdCardStateChange(bool cardIsPresent)
 {
   _currntBrowseScreenType = -1;
-  strcpy(_deviceMap->SelectedObject, "");
+  strcpy(_deviceMap->LoadedObject, "");
 }
 
 void BrowseScreenFlat::init(int index)
@@ -335,6 +327,7 @@ void BrowseScreenFlat::getCurrentFilename()
     case BROWSE_METHOD_IMGX:
       getImgXByIndex(_scsiId, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
       strcpy(_currentObjectDisplayName, _currentObjectName);
+      _currentObjectType = NAV_OBJECT_FILE;
       break;
 
     case BROWSE_METHOD_USE_PREFIX:
@@ -348,6 +341,7 @@ void BrowseScreenFlat::getCurrentFilename()
       pre[3] = '\0';
       SDNavPrefixFileByIndex.GetFileByIndex(pre, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
       strcpy(_currentObjectDisplayName, _currentObjectName);
+      _currentObjectType = NAV_OBJECT_FILE;
     } 
     case BROWSE_METHOD_NOT_BROWSABLE:
       break;
@@ -363,7 +357,7 @@ void BrowseScreenFlat::loadSelectedImage()
       strcat(g_tmpFilepath, "/");
       strcat(g_tmpFilepath, _currentObjectName);
 
-      strcpy(_deviceMap->SelectedObject, _currentObjectName);
+      strcpy(_deviceMap->LoadedObject, _currentObjectName);
       _deviceMap->NavObjectType  = _currentObjectType;
       
       haltUIUpdates();
@@ -386,6 +380,16 @@ void BrowseScreenFlat::loadSelectedImage()
       break;
 
     case BROWSE_METHOD_USE_PREFIX:
+      strcpy(g_tmpFilepath, _currentObjectName);
+
+      haltUIUpdates();
+      if (loadImageDeferred(_scsiId, g_tmpFilepath, SCREEN_BROWSE_FLAT, _scsiId))
+      {
+        strcpy(_deviceMap->Path, "");
+        strcpy(_deviceMap->Filename, _currentObjectName);
+      }
+      break;
+
     case BROWSE_METHOD_NOT_BROWSABLE:
       break;
   }

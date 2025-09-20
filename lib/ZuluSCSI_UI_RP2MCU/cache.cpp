@@ -171,7 +171,7 @@ int GetIndexFromCategoryCode(int scsiId, char cat)
 }
 
 
-extern "C" int findCacheFile(int scsiId, char cat, const char *searchFile, const char *searchPath, char *file, char *path, u_int64_t &size, NAV_OBJECT_TYPE &type, char *cueFile )
+extern "C" int findCacheFile(int scsiId, char cat, const char *searchFile, const char *searchPath)
 {
     int total = 0;
     DeviceMap *deviceMap = &g_devices[scsiId];
@@ -196,6 +196,9 @@ extern "C" int findCacheFile(int scsiId, char cat, const char *searchFile, const
     int i;
     int blockSize = ((MAX_PATH_LEN + MAX_PATH_LEN + MAX_PATH_LEN) + sizeof(u_int64_t) + sizeof(NAV_OBJECT_TYPE));
 
+    char file[MAX_FILE_PATH];
+    char path[MAX_FILE_PATH];
+
     for (i=0;i<total;i++)
     {
         int offset = blockSize * i;
@@ -204,10 +207,7 @@ extern "C" int findCacheFile(int scsiId, char cat, const char *searchFile, const
 
         fHandle.read(file, MAX_PATH_LEN);
         fHandle.read(path, MAX_PATH_LEN);
-        fHandle.read(&size, sizeof(u_int64_t));
-        fHandle.read(&type, sizeof(NAV_OBJECT_TYPE));
-        fHandle.read(cueFile, MAX_PATH_LEN);
-
+        
         if (strcmp(searchFile, file) == 0 && strcmp(searchPath, path) == 0)
         {
             fHandle.close();

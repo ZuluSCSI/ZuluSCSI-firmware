@@ -32,14 +32,16 @@ void InfoPage4Screen::init(int index)
 
    initScrollers(1);
 
-  setupScroller(0, 52, 32, 88, 8, 1);
+  setupScroller(0, 52, 26, 88, 8, 1);
   
   DeviceMap &map = g_devices[_scsiId];      
   char tmp[MAX_FILE_PATH];
   u_int64_t binSize;
   strcpy(tmp, map.Path);
   strcat(tmp, "/");
-  strcat(tmp, map.SelectedObject);
+  strcat(tmp, map.LoadedObject);
+
+  logmsg("&&&& Ttmp = '", tmp, "'");
 
   isFolderACueBinSet(tmp, _cue, _cueSize, binSize, _totalBins);
   setScrollerText(0, _cue);
@@ -71,24 +73,32 @@ void InfoPage4Screen::draw()
 
   _display->drawLine(0,10,_iconX+11,10, 1);
 
-  _display->setCursor(0,22);             
-  _display->print(F("Cue Bin Details:"));
+  _display->setCursor(0,16);             
+  _display->print(F("Bin/Cue Details:"));
 
-  _display->setCursor(0,32);             
+  _display->setCursor(0,26);             
   _display->print(F("Cue :"));
  
-  makeImageSizeStr(_cueSize, _sizeBuffer);
-
-  _display->setCursor(0,42);             
-  _display->print(F("Cue Sz:"));
-  _display->setCursor(52,42);       
-  _display->print(_sizeBuffer);    
-  _display->print("B");    
-  
-  _display->setCursor(0,52);             
+  _display->setCursor(0,36);             
   _display->print(F("Bins:"));
-  _display->setCursor(52,52);       
+  _display->setCursor(52,36);       
   _display->print(_totalBins);    
+
+  _display->setCursor(0,46);             
+  _display->print(F("Cue Size:"));
+  _display->setCursor(52,46);       
+  makeImageSizeStr(_cueSize, _sizeBuffer);
+  _display->print(_sizeBuffer);    
+  _display->print("B");  
+  
+    _display->setCursor(0,56);             
+  _display->print(F("Bin Size:"));
+  _display->setCursor(52,56);    
+  makeImageSizeStr(map.Size, _sizeBuffer);
+  _display->print(_sizeBuffer);
+
+  
+  
 }
 
 void InfoPage4Screen::shortUserPress()

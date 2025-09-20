@@ -53,36 +53,36 @@ void InfoPage3Screen::draw()
   const uint8_t *deviceIcon = getIconForType(map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
 
-    if (map.IsRaw)
-    {
-      drawIconFromRight(icon_raw, 0, 0);
-    }
-    if (map.IsRom)
-    {
-      drawIconFromRight(icon_rom, 0, 0);
-    }
+  if (map.IsRaw)
+  {
+    drawIconFromRight(icon_raw, 0, 0);
+  }
+  if (map.IsRom)
+  {
+    drawIconFromRight(icon_rom, 0, 0);
+  }
 
-    _display->drawLine(0,10,_iconX+11,10, 1);
+  _display->drawLine(0,10,_iconX+11,10, 1);
 
 
-  _display->setCursor(0,22);             
+  _display->setCursor(0,16);             
   _display->print(F("LBA:"));
-  _display->setCursor(52,22);       
+  _display->setCursor(52,16);       
   _display->print(map.LBA);    
 
-  _display->setCursor(0,32);             
+  _display->setCursor(0,26);             
   _display->print(F("Bt/Sec:"));
-  _display->setCursor(52,32);       
+  _display->setCursor(52,26);       
   _display->print(map.BytesPerSector);    
 
-  _display->setCursor(0,42);             
+  _display->setCursor(0,36);             
   _display->print(F("Sc/Trk:"));
-  _display->setCursor(52,42);       
+  _display->setCursor(52,36);       
   _display->print(map.SectorsPerTrack);    
 
-  _display->setCursor(0,52);             
+  _display->setCursor(0,46);             
   _display->print(F("Hd/Cyl:"));
-  _display->setCursor(52,52);       
+  _display->setCursor(52,46);       
   _display->print(map.HeadsPerCylinder);    
 }
 

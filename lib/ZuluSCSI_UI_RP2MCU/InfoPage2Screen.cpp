@@ -33,8 +33,8 @@ void InfoPage2Screen::init(int index)
   // Init the scroller
   initScrollers(2);
 
-  setupScroller(0, 52, 32, 88, 8, 1);
-  setupScroller(1, 52, 52, 88, 8, 1);
+  setupScroller(0, 52, 26, 88, 8, 1);
+  setupScroller(1, 52, 46, 88, 8, 1);
 
   // Set the scroller text
   DeviceMap &map = g_devices[_scsiId];
@@ -77,21 +77,26 @@ void InfoPage2Screen::draw()
 
     _display->drawLine(0,10,_iconX+11,10, 1);
 
-  _display->setCursor(0,22);             
+  _display->setCursor(0,16);             
   _display->print(F("Vendor:"));
-  _display->setCursor(52,22);       
+  _display->setCursor(52,16);       
   _display->print(map.Vendor);    
 
-  _display->setCursor(0,32);             
+  _display->setCursor(0,26);             
   _display->print(F("ProdId:")); 
 
-  _display->setCursor(0,42);             
+  _display->setCursor(0,36);             
   _display->print(F("Rev:"));
-  _display->setCursor(52,42);       
+  _display->setCursor(52,36);       
   _display->print(map.Revision);    
 
-  _display->setCursor(0,52);             
+  _display->setCursor(0,46);             
   _display->print(F("Serial:"));
+
+  _display->setCursor(0,56);             
+  _display->print(F("Quirks:"));
+  _display->setCursor(52,56);       
+  _display->print(map.Quirks); 
 }
 
 void InfoPage2Screen::shortUserPress()

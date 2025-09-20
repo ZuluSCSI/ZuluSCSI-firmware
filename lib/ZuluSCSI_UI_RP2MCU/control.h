@@ -86,6 +86,8 @@ struct DeviceMap
 	char Revision[5];
 	char Serial[17];
 
+    uint16_t Quirks;
+
     // Computed
     BROWSE_METHOD BrowseMethod;
 
@@ -102,7 +104,7 @@ struct DeviceMap
     int TotalFilesInCategory[MAX_CATEGORIES];
     SCREEN_BROWSETYPES BrowseScreenType; // GT TODO This is really a UI concept - move?
 
-    char SelectedObject[MAX_PATH_LEN];  // This is the same as filename for normal object, but the folder name for cue/bin
+    char LoadedObject[MAX_PATH_LEN];  // This is the same as filename for normal object, but the folder name for cue/bin
     NAV_OBJECT_TYPE NavObjectType;
 
     // Used by both Normal and Initiator

@@ -596,6 +596,10 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
                     valid = cdromValidateCueSheet(img);
+                    if (valid)
+                    {
+                        binCueInUse(target_idx, foldername);
+                    }
                 }
             }
 
@@ -1048,8 +1052,6 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
                 strcpy(buf, path);
                 strcat(buf, "/");
                 strcat(buf, file);
-
-                setInitialFullPath(target_idx, path, file, navObjectType); // patch the path
 
                 logmsg("Found file: ", buf);
                 img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
