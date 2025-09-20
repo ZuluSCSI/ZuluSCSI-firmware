@@ -34,11 +34,17 @@ void InfoPage3Screen::init(int index)
 void InfoPage3Screen::draw()
 { 
   _display->setCursor(0,0);             
-  _display->print(F("Info (3/3)"));
+  DeviceMap &map = g_devices[_scsiId];       
+  if (map.NavObjectType == NAV_OBJECT_CUE)
+  {
+    _display->print(F("Info (4/4)"));
+  }
+  else
+  {
+    _display->print(F("Info (3/3)"));
+  }
   
   _iconX = _display->width();
-
-  DeviceMap &map = g_devices[_scsiId];
 
   _display->setTextSize(2);
   printNumberFromTheRight(_scsiId, 6, 0);

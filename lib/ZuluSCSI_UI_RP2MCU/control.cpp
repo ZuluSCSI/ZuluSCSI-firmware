@@ -134,9 +134,6 @@ bool hasScreenBeenInitialized = false;
 bool hasControlBeenInitialized = false;
 
 
-
-
-
 /// Helpers
 
 const char *systemModeToString(SYSTEM_MODE systemMode)
@@ -198,14 +195,18 @@ void printDevices()
     int i;
     for (i = 0; i < S2S_MAX_TARGETS; i++)
     {
-        logmsg("  - ", i, "  Active: ", g_devices[i].Active, " user folder ",  g_devices[i].UserFolder,  "  root " , g_devices[i].RootFolder, "  path: ", g_devices[i].Path);
-        logmsg("    -  Type: ", typeToShortString(g_devices[i].DeviceType)
-            ," CurrentFilename ",  g_devices[i].Filename
-            ,"  Size  " , g_devices[i].Size
-            ,"  IsRemovable " , g_devices[i].IsRemovable,
-             "  IsRaw " , g_devices[i].IsRaw);
-            //" image_directory = ", g_devices[i].image_directory,
-            //" use_prefix = ", g_devices[i].use_prefix);
+        logmsg("SCSI : ", i);
+        logmsg(" Active:         ", g_devices[i].Active);
+        logmsg(" User Folder:    ", g_devices[i].UserFolder);
+        logmsg(" Root:           ", g_devices[i].RootFolder);
+        logmsg(" Path:           ", g_devices[i].Path);
+        logmsg(" SelectedObject: ", g_devices[i].SelectedObject);
+        logmsg(" Filename:       ", g_devices[i].Filename);
+        logmsg(" Type:           ", g_devices[i].DeviceType);
+        logmsg(" Size:           ", g_devices[i].Size);
+        logmsg(" IsRemovable:    ", g_devices[i].IsRemovable);
+        logmsg(" IsRaw:          ", g_devices[i].IsRaw);
+        logmsg(" NavObjectType:  ", g_devices[i].NavObjectType);
     }
 }
 
@@ -561,7 +562,38 @@ void initUIDisplay()
     hasScreenBeenInitialized = initScreenHardware();
 }
 
+// This clear the list of devices, used at startup and on card removal
+void initDevices()
+{
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
+    if (g_devices == nullptr)
+    {
+        g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
+    }
+#else
+    g_devices = static_g_devices;
+#endif
 
+    int i;
+    for (i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        g_devices[i].Active = false;
+        g_devices[i].UserFolder = false;
+        g_devices[i].NavObjectType = NAV_OBJECT_NONE;
+        strcpy(g_devices[i].RootFolder, "");
+        strcpy(g_devices[i].SelectedObject, "");
+        strcpy(g_devices[i].Path, g_devices[i].RootFolder);
+
+        g_devices[i].DeviceType = S2S_CFG_NOT_SET;
+        strcpy(g_devices[i].Filename, "");
+        g_devices[i].Size = 0;
+        g_devices[i].IsRemovable = false;
+        g_devices[i].IsRaw = false;
+
+        // UI Runtime
+        g_devices[i].BrowseScreenType = SCREEN_BROWSETYPE_FOLDERS;
+    }
+}
 
 void initUIPostSDInit(bool sd_card_present)
 {
@@ -595,6 +627,8 @@ void initUIPostSDInit(bool sd_card_present)
         g_uiStartTime = millis();
     }
 
+    initDevices();
+
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
 }
 
@@ -621,7 +655,7 @@ void updateRotary(int dir)
 
 int g_fileCount;
 
-void scanFileCallback(int count, const char *file, const char *path, u_int64_t size)
+void scanFileCallback(int count, const char *file, const char *path, u_int64_t size, NAV_OBJECT_TYPE type, const char *cueFile)
 {
     g_fileCount = count;
 }
@@ -676,9 +710,35 @@ void scanForNestedFolders()
 // Called on sd remove and Device Chnages
 void stateChange()
 {
-    g_userInputDetected = true;  // Something changed, so assume the user did interact
+   
+    // We could be here due to init or an sd card change
+    // Patch should have occured
+    // But some of the meta data might not exist. i.e. on DeviceMap
+    // NavObjectType
+    // SelectedObject
+    int i;
+    for (i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        if (g_devices[i].Active)
+        {
+            // 1. If SelectedObject is blank, then it was never overriden
+            if (strcmp(g_devices[i].SelectedObject, "") == 0)
+            {
+               strcpy(g_devices[i].SelectedObject, g_devices[i].Filename);
+            }
+                        
+            // 2. If the type was never set, assume it's a normal image (not a bin cue)
+            if (g_devices[i].NavObjectType == NAV_OBJECT_NONE)
+            {
+                g_devices[i].NavObjectType = NAV_OBJECT_FILE;
+            }
+        }
+    }
 
     // printDevices();
+
+    g_userInputDetected = true;  // Something changed, so assume the user did interact
+
     sendSDCardStateChangedToScreens(g_sdAvailable);
 
     if (g_sdAvailable)
@@ -789,36 +849,7 @@ void devicesUpdated()
     stateChange();
 }
 
-// This clear the list of devices, used at startup and on card removal
-void initDevices()
-{
-#if ZULUSCSI_RESERVED_SRAM_LEN > 0
-    if (g_devices == nullptr)
-    {
-        g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
-    }
-#else
-    g_devices = static_g_devices;
-#endif
 
-    int i;
-    for (i = 0; i < S2S_MAX_TARGETS; i++)
-    {
-        g_devices[i].Active = false;
-        g_devices[i].UserFolder = false;
-        strcpy(g_devices[i].RootFolder, "");
-        strcpy(g_devices[i].Path, g_devices[i].RootFolder);
-
-        g_devices[i].DeviceType = S2S_CFG_NOT_SET;
-        strcpy(g_devices[i].Filename, "");
-        g_devices[i].Size = 0;
-        g_devices[i].IsRemovable = false;
-        g_devices[i].IsRaw = false;
-
-        // UI Runtime
-        g_devices[i].BrowseScreenType = SCREEN_BROWSETYPE_FOLDERS;
-    }
-}
 
 void safeCopyString(const char *src, char *dst, uint8_t size)
 {
@@ -1020,10 +1051,13 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
     strcpy(map.Path, path); // Default Cwd to the root
 }
 
-extern "C" void setCurrentFolder(int target_idx, const char *path)
+// If the system loads an image (i.e. on sd insert or boot, these properties need to be set)
+extern "C" void setInitialFullPath(int target_idx, const char *path, const char *file, NAV_OBJECT_TYPE navObjectType)
 {
     DeviceMap &map = g_devices[target_idx];
     strcpy(map.Path, path); // Default Cwd to the root
+    strcpy(map.SelectedObject, file); // Default Cwd to the root
+    map.NavObjectType = navObjectType;
 }
 
 // When a card is removed or inserted. If it's removed then clear the device list

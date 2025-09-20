@@ -34,6 +34,7 @@
 #include "InfoScreen.h"
 #include "InfoPage2Screen.h"
 #include "InfoPage3Screen.h"
+#include "InfoPage4Screen.h"
 #include "MessageBox.h"
 #include "CopyScreen.h"
 #include "InitiatorMainScreen.h"
@@ -50,6 +51,7 @@ SettingsScreen *_settingsScreen;
 InfoScreen *_infoScreen;
 InfoPage2Screen *_infoPage2Screen;
 InfoPage3Screen *_infoPage3Screen;
+InfoPage4Screen *_infoPage4Screen;
 BrowseScreen *_browseScreen;
 BrowseTypeScreen *_browseTypeScreen;
 BrowseScreenFlat *_browseScreenFlat;
@@ -66,6 +68,7 @@ static SettingsScreen static_settingsScreen(&allocated_g_display);
 static InfoScreen static_infoScreen(&allocated_g_display);
 static InfoPage2Screen static_infoPage2Screen(&allocated_g_display);
 static InfoPage3Screen static_infoPage3Screen(&allocated_g_display);
+static InfoPage4Screen static_infoPage4Screen(&allocated_g_display);
 static BrowseScreen static_browseScreen(&allocated_g_display);
 static BrowseTypeScreen static_browseTypeScreen(&allocated_g_display);
 static BrowseScreenFlat static_browseScreenFlat(&allocated_g_display);
@@ -81,6 +84,7 @@ void initScreens()
     _infoScreen = &static_infoScreen;
     _infoPage2Screen = &static_infoPage2Screen;
     _infoPage3Screen = &static_infoPage3Screen;
+    _infoPage4Screen = &static_infoPage4Screen;
     _browseScreen = &static_browseScreen;
     _browseTypeScreen = &static_browseTypeScreen;
     _browseScreenFlat = &static_browseScreenFlat;
@@ -100,6 +104,7 @@ void initScreens()
     _infoScreen = new (reserve_buffer_align(sizeof(InfoScreen), 4)) InfoScreen(g_display);
     _infoPage2Screen = new (reserve_buffer_align(sizeof(InfoPage2Screen), 4)) InfoPage2Screen(g_display);
     _infoPage3Screen = new (reserve_buffer_align(sizeof(InfoPage3Screen), 4)) InfoPage3Screen(g_display);
+    _infoPage4Screen = new (reserve_buffer_align(sizeof(InfoPage4Screen), 4)) InfoPage4Screen(g_display);
     _browseScreen = new (reserve_buffer_align(sizeof(BrowseScreen), 4)) BrowseScreen(g_display);
     _browseTypeScreen = new (reserve_buffer_align(sizeof(BrowseTypeScreen), 4)) BrowseTypeScreen(g_display);
     _browseScreenFlat = new (reserve_buffer_align(sizeof(BrowseScreenFlat), 4)) BrowseScreenFlat(g_display);
@@ -117,6 +122,7 @@ void sendSDCardStateChangedToScreens(bool cardIsPresent)
     _infoScreen->sdCardStateChange(cardIsPresent);
     _infoPage2Screen->sdCardStateChange(cardIsPresent);
     _infoPage3Screen->sdCardStateChange(cardIsPresent);
+    _infoPage4Screen->sdCardStateChange(cardIsPresent);
     _browseScreen->sdCardStateChange(cardIsPresent);
     _browseTypeScreen->sdCardStateChange(cardIsPresent);
     _browseScreenFlat->sdCardStateChange(cardIsPresent);
@@ -150,6 +156,9 @@ Screen *GetScreen(SCREEN_TYPE type)
 
         case SCREEN_INFO_PAGE3:
             return _infoPage3Screen;
+
+        case SCREEN_INFO_PAGE4:
+            return _infoPage4Screen;
             
         case SCREEN_BROWSE_TYPE:
             return _browseTypeScreen;
@@ -196,6 +205,9 @@ const char *GetScreenName(SCREEN_TYPE type)
 
         case SCREEN_INFO_PAGE3:
             return "Info (3/3)";
+
+        case SCREEN_INFO_PAGE4:
+            return "Info (4/4)";
 
         case SCREEN_BROWSE_TYPE:
             return "Browse Type";

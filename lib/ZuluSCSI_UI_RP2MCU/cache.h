@@ -28,8 +28,8 @@ extern bool g_cacheActive;
 
 extern "C" bool doesDeviceHaveAnyCategoryFiles(int scsiId);
 
-extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *path, u_int64_t &size);
-extern "C" int findCacheFile(int scsiId, char cat, char *file, char *path);
+extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *path, u_int64_t &size, NAV_OBJECT_TYPE &type, char *cueFile);
+extern "C" int findCacheFile(int scsiId, char cat, const char *searchFile, const char *searchPath, char *file, char *path, u_int64_t &size, NAV_OBJECT_TYPE &type, char *cueFile);
 
 extern void clearCacheData();
 extern void buildCache();

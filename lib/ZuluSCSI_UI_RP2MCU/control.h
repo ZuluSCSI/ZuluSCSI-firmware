@@ -102,6 +102,9 @@ struct DeviceMap
     int TotalFilesInCategory[MAX_CATEGORIES];
     SCREEN_BROWSETYPES BrowseScreenType; // GT TODO This is really a UI concept - move?
 
+    char SelectedObject[MAX_PATH_LEN];  // This is the same as filename for normal object, but the folder name for cue/bin
+    NAV_OBJECT_TYPE NavObjectType;
+
     // Used by both Normal and Initiator
     char Filename[MAX_PATH_LEN]; 
     S2S_CFG_TYPE DeviceType;
@@ -136,7 +139,9 @@ extern INITIATOR_MODE g_initiatorMode;
 extern void sendSDCardStateChangedToScreens(bool cardIsPresent);
 extern void changeScreen(SCREEN_TYPE type, int index);
 
-extern bool isFolderACueBinSet(const char *folder, char *cueFile);
+extern bool isFolderACueBinSet(const char *folder, char *cueFile, u_int64_t &cueSize, u_int64_t &binSize, int &totalBins);
+
+extern void printDevices();
 
 #endif
 

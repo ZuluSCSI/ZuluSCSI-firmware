@@ -10,7 +10,7 @@ public:
     bool TotalItems(const char* dirname, int &total);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
     int _total;
 };
@@ -18,28 +18,29 @@ protected:
 class ItemByIndexSDNavigator : public SDNavigator
 {
 public:
-    bool GetObjectByIndex(const char *dirname, int index, char* filename, size_t buflen, bool &isDir, u_int64_t &size);
+    bool GetObjectByIndex(const char *dirname, int index, char* filename, size_t buflen, NAV_OBJECT_TYPE &navObjectType, u_int64_t &size, char *cueFilename);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
     int _index;
     int _counter;
 
-    bool _isDir;
+    NAV_OBJECT_TYPE _navObjectType;
     u_int64_t _size;
     const char *_filename;
+    const char *_cueFilename;
 };
 
 class FindItemIndexByNameAndPathSDNavigator : public SDNavigator
 {
 public:
-    int FindItemByNameAndPath(const char *dirname, const char *filename, bool &isDir);
+    int FindItemByNameAndPath(const char *dirname, const char *filename, NAV_OBJECT_TYPE &navObjectType);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
-    bool _isDir;
+    NAV_OBJECT_TYPE _navObjectType;
     int _counter;
     const char *_filename;
 };
@@ -50,7 +51,7 @@ public:
     bool TotalItems(const char* prefix, int &total);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
     const char* _prefix;
     int _total;
@@ -62,7 +63,7 @@ public:
     bool GetFileByIndex(const char *prefix, int index, char* buf, size_t buflen, u_int64_t &size);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectTyper, char *cueFilename);
 
     int _index;
     int _counter;
@@ -77,16 +78,18 @@ protected:
 class FileByIndexRecursiveSDNavigator : public SDNavigator
 {
 public:
-    bool GetObjectByIndexRecursive(const char *dirname, int index, char* filename, char *path, size_t buflen, u_int64_t &size);
+    bool GetObjectByIndexRecursive(const char *dirname, int index, char* filename, char *path, size_t buflen, u_int64_t &size, NAV_OBJECT_TYPE &navObjectType, char *cueFilename);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
     int _index;
     int _counter;
 
     u_int64_t _size;
     const char *_filename;
+    NAV_OBJECT_TYPE _navObjectType;
+    const char *_cueFilename;
     const char *_path;
 };
 
@@ -96,7 +99,7 @@ public:
     int FindItemIndexByNameAndPathRecursive(const char *dirname, char* filename, const char *path);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
     int _counter;
 
@@ -109,24 +112,24 @@ protected:
 class ScanFilesRecursiveSDNavigator : public SDNavigator
 {
 public:
-    bool ScanFilesRecursive(const char *dirname, bool &hasDirs, void (*callback)(int, const char *, const char *, u_int64_t));
+    bool ScanFilesRecursive(const char *dirname, bool &hasDirs, void (*callback)(int, const char *, const char *, u_int64_t, NAV_OBJECT_TYPE, const char *));
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
-    void (*_callback)(int, const char *, const char *, u_int64_t);
+    void (*_callback)(int, const char *, const char *, u_int64_t, NAV_OBJECT_TYPE, const char *);
 
     int _counter;
     bool _hasDirs;
 };
 
-extern TotalFilesSDNavigator SDNavTotalFiles;   // This works the safe for both RAW nd bincue remmaping
+extern TotalFilesSDNavigator SDNavTotalFiles;  
 
-extern ItemByIndexSDNavigator SDNavItemByIndex;   // TODO BINCUE remap
-extern FindItemIndexByNameAndPathSDNavigator SDNavFindItemIndexByNameAndPath;  // TODO BINCUE remap
-extern FileByIndexRecursiveSDNavigator SDNavFileByIndexRecursive;  // TODO BINCUE remap
-extern FindItemIndexByNameAndPathRecursiveSDNavigator SDNavFindItemIndexByNameAndPathRecursive;  // TODO BINCUE remap
-extern ScanFilesRecursiveSDNavigator SDNavScanFilesRecursive;  // TODO BINCUE remap
+extern ItemByIndexSDNavigator SDNavItemByIndex;  
+extern FindItemIndexByNameAndPathSDNavigator SDNavFindItemIndexByNameAndPath;  
+extern FileByIndexRecursiveSDNavigator SDNavFileByIndexRecursive; 
+extern FindItemIndexByNameAndPathRecursiveSDNavigator SDNavFindItemIndexByNameAndPathRecursive; 
+extern ScanFilesRecursiveSDNavigator SDNavScanFilesRecursive;  
 
 // no remapping for bin/cue
 extern TotalPrefixFilesSDNavigator SDNavTotalPrefixFiles;

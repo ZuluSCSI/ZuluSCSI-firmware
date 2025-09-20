@@ -315,6 +315,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableParity = true;
     cfgSys.controlBoardDisable = false;
     cfgSys.controlBoardCache = false;
+    cfgSys.controlBoardShowCueFileName = false;
     cfgSys.controlBoardReverseRotary = false;
     cfgSys.controlBoardFlipDisplay = false;
     cfgSys.controlBoardDimDisplay = false;
@@ -434,6 +435,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.mapLunsToIDs = ini_getbool("SCSI", "MapLunsToIDs", cfgSys.mapLunsToIDs, CONFIGFILE);
     cfgSys.enableParity =  ini_getbool("SCSI", "EnableParity", cfgSys.enableParity, CONFIGFILE);
     cfgSys.controlBoardDisable =  ini_getbool("SCSI", "ControlBoardDisable", cfgSys.controlBoardDisable, CONFIGFILE);
+    cfgSys.controlBoardShowCueFileName=  ini_getbool("SCSI", "ControlBoardShowCueFileName", cfgSys.controlBoardShowCueFileName, CONFIGFILE);
     cfgSys.controlBoardCache =  ini_getbool("SCSI", "ControlBoardCache", cfgSys.controlBoardCache, CONFIGFILE);
     cfgSys.controlBoardReverseRotary =  ini_getbool("SCSI", "ControlBoardReverseRotary", cfgSys.controlBoardReverseRotary, CONFIGFILE);
     cfgSys.controlBoardFlipDisplay =  ini_getbool("SCSI", "ControlBoardFlipDisplay", cfgSys.controlBoardFlipDisplay, CONFIGFILE);

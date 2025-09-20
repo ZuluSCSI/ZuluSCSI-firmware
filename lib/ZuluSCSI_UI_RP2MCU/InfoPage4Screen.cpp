@@ -21,43 +21,37 @@
 
 #if defined(CONTROL_BOARD)
 
-#include "InfoPage2Screen.h"
+#include "InfoPage4Screen.h"
 #include "ZuluSCSI_log.h"
 
-void InfoPage2Screen::init(int index)
+void InfoPage4Screen::init(int index)
 {
   Screen::init(index);
 
   _scsiId = index;
 
-  // Init the scroller
-  initScrollers(2);
+   initScrollers(1);
 
   setupScroller(0, 52, 32, 88, 8, 1);
-  setupScroller(1, 52, 52, 88, 8, 1);
+  
+  DeviceMap &map = g_devices[_scsiId];      
+  char tmp[MAX_FILE_PATH];
+  u_int64_t binSize;
+  strcpy(tmp, map.Path);
+  strcat(tmp, "/");
+  strcat(tmp, map.SelectedObject);
 
-  // Set the scroller text
-  DeviceMap &map = g_devices[_scsiId];
-  setScrollerText(0, map.ProdId);
-  setScrollerText(1, map.Serial);
+  isFolderACueBinSet(tmp, _cue, _cueSize, binSize, _totalBins);
+  setScrollerText(0, _cue);
 }
 
-void InfoPage2Screen::draw()
+void InfoPage4Screen::draw()
 { 
-  _display->setCursor(0,0);      
+  _display->setCursor(0,0);             
   DeviceMap &map = g_devices[_scsiId];       
-  if (map.NavObjectType == NAV_OBJECT_CUE)
-  {
-    _display->print(F("Info (3/4)"));
-  }
-  else
-  {
-    _display->print(F("Info (2/3)"));
-  }
+  _display->print(F("Info (2/4)"));
   
   _iconX = _display->width();
-
- 
 
   _display->setTextSize(2);
   printNumberFromTheRight(_scsiId, 6, 0);
@@ -66,56 +60,51 @@ void InfoPage2Screen::draw()
   const uint8_t *deviceIcon = getIconForType(map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
 
-    if (map.IsRaw)
-    {
-      drawIconFromRight(icon_raw, 0, 0);
-    }
-    if (map.IsRom)
-    {
-      drawIconFromRight(icon_rom, 0, 0);
-    }
+  if (map.IsRaw)
+  {
+    drawIconFromRight(icon_raw, 0, 0);
+  }
+  if (map.IsRom)
+  {
+    drawIconFromRight(icon_rom, 0, 0);
+  }
 
-    _display->drawLine(0,10,_iconX+11,10, 1);
+  _display->drawLine(0,10,_iconX+11,10, 1);
 
   _display->setCursor(0,22);             
-  _display->print(F("Vendor:"));
-  _display->setCursor(52,22);       
-  _display->print(map.Vendor);    
+  _display->print(F("Cue Bin Details:"));
 
   _display->setCursor(0,32);             
-  _display->print(F("ProdId:")); 
+  _display->print(F("Cue :"));
+ 
+  makeImageSizeStr(_cueSize, _sizeBuffer);
 
   _display->setCursor(0,42);             
-  _display->print(F("Rev:"));
+  _display->print(F("Cue Sz:"));
   _display->setCursor(52,42);       
-  _display->print(map.Revision);    
-
+  _display->print(_sizeBuffer);    
+  _display->print("B");    
+  
   _display->setCursor(0,52);             
-  _display->print(F("Serial:"));
+  _display->print(F("Bins:"));
+  _display->setCursor(52,52);       
+  _display->print(_totalBins);    
 }
 
-void InfoPage2Screen::shortUserPress()
+void InfoPage4Screen::shortUserPress()
 {
   changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
 }
 
-void InfoPage2Screen::rotaryChange(int direction)
+void InfoPage4Screen::rotaryChange(int direction)
 {
-  if (direction == 1)
+  if (direction == -1)
   {
-    changeScreen(SCREEN_INFO_PAGE3, _scsiId);
+    changeScreen(SCREEN_INFO, _scsiId);
   }
-  else if (direction == -1)
+  else if (direction == 1)
   {
-    DeviceMap &map = g_devices[_scsiId];
-    if (map.NavObjectType == NAV_OBJECT_CUE)
-    {
-      changeScreen(SCREEN_INFO_PAGE4, _scsiId); 
-    }
-    else
-    {
-      changeScreen(SCREEN_INFO, _scsiId); 
-    }
+    changeScreen(SCREEN_INFO_PAGE2, _scsiId);
   }
 }
 

@@ -31,6 +31,14 @@
 #include "scsi2sd.h" 
 #include "ZuluSCSI_config.h" 
 
+typedef enum
+{
+    NAV_OBJECT_NONE,
+	NAV_OBJECT_FILE,
+    NAV_OBJECT_DIR,
+    NAV_OBJECT_CUE
+} NAV_OBJECT_TYPE;
+
 #define MAX_PATH_LEN MAX_FILE_PATH
 #define MAX_CATEGORIES 10
 #define MAX_CATEGORY_NAME_LEN 32
@@ -43,7 +51,7 @@ extern "C" bool mscMode();
 extern "C" void loadImage();      // in ZuluSCSI_disk used in ZuluSCSI
 
 extern "C" void setFolder(int target_idx, bool userSet, const char *path);
-extern "C" void setCurrentFolder(int target_idx, const char *path);
+extern "C" void setInitialFullPath(int target_idx, const char *path, const char *file, NAV_OBJECT_TYPE navObjectType);
 extern "C" void initUIDisplay();
 extern "C" void initUIPostSDInit(bool cardPresent);
 

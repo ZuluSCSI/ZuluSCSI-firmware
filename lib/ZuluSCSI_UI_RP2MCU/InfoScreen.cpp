@@ -38,19 +38,31 @@ void InfoScreen::init(int index)
 
   // Set the scroller text
   DeviceMap &map = g_devices[_scsiId];
-  setScrollerText(0, map.Filename);
+
+  image_config_t &img = g_DiskImages[_scsiId];
+  setScrollerText(0, img.current_image);
   setScrollerText(1, map.Path);
 }
 
 void InfoScreen::draw()
 { 
+  DeviceMap &map = g_devices[_scsiId];
+
   _display->setCursor(0,0);             
-  _display->print(F("Info (1/3)"));
+  if (map.NavObjectType == NAV_OBJECT_CUE)
+  {
+    _display->print(F("Info (1/4)"));
+  }
+  else
+  {
+    _display->print(F("Info (1/3)"));
+  }
+  
+  
   
   _iconX = _display->width();
 
-  DeviceMap &map = g_devices[_scsiId];
-
+  
   _display->setTextSize(2);
   printNumberFromTheRight(_scsiId, 6, 0);
   _display->setTextSize(1);
@@ -99,7 +111,15 @@ void InfoScreen::rotaryChange(int direction)
 {
   if (direction == 1)
   {
-    changeScreen(SCREEN_INFO_PAGE2, _scsiId);
+    DeviceMap &map = g_devices[_scsiId];
+    if (map.NavObjectType == NAV_OBJECT_CUE)
+    {
+      changeScreen(SCREEN_INFO_PAGE4, _scsiId); 
+    }
+    else
+    {
+      changeScreen(SCREEN_INFO_PAGE2, _scsiId); 
+    }
   }
   else if (direction == -1)
   {

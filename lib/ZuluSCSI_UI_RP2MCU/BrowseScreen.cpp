@@ -27,6 +27,7 @@
 #include "MessageBox.h"
 #include "control_global.h"
 #include "UISDNavigator.h"
+#include "ZuluSCSI_settings.h"
 
 void BrowseScreen::init(int index)
 {
@@ -51,14 +52,13 @@ void BrowseScreen::init(int index)
   setFolderAndUpdateScrollers(_deviceMap->Path, 0 );
 
   // Find the index of the file 
-  bool isDir;
-  _currentObjectIndex = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(_currentObjectPath, _deviceMap->Filename, isDir);
+  NAV_OBJECT_TYPE navObjectType;
+  _currentObjectIndex = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(_currentObjectPath, _deviceMap->SelectedObject, navObjectType);
   if (_currentObjectIndex == -1)
   {
     _currentObjectIndex = 0;
   }
   
-
   // Need to recreate the stack
   // e.g. ISO3/folder  needs a stack of 1, where element 0 is the position of 'folder'
   bool done = false;
@@ -70,7 +70,7 @@ void BrowseScreen::init(int index)
   {
     char *firstSlash = strchr(start, (char)'/');
     
-    bool isDir;
+    NAV_OBJECT_TYPE navObjectType;
 
     if (firstSlash == NULL) // End of the list
     {
@@ -103,8 +103,8 @@ void BrowseScreen::init(int index)
       // logmsg("   --- folderToLookFor = '", folderToLookFor, "'");
 
 
-      int index = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(folderToCheck, folderToLookFor, isDir);
-      if (isDir)
+      int index = SDNavFindItemIndexByNameAndPath.FindItemByNameAndPath(folderToCheck, folderToLookFor, navObjectType);
+      if (navObjectType == NAV_OBJECT_DIR)
       {
         _returnStack[_stackDepth++] = index;
       }  
@@ -132,13 +132,13 @@ void BrowseScreen::draw()
 
   _display->drawLine(0,10,_iconX+11,10, 1);
 
-  _display->setCursor(0,36);
-  _display->print(F("Path: "));     
-
   _display->setCursor(0,22);             
   _display->print(F("Item: "));
 
-  if (!_isCurrentObjectADir)
+  _display->setCursor(0,36);
+  _display->print(F("Path: "));     
+
+  if (_currentObjectType != NAV_OBJECT_DIR)
   {
     _display->setCursor(0,46);             
     _display->print(F("Size: "));
@@ -149,15 +149,19 @@ void BrowseScreen::draw()
   }
 
   _display->setCursor(0,56);    
-  if (_isCurrentObjectADir)
+  switch(_currentObjectType)
   {
-    _display->print(F("Dir"));
+    case NAV_OBJECT_FILE:
+      _display->print(F("File"));
+      break;
+    case NAV_OBJECT_DIR:
+      _display->print(F("Dir"));
+      break;
+    case NAV_OBJECT_CUE:
+      _display->print(F("BinCue"));
+      break;
   }
-  else
-  {
-    _display->print(F("File"));
-  }
-
+  
   _display->setCursor(42,56);    
   _display->print((_currentObjectIndex+1));
   _display->print(" of ");
@@ -167,6 +171,7 @@ void BrowseScreen::draw()
 void BrowseScreen::sdCardStateChange(bool cardIsPresent)
 {
   _stackDepth = 0;
+  strcpy(_deviceMap->SelectedObject, "");
 }
 
 void BrowseScreen::shortRotaryPress()
@@ -194,7 +199,7 @@ void BrowseScreen::shortUserPress()
 
 void BrowseScreen::shortEjectPress()
 {
-  if (_isCurrentObjectADir)
+  if (_currentObjectType == NAV_OBJECT_DIR)
   {
     selectCurrentObject();
   }
@@ -223,7 +228,7 @@ void BrowseScreen::rotaryChange(int direction)
 void BrowseScreen::getCurrentFilenameAndUpdateScrollers()
 {
   getCurrentFilename();
-  setScrollerText(0, _currentObjectName);
+  setScrollerText(0, _currentObjectDisplayName);
 }
 
 void BrowseScreen::setFolderAndUpdateScrollers(char *folder, int initialFile)
@@ -268,16 +273,17 @@ int BrowseScreen::selectCurrentObject()
 
     if (index < _totalObjects) // Object from disc
     {
-      bool isDir;
+      NAV_OBJECT_TYPE navObjectType;
       u_int64_t size;
-      
-      if (!SDNavItemByIndex.GetObjectByIndex(_currentObjectPath, index, g_tmpFilename, (size_t)MAX_PATH_LEN, isDir, size))
+      char tmp[MAX_FILE_PATH];
+
+      if (!SDNavItemByIndex.GetObjectByIndex(_currentObjectPath, index, g_tmpFilename, (size_t)MAX_PATH_LEN, navObjectType, size, tmp))
       {
           return 0;
       }
       else
       {
-        if (isDir)
+        if (navObjectType == NAV_OBJECT_DIR)
         {
             int newPathLen = strlen(_currentObjectPath) + strlen(g_tmpFilename) + 1;
             if ( newPathLen > (MAX_PATH_LEN-1))
@@ -329,7 +335,8 @@ bool BrowseScreen::goBackADirectory()
   if (!isCurrentFolderRoot())
   {
       strcpy(_currentObjectName, _back);
-      _isCurrentObjectADir = true; 
+      strcpy(_currentObjectDisplayName, _currentObjectName);
+      _currentObjectType = NAV_OBJECT_DIR;
 
       _currentObjectIndex = _totalObjects;
       selectCurrentObject();
@@ -357,15 +364,23 @@ void BrowseScreen::getCurrentFilename()
 
     if (_currentObjectIndex < _totalObjects) // Object from disc
     {
-        if (!SDNavItemByIndex.GetObjectByIndex(_currentObjectPath, _currentObjectIndex,  _currentObjectName, (size_t)MAX_PATH_LEN, _isCurrentObjectADir, _currentObjectSize))
+        if (!SDNavItemByIndex.GetObjectByIndex(_currentObjectPath, _currentObjectIndex,  _currentObjectName, (size_t)MAX_PATH_LEN, _currentObjectType, _currentObjectSize, _currentObjectDisplayName))
         {
             logmsg("* ERROR - BrowseScreen::getCurrentFilename(). Couldnt get FindObjectByIndex: ", (int)_scsiId);
+        }
+
+        // The assumption above is that _currentObjectDisplayName is a cue, but if it's not, copy the objectName
+        scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+        if (_currentObjectType != NAV_OBJECT_CUE || !cfg->controlBoardShowCueFileName) 
+        {
+          strcpy(_currentObjectDisplayName, _currentObjectName);
         }
     }
     else if (!isCurrentFolderRoot() && _currentObjectIndex ==  (totalObjects-1))
     {
         strcpy(_currentObjectName, _back);
-        _isCurrentObjectADir = true; 
+        strcpy(_currentObjectDisplayName, _currentObjectName);
+        _currentObjectType = NAV_OBJECT_DIR; 
     }
 }
 
@@ -376,12 +391,15 @@ bool BrowseScreen::isCurrentFolderRoot()
 
 void BrowseScreen::loadSelectedImage()
 {
-  if (!_isCurrentObjectADir)
+  if (_currentObjectType != NAV_OBJECT_DIR)
   {
       strcpy(g_tmpFilepath, _currentObjectPath);
       strcat(g_tmpFilepath, "/");
       strcat(g_tmpFilepath, _currentObjectName);
-      
+
+      strcpy(_deviceMap->SelectedObject, _currentObjectName);
+      _deviceMap->NavObjectType  = _currentObjectType;
+
       logmsg("Loading Image file: ", g_tmpFilepath);
       
       haltUIUpdates();

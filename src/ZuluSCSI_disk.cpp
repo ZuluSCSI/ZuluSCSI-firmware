@@ -1041,9 +1041,15 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
             logmsg("Couldn't find file in root. Looking in subfolders");
 
             char path[MAX_PATH_LEN];
-            if (SDNavGetFirstFileRecursive.GetFirstFileRecursive(dirname, buf, path))
+            char file[MAX_PATH_LEN];
+            NAV_OBJECT_TYPE navObjectType;
+            if (SDNavGetFirstFileRecursive.GetFirstFileRecursive(dirname, file, path, navObjectType))
             {
-                setCurrentFolder(target_idx, path); // patch the path
+                strcpy(buf, path);
+                strcat(buf, "/");
+                strcat(buf, file);
+
+                setInitialFullPath(target_idx, path, file, navObjectType); // patch the path
 
                 logmsg("Found file: ", buf);
                 img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something

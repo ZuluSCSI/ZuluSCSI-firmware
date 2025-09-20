@@ -22,12 +22,13 @@ typedef enum
 } WALK_DIR_RESULT;
 
 
+
 class SDNavigator
 {
 protected:	
-    WALK_DIR_RESULT WalkDirectory(const char* dirname, bool recursive, bool includeAllFiles);
+    WALK_DIR_RESULT WalkDirectory(const char* dirname, bool recursive, bool includeAllFiles, bool remapBinCues);
 
-	virtual PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path); // returning true mean stop processing
+	virtual PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename); // returning true mean stop processing
 
     bool startsWith(const char* str, const char* prefix);
 
@@ -37,13 +38,14 @@ protected:
 class FindItemIndexByNameAndPathSDNavigatorRaw : public SDNavigator
 {
 public:
-    int FindItemByNameAndPath(const char *dirname, const char *filename, bool &isDir);
+    int FindItemByNameAndPath(const char *dirname, const char *filename, u_int64_t &size, NAV_OBJECT_TYPE &navObjectType);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
-    bool _isDir;
+    NAV_OBJECT_TYPE _navObjectType;
     int _counter;
+    u_int64_t _size;
     const char *_filename;
 };
 
@@ -54,7 +56,7 @@ public:
     bool ScanFiles(const char *dirname, void (*callback)(int, const char *, const char *, u_int64_t));
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
     void (*_callback)(int, const char *, const char *, u_int64_t);
 
@@ -65,13 +67,14 @@ protected:
 class GetFirstFileRecursiveSDNavigator : public SDNavigator
 {
 public:
-    bool GetFirstFileRecursive(const char *dirname, char *filename, char *path);
+    bool GetFirstFileRecursive(const char *dirname, char *filename, char *path, NAV_OBJECT_TYPE &navObjectType);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(FsFile &file, const char *filename, const char *path);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
     const char *_filename;
     const char *_path;
+    NAV_OBJECT_TYPE _navObjectType;
 };
 
 extern GetFirstFileRecursiveSDNavigator SDNavGetFirstFileRecursive;

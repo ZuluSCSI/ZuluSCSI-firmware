@@ -39,7 +39,6 @@ extern const char *g_log_short_firmwareversion;
 
 // new in ZuluSCSI_platform.h
 extern bool g_scsi_initiator;
-
 #endif
 
 #endif

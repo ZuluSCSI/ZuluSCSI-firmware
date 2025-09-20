@@ -14,6 +14,7 @@ GetFirstFileRecursiveSDNavigator SDNavGetFirstFileRecursive;
 
 int totCue = 0;
 char tmpCueFile[MAX_FILE_PATH];
+u_int64_t g_cueSize;
 
 void cueScan(int count, const char *file, const char *path, u_int64_t size)
 {
@@ -29,6 +30,7 @@ void cueScan(int count, const char *file, const char *path, u_int64_t size)
         strcpy(g_tmpFilepath, tmpCueFile);
 
         strcpy(g_tmpFilename, file);
+        g_cueSize = size;
         totCue++;
     }
   }
@@ -38,7 +40,7 @@ void cueScan(int count, const char *file, const char *path, u_int64_t size)
 // Load data from CUE sheet for the given device,
 // using the second half of scsiDev.data buffer for temporary storage.
 // Returns false if no cue sheet or it could not be opened.
-static bool loadCueSheet(const char *cueFile, CUEParser &parser)
+static bool loadCueSheet(const char *cueFile, CUEParser &parser, u_int64_t &cueFileSize)
 {
     // Use second half of scsiDev.data as the buffer for cue sheet text
     size_t halfbufsize = sizeof(scsiDev.data) / 2;
@@ -46,23 +48,24 @@ static bool loadCueSheet(const char *cueFile, CUEParser &parser)
 
     FsVolume *vol = SD.vol();
     FsFile fHandle = vol->open(cueFile, O_RDONLY);
-    int len = fHandle.read(cuebuf, halfbufsize);
+    cueFileSize = fHandle.read(cuebuf, halfbufsize);
     fHandle.close();
 
-    if (len <= 0)
+    if (cueFileSize <= 0 || cueFileSize < g_cueSize) // empty, or didn't load the whole thing
     {
         return false;
     }
 
-    cuebuf[len] = '\0';
+    cuebuf[cueFileSize] = '\0';
     parser = CUEParser(cuebuf);
     return true;
 }
 
-bool isFolderACueBinSet(const char *folder, char *cueFile)
+bool isFolderACueBinSet(const char *folder, char *cueFile, u_int64_t &cueSize, u_int64_t &binSize, int &totalBins)
 {
   // look for .cue files
   totCue = 0;
+  binSize = 0;
   SDNavScanFilesRaw.ScanFiles(folder, cueScan);
 
   if (totCue == 1)
@@ -70,24 +73,37 @@ bool isFolderACueBinSet(const char *folder, char *cueFile)
     // found 1 cue file
     // parse it, and look for the bin files in it
     CUEParser parser;
-    if (loadCueSheet(g_tmpFilepath, parser))
+    u_int64_t cueFileSize = 0;
+    totalBins = 0;
+
+    if (loadCueSheet(g_tmpFilepath, parser, cueFileSize))
     {
+        
       CUETrackInfo const *track;
       uint64_t prev_capacity = 0;
 
       // Find last track
       while((track = parser.next_track(prev_capacity)) != nullptr)
       {
-          bool isDir;
-          int index = SDNavFindItemIndexByNameAndPathRaw.FindItemByNameAndPath(folder, track->filename, isDir);
+          NAV_OBJECT_TYPE navObjectType;
+          u_int64_t size;
+          int index = SDNavFindItemIndexByNameAndPathRaw.FindItemByNameAndPath(folder, track->filename, size, navObjectType);
+          binSize += size;
+          totalBins++;
           if (index == -1)
           {
             return false; // Couldn't find a bin mentioned in the cue file
           }
       }
     }
+    else
+    {
+        return false;
+    }
 
     strcpy(cueFile, g_tmpFilename);
+    // cueSize = g_cueSize;
+    cueSize = cueFileSize;
 
     return true; // All matched
   }
@@ -104,36 +120,36 @@ bool SDNavigator::startsWith(const char* str, const char* prefix)
     return strncasecmp(prefix, str, prefix_len) == 0;
 }
 
-PROCESS_DIR_ITEM_RESULT SDNavigator::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)
+PROCESS_DIR_ITEM_RESULT SDNavigator::ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename)
 {
     return PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING;
 }
 
-WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, bool includeAllFiles)
+WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, bool includeAllFiles, bool remapBinCues)
 {
     char buf[MAX_PATH_LEN];
-    memset(buf, 0, MAX_FILE_PATH);
+   
 
     FsFile dir;
     if (dirname[0] == '\0')
     {
-        logmsg("Image directory name invalid");
+       // SAVE logmsg("Image directory name invalid");
         return WALK_DIR_ITEM_RESULT_FAIL;
     }
     if (!dir.open(dirname))
     {
-        logmsg("Image directory '", dirname, "' couldn't be opened");
+      // SAVE  logmsg("Image directory '", dirname, "' couldn't be opened");
         return WALK_DIR_ITEM_RESULT_FAIL;
     }
     if (!dir.isDir())
     {
-        logmsg("Can't find images in '", dirname, "', not a directory");
+     // SAVE   logmsg("Can't find images in '", dirname, "', not a directory");
         dir.close();
         return WALK_DIR_ITEM_RESULT_FAIL;
     }
     if (dir.isHidden())
     {
-        logmsg("Image directory '", dirname, "' is hidden, skipping");
+      // SAVE  logmsg("Image directory '", dirname, "' is hidden, skipping");
         dir.close();
         return WALK_DIR_ITEM_RESULT_FAIL;
     }
@@ -141,9 +157,10 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
     FsFile file;
     while (file.openNext(&dir, O_RDONLY))
     {
+        memset(buf, 0, MAX_FILE_PATH);
         if (!file.getName(buf, MAX_FILE_PATH))
         {
-            logmsg("Image directory '", dirname, "' had invalid file");
+     // SAVE       logmsg("Image directory '", dirname, "' had invalid file");
             continue;
         }
 
@@ -159,11 +176,19 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
             continue;
         }
 
+        char newPath[MAX_FILE_PATH];
+        char cueFile[MAX_FILE_PATH];
+        memset(cueFile, 0, MAX_FILE_PATH);
+
+        u_int64_t cueSize;
+        u_int64_t binSize;
+        int totalBins;
+
         if (recursive)
         {
-            if (!file.isDir())
+            if (!file.isDir()) // File
             {
-                switch(ProcessDirectoryItem(file, buf, dirname))
+                switch(ProcessDirectoryItem(buf, dirname, file.size(), NAV_OBJECT_FILE, cueFile))
                 {
                     case PROCESS_DIR_ITEM_RESULT_PROCEED:
                         break;
@@ -171,35 +196,83 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
                         return WALK_DIR_ITEM_RESULT_STOP_PROCESSING;
                 }
             }
-            else
+            else // Dir
             {
-                char newPath[MAX_FILE_PATH];
                 memset(newPath, 0, MAX_FILE_PATH);
                 strcpy(newPath, dirname);
                 strcat(newPath, "/");
                 strcat(newPath, buf);
 
-                _hasSubDirs = true;
+                bool processDirAsNormal = true;
 
-                switch(WalkDirectory(newPath, recursive, includeAllFiles))
+                if (remapBinCues)
                 {
-                    case WALK_DIR_ITEM_RESULT_OK:
-                        break;
-                    case WALK_DIR_ITEM_RESULT_FAIL:
-                        return WALK_DIR_ITEM_RESULT_FAIL;
-                    case WALK_DIR_ITEM_RESULT_STOP_PROCESSING:
-                        return WALK_DIR_ITEM_RESULT_STOP_PROCESSING;
+                    // do check
+                    if (isFolderACueBinSet(newPath, cueFile, cueSize, binSize, totalBins))
+                    {
+                        processDirAsNormal = false;
+
+                        switch(ProcessDirectoryItem(buf, dirname, binSize, NAV_OBJECT_CUE, cueFile))
+                        {
+                            case PROCESS_DIR_ITEM_RESULT_PROCEED:
+                                break;
+                            case PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING:
+                                return WALK_DIR_ITEM_RESULT_STOP_PROCESSING;
+                        }
+                    }
+                }
+                
+                if (processDirAsNormal)
+                {
+                    _hasSubDirs = true;
+
+                    switch(WalkDirectory(newPath, recursive, includeAllFiles, remapBinCues))
+                    {
+                        case WALK_DIR_ITEM_RESULT_OK:
+                            break;
+                        case WALK_DIR_ITEM_RESULT_FAIL:
+                            return WALK_DIR_ITEM_RESULT_FAIL;
+                        case WALK_DIR_ITEM_RESULT_STOP_PROCESSING:
+                            return WALK_DIR_ITEM_RESULT_STOP_PROCESSING;
+                    }
                 }
             }
         }
         else
         {
-            switch(ProcessDirectoryItem(file, buf, dirname))
+            // Non Recursive
+            bool processDirAsNormal = true;
+
+            if (remapBinCues && file.isDir())
             {
-                case PROCESS_DIR_ITEM_RESULT_PROCEED:
-                    break;
-                case PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING:
-                    return WALK_DIR_ITEM_RESULT_STOP_PROCESSING;
+                memset(newPath, 0, MAX_FILE_PATH);
+                strcpy(newPath, dirname);
+                strcat(newPath, "/");
+                strcat(newPath, buf);
+                
+                if (isFolderACueBinSet(newPath, cueFile, cueSize, binSize, totalBins))
+                {
+                    processDirAsNormal = false;
+
+                    switch(ProcessDirectoryItem(buf, dirname, binSize, NAV_OBJECT_CUE, cueFile))
+                    {
+                        case PROCESS_DIR_ITEM_RESULT_PROCEED:
+                            break;
+                        case PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING:
+                            return WALK_DIR_ITEM_RESULT_STOP_PROCESSING;
+                    }    
+                }
+            }
+
+            if (processDirAsNormal)
+            {
+                switch(ProcessDirectoryItem(buf, dirname, file.size(), file.isDir() ? NAV_OBJECT_DIR : NAV_OBJECT_FILE, cueFile))
+                {
+                    case PROCESS_DIR_ITEM_RESULT_PROCEED:
+                        break;
+                    case PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING:
+                        return WALK_DIR_ITEM_RESULT_STOP_PROCESSING;
+                }
             }
         }
     }
@@ -209,23 +282,22 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
 
 // GetFirstFileRecursiveSDNavigator
 ///////////////////////////////////
-PROCESS_DIR_ITEM_RESULT GetFirstFileRecursiveSDNavigator::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)
+PROCESS_DIR_ITEM_RESULT GetFirstFileRecursiveSDNavigator::ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename)
 {
     _filename = filename;
     _path = path;
+    _navObjectType = navObjectType;
 
     return PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING;
 }
 
-bool GetFirstFileRecursiveSDNavigator::GetFirstFileRecursive(const char *dirname, char *filename, char *path)
+bool GetFirstFileRecursiveSDNavigator::GetFirstFileRecursive(const char *dirname, char *filename, char *path, NAV_OBJECT_TYPE &navObjectType)
 {
-    if (WalkDirectory(dirname, true, false) != WALK_DIR_ITEM_RESULT_FAIL)
+    if (WalkDirectory(dirname, true, false, true) != WALK_DIR_ITEM_RESULT_FAIL)
     {
-        strcpy(filename, _path);
-        strcat(filename, "/");
-        strcat(filename, _filename);
-        
+        strcpy(filename, _filename);
         strcpy(path, _path);
+        navObjectType = _navObjectType;
 
         return true;
     }
@@ -235,11 +307,12 @@ bool GetFirstFileRecursiveSDNavigator::GetFirstFileRecursive(const char *dirname
 
 // FindItemIndexByNameAndPathSDNavigator
 ///////////////////////////////
-PROCESS_DIR_ITEM_RESULT FindItemIndexByNameAndPathSDNavigatorRaw::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)
+PROCESS_DIR_ITEM_RESULT FindItemIndexByNameAndPathSDNavigatorRaw::ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename)
 {
-    if (strcmp(filename, _filename) == 0)
+    if (strcasecmp(filename, _filename) == 0)
     {
-        _isDir = file.isDir();
+        _navObjectType = navObjectType;
+        _size = size;
         return PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING;    
     }
 
@@ -247,15 +320,16 @@ PROCESS_DIR_ITEM_RESULT FindItemIndexByNameAndPathSDNavigatorRaw::ProcessDirecto
     return PROCESS_DIR_ITEM_RESULT_PROCEED;
 }
 
-int FindItemIndexByNameAndPathSDNavigatorRaw::FindItemByNameAndPath(const char *dirname,  const char *filename, bool &isDir)
+int FindItemIndexByNameAndPathSDNavigatorRaw::FindItemByNameAndPath(const char *dirname,  const char *filename,u_int64_t &size, NAV_OBJECT_TYPE &navObjectType)
 {
     _filename = filename;
     _counter = 0;
-    _isDir = false;
+    _navObjectType = NAV_OBJECT_NONE;
 
-    if (WalkDirectory(dirname, false, false) == WALK_DIR_ITEM_RESULT_STOP_PROCESSING)
+    if (WalkDirectory(dirname, false, false, false) == WALK_DIR_ITEM_RESULT_STOP_PROCESSING)
     {
-        isDir = _isDir;
+        navObjectType = _navObjectType;
+        size = _size;
         return _counter;
     }
 
@@ -264,9 +338,9 @@ int FindItemIndexByNameAndPathSDNavigatorRaw::FindItemByNameAndPath(const char *
 
 // ScanFilesRecursiveSDNavigator
 ////////////////////////////////
-PROCESS_DIR_ITEM_RESULT ScanFilesSDNavigatorRaw::ProcessDirectoryItem(FsFile &file, const char *filename, const char *path)
+PROCESS_DIR_ITEM_RESULT ScanFilesSDNavigatorRaw::ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename)
 {
-    _callback(_counter, filename, path, file.size());
+    _callback(_counter, filename, path, size);
     _counter++;
 
     return PROCESS_DIR_ITEM_RESULT_PROCEED;
@@ -277,7 +351,7 @@ bool ScanFilesSDNavigatorRaw::ScanFiles(const char *dirname, void (*callback)(in
     _callback = callback;
     _counter = 0;
 
-    if (WalkDirectory(dirname, false, true) != WALK_DIR_ITEM_RESULT_FAIL)
+    if (WalkDirectory(dirname, false, true, false) != WALK_DIR_ITEM_RESULT_FAIL)
     {
         return true;
     }
