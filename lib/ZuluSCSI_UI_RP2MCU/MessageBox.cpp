@@ -29,6 +29,7 @@
 #include "control_global.h"
 
 extern Screen *g_activeScreen;
+extern bool g_led_blinking;
 
 void MessageBox::init(int index)
 {
@@ -69,8 +70,12 @@ void MessageBox::tick()
   {
     if (g_pendingLoadComplete > -1)
     {
-        _conditionPendingLoadComplete = false;
-        changeScreen(_return, _index);
+        // Now wait for the flashing to stop
+        if (!g_led_blinking)
+        {
+          _conditionPendingLoadComplete = false;
+          changeScreen(_return, _index);
+        }
     }
   }
 }
