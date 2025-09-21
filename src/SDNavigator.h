@@ -67,7 +67,7 @@ protected:
 class GetFirstFileRecursiveSDNavigator : public SDNavigator
 {
 public:
-    bool GetFirstFileRecursive(const char *dirname, char *filename, char *path, NAV_OBJECT_TYPE &navObjectType);
+    bool GetFirstFileRecursive(const char *dirname, char *filename, char *path);
 
 protected:	
 	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);

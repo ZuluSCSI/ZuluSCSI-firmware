@@ -1046,12 +1046,13 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 
             char path[MAX_PATH_LEN];
             char file[MAX_PATH_LEN];
-            NAV_OBJECT_TYPE navObjectType;
-            if (SDNavGetFirstFileRecursive.GetFirstFileRecursive(dirname, file, path, navObjectType))
+            if (SDNavGetFirstFileRecursive.GetFirstFileRecursive(dirname, file, path))
             {
                 strcpy(buf, path);
                 strcat(buf, "/");
                 strcat(buf, file);
+
+                setFolder(target_idx, true, path);
 
                 logmsg("Found file: ", buf);
                 img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something

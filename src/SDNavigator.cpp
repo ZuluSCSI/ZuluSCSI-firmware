@@ -286,19 +286,16 @@ PROCESS_DIR_ITEM_RESULT GetFirstFileRecursiveSDNavigator::ProcessDirectoryItem(c
 {
     _filename = filename;
     _path = path;
-    _navObjectType = navObjectType;
-
+    
     return PROCESS_DIR_ITEM_RESULT_STOP_PROCESSING;
 }
 
-bool GetFirstFileRecursiveSDNavigator::GetFirstFileRecursive(const char *dirname, char *filename, char *path, NAV_OBJECT_TYPE &navObjectType)
+bool GetFirstFileRecursiveSDNavigator::GetFirstFileRecursive(const char *dirname, char *filename, char *path)
 {
     if (WalkDirectory(dirname, true, false, true) != WALK_DIR_ITEM_RESULT_FAIL)
     {
         strcpy(filename, _filename);
         strcpy(path, _path);
-        navObjectType = _navObjectType;
-
         return true;
     }
 
