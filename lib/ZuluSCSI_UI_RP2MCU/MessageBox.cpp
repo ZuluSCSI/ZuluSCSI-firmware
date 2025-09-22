@@ -70,12 +70,8 @@ void MessageBox::tick()
   {
     if (g_pendingLoadComplete > -1)
     {
-        // Now wait for the flashing to stop
-        if (!g_led_blinking)
-        {
-          _conditionPendingLoadComplete = false;
-          changeScreen(_return, _index);
-        }
+        _conditionPendingLoadComplete = false;
+        deferredMessageBoxClose(1000, _return, _index);
     }
   }
 }
