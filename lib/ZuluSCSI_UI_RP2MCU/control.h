@@ -112,6 +112,15 @@ extern char g_tmpFilepath[MAX_PATH_LEN];
 extern DeviceMap *g_devices;
 
 extern const char* typeToShortString(S2S_CFG_TYPE type);
+
+/**
+ * Keep Message box open for delay_ms millisecond
+ * \param open_ms number of milliseconds to keep message box open, 0 immediately closes
+ * \param screen the screen to change to after it closes
+ * \param deviceId the device ID for the screen to change to
+ */
+
+extern void deferredMessageBoxClose(uint32_t open_ms, SCREEN_TYPE screen, int deviceId);
 extern bool loadImageDeferred(uint8_t id, const char* next_filename, SCREEN_TYPE returnScreen, int returnIndex);
 extern void patchDevice(uint8_t i);
 

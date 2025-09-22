@@ -125,7 +125,17 @@ int g_previousIndex = SCREEN_ID_NO_PREVIOUS;
 SYSTEM_MODE g_systemMode = SYSTEM_NORMAL;
 
 static ZULUSCSI_UI_START g_uiStart = ZULUSCSI_UI_START_SPLASH_VERSION;
-static uint32_t g_uiStartTime = 0;
+static uint32_t g_uiSplashStartTime = 0;
+
+static struct
+{
+    bool active = false;
+    uint32_t startTime = 0;
+    uint32_t remainOpenTime = 0;
+    SCREEN_TYPE changeScreenTo = SCREEN_NONE;
+    int changeDeviceIdTo = SCREEN_ID_UNINITIALIZED;
+} g_uiAutoCloseMsgBox;
+
 
 int g_pcaAddr = 0x3F;
 
@@ -212,14 +222,14 @@ static bool splashScreenPoll()
 {
     if (g_uiStart != ZULUSCSI_UI_START_DONE)
     {
-        if (g_uiStart == ZULUSCSI_UI_START_SPLASH_VERSION && (uint32_t)(millis() - g_uiStartTime) > 1500)
+        if (g_uiStart == ZULUSCSI_UI_START_SPLASH_VERSION && (uint32_t)(millis() - g_uiSplashStartTime) > 1500)
         {
             _splashScreen->setBannerText(systemModeToString(g_systemMode));
             changeScreen(SCREEN_SPLASH, SCREEN_ID_NO_PREVIOUS);
             g_uiStart = ZULUSCSI_UI_START_SPLASH_SYS_MODE;
-            g_uiStartTime = millis();
+            g_uiSplashStartTime = millis();
         }
-        else if (g_uiStart == ZULUSCSI_UI_START_SPLASH_SYS_MODE && (uint32_t)(millis() - g_uiStartTime) > 1000)
+        else if (g_uiStart == ZULUSCSI_UI_START_SPLASH_SYS_MODE && (uint32_t)(millis() - g_uiSplashStartTime) > 1000)
         {
             g_uiStart = ZULUSCSI_UI_START_DONE;
 
@@ -251,9 +261,44 @@ static bool splashScreenPoll()
     }
     return false;
 }
+
+void deferredMessageBoxClose(uint32_t open_ms, SCREEN_TYPE screen, int deviceId)
+{
+    if (open_ms == 0)
+        changeScreen(screen, deviceId);
+    else
+    {
+        g_uiAutoCloseMsgBox.active = true;
+        g_uiAutoCloseMsgBox.changeScreenTo = screen;
+        g_uiAutoCloseMsgBox.changeDeviceIdTo = deviceId;
+        g_uiAutoCloseMsgBox.remainOpenTime = open_ms;
+        g_uiAutoCloseMsgBox.startTime = millis();
+    }
+}
+
+/**
+ * Check if the message box should be closed
+ */
+static void pollMessageBoxClose()
+{
+    if (g_uiAutoCloseMsgBox.active && (uint32_t)(millis() - g_uiAutoCloseMsgBox.startTime) > g_uiAutoCloseMsgBox.remainOpenTime)
+    {
+        g_uiAutoCloseMsgBox.active = false;
+        changeScreen(g_uiAutoCloseMsgBox.changeScreenTo, g_uiAutoCloseMsgBox.changeDeviceIdTo);
+    }
+}
+
+/**
+ * poll various UI timers
+ */
+static void pollUI()
+{
+    pollMessageBoxClose();
+}
+
 /**
  * Skip changeScreen if splash screen is still visible
- * Otherwise change s   creen if the same screen isn't already loaded or if force_change is true
+ * Otherwise change screen if the same screen isn't already loaded or if force_change is true
  * \param screen screen type to change 
  * \param deviceId the device ID
  * \param force_change don't check if the screen is already loaded
@@ -588,7 +633,7 @@ void initUIPostSDInit(bool sd_card_present)
         changeScreen(SCREEN_SPLASH, SCREEN_ID_NO_PREVIOUS);
         g_activeScreen->tick();
         g_uiStart = ZULUSCSI_UI_START_SPLASH_VERSION;
-        g_uiStartTime = millis();
+        g_uiSplashStartTime = millis();
     }
 
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
@@ -1036,6 +1081,8 @@ extern "C" void controlLoop()
     {
         return;
     }
+
+    pollUI();
 
     // Get the input from the control board
     uint8_t input_byte = getValue();
