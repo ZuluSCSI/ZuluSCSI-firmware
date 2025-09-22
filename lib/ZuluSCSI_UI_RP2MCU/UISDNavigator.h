@@ -63,7 +63,7 @@ public:
     bool GetFileByIndex(const char *prefix, int index, char* buf, size_t buflen, u_int64_t &size);
 
 protected:	
-	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectTyper, char *cueFilename);
+	PROCESS_DIR_ITEM_RESULT ProcessDirectoryItem(const char *filename, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, char *cueFilename);
 
     int _index;
     int _counter;

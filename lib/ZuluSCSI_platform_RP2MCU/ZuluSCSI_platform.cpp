@@ -90,7 +90,7 @@ const char *g_platform_name = PLATFORM_NAME;
 bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
-bool g_led_blinking = false;
+static bool g_led_blinking = false;
 static bool g_led_state = false;
 static struct {
     uint32_t slice;

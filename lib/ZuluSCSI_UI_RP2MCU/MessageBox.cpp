@@ -29,7 +29,6 @@
 #include "control_global.h"
 
 extern Screen *g_activeScreen;
-extern bool g_led_blinking;
 
 void MessageBox::init(int index)
 {
