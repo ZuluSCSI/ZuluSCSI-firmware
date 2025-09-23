@@ -41,8 +41,6 @@ void InfoPage4Screen::init(int index)
   strcat(tmp, "/");
   strcat(tmp, map.LoadedObject);
 
-  logmsg("&&&& Ttmp = '", tmp, "'");
-
   isFolderACueBinSet(tmp, _cue, _cueSize, binSize, _totalBins);
   setScrollerText(0, _cue);
 }
@@ -51,7 +49,7 @@ void InfoPage4Screen::draw()
 { 
   _display->setCursor(0,0);             
   DeviceMap &map = g_devices[_scsiId];       
-  _display->print(F("Info (2/4)"));
+  _display->print(F("Info (2/3)"));
   
   _iconX = _display->width();
 

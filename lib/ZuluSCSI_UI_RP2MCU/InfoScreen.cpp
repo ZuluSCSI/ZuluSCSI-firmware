@@ -39,8 +39,7 @@ void InfoScreen::init(int index)
   // Set the scroller text
   DeviceMap &map = g_devices[_scsiId];
 
-  image_config_t &img = g_DiskImages[_scsiId];
-  setScrollerText(0, img.current_image);
+  setScrollerText(0, map.LoadedObject);
   setScrollerText(1, map.Path);
 }
 
@@ -48,43 +47,39 @@ void InfoScreen::draw()
 { 
   DeviceMap &map = g_devices[_scsiId];
 
-  _display->setCursor(0,0);             
-  if (map.NavObjectType == NAV_OBJECT_CUE)
-  {
-    _display->print(F("Info (1/4)"));
-  }
-  else
-  {
-    _display->print(F("Info (1/3)"));
-  }
-  
-  
+  _display->setCursor(0,0);    
+  _display->print(F("Info (1/3)"));         
   
   _iconX = _display->width();
 
-  
   _display->setTextSize(2);
   printNumberFromTheRight(_scsiId, 6, 0);
   _display->setTextSize(1);
 
-
   const uint8_t *deviceIcon = getIconForType(map.DeviceType, true);
   drawIconFromRight(deviceIcon, 6, 0);
 
-    if (map.IsRaw)
-    {
-      drawIconFromRight(icon_raw, 0, 0);
-    }
-    if (map.IsRom)
-    {
-      drawIconFromRight(icon_rom, 0, 0);
-    }
+  if (map.IsRaw)
+  {
+    drawIconFromRight(icon_raw, 0, 0);
+  }
+  if (map.IsRom)
+  {
+    drawIconFromRight(icon_rom, 0, 0);
+  }
 
-    _display->drawLine(0,10,_iconX+11,10, 1);
+  _display->drawLine(0,10,_iconX+11,10, 1);
 
 
-  _display->setCursor(0,16);             
-  _display->print(F("File: "));
+  _display->setCursor(0,16);    
+  if (map.NavObjectType == NAV_OBJECT_CUE)
+  {         
+    _display->print(F("BinCue:"));
+  }
+  else
+  {
+    _display->print(F("File:"));
+  }
 
   _display->setCursor(0,26);             
   _display->print(F("Folder: "));
@@ -128,9 +123,9 @@ void InfoScreen::shortUserPress()
 
 void InfoScreen::rotaryChange(int direction)
 {
+  DeviceMap &map = g_devices[_scsiId];
   if (direction == 1)
   {
-    DeviceMap &map = g_devices[_scsiId];
     if (map.NavObjectType == NAV_OBJECT_CUE)
     {
       changeScreen(SCREEN_INFO_PAGE4, _scsiId); 
@@ -142,7 +137,14 @@ void InfoScreen::rotaryChange(int direction)
   }
   else if (direction == -1)
   {
-    changeScreen(SCREEN_INFO_PAGE3, _scsiId);
+    if (map.NavObjectType == NAV_OBJECT_CUE)
+    {
+      changeScreen(SCREEN_INFO_PAGE2, _scsiId);
+    }
+    else
+    {
+      changeScreen(SCREEN_INFO_PAGE3, _scsiId);
+    }
   }
 }
 

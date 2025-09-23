@@ -48,7 +48,7 @@ void InfoPage2Screen::draw()
   DeviceMap &map = g_devices[_scsiId];       
   if (map.NavObjectType == NAV_OBJECT_CUE)
   {
-    _display->print(F("Info (3/4)"));
+    _display->print(F("Info (3/3)"));
   }
   else
   {
@@ -106,13 +106,21 @@ void InfoPage2Screen::shortUserPress()
 
 void InfoPage2Screen::rotaryChange(int direction)
 {
+  DeviceMap &map = g_devices[_scsiId];
+
   if (direction == 1)
   {
-    changeScreen(SCREEN_INFO_PAGE3, _scsiId);
+    if (map.NavObjectType == NAV_OBJECT_CUE)
+    {
+      changeScreen(SCREEN_INFO, _scsiId);
+    }
+    else
+    {
+      changeScreen(SCREEN_INFO_PAGE3, _scsiId);
+    }
   }
   else if (direction == -1)
   {
-    DeviceMap &map = g_devices[_scsiId];
     if (map.NavObjectType == NAV_OBJECT_CUE)
     {
       changeScreen(SCREEN_INFO_PAGE4, _scsiId); 
