@@ -141,9 +141,10 @@ void MainScreen::shortRotaryPress()
   changeScreen(SCREEN_INFO, _selectedDevice);
 }
 
+
 void MainScreen::shortUserPress()
 {
-  
+   // printDevices();;
 }
 
 void MainScreen::shortEjectPress()

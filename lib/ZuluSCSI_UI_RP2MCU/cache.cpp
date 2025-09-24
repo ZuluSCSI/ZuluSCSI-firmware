@@ -29,6 +29,7 @@
 #include "MessageBox.h"
 #include "cache.h"
 #include "control_global.h"
+#include "UISDNavigator.h"
 
 extern SdFs SD;
 FsFile g_fileHandle;
@@ -63,7 +64,7 @@ FsFile appendFile(const char*filenamne)
     return vol->open(filenamne, O_WRONLY | O_CREAT);
 }
 
-void fileCallback(int count, const char *file, const char *path, u_int64_t size)
+void fileCallback(int count, const char *file, const char *path, u_int64_t size, NAV_OBJECT_TYPE navObjectType, const char *cueFilename)
 {
     DeviceMap *deviceMap = &g_devices[g_currentID];
 
@@ -95,6 +96,9 @@ void fileCallback(int count, const char *file, const char *path, u_int64_t size)
                     catHandle.write((u_int8_t *)path, MAX_PATH_LEN);
                     catHandle.write((u_int8_t *)&size, sizeof(u_int64_t));
 
+                    catHandle.write((u_int8_t *)&navObjectType, sizeof(NAV_OBJECT_TYPE));
+                    catHandle.write((u_int8_t *)cueFilename, MAX_PATH_LEN);    
+
                     catHandle.close();
                     found = true;
                 }
@@ -114,6 +118,9 @@ void fileCallback(int count, const char *file, const char *path, u_int64_t size)
     g_fileHandle.write((u_int8_t *)file, MAX_PATH_LEN);
     g_fileHandle.write((u_int8_t *)path, MAX_PATH_LEN);
     g_fileHandle.write((u_int8_t *)&size, sizeof(u_int64_t));
+    g_fileHandle.write((u_int8_t *)&navObjectType, sizeof(NAV_OBJECT_TYPE));
+    g_fileHandle.write((u_int8_t *)cueFilename, MAX_PATH_LEN);    
+
 }
 
 void purgeCacheFolder()
@@ -164,7 +171,7 @@ int GetIndexFromCategoryCode(int scsiId, char cat)
 }
 
 
-extern "C" int findCacheFile(int scsiId, char cat, char *file, char *path)
+extern "C" int findCacheFile(int scsiId, char cat, const char *searchFile, const char *searchPath)
 {
     int total = 0;
     DeviceMap *deviceMap = &g_devices[scsiId];
@@ -187,20 +194,21 @@ extern "C" int findCacheFile(int scsiId, char cat, char *file, char *path)
     FsFile fHandle = vol->open(g_tmpCacheFilepath, O_RDONLY);
 
     int i;
-    int blockSize = ((MAX_PATH_LEN + MAX_PATH_LEN) + sizeof(u_int64_t));
+    int blockSize = ((MAX_PATH_LEN + MAX_PATH_LEN + MAX_PATH_LEN) + sizeof(u_int64_t) + sizeof(NAV_OBJECT_TYPE));
+
+    char file[MAX_FILE_PATH];
+    char path[MAX_FILE_PATH];
 
     for (i=0;i<total;i++)
     {
         int offset = blockSize * i;
-        u_int64_t size;
 
         fHandle.seek(offset);
 
         fHandle.read(file, MAX_PATH_LEN);
         fHandle.read(path, MAX_PATH_LEN);
-        fHandle.read(&size, sizeof(u_int64_t));
-
-        if (strcmp(deviceMap->Filename, file) == 0 && strcmp(deviceMap->Path, path) == 0)
+        
+        if (strcmp(searchFile, file) == 0 && strcmp(searchPath, path) == 0)
         {
             fHandle.close();
             return i;
@@ -211,7 +219,7 @@ extern "C" int findCacheFile(int scsiId, char cat, char *file, char *path)
     return -1;
 }
 
-extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *path, u_int64_t &size)
+extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *path, u_int64_t &size, NAV_OBJECT_TYPE &type, char *cueFile)
 {
     strcpy(g_tmpCacheFilepath, ".cache/cache0_.dat");
     g_tmpCacheFilepath[13] = cat;
@@ -220,7 +228,7 @@ extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *
     FsVolume *vol = SD.vol();
     FsFile fHandle = vol->open(g_tmpCacheFilepath, O_RDONLY);
 
-    int blockSize = ((MAX_PATH_LEN + MAX_PATH_LEN) + sizeof(u_int64_t));
+    int blockSize = ((MAX_PATH_LEN + MAX_PATH_LEN + MAX_PATH_LEN) + sizeof(NAV_OBJECT_TYPE) + sizeof(u_int64_t));
     int offset = blockSize * index;
 
     fHandle.seek(offset);
@@ -228,7 +236,9 @@ extern "C" void getCacheFile(int scsiId, char cat, int index, char *file, char *
     fHandle.read(file, MAX_PATH_LEN);
     fHandle.read(path, MAX_PATH_LEN);
     fHandle.read(&size, sizeof(u_int64_t));
-
+    fHandle.read(&type, sizeof(NAV_OBJECT_TYPE));
+    fHandle.read(cueFile, MAX_PATH_LEN);
+    
     fHandle.close();
 }
 

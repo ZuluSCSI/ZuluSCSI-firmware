@@ -70,7 +70,7 @@ void MessageBox::tick()
     if (g_pendingLoadComplete > -1)
     {
         _conditionPendingLoadComplete = false;
-        changeScreen(_return, _index);
+        deferredMessageBoxClose(1000, _return, _index);
     }
   }
 }

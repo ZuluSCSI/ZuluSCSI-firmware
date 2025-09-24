@@ -86,6 +86,8 @@ struct DeviceMap
 	char Revision[5];
 	char Serial[17];
 
+    uint16_t Quirks;
+
     // Computed
     BROWSE_METHOD BrowseMethod;
 
@@ -102,6 +104,14 @@ struct DeviceMap
     int TotalFilesInCategory[MAX_CATEGORIES];
     SCREEN_BROWSETYPES BrowseScreenType; // GT TODO This is really a UI concept - move?
 
+    char LoadedObject[MAX_PATH_LEN];  // This is the same as filename for normal object, but the folder name for cue/bin
+    NAV_OBJECT_TYPE NavObjectType;
+
+    // Cahce during initial load or loadLoad
+    char CueFilename[MAX_PATH_LEN]; 
+    int TotalBins;
+    uint64_t CueSize;
+
     // Used by both Normal and Initiator
     char Filename[MAX_PATH_LEN]; 
     S2S_CFG_TYPE DeviceType;
@@ -116,13 +126,22 @@ struct DeviceMap
     uint64_t SectorCount;
 };
 
-extern char g_tmpFilename[MAX_PATH_LEN];
-extern char g_tmpFilepath[MAX_PATH_LEN];
+
 extern DeviceMap *g_devices;
 
 extern const char* typeToShortString(S2S_CFG_TYPE type);
+
+/**
+ * Keep Message box open for delay_ms millisecond
+ * \param open_ms number of milliseconds to keep message box open, 0 immediately closes
+ * \param screen the screen to change to after it closes
+ * \param deviceId the device ID for the screen to change to
+ */
+
+extern void deferredMessageBoxClose(uint32_t open_ms, SCREEN_TYPE screen, int deviceId);
 extern bool loadImageDeferred(uint8_t id, const char* next_filename, SCREEN_TYPE returnScreen, int returnIndex);
 extern void patchDevice(uint8_t i);
+extern void UpdateDeviceInfo(int target_idx, const char *fullPath, const char *path, const char *file, NAV_OBJECT_TYPE navObjectType);
 
 // In UIContainer.cpp
 
@@ -137,6 +156,9 @@ extern INITIATOR_MODE g_initiatorMode;
 extern void sendSDCardStateChangedToScreens(bool cardIsPresent);
 extern void changeScreen(SCREEN_TYPE type, int index);
 
+extern bool isFolderACueBinSet(const char *folder, char *cueFile, u_int64_t &cueSize, u_int64_t &binSize, int &totalBins);
+
+extern void printDevices();
 
 #endif
 

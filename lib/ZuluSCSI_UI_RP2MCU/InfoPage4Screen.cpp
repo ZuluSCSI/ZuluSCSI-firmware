@@ -21,21 +21,28 @@
 
 #if defined(CONTROL_BOARD)
 
-#include "InfoPage3Screen.h"
+#include "InfoPage4Screen.h"
 #include "ZuluSCSI_log.h"
 
-void InfoPage3Screen::init(int index)
+void InfoPage4Screen::init(int index)
 {
   Screen::init(index);
 
   _scsiId = index;
+
+   initScrollers(1);
+
+  setupScroller(0, 52, 26, 88, 8, 1);
+  
+  DeviceMap &map = g_devices[_scsiId];      
+ setScrollerText(0, map.CueFilename);
 }
 
-void InfoPage3Screen::draw()
+void InfoPage4Screen::draw()
 { 
   _display->setCursor(0,0);             
   DeviceMap &map = g_devices[_scsiId];       
-  _display->print(F("Info (3/3)"));
+  _display->print(F("Info (2/3)"));
   
   _iconX = _display->width();
 
@@ -57,42 +64,48 @@ void InfoPage3Screen::draw()
 
   _display->drawLine(0,10,_iconX+11,10, 1);
 
-
   _display->setCursor(0,16);             
-  _display->print(F("LBA:"));
-  _display->setCursor(52,16);       
-  _display->print(map.LBA);    
+  _display->print(F("Bin/Cue Details:"));
 
   _display->setCursor(0,26);             
-  _display->print(F("Bt/Sec:"));
-  _display->setCursor(52,26);       
-  _display->print(map.BytesPerSector);    
-
+  _display->print(F("Cue :"));
+ 
   _display->setCursor(0,36);             
-  _display->print(F("Sc/Trk:"));
+  _display->print(F("Bins:"));
   _display->setCursor(52,36);       
-  _display->print(map.SectorsPerTrack);    
+  _display->print(map.TotalBins);    
 
   _display->setCursor(0,46);             
-  _display->print(F("Hd/Cyl:"));
+  _display->print(F("Cue Size:"));
   _display->setCursor(52,46);       
-  _display->print(map.HeadsPerCylinder);    
+  makeImageSizeStr(map.CueSize, _sizeBuffer);
+  _display->print(_sizeBuffer);    
+  _display->print("B");  
+  
+    _display->setCursor(0,56);             
+  _display->print(F("Bin Size:"));
+  _display->setCursor(52,56);    
+  makeImageSizeStr(map.Size, _sizeBuffer);
+  _display->print(_sizeBuffer);
+
+  
+  
 }
 
-void InfoPage3Screen::shortUserPress()
+void InfoPage4Screen::shortUserPress()
 {
   changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
 }
 
-void InfoPage3Screen::rotaryChange(int direction)
+void InfoPage4Screen::rotaryChange(int direction)
 {
   if (direction == -1)
   {
-    changeScreen(SCREEN_INFO_PAGE2, _scsiId);
+    changeScreen(SCREEN_INFO, _scsiId);
   }
   else if (direction == 1)
   {
-    changeScreen(SCREEN_INFO, _scsiId);
+    changeScreen(SCREEN_INFO_PAGE2, _scsiId);
   }
 }
 

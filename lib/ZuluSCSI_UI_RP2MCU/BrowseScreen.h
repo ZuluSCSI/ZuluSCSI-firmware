@@ -49,10 +49,13 @@ private:
     int _scsiId;
     DeviceMap *_deviceMap;
 
+    char _currentObjectDisplayName[MAX_PATH_LEN];
+
     char _currentObjectName[MAX_PATH_LEN];
-    char _currentObjectPath[MAX_PATH_LEN];
+    char _currentObjectPath[MAX_PATH_LEN]; // This is the real path that we are 
+
     u_int64_t _currentObjectSize;
-    bool _isCurrentObjectADir;
+    NAV_OBJECT_TYPE _currentObjectType;
     int _currentObjectIndex; // index into _totalObjects
     int _totalObjects;  // Real file total - doesn't include ".." if not root
 

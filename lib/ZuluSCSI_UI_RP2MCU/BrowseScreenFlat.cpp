@@ -28,6 +28,8 @@
 
 #include "cache.h"
 #include "control_global.h"
+#include "UISDNavigator.h"
+#include "ZuluSCSI_settings.h"
 
 void BrowseScreenFlat::initImgDir(int index)
 {
@@ -55,16 +57,19 @@ void BrowseScreenFlat::initImgDir(int index)
   // Find the index of the file 
   if (g_cacheActive)
   {
-    _currentObjectIndex = findCacheFile(_scsiId, _catChar, _currentObjectName, _currentObjectPath);
+    _currentObjectIndex = findCacheFile(_scsiId, _catChar, _deviceMap->LoadedObject, _deviceMap->Path);
   }
   else
   {
-    _currentObjectIndex = SDNavFindItemIndexByNameAndPathRecursive.FindItemIndexByNameAndPathRecursive(_deviceMap->RootFolder, _currentObjectName, _currentObjectPath);
-    if (_currentObjectIndex == -1)
-    {
-      _currentObjectIndex = 0;
-    }
+    _currentObjectIndex = SDNavFindItemIndexByNameAndPathRecursive.FindItemIndexByNameAndPathRecursive(_deviceMap->RootFolder, _deviceMap->LoadedObject, _deviceMap->Path);
   }
+
+  // If none was found, just select the first
+  if (_currentObjectIndex == -1)
+  {
+    _currentObjectIndex = 0;
+  }
+  
 }
 
 void BrowseScreenFlat::initImgX(int index)
@@ -120,6 +125,7 @@ void BrowseScreenFlat::initPrefix(int index)
 void BrowseScreenFlat::sdCardStateChange(bool cardIsPresent)
 {
   _currntBrowseScreenType = -1;
+  strcpy(_deviceMap->LoadedObject, "");
 }
 
 void BrowseScreenFlat::init(int index)
@@ -207,7 +213,15 @@ void BrowseScreenFlat::draw()
   _display->print(_sizeBuffer);
 
   _display->setCursor(0,56);    
-  _display->print(F("File"));
+  switch(_currentObjectType)
+  {
+    case NAV_OBJECT_FILE:
+      _display->print(F("File"));
+      break;
+    case NAV_OBJECT_CUE:
+      _display->print(F("BinCue"));
+      break;
+  }
   
   _display->setCursor(42,56);    
   _display->print((_currentObjectIndex+1));
@@ -280,7 +294,7 @@ int BrowseScreenFlat::navigateToPreviousObject()
 void BrowseScreenFlat::getCurrentFilenameAndUpdateScrollers()
 {
   getCurrentFilename();
-  setScrollerText(0, _currentObjectName);
+  setScrollerText(0, _currentObjectDisplayName);
   setScrollerText(1, _currentObjectPath);
 }
 
@@ -295,17 +309,25 @@ void BrowseScreenFlat::getCurrentFilename()
       {
           if (g_cacheActive)
           {
-            getCacheFile(_scsiId, _catChar, _currentObjectIndex, _currentObjectName, _currentObjectPath, _currentObjectSize);
+            getCacheFile(_scsiId, _catChar, _currentObjectIndex, _currentObjectName, _currentObjectPath, _currentObjectSize, _currentObjectType, _currentObjectDisplayName);     
           }
           else
           {
-            SDNavFileByIndexRecursive.GetObjectByIndexRecursive(_deviceMap->RootFolder, _currentObjectIndex, _currentObjectName, _currentObjectPath, 64, _currentObjectSize);
+            SDNavFileByIndexRecursive.GetObjectByIndexRecursive(_deviceMap->RootFolder, _currentObjectIndex, _currentObjectName, _currentObjectPath, MAX_FILE_PATH, _currentObjectSize, _currentObjectType, _currentObjectDisplayName);
+          }
+          // The assumption above is that _currentObjectDisplayName is a cue, but if it's not, copy the objectName
+          scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
+          if (_currentObjectType != NAV_OBJECT_CUE || !cfg->controlBoardShowCueFileName) 
+          {
+            strcpy(_currentObjectDisplayName, _currentObjectName);
           }
       }  
       break;
 
     case BROWSE_METHOD_IMGX:
       getImgXByIndex(_scsiId, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
+      strcpy(_currentObjectDisplayName, _currentObjectName);
+      _currentObjectType = NAV_OBJECT_FILE;
       break;
 
     case BROWSE_METHOD_USE_PREFIX:
@@ -318,6 +340,8 @@ void BrowseScreenFlat::getCurrentFilename()
         pre[2] = 'A' + (_scsiId - 10);
       pre[3] = '\0';
       SDNavPrefixFileByIndex.GetFileByIndex(pre, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
+      strcpy(_currentObjectDisplayName, _currentObjectName);
+      _currentObjectType = NAV_OBJECT_FILE;
     } 
     case BROWSE_METHOD_NOT_BROWSABLE:
       break;
@@ -332,12 +356,11 @@ void BrowseScreenFlat::loadSelectedImage()
       strcpy(g_tmpFilepath, _currentObjectPath);
       strcat(g_tmpFilepath, "/");
       strcat(g_tmpFilepath, _currentObjectName);
-      
+
       haltUIUpdates();
       if (loadImageDeferred(_scsiId, g_tmpFilepath, SCREEN_BROWSE_FLAT, _scsiId))
       {
-        strcpy(_deviceMap->Path, _currentObjectPath);
-        strcpy(_deviceMap->Filename, _currentObjectName);
+        UpdateDeviceInfo(_scsiId, g_tmpFilepath, _currentObjectPath, _currentObjectName, _currentObjectType);
       }
       break;
 
@@ -353,6 +376,16 @@ void BrowseScreenFlat::loadSelectedImage()
       break;
 
     case BROWSE_METHOD_USE_PREFIX:
+      strcpy(g_tmpFilepath, _currentObjectName);
+
+      haltUIUpdates();
+      if (loadImageDeferred(_scsiId, g_tmpFilepath, SCREEN_BROWSE_FLAT, _scsiId))
+      {
+        strcpy(_deviceMap->Path, "");
+        strcpy(_deviceMap->Filename, _currentObjectName);
+      }
+      break;
+
     case BROWSE_METHOD_NOT_BROWSABLE:
       break;
   }

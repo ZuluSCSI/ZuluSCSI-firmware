@@ -24,8 +24,9 @@
 extern "C" void scsiReinitComplete() {}
 extern "C" void controlLoop() {}
 extern "C" bool mscMode() { return false; }
-extern "C" void setFolder(int target_idx, bool userSet, const char *path) {}
-extern "C" void setCurrentFolder(int target_idx, const char *path) {}
+extern "C" void setRootFolder(int target_idx, bool userSet, const char *path) {}
+extern "C" void setFolder(int target_idx, const char *path) {}
+extern "C" void binCueInUse(int target_idx, const char *foldername) {}
 extern "C" void initUIDisplay() {}
 extern "C" void initUIPostSDInit(bool cardPresent) {}
 

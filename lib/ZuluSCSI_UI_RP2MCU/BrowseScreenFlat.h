@@ -48,6 +48,9 @@ private:
     int _scsiId;
     DeviceMap *_deviceMap;
 
+    char _currentObjectDisplayName[MAX_PATH_LEN];
+    NAV_OBJECT_TYPE _currentObjectType;
+    
     const char *_back = "..";
     char _currentObjectName[MAX_PATH_LEN];
     char _currentObjectPath[MAX_PATH_LEN];

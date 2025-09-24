@@ -39,7 +39,7 @@
 #include "CopyScreen.h"
 #include "InitiatorMainScreen.h"
 #include "ScreenSaver.h"
-#include "SDNavigator.h"
+#include "UISDNavigator.h"
 
 #define TOTAL_CONTROL_BOARD_BUTTONS 3
 
@@ -91,8 +91,7 @@ const uint8_t rotary_transition_lut[7][4] =
   {ROTARY_CONT_CCW_110,  ROTARY_LAST_CCW_101,   ROTARY_START_CCW_100,  ROTARY_TICK_000},
 };
 
-char g_tmpFilename[MAX_PATH_LEN];
-char g_tmpFilepath[MAX_PATH_LEN];
+
 
 // Device state tracking
 bool g_sdAvailable = false;
@@ -126,13 +125,24 @@ int g_previousIndex = SCREEN_ID_NO_PREVIOUS;
 SYSTEM_MODE g_systemMode = SYSTEM_NORMAL;
 
 static ZULUSCSI_UI_START g_uiStart = ZULUSCSI_UI_START_SPLASH_VERSION;
-static uint32_t g_uiStartTime = 0;
+static uint32_t g_uiSplashStartTime = 0;
+
+static struct
+{
+    bool active = false;
+    uint32_t startTime = 0;
+    uint32_t remainOpenTime = 0;
+    SCREEN_TYPE changeScreenTo = SCREEN_NONE;
+    int changeDeviceIdTo = SCREEN_ID_UNINITIALIZED;
+} g_uiAutoCloseMsgBox;
+
 
 int g_pcaAddr = 0x3F;
 
 bool g_controlBoardEnabled = false;
 bool hasScreenBeenInitialized = false;
 bool hasControlBeenInitialized = false;
+
 
 /// Helpers
 
@@ -195,14 +205,21 @@ void printDevices()
     int i;
     for (i = 0; i < S2S_MAX_TARGETS; i++)
     {
-        logmsg("  - ", i, "  Active: ", g_devices[i].Active, " user folder ",  g_devices[i].UserFolder,  "  root " , g_devices[i].RootFolder, "  path: ", g_devices[i].Path);
-        logmsg("    -  Type: ", typeToShortString(g_devices[i].DeviceType)
-            ," CurrentFilename ",  g_devices[i].Filename
-            ,"  Size  " , g_devices[i].Size
-            ,"  IsRemovable " , g_devices[i].IsRemovable,
-             "  IsRaw " , g_devices[i].IsRaw);
-            //" image_directory = ", g_devices[i].image_directory,
-            //" use_prefix = ", g_devices[i].use_prefix);
+        logmsg("SCSI : ", i);
+        logmsg(" Active:         ", g_devices[i].Active);
+        logmsg(" User Folder:    ", g_devices[i].UserFolder);
+        logmsg(" Root:           ", g_devices[i].RootFolder);
+        logmsg(" Path:           ", g_devices[i].Path);
+        logmsg(" LoadedObject:   ", g_devices[i].LoadedObject);
+        logmsg(" Filename:       ", g_devices[i].Filename);
+        logmsg(" Type:           ", g_devices[i].DeviceType);
+        logmsg(" Size:           ", g_devices[i].Size);
+        logmsg(" IsRemovable:    ", g_devices[i].IsRemovable);
+        logmsg(" IsRaw:          ", g_devices[i].IsRaw);
+        logmsg(" NavObjectType:  ", g_devices[i].NavObjectType);
+        logmsg(" CueFilename:    ", g_devices[i].CueFilename);
+        logmsg(" CueSize:        ", g_devices[i].CueSize);
+        logmsg(" TotalBins:      ", g_devices[i].TotalBins);
     }
 }
 
@@ -213,14 +230,14 @@ static bool splashScreenPoll()
 {
     if (g_uiStart != ZULUSCSI_UI_START_DONE)
     {
-        if (g_uiStart == ZULUSCSI_UI_START_SPLASH_VERSION && (uint32_t)(millis() - g_uiStartTime) > 1500)
+        if (g_uiStart == ZULUSCSI_UI_START_SPLASH_VERSION && (uint32_t)(millis() - g_uiSplashStartTime) > 1500)
         {
             _splashScreen->setBannerText(systemModeToString(g_systemMode));
             changeScreen(SCREEN_SPLASH, SCREEN_ID_NO_PREVIOUS);
             g_uiStart = ZULUSCSI_UI_START_SPLASH_SYS_MODE;
-            g_uiStartTime = millis();
+            g_uiSplashStartTime = millis();
         }
-        else if (g_uiStart == ZULUSCSI_UI_START_SPLASH_SYS_MODE && (uint32_t)(millis() - g_uiStartTime) > 1000)
+        else if (g_uiStart == ZULUSCSI_UI_START_SPLASH_SYS_MODE && (uint32_t)(millis() - g_uiSplashStartTime) > 1000)
         {
             g_uiStart = ZULUSCSI_UI_START_DONE;
 
@@ -252,9 +269,44 @@ static bool splashScreenPoll()
     }
     return false;
 }
+
+void deferredMessageBoxClose(uint32_t open_ms, SCREEN_TYPE screen, int deviceId)
+{
+    if (open_ms == 0)
+        changeScreen(screen, deviceId);
+    else
+    {
+        g_uiAutoCloseMsgBox.active = true;
+        g_uiAutoCloseMsgBox.changeScreenTo = screen;
+        g_uiAutoCloseMsgBox.changeDeviceIdTo = deviceId;
+        g_uiAutoCloseMsgBox.remainOpenTime = open_ms;
+        g_uiAutoCloseMsgBox.startTime = millis();
+    }
+}
+
+/**
+ * Check if the message box should be closed
+ */
+static void pollMessageBoxClose()
+{
+    if (g_uiAutoCloseMsgBox.active && (uint32_t)(millis() - g_uiAutoCloseMsgBox.startTime) > g_uiAutoCloseMsgBox.remainOpenTime)
+    {
+        g_uiAutoCloseMsgBox.active = false;
+        changeScreen(g_uiAutoCloseMsgBox.changeScreenTo, g_uiAutoCloseMsgBox.changeDeviceIdTo);
+    }
+}
+
+/**
+ * poll various UI timers
+ */
+static void pollUI()
+{
+    pollMessageBoxClose();
+}
+
 /**
  * Skip changeScreen if splash screen is still visible
- * Otherwise change s   creen if the same screen isn't already loaded or if force_change is true
+ * Otherwise change screen if the same screen isn't already loaded or if force_change is true
  * \param screen screen type to change 
  * \param deviceId the device ID
  * \param force_change don't check if the screen is already loaded
@@ -558,7 +610,41 @@ void initUIDisplay()
     hasScreenBeenInitialized = initScreenHardware();
 }
 
+// This clear the list of devices, used at startup and on card removal
+void initDevices()
+{
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
+    if (g_devices == nullptr)
+    {
+        g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
+    }
+#else
+    g_devices = static_g_devices;
+#endif
 
+    int i;
+    for (i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        g_devices[i].Active = false;
+        g_devices[i].UserFolder = false;
+        g_devices[i].CueSize = 0;
+        g_devices[i].TotalBins = 0;
+        g_devices[i].NavObjectType = NAV_OBJECT_NONE;
+        strcpy(g_devices[i].RootFolder, "");
+        strcpy(g_devices[i].LoadedObject, "");
+        strcpy(g_devices[i].CueFilename, "");
+        strcpy(g_devices[i].Path, g_devices[i].RootFolder);
+
+        g_devices[i].DeviceType = S2S_CFG_NOT_SET;
+        strcpy(g_devices[i].Filename, "");
+        g_devices[i].Size = 0;
+        g_devices[i].IsRemovable = false;
+        g_devices[i].IsRaw = false;
+
+        // UI Runtime
+        g_devices[i].BrowseScreenType = SCREEN_BROWSETYPE_FOLDERS;
+    }
+}
 
 void initUIPostSDInit(bool sd_card_present)
 {
@@ -589,7 +675,7 @@ void initUIPostSDInit(bool sd_card_present)
         changeScreen(SCREEN_SPLASH, SCREEN_ID_NO_PREVIOUS);
         g_activeScreen->tick();
         g_uiStart = ZULUSCSI_UI_START_SPLASH_VERSION;
-        g_uiStartTime = millis();
+        g_uiSplashStartTime = millis();
     }
 
     logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
@@ -618,7 +704,7 @@ void updateRotary(int dir)
 
 int g_fileCount;
 
-void scanFileCallback(int count, const char *file, const char *path, u_int64_t size)
+void scanFileCallback(int count, const char *file, const char *path, u_int64_t size, NAV_OBJECT_TYPE type, const char *cueFile)
 {
     g_fileCount = count;
 }
@@ -673,9 +759,10 @@ void scanForNestedFolders()
 // Called on sd remove and Device Chnages
 void stateChange()
 {
+    // printDevices();
+
     g_userInputDetected = true;  // Something changed, so assume the user did interact
 
-    // printDevices();
     sendSDCardStateChangedToScreens(g_sdAvailable);
 
     if (g_sdAvailable)
@@ -786,36 +873,7 @@ void devicesUpdated()
     stateChange();
 }
 
-// This clear the list of devices, used at startup and on card removal
-void initDevices()
-{
-#if ZULUSCSI_RESERVED_SRAM_LEN > 0
-    if (g_devices == nullptr)
-    {
-        g_devices = (DeviceMap*) reserve_buffer_align(sizeof(DeviceMap) * S2S_MAX_TARGETS, 4);
-    }
-#else
-    g_devices = static_g_devices;
-#endif
 
-    int i;
-    for (i = 0; i < S2S_MAX_TARGETS; i++)
-    {
-        g_devices[i].Active = false;
-        g_devices[i].UserFolder = false;
-        strcpy(g_devices[i].RootFolder, "");
-        strcpy(g_devices[i].Path, g_devices[i].RootFolder);
-
-        g_devices[i].DeviceType = S2S_CFG_NOT_SET;
-        strcpy(g_devices[i].Filename, "");
-        g_devices[i].Size = 0;
-        g_devices[i].IsRemovable = false;
-        g_devices[i].IsRaw = false;
-
-        // UI Runtime
-        g_devices[i].BrowseScreenType = SCREEN_BROWSETYPE_FOLDERS;
-    }
-}
 
 void safeCopyString(const char *src, char *dst, uint8_t size)
 {
@@ -864,6 +922,10 @@ void patchDevice(uint8_t target_idx)
 
     DeviceMap &map = g_devices[target_idx];
 
+    strcpy(map.CueFilename, "");
+    map.CueSize = 0;
+    map.TotalBins = 0;
+
     strcpy(map.Filename, img.current_image);
     map.Size = img.file.size();
     map.IsRaw = img.file.isRaw();
@@ -871,10 +933,42 @@ void patchDevice(uint8_t target_idx)
     map.IsWritable =  img.file.isWritable();
     
     map.Active = img.file.isOpen();
+    map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
 
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(target_idx);
     if (map.Active)
     {
+        // 1. A bincue will have set this via binCueInUse(), for all others set it to the filename
+        if (strcmp(map.LoadedObject, "") == 0)
+        {
+            strcpy(map.LoadedObject, map.Filename);
+        }
+                    
+        // 2.  bincue will have set this via binCueInUse(), for all others default to a normal file
+        switch(map.NavObjectType)
+        {
+            case NAV_OBJECT_NONE:
+                map.NavObjectType = NAV_OBJECT_FILE;
+                break;
+
+            case NAV_OBJECT_CUE:
+                {
+                    char tmp[MAX_FILE_PATH];
+                    strcpy(tmp, map.Path);
+                    strcat(tmp, "/");
+                    if ( (strlen(tmp) + strlen(map.LoadedObject)+  2) < MAX_FILE_PATH)
+                    {
+                        strcat(tmp, map.LoadedObject);
+                    }
+                    else
+                    {
+                        logmsg("Error. Path too long. Trying to join '", tmp, "' with '", map.LoadedObject, '"');
+                    }
+
+                    isFolderACueBinSet(tmp, map.CueFilename, map.CueSize, map.Size, map.TotalBins);
+                }
+        }
+        
         map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;
         map.IsRemovable = isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType);
 
@@ -883,6 +977,7 @@ void patchDevice(uint8_t target_idx)
         map.SectorsPerTrack = cfg->sectorsPerTrack;
         map.HeadsPerCylinder = cfg->headsPerCylinder;
 
+        map.Quirks = cfg->quirks;
         safeCopyString(cfg->vendor, map.Vendor, 8);
         safeCopyString(cfg->prodId, map.ProdId, 16);
         safeCopyString(cfg->revision, map.Revision, 4);
@@ -927,16 +1022,11 @@ void patchDevice(uint8_t target_idx)
                 map.MaxImgX = j;
             }
         }
-        else
-        {
-            map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
-        }
     }
     else
     {
         map.DeviceType = S2S_CFG_NOT_SET;
         map.IsRemovable = false;
-        map.BrowseMethod = BROWSE_METHOD_NOT_BROWSABLE;
     }
 
     /*
@@ -997,13 +1087,35 @@ void patchDevices()
     }
 }
 
+// This is called when a new image is loaded and sets all needed fields in the DeveMap
+// Note: technically 'fullPath' is redundant, but it's always availale, so save recomputing it here
+void UpdateDeviceInfo(int target_idx, const char *fullPath, const char *path, const char *file, NAV_OBJECT_TYPE navObjectType)
+{
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
+    DeviceMap &map = g_devices[target_idx];
+
+    map.NavObjectType  = navObjectType;
+
+    strcpy(map.LoadedObject, file);
+    strcpy(map.Filename, file);
+    strcpy(map.Path, path);
+    if (map.NavObjectType == NAV_OBJECT_CUE)
+    {
+        isFolderACueBinSet(fullPath, map.CueFilename, map.CueSize, map.Size, map.TotalBins);
+    }
+}
+
 //////////////////////////////////////
 // Externs called by original ZULU code
 //////////////////////////////////////
 
 // When Zulu is determing if drives are folder based, once it works it out, it calls this
 // This is used as the 1st pass on setting device info
-extern "C" void setFolder(int target_idx, bool userSet, const char *path)
+extern "C" void setRootFolder(int target_idx, bool userSet, const char *path)
 {
     if (!g_controlBoardEnabled)
     {
@@ -1017,10 +1129,47 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
     strcpy(map.Path, path); // Default Cwd to the root
 }
 
-extern "C" void setCurrentFolder(int target_idx, const char *path)
+extern "C" void setFolder(int target_idx, const char *path)
 {
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
     DeviceMap &map = g_devices[target_idx];
     strcpy(map.Path, path); // Default Cwd to the root
+}
+
+void splitPath(const char *full, char *path, char *file)
+{
+    const char *lastSlash = strrchr(full, '/');
+    if (!lastSlash)
+    {
+        strcpy(path, full);
+        strcpy(file, "");
+    }
+    else
+    {
+        int len = lastSlash - full;
+        strncpy(path, full, len);
+        path[len] = 0;
+
+        strcpy(file, lastSlash+1);
+    }
+}
+
+extern "C" void binCueInUse(int target_idx, const char *foldername) 
+{
+    DeviceMap &map = g_devices[target_idx];
+    map.NavObjectType = NAV_OBJECT_CUE;
+
+    char path[MAX_FILE_PATH];
+    char file[MAX_FILE_PATH];
+
+    splitPath(foldername, path, file);
+
+    strcpy(map.Path, path); 
+    strcpy(map.LoadedObject, file);
 }
 
 // When a card is removed or inserted. If it's removed then clear the device list
@@ -1092,6 +1241,8 @@ extern "C" void controlLoop()
     {
         return;
     }
+
+    pollUI();
 
     // Get the input from the control board
     uint8_t input_byte = getValue();

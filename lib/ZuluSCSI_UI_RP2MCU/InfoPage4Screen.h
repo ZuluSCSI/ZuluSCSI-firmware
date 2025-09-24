@@ -21,16 +21,28 @@
 
 #if defined(CONTROL_BOARD)
 
-#ifndef BROWSEMETHOD_H
-#define BROWSEMETHOD_H
+#ifndef INFOPAGE4SCREEN_H
+#define INFOPAGE4SCREEN_H
 
-typedef enum
+#include "Screen.h"
+#include "scrolling_text.h"
+
+class InfoPage4Screen : public Screen
 {
-    BROWSE_METHOD_NOT_BROWSABLE,
-    BROWSE_METHOD_IMDDIR,
-	BROWSE_METHOD_IMGX,
-    BROWSE_METHOD_USE_PREFIX
-} BROWSE_METHOD; 
+public:
+    InfoPage4Screen(Adafruit_SSD1306 *display) : Screen(display) {}
+
+    SCREEN_TYPE screenType() { return SCREEN_INFO_PAGE4; }
+
+    void init(int index);
+    void draw();
+
+    void shortUserPress();
+    void rotaryChange(int direction);
+
+private:
+    int _scsiId;
+};
 
 #endif
 
