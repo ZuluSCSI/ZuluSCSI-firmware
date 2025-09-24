@@ -50,7 +50,8 @@ extern "C" void controlLoop();
 extern "C" bool mscMode();
 extern "C" void loadImage();      // in ZuluSCSI_disk used in ZuluSCSI
 
-extern "C" void setFolder(int target_idx, bool userSet, const char *path);
+extern "C" void setRootFolder(int target_idx, bool userSet, const char *path);
+extern "C" void setFolder(int target_idx, const char *path);
 extern "C" void binCueInUse(int target_idx, const char *foldername);
 extern "C" void initUIDisplay();
 extern "C" void initUIPostSDInit(bool cardPresent);

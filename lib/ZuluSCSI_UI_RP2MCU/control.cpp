@@ -217,6 +217,9 @@ void printDevices()
         logmsg(" IsRemovable:    ", g_devices[i].IsRemovable);
         logmsg(" IsRaw:          ", g_devices[i].IsRaw);
         logmsg(" NavObjectType:  ", g_devices[i].NavObjectType);
+        logmsg(" CueFilename:    ", g_devices[i].CueFilename);
+        logmsg(" CueSize:        ", g_devices[i].CueSize);
+        logmsg(" TotalBins:      ", g_devices[i].TotalBins);
     }
 }
 
@@ -624,9 +627,12 @@ void initDevices()
     {
         g_devices[i].Active = false;
         g_devices[i].UserFolder = false;
+        g_devices[i].CueSize = 0;
+        g_devices[i].TotalBins = 0;
         g_devices[i].NavObjectType = NAV_OBJECT_NONE;
         strcpy(g_devices[i].RootFolder, "");
         strcpy(g_devices[i].LoadedObject, "");
+        strcpy(g_devices[i].CueFilename, "");
         strcpy(g_devices[i].Path, g_devices[i].RootFolder);
 
         g_devices[i].DeviceType = S2S_CFG_NOT_SET;
@@ -916,6 +922,10 @@ void patchDevice(uint8_t target_idx)
 
     DeviceMap &map = g_devices[target_idx];
 
+    strcpy(map.CueFilename, "");
+    map.CueSize = 0;
+    map.TotalBins = 0;
+
     strcpy(map.Filename, img.current_image);
     map.Size = img.file.size();
     map.IsRaw = img.file.isRaw();
@@ -935,9 +945,28 @@ void patchDevice(uint8_t target_idx)
         }
                     
         // 2.  bincue will have set this via binCueInUse(), for all others default to a normal file
-        if (map.NavObjectType == NAV_OBJECT_NONE)
+        switch(map.NavObjectType)
         {
-            map.NavObjectType = NAV_OBJECT_FILE;
+            case NAV_OBJECT_NONE:
+                map.NavObjectType = NAV_OBJECT_FILE;
+                break;
+
+            case NAV_OBJECT_CUE:
+                {
+                    char tmp[MAX_FILE_PATH];
+                    strcpy(tmp, map.Path);
+                    strcat(tmp, "/");
+                    if ( (strlen(tmp) + strlen(map.LoadedObject)+  2) < MAX_FILE_PATH)
+                    {
+                        strcat(tmp, map.LoadedObject);
+                    }
+                    else
+                    {
+                        logmsg("Error. Path too long. Trying to join '", tmp, "' with '", map.LoadedObject, '"');
+                    }
+
+                    isFolderACueBinSet(tmp, map.CueFilename, map.CueSize, map.Size, map.TotalBins);
+                }
         }
         
         map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;
@@ -1058,13 +1087,35 @@ void patchDevices()
     }
 }
 
+// This is called when a new image is loaded and sets all needed fields in the DeveMap
+// Note: technically 'fullPath' is redundant, but it's always availale, so save recomputing it here
+void UpdateDeviceInfo(int target_idx, const char *fullPath, const char *path, const char *file, NAV_OBJECT_TYPE navObjectType)
+{
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
+    DeviceMap &map = g_devices[target_idx];
+
+    map.NavObjectType  = navObjectType;
+
+    strcpy(map.LoadedObject, file);
+    strcpy(map.Filename, file);
+    strcpy(map.Path, path);
+    if (map.NavObjectType == NAV_OBJECT_CUE)
+    {
+        isFolderACueBinSet(fullPath, map.CueFilename, map.CueSize, map.Size, map.TotalBins);
+    }
+}
+
 //////////////////////////////////////
 // Externs called by original ZULU code
 //////////////////////////////////////
 
 // When Zulu is determing if drives are folder based, once it works it out, it calls this
 // This is used as the 1st pass on setting device info
-extern "C" void setFolder(int target_idx, bool userSet, const char *path)
+extern "C" void setRootFolder(int target_idx, bool userSet, const char *path)
 {
     if (!g_controlBoardEnabled)
     {
@@ -1075,6 +1126,17 @@ extern "C" void setFolder(int target_idx, bool userSet, const char *path)
     map.Active = true;
     map.UserFolder = userSet;
     strcpy(map.RootFolder, path);
+    strcpy(map.Path, path); // Default Cwd to the root
+}
+
+extern "C" void setFolder(int target_idx, const char *path)
+{
+    if (!g_controlBoardEnabled)
+    {
+        return;
+    }
+
+    DeviceMap &map = g_devices[target_idx];
     strcpy(map.Path, path); // Default Cwd to the root
 }
 

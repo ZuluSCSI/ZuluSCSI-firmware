@@ -107,6 +107,11 @@ struct DeviceMap
     char LoadedObject[MAX_PATH_LEN];  // This is the same as filename for normal object, but the folder name for cue/bin
     NAV_OBJECT_TYPE NavObjectType;
 
+    // Cahce during initial load or loadLoad
+    char CueFilename[MAX_PATH_LEN]; 
+    int TotalBins;
+    uint64_t CueSize;
+
     // Used by both Normal and Initiator
     char Filename[MAX_PATH_LEN]; 
     S2S_CFG_TYPE DeviceType;
@@ -136,6 +141,7 @@ extern const char* typeToShortString(S2S_CFG_TYPE type);
 extern void deferredMessageBoxClose(uint32_t open_ms, SCREEN_TYPE screen, int deviceId);
 extern bool loadImageDeferred(uint8_t id, const char* next_filename, SCREEN_TYPE returnScreen, int returnIndex);
 extern void patchDevice(uint8_t i);
+extern void UpdateDeviceInfo(int target_idx, const char *fullPath, const char *path, const char *file, NAV_OBJECT_TYPE navObjectType);
 
 // In UIContainer.cpp
 

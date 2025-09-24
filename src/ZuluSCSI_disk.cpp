@@ -756,7 +756,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             img->image_directory = true;
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
 
-            setFolder(target_idx, false, dir_name);
+            setRootFolder(target_idx, false, dir_name);
         }
     }
 }
@@ -782,7 +782,7 @@ static void scsiDiskSetConfig(int target_idx)
         logmsg("SCSI", target_idx, " using image directory '", tmp, "'");
         img.image_directory = true;
 
-        setFolder(target_idx, true, tmp);
+        setRootFolder(target_idx, true, tmp);
     }
     else
     {
@@ -1049,10 +1049,16 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
             if (SDNavGetFirstFileRecursive.GetFirstFileRecursive(dirname, file, path))
             {
                 strcpy(buf, path);
+                if ( (strlen(path) + strlen(file)+  2) >= MAX_FILE_PATH)
+                {
+                    logmsg("Error. Path too long. Trying to join '", path, "' with '", file, '"');
+                    return 0;
+                }
+                        
                 strcat(buf, "/");
                 strcat(buf, file);
 
-                setFolder(target_idx, true, path);
+                setFolder(target_idx, path);
 
                 logmsg("Found file: ", buf);
                 img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something

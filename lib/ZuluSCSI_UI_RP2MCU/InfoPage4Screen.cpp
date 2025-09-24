@@ -35,14 +35,7 @@ void InfoPage4Screen::init(int index)
   setupScroller(0, 52, 26, 88, 8, 1);
   
   DeviceMap &map = g_devices[_scsiId];      
-  char tmp[MAX_FILE_PATH];
-  u_int64_t binSize;
-  strcpy(tmp, map.Path);
-  strcat(tmp, "/");
-  strcat(tmp, map.LoadedObject);
-
-  isFolderACueBinSet(tmp, _cue, _cueSize, binSize, _totalBins);
-  setScrollerText(0, _cue);
+ setScrollerText(0, map.CueFilename);
 }
 
 void InfoPage4Screen::draw()
@@ -80,12 +73,12 @@ void InfoPage4Screen::draw()
   _display->setCursor(0,36);             
   _display->print(F("Bins:"));
   _display->setCursor(52,36);       
-  _display->print(_totalBins);    
+  _display->print(map.TotalBins);    
 
   _display->setCursor(0,46);             
   _display->print(F("Cue Size:"));
   _display->setCursor(52,46);       
-  makeImageSizeStr(_cueSize, _sizeBuffer);
+  makeImageSizeStr(map.CueSize, _sizeBuffer);
   _display->print(_sizeBuffer);    
   _display->print("B");  
   

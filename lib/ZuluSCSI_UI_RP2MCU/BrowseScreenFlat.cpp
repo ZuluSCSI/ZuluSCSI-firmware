@@ -357,14 +357,10 @@ void BrowseScreenFlat::loadSelectedImage()
       strcat(g_tmpFilepath, "/");
       strcat(g_tmpFilepath, _currentObjectName);
 
-      strcpy(_deviceMap->LoadedObject, _currentObjectName);
-      _deviceMap->NavObjectType  = _currentObjectType;
-      
       haltUIUpdates();
       if (loadImageDeferred(_scsiId, g_tmpFilepath, SCREEN_BROWSE_FLAT, _scsiId))
       {
-        strcpy(_deviceMap->Path, _currentObjectPath);
-        strcpy(_deviceMap->Filename, _currentObjectName);
+        UpdateDeviceInfo(_scsiId, g_tmpFilepath, _currentObjectPath, _currentObjectName, _currentObjectType);
       }
       break;
 

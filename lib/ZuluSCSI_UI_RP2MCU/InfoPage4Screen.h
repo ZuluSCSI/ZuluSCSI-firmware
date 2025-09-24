@@ -42,10 +42,6 @@ public:
 
 private:
     int _scsiId;
-
-    char _cue[MAX_FILE_PATH];
-    u_int64_t _cueSize;
-    int _totalBins;
 };
 
 #endif

@@ -78,7 +78,6 @@ bool isFolderACueBinSet(const char *folder, char *cueFile, u_int64_t &cueSize, u
 
     if (loadCueSheet(g_tmpFilepath, parser, cueFileSize))
     {
-        
       CUETrackInfo const *track;
       uint64_t prev_capacity = 0;
 
@@ -90,6 +89,7 @@ bool isFolderACueBinSet(const char *folder, char *cueFile, u_int64_t &cueSize, u
           int index = SDNavFindItemIndexByNameAndPathRaw.FindItemByNameAndPath(folder, track->filename, size, navObjectType);
           binSize += size;
           totalBins++;
+
           if (index == -1)
           {
             return false; // Couldn't find a bin mentioned in the cue file

@@ -394,17 +394,13 @@ void BrowseScreen::loadSelectedImage()
       strcpy(g_tmpFilepath, _currentObjectPath);
       strcat(g_tmpFilepath, "/");
       strcat(g_tmpFilepath, _currentObjectName);
-
-      strcpy(_deviceMap->LoadedObject, _currentObjectName);
-      _deviceMap->NavObjectType  = _currentObjectType;
-
+    
       logmsg("Loading Image file: ", g_tmpFilepath);
       
       haltUIUpdates();
       if (loadImageDeferred(_scsiId, g_tmpFilepath, SCREEN_BROWSE, _scsiId))
       {
-        strcpy(_deviceMap->Filename, _currentObjectName);
-        strcpy(_deviceMap->Path, _currentObjectPath);
+        UpdateDeviceInfo(_scsiId, g_tmpFilepath, _currentObjectPath, _currentObjectName, _currentObjectType);
       }
   }
 }
