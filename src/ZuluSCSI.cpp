@@ -1080,10 +1080,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
         uint32_t input_wait_start = millis();
         while ((uint32_t)(millis() - input_wait_start) < 500)
         {
-          if (scsiDev.phase == BUS_FREE)
-          {
-            controlLoop();
-          }
+          controlLoop();
         }
       }
       platform_reset_watchdog();
