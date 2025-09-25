@@ -157,6 +157,7 @@ extern void sendSDCardStateChangedToScreens(bool cardIsPresent);
 extern void changeScreen(SCREEN_TYPE type, int index);
 
 extern bool isFolderACueBinSet(const char *folder, char *cueFile, u_int64_t &cueSize, u_int64_t &binSize, int &totalBins);
+extern bool isFileABinFileWithACueFile(const char *binFile, char *cueFile, u_int64_t &cueSize, int &totalBins);
 
 extern void printDevices();
 
