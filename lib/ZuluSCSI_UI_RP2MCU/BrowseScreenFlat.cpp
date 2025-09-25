@@ -219,6 +219,7 @@ void BrowseScreenFlat::draw()
       _display->print(F("File"));
       break;
     case NAV_OBJECT_CUE:
+    case NAV_OBJECT_CUE_SIMPLE:
       _display->print(F("BinCue"));
       break;
   }
@@ -315,12 +316,7 @@ void BrowseScreenFlat::getCurrentFilename()
           {
             SDNavFileByIndexRecursive.GetObjectByIndexRecursive(_deviceMap->RootFolder, _currentObjectIndex, _currentObjectName, _currentObjectPath, MAX_FILE_PATH, _currentObjectSize, _currentObjectType, _currentObjectDisplayName);
           }
-          // The assumption above is that _currentObjectDisplayName is a cue, but if it's not, copy the objectName
-          scsi_system_settings_t *cfg = g_scsi_settings.getSystem();
-          if (_currentObjectType != NAV_OBJECT_CUE || !cfg->controlBoardShowCueFileName) 
-          {
-            strcpy(_currentObjectDisplayName, _currentObjectName);
-          }
+          strcpy(_currentObjectDisplayName, _currentObjectName);
       }  
       break;
 

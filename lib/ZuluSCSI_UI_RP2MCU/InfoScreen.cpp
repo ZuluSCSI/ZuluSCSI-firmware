@@ -33,8 +33,8 @@ void InfoScreen::init(int index)
   // Init the scroller
   initScrollers(2);
 
-  setupScroller(0, 52, 16, 88, 8, 1);
-  setupScroller(1, 52, 26, 88, 8, 1);
+  setupScroller(0, 52, 16, 76, 8, 1);
+  setupScroller(1, 52, 26, 76, 8, 1);
 
   // Set the scroller text
   DeviceMap &map = g_devices[_scsiId];
@@ -72,7 +72,7 @@ void InfoScreen::draw()
 
 
   _display->setCursor(0,16);    
-  if (map.NavObjectType == NAV_OBJECT_CUE)
+  if (map.NavObjectType == NAV_OBJECT_CUE || map.NavObjectType == NAV_OBJECT_CUE_SIMPLE)
   {         
     _display->print(F("BinCue:"));
   }
@@ -126,7 +126,7 @@ void InfoScreen::rotaryChange(int direction)
   DeviceMap &map = g_devices[_scsiId];
   if (direction == 1)
   {
-    if (map.NavObjectType == NAV_OBJECT_CUE)
+    if (map.NavObjectType == NAV_OBJECT_CUE || map.NavObjectType == NAV_OBJECT_CUE_SIMPLE)
     {
       changeScreen(SCREEN_INFO_PAGE4, _scsiId); 
     }
@@ -137,7 +137,7 @@ void InfoScreen::rotaryChange(int direction)
   }
   else if (direction == -1)
   {
-    if (map.NavObjectType == NAV_OBJECT_CUE)
+    if (map.NavObjectType == NAV_OBJECT_CUE || map.NavObjectType == NAV_OBJECT_CUE_SIMPLE)
     {
       changeScreen(SCREEN_INFO_PAGE2, _scsiId);
     }
