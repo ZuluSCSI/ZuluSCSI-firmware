@@ -948,25 +948,47 @@ void patchDevice(uint8_t target_idx)
         switch(map.NavObjectType)
         {
             case NAV_OBJECT_NONE:
+            case NAV_OBJECT_FILE:
+            case NAV_OBJECT_CUE_SIMPLE:
+            {
                 map.NavObjectType = NAV_OBJECT_FILE;
+
+                // check if it's simple bincue
+                char tmp[MAX_FILE_PATH];
+                strcpy(tmp, map.Path);
+                strcat(tmp, "/");
+                if ( (strlen(tmp) + strlen(map.LoadedObject)+  2) < MAX_FILE_PATH)
+                {
+                    strcat(tmp, map.LoadedObject);
+                }
+                else
+                {
+                    logmsg("Error. Path too long. Trying to join '", tmp, "' with '", map.LoadedObject, '"');
+                }
+                bool isSimpleCue = isFileABinFileWithACueFile(tmp,map.CueFilename, map.CueSize, map.TotalBins);
+                if (isSimpleCue)
+                {
+                    map.NavObjectType = NAV_OBJECT_CUE_SIMPLE;
+                }
                 break;
 
+            }
             case NAV_OBJECT_CUE:
+            {
+                char tmp[MAX_FILE_PATH];
+                strcpy(tmp, map.Path);
+                strcat(tmp, "/");
+                if ( (strlen(tmp) + strlen(map.LoadedObject)+  2) < MAX_FILE_PATH)
                 {
-                    char tmp[MAX_FILE_PATH];
-                    strcpy(tmp, map.Path);
-                    strcat(tmp, "/");
-                    if ( (strlen(tmp) + strlen(map.LoadedObject)+  2) < MAX_FILE_PATH)
-                    {
-                        strcat(tmp, map.LoadedObject);
-                    }
-                    else
-                    {
-                        logmsg("Error. Path too long. Trying to join '", tmp, "' with '", map.LoadedObject, '"');
-                    }
-
-                    isFolderACueBinSet(tmp, map.CueFilename, map.CueSize, map.Size, map.TotalBins);
+                    strcat(tmp, map.LoadedObject);
                 }
+                else
+                {
+                    logmsg("Error. Path too long. Trying to join '", tmp, "' with '", map.LoadedObject, '"');
+                }
+
+                isFolderACueBinSet(tmp, map.CueFilename, map.CueSize, map.Size, map.TotalBins);
+            }
         }
         
         map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;
@@ -1103,10 +1125,6 @@ void UpdateDeviceInfo(int target_idx, const char *fullPath, const char *path, co
     strcpy(map.LoadedObject, file);
     strcpy(map.Filename, file);
     strcpy(map.Path, path);
-    if (map.NavObjectType == NAV_OBJECT_CUE)
-    {
-        isFolderACueBinSet(fullPath, map.CueFilename, map.CueSize, map.Size, map.TotalBins);
-    }
 }
 
 //////////////////////////////////////

@@ -61,6 +61,75 @@ static bool loadCueSheet(const char *cueFile, CUEParser &parser, u_int64_t &cueF
     return true;
 }
 
+bool ProcessCueFile(char *cueFile, u_int64_t &cueSize, u_int64_t &binSize, int &totalBins, bool matchBins, const char *folder)
+{
+    CUEParser parser;
+    u_int64_t cueFileSize = 0;
+    totalBins = 0;
+
+    if (loadCueSheet(cueFile, parser, cueFileSize))
+    {
+        CUETrackInfo const *track;
+        uint64_t prev_capacity = 0;
+
+        // Find last track
+        while((track = parser.next_track(prev_capacity)) != nullptr)
+        {
+            if (matchBins)
+            {
+                NAV_OBJECT_TYPE navObjectType;
+                u_int64_t size;
+                int index = SDNavFindItemIndexByNameAndPathRaw.FindItemByNameAndPath(folder, track->filename, size, navObjectType);
+                
+                if (index == -1)
+                {
+                    return false; // Couldn't find a bin mentioned in the cue file
+                }
+                binSize += size;
+            }
+            
+            totalBins++;
+        }
+    }
+    else
+    {
+        return false;
+    }
+
+    cueSize = cueFileSize;
+
+    return true;
+}
+
+bool isFileABinFileWithACueFile(const char *binFile, char *cueFile, u_int64_t &cueSize, int &totalBins)
+{
+    const char *extension = strrchr(binFile, '.');
+    if (!extension || strcasecmp(extension, ".bin") != 0)
+    {
+        return false;
+    }
+
+    char tmp[MAX_FILE_PATH];
+    strcpy(tmp, binFile);
+    strcpy(tmp+(extension-binFile), ".cue");
+
+    if (SD.exists(tmp))
+    {
+        u_int64_t binSize;
+        bool res = ProcessCueFile(tmp, cueSize, binSize, totalBins, false, nullptr);
+        if (res)
+        {
+            const char *slash = strrchr(tmp, '/');
+            if (slash)
+            {
+                strcpy(cueFile, slash+1);
+            }
+        }
+        return res;
+    }
+    return false;
+}
+
 bool isFolderACueBinSet(const char *folder, char *cueFile, u_int64_t &cueSize, u_int64_t &binSize, int &totalBins)
 {
   // look for .cue files
@@ -70,42 +139,12 @@ bool isFolderACueBinSet(const char *folder, char *cueFile, u_int64_t &cueSize, u
 
   if (totCue == 1)
   {
-    // found 1 cue file
-    // parse it, and look for the bin files in it
-    CUEParser parser;
-    u_int64_t cueFileSize = 0;
-    totalBins = 0;
-
-    if (loadCueSheet(g_tmpFilepath, parser, cueFileSize))
+    bool res = ProcessCueFile(g_tmpFilepath, cueSize, binSize, totalBins, true, folder);
+    if (res)
     {
-      CUETrackInfo const *track;
-      uint64_t prev_capacity = 0;
-
-      // Find last track
-      while((track = parser.next_track(prev_capacity)) != nullptr)
-      {
-          NAV_OBJECT_TYPE navObjectType;
-          u_int64_t size;
-          int index = SDNavFindItemIndexByNameAndPathRaw.FindItemByNameAndPath(folder, track->filename, size, navObjectType);
-          binSize += size;
-          totalBins++;
-
-          if (index == -1)
-          {
-            return false; // Couldn't find a bin mentioned in the cue file
-          }
-      }
+        strcpy(cueFile, g_tmpFilename);
     }
-    else
-    {
-        return false;
-    }
-
-    strcpy(cueFile, g_tmpFilename);
-    // cueSize = g_cueSize;
-    cueSize = cueFileSize;
-
-    return true; // All matched
+    return res;
   }
     
   return false; // Didn't find exactly 1 cue file
@@ -186,9 +225,16 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
 
         if (recursive)
         {
+            memset(newPath, 0, MAX_FILE_PATH);
+            strcpy(newPath, dirname);
+            strcat(newPath, "/");
+            strcat(newPath, buf);
+            
             if (!file.isDir()) // File
             {
-                switch(ProcessDirectoryItem(buf, dirname, file.size(), NAV_OBJECT_FILE, cueFile))
+                bool isSimpleCue = isFileABinFileWithACueFile(newPath, cueFile, cueSize, totalBins);
+
+                switch(ProcessDirectoryItem(buf, dirname, file.size(), isSimpleCue ? NAV_OBJECT_CUE_SIMPLE : NAV_OBJECT_FILE, cueFile))
                 {
                     case PROCESS_DIR_ITEM_RESULT_PROCEED:
                         break;
@@ -198,11 +244,6 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
             }
             else // Dir
             {
-                memset(newPath, 0, MAX_FILE_PATH);
-                strcpy(newPath, dirname);
-                strcat(newPath, "/");
-                strcat(newPath, buf);
-
                 bool processDirAsNormal = true;
 
                 if (remapBinCues)
@@ -266,7 +307,15 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
 
             if (processDirAsNormal)
             {
-                switch(ProcessDirectoryItem(buf, dirname, file.size(), file.isDir() ? NAV_OBJECT_DIR : NAV_OBJECT_FILE, cueFile))
+                NAV_OBJECT_TYPE type = NAV_OBJECT_DIR;
+                
+                if (!file.isDir())
+                {
+                    bool isSimpleCue = isFileABinFileWithACueFile(newPath, cueFile, cueSize, totalBins);
+                    type = isSimpleCue ? NAV_OBJECT_CUE_SIMPLE : NAV_OBJECT_FILE;
+                }
+
+                switch(ProcessDirectoryItem(buf, dirname, file.size(), type, cueFile))
                 {
                     case PROCESS_DIR_ITEM_RESULT_PROCEED:
                         break;

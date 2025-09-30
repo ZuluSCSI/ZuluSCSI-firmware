@@ -32,7 +32,7 @@ void InfoPage4Screen::init(int index)
 
    initScrollers(1);
 
-  setupScroller(0, 52, 26, 88, 8, 1);
+  setupScroller(0, 52, 26, 76, 8, 1);
   
   DeviceMap &map = g_devices[_scsiId];      
  setScrollerText(0, map.CueFilename);
@@ -70,8 +70,18 @@ void InfoPage4Screen::draw()
   _display->setCursor(0,26);             
   _display->print(F("Cue :"));
  
-  _display->setCursor(0,36);             
-  _display->print(F("Bins:"));
+  _display->setCursor(0,36);            
+  switch(map.NavObjectType)
+  {
+    case NAV_OBJECT_CUE:
+      _display->print(F("Bins:"));
+      break;
+
+    case NAV_OBJECT_CUE_SIMPLE:
+      _display->print(F("Tracks:"));
+      break;
+  }
+  
   _display->setCursor(52,36);       
   _display->print(map.TotalBins);    
 

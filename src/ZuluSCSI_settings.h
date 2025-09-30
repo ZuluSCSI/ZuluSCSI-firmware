@@ -105,8 +105,6 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
     bool controlBoardFlipDisplay;
     bool controlBoardCache;
 
-    bool controlBoardShowCueFileName;
-
     bool controlBoardDimDisplay;
     uint16_t controlBoardScreenSaverTimeSec;
     uint16_t controlBoardScreenSaverStyle;

@@ -449,8 +449,6 @@ Control Board Config
 
 - `ControlBoardScreenSaverTimeSec` - Sets the seconds before the screen savers starts. 0 means screen saver is disabled
 
-- `ControlBoardShowCueFileName` - When disaplaying a bin/cue in a folder, the default is to show the folder name for the name. Setting this to 1 will display the cue file name
-
 - `ControlBoardScreenSaverStyle` - There are several screen savers, each ones uses more resources, so if you see a performance drop try a lower numbered one:
 
 - 0 - Random selection (each time the screen saver starts, a random one will be selected)
