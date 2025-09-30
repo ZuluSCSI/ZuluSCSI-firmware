@@ -97,6 +97,8 @@ SECTIONS
         /* Libraries that are not performance-critical */
         *libminIni.a:(.text .text*)
         *libCUEParser.a:(.text .text*)
+        *libZuluSCSI_UI_RP2MCU.a:(.text .text*)
+        *libZuluSCSI_audio_RP2MCU:(.text .text*)
 
         /* C++ constructors and destructors */
         *(.text*_ZN*C1*)

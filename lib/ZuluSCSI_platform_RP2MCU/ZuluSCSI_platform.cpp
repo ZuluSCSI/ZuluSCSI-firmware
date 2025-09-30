@@ -81,6 +81,7 @@ extern "C" {
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
 
 extern bool g_rawdrive_active;
+extern bool g_log_to_sd;
 
 extern "C" {
 #include "timings_RP2MCU.h"
@@ -99,6 +100,25 @@ static struct {
     bool breathing;
     uint32_t period;
 } g_led_pwm = {0};
+
+typedef enum
+{
+    USB_INPUT_NONE,
+    USB_INPUT_EXIT_MSC,
+    USB_INPUT_REBOOT_MSC,
+    USB_INPUT_REBOOT_IMAGES_MSC,
+    USB_INPUT_REBOOT,
+    USB_INPUT_TOGGLE_DEBUG,
+    USB_INPUT_LOG_TO_SD
+}
+usb_input_type_t;
+
+typedef enum 
+{
+    MENU_CONTEXT_TARGET_MAIN,
+    MENU_CONTEXT_TARGET_MSC
+}
+menu_context_t;
 
 static void usb_log_poll();
 
@@ -224,15 +244,23 @@ bool platform_reclock(zuluscsi_speed_grade_t speed_grade)
     return do_reclock;
 }
 
-bool platform_rebooted_into_mass_storage()
+// reads the mode from the scratch0 location and then clears it, keeping the set value for later calls 
+mass_storage_mode platform_rebooted_into_mass_storage()
 {
+    static mass_storage_mode mode = MASS_STORAGE_MODE_NONE;
+    if (mode != MASS_STORAGE_MODE_NONE)
+        return mode;
     volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
     if (*scratch0 == REBOOT_INTO_MASS_STORAGE_MAGIC_NUM)
     {
-        *scratch0 = 0;
-        return true;
+        mode = MASS_STORAGE_MODE_SD;
     }
-    return false;
+    else if (*scratch0 == REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM)
+    {
+        mode = MASS_STORAGE_MODE_IMAGES;
+    }   
+    *scratch0 = 0;
+    return mode;
 }
 
 #ifdef HAS_DIP_SWITCHES
@@ -380,7 +408,7 @@ void platform_init()
         termination = !gpio_get(DIP_TERM);
 
     }
-# elif defined(ZULUSCSI_V2_0)
+# elif defined(ZULUSCSI_RP2040)
     pin_setup_state_t dip_state = read_setup_ack_pin();
     if (dip_state == SETUP_UNDETERMINED)
     {
@@ -565,6 +593,8 @@ void platform_late_init()
     mutex_init(&g_core1_mutex);
     multicore_launch_core1(core1_handler);
 
+    initUIDisplay();
+
     if (!g_scsi_initiator)
     {
         // Act as SCSI device / target
@@ -677,10 +707,15 @@ void platform_late_init()
 
 void platform_post_sd_card_init() 
 {
-#if defined(ENABLE_AUDIO_OUTPUT) && !defined(ZULUSCSI_BLASTER)
-        // one-time control setup for DMA channels and second core
-        audio_setup();
+#if defined(ENABLE_AUDIO_OUTPUT)
+# ifdef ENABLE_AUDIO_OUTPUT_I2S
+    audio_reclock();
+# elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    // one-time control setup for DMA channels and second core
+    audio_setup();
+# endif
 #endif // ENABLE_AUDIO_OUTPUT
+
 }
 
 bool platform_is_initiator_mode_enabled()
@@ -765,6 +800,7 @@ void platform_emergency_log_save()
 
 static void usb_log_poll();
 static void usb_input_poll();
+static usb_input_type_t serial_menu(menu_context_t context);
 
 __attribute__((noinline))
 void show_hardfault(uint32_t *sp)
@@ -900,57 +936,9 @@ static void usb_log_poll()
 // Grab input from USB Serial terminal
 static void usb_input_poll()
 {
-#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
-
-    if (!usb_serial_connected()) return;
-
-#ifdef PLATFORM_MASS_STORAGE
-    if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
-#endif
-
-    // Caputure reboot key sequence
-    static bool mass_storage_reboot_keyed = false;
-    static bool basic_reboot_keyed = false;
-    volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
-    int32_t available = Serial.available();
-    if(available > 0)
-    {
-        int32_t read = Serial.read();
-        switch((char) read)
-        {
-            case 'R':
-            case 'r':
-                basic_reboot_keyed = true;
-                mass_storage_reboot_keyed = false;
-                logmsg("Basic reboot requested, press 'y' to engage or any key to clear");
-                break;
-            case 'M':
-            case 'm':
-                mass_storage_reboot_keyed = true;
-                basic_reboot_keyed = false;
-                logmsg("Boot into mass storage requested, press 'y' to engage or any key to clear");
-                *scratch0 = REBOOT_INTO_MASS_STORAGE_MAGIC_NUM;
-                break;
-            case 'Y':
-            case 'y':
-                if (basic_reboot_keyed || mass_storage_reboot_keyed)
-                {
-                    logmsg("Rebooting", mass_storage_reboot_keyed ? " into mass storage": "");
-                    g_rebooting = true;
-                }
-                break;
-            case '\n':
-                break;
-
-            default:
-                if (basic_reboot_keyed || mass_storage_reboot_keyed)
-                    logmsg("Cleared reboot setting");
-                mass_storage_reboot_keyed = false;
-                basic_reboot_keyed = false;
-        }
-    }
-#endif // PIO_FRAMEWORK_ARDUINO_NO_USB
+    serial_menu(MENU_CONTEXT_TARGET_MAIN);
 }
+
 // Use ADC to implement supply voltage monitoring for the +3.0V rail.
 // This works by sampling the temperature sensor channel, which has
 // a voltage of 0.7 V, allowing to calculate the VDD voltage.
@@ -1557,7 +1545,169 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 
 #endif
 
+#ifdef PLATFORM_MASS_STORAGE
+static usb_input_type_t serial_menu(menu_context_t context)
+{
+#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+
+    if (!usb_serial_connected()) return USB_INPUT_NONE;
+
+    if (platform_msc_lock_get()) return USB_INPUT_NONE; // Avoid re-entrant USB events
+
+    // Capture reboot key sequence
+    static usb_input_type_t input_type = USB_INPUT_NONE;
+    
+    volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+    
+    int32_t available = Serial.available();
+    bool yes_keyed = false;
+    bool match_keyed = true;
+    bool ignore_key = false;
+    if(available > 0)
+    {
+        int32_t read = Serial.read();
+        switch((char) read)
+        {
+            case 'X':
+            case 'x':
+                if (context ==  MENU_CONTEXT_TARGET_MSC)
+                    input_type = USB_INPUT_EXIT_MSC;
+                else
+                    ignore_key = true;
+                break;
+            case 'R':
+            case 'r':
+                input_type = USB_INPUT_REBOOT;
+                break;
+            case 'S':
+            case 's':
+                input_type = USB_INPUT_REBOOT_MSC;
+                break;
+            case 'I':
+            case 'i':
+                input_type = USB_INPUT_REBOOT_IMAGES_MSC;
+                break;
+            case 'D':
+            case 'd':
+                input_type = USB_INPUT_TOGGLE_DEBUG;
+                break;
+            case 'L':
+            case 'l':
+                input_type = USB_INPUT_LOG_TO_SD;
+                break;
+            case 'Y':
+            case 'y':
+                yes_keyed = true;
+                break;
+            case '\n':
+                ignore_key = true;
+                break;
+            default:
+                match_keyed = false;
+        }
+        if (ignore_key)
+            return USB_INPUT_NONE;
+
+        if (!match_keyed)
+        {
+            input_type = USB_INPUT_NONE;
+            *scratch0 = 0;
+            logmsg(
+                "\r\n"                
+                "  Available ZuluSCSI Console Commands:\r\n"
+                "  ===================================================\r\n"
+                , context == MENU_CONTEXT_TARGET_MSC ?
+                "    'x' - exit from mass storage mode, eject USB drive(s)\r\n" : 
+                ""
+                ,
+                "    'r' - reboot device normally\r\n"
+                "    's' - reboot with SD card as USB drive\r\n"
+                "    'i' - reboot with images presented as USB drives\r\n"
+                "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
+                "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
+                "  press 'y' after a command to confirm and execute"
+            );
+        }
+        else if (yes_keyed)
+        {
+            switch (input_type)
+            {
+                case USB_INPUT_REBOOT:
+                    logmsg("Rebooting");
+                    *scratch0 = 0;
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_REBOOT_MSC:
+                    logmsg("Rebooting and exposing SD card as a USB drive");
+                    *scratch0 = REBOOT_INTO_MASS_STORAGE_MAGIC_NUM;
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_REBOOT_IMAGES_MSC:
+                    logmsg("Reboot and exposing image files as USB drives");
+                    *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_TOGGLE_DEBUG:
+                    *scratch0 = 0;
+                    g_log_debug = !g_log_debug;
+                    logmsg("Turning debug logging ", g_log_debug ? "on" : "off");
+                    break;
+                case USB_INPUT_LOG_TO_SD:
+                    *scratch0 = 0;
+                    g_log_to_sd = !g_log_to_sd;
+                    logmsg("Turning logging to SD card ", g_log_to_sd ? "on" : "off");
+                    break;
+                case USB_INPUT_EXIT_MSC:
+                    logmsg("Exiting mass storage");
+                    *scratch0 = 0;
+                    break;
+                default:
+                    *scratch0 = 0;
+                    input_type = USB_INPUT_NONE;
+            }
+            usb_input_type_t return_type = input_type;
+            input_type = USB_INPUT_NONE;
+            return return_type;
+        }
+        else
+        {
+            switch (input_type)
+            {
+                case USB_INPUT_REBOOT:
+                    logmsg("Basic reboot requested, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_REBOOT_MSC:
+                    logmsg("Boot into SD card as USB drive requested, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_REBOOT_IMAGES_MSC:
+                    logmsg("Boot into all images as USB drives requested, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_TOGGLE_DEBUG:
+                    logmsg("Turn debug ", g_log_debug ? "off" : "on", ", press 'y' to engage or any key to clear");
+                    break;
+                    case USB_INPUT_LOG_TO_SD:
+                    logmsg("Turn logging to SD Card ", g_log_to_sd ? "off" : "on", ", press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_EXIT_MSC:
+                    logmsg("Exit mass storage mode, press 'y' to engage or any key to clear");
+                    break;
+                default:
+                    input_type = USB_INPUT_NONE;
+            }
+        }
+    }
+    #endif // PIO_FRAMEWORK_ARDUINO_NO_USB
+    return USB_INPUT_NONE;
+}
+#endif // PLATFORM_MASS_STORAGE
 } /* extern "C" */
+
+#ifdef PLATFORM_MASS_STORAGE
+bool platform_stop_msc()
+{
+    return serial_menu(MENU_CONTEXT_TARGET_MSC) == USB_INPUT_EXIT_MSC;
+}
+#endif // PLATFORM_MASS_STORAGE
 
 
 #ifdef SD_USE_SDIO

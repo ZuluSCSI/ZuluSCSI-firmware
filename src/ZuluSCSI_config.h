@@ -27,7 +27,7 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "25.09.04"
+#define FW_VER_NUM      "25.09.24"
 #define FW_VER_SUFFIX   "release"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
@@ -65,7 +65,7 @@
 #define HDIMG_LUN_POS 3                 // Position to embed LUN numbers
 #define HDIMG_BLK_POS 5                 // Position to embed block size numbers
 
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
 #define MAX_FILE_PATH 260                // Maximum file name length
 #else
 #define MAX_FILE_PATH 64                // Maximum file name length
@@ -139,4 +139,5 @@
 
 // Settings for rebooting
 #define REBOOT_INTO_MASS_STORAGE_MAGIC_NUM 0x5eeded
+#define REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM 0xde1ce5
 

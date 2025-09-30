@@ -62,22 +62,7 @@ SECTIONS
        *libWire.a:*(*)
        *libSPI.a:*(*)
         
-       *libZuluSCSI_platform_RP2MCU.a:control.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:cache.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:BrowseScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:InfoScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:MainScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:MessageBox.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:NoSDScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:Screen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:scrolling_text.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:SplashScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:UIContainer.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:BrowseScreenFlat.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:BrowseTypeScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:CopyScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:InitiatorMainScreen.cpp.o*(*)
-       *libZuluSCSI_platform_RP2MCU.a:ProgressBar.cpp.o*(*)
+       *libZuluSCSI_UI_RP2MCU.a:*(*)
     }
 
     .text : {
@@ -85,6 +70,8 @@ SECTIONS
         cyw43_digitalRead = 0;
         cyw43_pinMode = 0;
         init_cyw43_wifi = bootloader_main;
+        setPendingImageLoad = 0;
+
         __logical_binary_start = .;
         KEEP (*(.btldr_vectors))
         KEEP (*(.binary_info_header))

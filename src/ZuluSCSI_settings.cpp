@@ -313,10 +313,14 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableSelLatch = false;
     cfgSys.mapLunsToIDs = false;
     cfgSys.enableParity = true;
-    cfgSys.disableControlBoard = false;
-    cfgSys.enableControlBoardCache = false;
-    cfgSys.reverseControlBoardRotary = false;
-    cfgSys.flipControlBoardDisplay = false;
+    cfgSys.controlBoardDisable = false;
+    cfgSys.controlBoardCache = false;
+    cfgSys.controlBoardShowCueFileName = false;
+    cfgSys.controlBoardReverseRotary = false;
+    cfgSys.controlBoardFlipDisplay = false;
+    cfgSys.controlBoardDimDisplay = false;
+    cfgSys.controlBoardScreenSaverTimeSec = 300; // 5 mins
+    cfgSys.controlBoardScreenSaverStyle = 2; // Slow Random ZuluSCSI logo. Very low load.
     cfgSys.useFATAllocSize = false;
 #ifdef ZULUSCSI_MCU_RP20XX
     cfgSys.enableCDAudio = false;
@@ -337,6 +341,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.maxBusWidth = 0;
 #endif
 
+    cfgSys.logToSDCard = true;
     // setting set for all or specific devices
     cfgDev.deviceType = S2S_CFG_NOT_SET;
     cfgDev.deviceTypeModifier = 0;
@@ -429,10 +434,15 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableSelLatch = ini_getbool("SCSI", "EnableSelLatch", cfgSys.enableSelLatch, CONFIGFILE);
     cfgSys.mapLunsToIDs = ini_getbool("SCSI", "MapLunsToIDs", cfgSys.mapLunsToIDs, CONFIGFILE);
     cfgSys.enableParity =  ini_getbool("SCSI", "EnableParity", cfgSys.enableParity, CONFIGFILE);
-    cfgSys.disableControlBoard =  ini_getbool("SCSI", "DisableControlBoard", cfgSys.disableControlBoard, CONFIGFILE);
-    cfgSys.enableControlBoardCache =  ini_getbool("SCSI", "EnableControlBoardCache", cfgSys.enableControlBoardCache, CONFIGFILE);
-    cfgSys.reverseControlBoardRotary =  ini_getbool("SCSI", "ReverseControlBoardRotary", cfgSys.reverseControlBoardRotary, CONFIGFILE);
-    cfgSys.flipControlBoardDisplay =  ini_getbool("SCSI", "FlipControlBoardDisplay", cfgSys.flipControlBoardDisplay, CONFIGFILE);
+    cfgSys.controlBoardDisable =  ini_getbool("SCSI", "ControlBoardDisable", cfgSys.controlBoardDisable, CONFIGFILE);
+    cfgSys.controlBoardShowCueFileName=  ini_getbool("SCSI", "ControlBoardShowCueFileName", cfgSys.controlBoardShowCueFileName, CONFIGFILE);
+    cfgSys.controlBoardCache =  ini_getbool("SCSI", "ControlBoardCache", cfgSys.controlBoardCache, CONFIGFILE);
+    cfgSys.controlBoardReverseRotary =  ini_getbool("SCSI", "ControlBoardReverseRotary", cfgSys.controlBoardReverseRotary, CONFIGFILE);
+    cfgSys.controlBoardFlipDisplay =  ini_getbool("SCSI", "ControlBoardFlipDisplay", cfgSys.controlBoardFlipDisplay, CONFIGFILE);
+    cfgSys.controlBoardDimDisplay =  ini_getbool("SCSI", "ControlBoardDimDisplay", cfgSys.controlBoardDimDisplay, CONFIGFILE);
+    cfgSys.controlBoardScreenSaverTimeSec =  ini_getl("SCSI", "ControlBoardScreenSaverTimeSec", cfgSys.controlBoardScreenSaverTimeSec, CONFIGFILE);
+    cfgSys.controlBoardScreenSaverStyle =  ini_getl("SCSI", "ControlBoardScreenSaverStyle", cfgSys.controlBoardScreenSaverStyle, CONFIGFILE);   
+
     cfgSys.useFATAllocSize = ini_getbool("SCSI", "UseFATAllocSize", cfgSys.useFATAllocSize, CONFIGFILE);
     cfgSys.enableCDAudio = ini_getbool("SCSI", "EnableCDAudio", cfgSys.enableCDAudio, CONFIGFILE);
     cfgSys.maxVolume =  ini_getl("SCSI", "MaxVolume", cfgSys.maxVolume, CONFIGFILE);
@@ -458,8 +468,9 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     }
 
     cfgSys.maxBusWidth = ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE);
+    cfgSys.logToSDCard = ini_getbool("SCSI", "LogToSDCard", cfgSys.logToSDCard, CONFIGFILE);
 
-    initUI(true);
+    initUIPostSDInit(true);
 
     return &cfgSys;
 }

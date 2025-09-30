@@ -259,6 +259,7 @@ void scsiInitiatorMainLoop()
                 logmsg("Initiator init delay set in ", CONFIGFILE ," to ", (int)msc_init_delay, " milliseconds");
             delay(msc_init_delay);
 
+            // GT TODO
             logmsg("Entering USB MSC initiator mode");
             platform_enter_msc();
             setup_msc_initiator();
@@ -310,7 +311,7 @@ void scsiInitiatorMainLoop()
         g_initiator_state.eject_when_done = false;
         g_initiator_state.use_read10 = false;
 
-        UIInitiatorScanning(g_initiator_state.target_id);
+        UIInitiatorScanning(g_initiator_state.target_id, g_initiator_state.initiator_id);
         
         if (!(g_initiator_state.drives_imaged & (1 << g_initiator_state.target_id)))
         {

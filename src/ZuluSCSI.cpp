@@ -61,6 +61,7 @@
 #include "ZuluSCSI_msc_initiator.h"
 #include "ZuluSCSI_msc.h"
 #include "ZuluSCSI_blink.h"
+#include "ZuluSCSI_buffer_control.h"
 #include "ROMDrive.h"
 
 #include "ui.h"
@@ -71,6 +72,7 @@ bool g_rawdrive_active;
 static bool g_romdrive_active;
 bool g_sdcard_present;
 bool g_rebooting = false;
+bool g_log_to_sd;
 #ifndef SD_SPEED_CLASS_WARN_BELOW
 #define SD_SPEED_CLASS_WARN_BELOW 10
 #endif
@@ -89,6 +91,9 @@ void save_logfile(bool always = false)
     return;
 #endif
 
+if (!g_log_to_sd)
+  return;
+  
   static uint32_t prev_log_pos = 0;
   static uint32_t prev_log_len = 0;
   static uint32_t prev_log_save = 0;
@@ -811,14 +816,27 @@ static void reinitSCSI()
   scsiInit();
 
 #ifdef ZULUSCSI_NETWORK
+
   if (scsiDiskCheckAnyNetworkDevicesConfigured() && platform_network_supported())
   {
-    platform_network_init(scsiDev.boardCfg.wifiMACAddress);
     if (scsiDev.boardCfg.wifiSSID[0] != '\0')
+    {
+      platform_network_init(scsiDev.boardCfg.wifiMACAddress);
       platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+    }
+    else
+    {
+      logmsg("Wi-Fi device enabled, but no WiFi SSID specified."); 
+      logmsg("Please define \"WiFiSSID\" in the config file: ", CONFIGFILE, " under the heading \"[SCSI]\"");
+    }
   }
   else
   {
+    if (platform_network_supported() && scsiDev.boardCfg.wifiSSID[0] != '\0')
+    {
+      logmsg("Wi-Fi SSID specified as \"", scsiDev.boardCfg.wifiSSID, "\", but no SCSI ID assigned to a network device");
+      logmsg("Please create an empty file \"NEx.img\", where x is the SCSI ID of the network device, on the SD card");
+    }
     platform_network_deinit();
   }
 #endif // ZULUSCSI_NETWORK
@@ -1020,7 +1038,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
   bool orig_g_sdcard_present = g_sdcard_present;
 
-  sdCardStateChanged(!g_sdcard_present);
+  sdCardStateChanged(g_sdcard_present);
 
   if(!g_sdcard_present)
   {
@@ -1039,7 +1057,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
       // if booting and no card found, we want to init the display here as it usually gets inited
       // from readint the config
-      initUI(false);
+      initUIPostSDInit(false);
     }
     dbgmsg("SD card init failed, sdErrorCode: ", (int)SD.sdErrorCode(),
            " sdErrorData: ", (int)SD.sdErrorData());
@@ -1057,15 +1075,23 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     do
     {
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
+      if (g_controlBoardEnabled)
+      {
+        uint32_t input_wait_start = millis();
+        while ((uint32_t)(millis() - input_wait_start) < 500)
+        {
+          controlLoop();
+        }
+      }
       platform_reset_watchdog();
       g_sdcard_present = mountSDCard();
 
       if (g_sdcard_present != orig_g_sdcard_present)
       {
-          sdCardStateChanged(!g_sdcard_present);
+          sdCardStateChanged(g_sdcard_present);
       }
   
-    } while (!g_sdcard_present && wait_for_card);
+    } while (!g_sdcard_present && wait_for_card && !g_rebooting);
     blink_cancel();
     LED_OFF();
 
@@ -1097,8 +1123,9 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     char presetName[32];
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
     scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName);
+    g_log_to_sd = g_scsi_settings.getSystem()->logToSDCard;
 
-#ifdef RECLOCKING_SUPPORTED
+    #ifdef RECLOCKING_SUPPORTED
     zuluscsi_speed_grade_t speed_grade = (zuluscsi_speed_grade_t) g_scsi_settings.getSystem()->speedGrade;
     if (speed_grade != zuluscsi_speed_grade_t::SPEED_GRADE_DEFAULT)
     { 
@@ -1111,7 +1138,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     }
     else
     {
-#ifndef ENABLE_AUDIO_OUTPUT // if audio is enabled, skip message because reclocking ocurred earlier
+#ifndef ENABLE_AUDIO_OUTPUT // if audio is enabled, skip message because reclocking occurred earlier
       logmsg("Speed grade set to Default, skipping reclocking");
 #endif
     }
@@ -1124,7 +1151,10 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       delay(boot_delay_ms);
     }
     platform_post_sd_card_init();
-    kiosk_restore_images();
+#ifdef PLATFORM_HAS_INITIATOR_MODE
+    if (!platform_is_initiator_mode_enabled())
+#endif
+      kiosk_restore_images();
     reinitSCSI();
 
     boot_delay_ms = cfg->initPostDelay;
@@ -1159,11 +1189,6 @@ extern "C" void zuluscsi_setup(void)
   platform_init();
   platform_late_init();
 
-  if (g_controlBoardEnabled)
-  {
-    controlInit();
-  }
-
   bool is_initiator = false;
 #ifdef PLATFORM_HAS_INITIATOR_MODE
   is_initiator = platform_is_initiator_mode_enabled();
@@ -1173,11 +1198,11 @@ extern "C" void zuluscsi_setup(void)
 
 #ifdef PLATFORM_MASS_STORAGE
   static bool check_mass_storage = true;
-  if ((check_mass_storage || platform_rebooted_into_mass_storage()) && !is_initiator)
+  if ((check_mass_storage || (platform_rebooted_into_mass_storage() != MASS_STORAGE_MODE_NONE)) && !is_initiator && g_sdcard_present)
   {
     if (g_scsi_settings.getSystem()->enableUSBMassStorage
        || g_scsi_settings.getSystem()->usbMassStoragePresentImages
-       || platform_rebooted_into_mass_storage()
+       || platform_rebooted_into_mass_storage() != MASS_STORAGE_MODE_NONE
     )
     {
       check_mass_storage = false;
@@ -1196,12 +1221,15 @@ extern "C" void zuluscsi_setup(void)
   
 
   logmsg("Clock set to: ", (int) platform_sys_clock_in_hz(), "Hz");
-  logmsg("Initialization complete!");
+#if ZULUSCSI_RESERVED_SRAM_LEN > 0
+    dbgmsg("Shared buffer has ", (int) reserve_buffer_left(), " bytes left out of ", (int) ZULUSCSI_RESERVED_SRAM_LEN, " bytes total");
+#endif
+    logmsg("Firmware initialization complete!");
 }
 
 void control_disk_swap()
 {
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
   if (g_pendingLoadIndex != -1)
   {
     loadImage();
@@ -1211,6 +1239,26 @@ void control_disk_swap()
 
 extern "C" void zuluscsi_main_loop(void)
 {
+    // While timer for reboot is going, attempt to close SD images
+  if (g_rebooting)
+  {
+    while (!scsiIsWriteFinished(NULL) || !scsiIsReadFinished(NULL))
+    {
+      platform_reset_watchdog();
+    }
+    scsiDiskCloseSDCardImages();
+    save_logfile();
+    g_logfile.close();
+    SD.card()->syncDevice();
+    platform_reset_mcu(1000);
+    while(1)
+    {
+      platform_poll();
+      blink_poll();
+      platform_reset_watchdog();
+    }
+  }
+
   static uint32_t sd_card_check_time = 0;
   static uint32_t last_request_time = 0;
 
@@ -1230,7 +1278,10 @@ extern "C" void zuluscsi_main_loop(void)
 
   if (g_controlBoardEnabled)
   {
-    controlLoop();
+    if (scsiDev.phase == BUS_FREE)
+    {
+      controlLoop();
+    }
   }
 
 #ifdef ZULUSCSI_NETWORK
@@ -1263,24 +1314,7 @@ extern "C" void zuluscsi_main_loop(void)
     }
   }
 
-  // While timer for reboot is going, attempt to close SD images
-  if (g_rebooting)
-  {
-    while (!scsiIsWriteFinished(NULL) || !scsiIsReadFinished(NULL))
-    {
-      platform_reset_watchdog();
-    }
-    scsiDiskCloseSDCardImages();
-    save_logfile();
-    g_logfile.close();
-    platform_reset_mcu(1000);
-    while(1)
-    {
-      platform_poll();
-      blink_poll();
-      platform_reset_watchdog();
-    }
-  }
+
 
   if (g_sdcard_present)
   {
@@ -1296,7 +1330,7 @@ extern "C" void zuluscsi_main_loop(void)
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
 
-          sdCardStateChanged(true);
+          sdCardStateChanged(false);
         }
       }
     }
@@ -1318,7 +1352,7 @@ extern "C" void zuluscsi_main_loop(void)
         LED_OFF();
         logmsg("SD card reinit succeeded");
 
-        sdCardStateChanged(false);
+        sdCardStateChanged(true);
 
         print_sd_info();
         reinitSCSI();
@@ -1331,6 +1365,18 @@ extern "C" void zuluscsi_main_loop(void)
         blinkStatus(BLINK_ERROR_NO_SD_CARD);
         platform_reset_watchdog();
         platform_poll();
+        if (g_controlBoardEnabled)
+        {
+          uint32_t input_wait_start = millis();
+          while ((uint32_t)(millis() - input_wait_start) < 500)
+          {
+            if (scsiDev.phase == BUS_FREE)
+            {
+              controlLoop();
+            }
+          }
+        }
+
       }
     } while (!g_sdcard_present && !g_romdrive_active && !is_initiator && !g_rebooting);
   }
@@ -1498,10 +1544,12 @@ static void kiosk_restore_images()
         uint32_t last_progress_mb = 0;
         bool copy_success = true;
 
-        UIKioskCopyInit(devCount+1, totalOriFound, target_size/BUFFER_SIZE, BUFFER_SIZE, tgt_name);
+        UIKioskCopyInit(devCount+1, totalOriFound, ori_size/BUFFER_SIZE, BUFFER_SIZE, tgt_name);
 
         original.rewind();
-        int block = 0;
+        uint32_t block = 0;
+        uint32_t block_time = 0;
+        uint32_t ui_update_start = millis();
         while (bytes_copied < ori_size && copy_success)
         {
           uint32_t time_start = millis();
@@ -1539,12 +1587,17 @@ static void kiosk_restore_images()
           // Set LED based on current state with pattern [ON, OFF, ON, OFF, OFF]
           int led_state = progress_mb % 5;
           platform_write_led(led_state == 0 || led_state == 2);
+          block_time += (uint32_t)(millis() - time_start);
+          if ((uint32_t)(millis() - ui_update_start) > 250)
+          {
+            UIKioskCopyProgress(block_time, block);
+            ui_update_start  = millis();
+            block_time = 0;
 
-          UIKioskCopyProgress(millis() - time_start, block);
+          }
           block++;
         }
         
-        UIKioskCopyProgress(0, block);
         devCount++;
 
         target.close();

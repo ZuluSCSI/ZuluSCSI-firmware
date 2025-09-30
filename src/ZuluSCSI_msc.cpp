@@ -27,6 +27,8 @@
 #include "ZuluSCSI_msc.h"
 #include "ZuluSCSI_settings.h"
 
+#include "ui.h"
+
 // external global SD variable
 extern SdFs SD;
 
@@ -49,7 +51,9 @@ void zuluscsi_msc_loop() {
   platform_set_blink_status(0);
 
   // pull in the setting for presenting images as USB devices
-  platform_set_msc_image_mode(g_scsi_settings.getSystem()->usbMassStoragePresentImages);
+  platform_set_msc_image_mode(
+      g_scsi_settings.getSystem()->usbMassStoragePresentImages 
+      || platform_rebooted_into_mass_storage() == MASS_STORAGE_MODE_IMAGES);
 
   platform_enter_msc();
   
@@ -96,6 +100,15 @@ void zuluscsi_msc_loop() {
     MSC_LEDMode = LED_SOLIDON;
 	  LED_ON(); 
     delay(30);
+
+    if (g_controlBoardEnabled)
+    {
+      if (mscMode())
+        break;
+    }
+
+    if (platform_stop_msc())
+      break;
   }
 
   // turn the LED off to indicate exiting MSC

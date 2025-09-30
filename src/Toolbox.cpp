@@ -41,7 +41,7 @@ extern "C" int8_t scsiToolboxEnabled()
     if (enabled == -1)
     {
         enabled = ini_getbool("SCSI", "EnableToolbox", 0, CONFIGFILE);
-        logmsg("Toolbox enabled = ", enabled);
+        logmsg("Toolbox ", enabled == 1 ? "enabled" : "disabled");
     }
     return enabled == 1;
 }
@@ -222,6 +222,7 @@ static void onListDevices()
         }
     }
     scsiDev.dataLen = S2S_MAX_TARGETS;
+    scsiDev.phase = DATA_IN;
 }
 
 static void onSetNextCD(const char * img_dir)

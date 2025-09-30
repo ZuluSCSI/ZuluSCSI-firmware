@@ -1,28 +1,41 @@
+/**
+ * Copyright (c) 2025 Guy Taylor
+ *
+ * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
+ *
+ * https://www.gnu.org/licenses/gpl-3.0.html
+ * ----
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+**/
+
 #include "ui.h"
 
 extern "C" void scsiReinitComplete() {}
-extern "C" void sdCardStateChanged(bool absent) {}
-extern "C" void controlInit() {}
+extern "C" void sdCardStateChanged(bool sdAvailable) {}
 extern "C" void controlLoop() {}
-extern "C" void setFolder(int target_idx, bool userSet, const char *path) {}
-extern "C" void setCurrentFolder(int target_idx, const char *path) {}
-extern "C" void initUI(bool cardPresent) {}
+extern "C" bool mscMode() { return false; }
+extern "C" void setRootFolder(int target_idx, bool userSet, const char *path) {}
+extern "C" void setFolder(int target_idx, const char *path) {}
+extern "C" void binCueInUse(int target_idx, const char *foldername) {}
+extern "C" void initUIDisplay() {}
+extern "C" void initUIPostSDInit(bool cardPresent) {}
 
 bool g_controlBoardEnabled = false;
 
 bool g_initiatorMessageToProcess;
 
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-
-int g_pendingLoadIndex;
-int g_pendingLoadComplete;
-int g_totalCategories[8];
-char g_categoryCodeAndNames[8][10][32];
-char g_filenameToLoad[MAX_PATH_LEN];
-
-#endif 
-
-void UIInitiatorScanning(uint8_t deviceId) {}
+void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId) {}
 void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) {}
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) {}
 void UIInitiatorRetry(uint8_t deviceId) {}

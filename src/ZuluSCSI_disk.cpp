@@ -54,7 +54,7 @@ extern "C" {
 }
 
 #include "SDNavigator.h"
-GetFirstFileRecursiveSDNavigator SDNavGetFirstFileRecursive;
+
 
 #ifndef PLATFORM_MAX_SCSI_SPEED
 #define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_ASYNC_50
@@ -596,6 +596,10 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
                     valid = cdromValidateCueSheet(img);
+                    if (valid)
+                    {
+                        binCueInUse(target_idx, foldername);
+                    }
                 }
             }
 
@@ -752,7 +756,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             img->image_directory = true;
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
 
-            setFolder(target_idx, false, dir_name);
+            setRootFolder(target_idx, false, dir_name);
         }
     }
 }
@@ -778,7 +782,7 @@ static void scsiDiskSetConfig(int target_idx)
         logmsg("SCSI", target_idx, " using image directory '", tmp, "'");
         img.image_directory = true;
 
-        setFolder(target_idx, true, tmp);
+        setRootFolder(target_idx, true, tmp);
     }
     else
     {
@@ -812,7 +816,7 @@ static void scsiDiskSetConfig(int target_idx)
 
     }
 
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
     g_totalCategories[target_idx] = 0;
     
     int i;
@@ -1037,13 +1041,24 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 
         if (nextlen == 0)
         {
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
             logmsg("Couldn't find file in root. Looking in subfolders");
 
             char path[MAX_PATH_LEN];
-            if (SDNavGetFirstFileRecursive.GetFirstFileRecursive(dirname, buf, path))
+            char file[MAX_PATH_LEN];
+            if (SDNavGetFirstFileRecursive.GetFirstFileRecursive(dirname, file, path))
             {
-                setCurrentFolder(target_idx, path); // patch the path
+                strcpy(buf, path);
+                if ( (strlen(path) + strlen(file)+  2) >= MAX_FILE_PATH)
+                {
+                    logmsg("Error. Path too long. Trying to join '", path, "' with '", file, '"');
+                    return 0;
+                }
+                        
+                strcat(buf, "/");
+                strcat(buf, file);
+
+                setFolder(target_idx, path);
 
                 logmsg("Found file: ", buf);
                 img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
@@ -1054,7 +1069,7 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 #endif
                 logmsg("Image directory was empty for ID", target_idx);
                 return 0;
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
             }
 #endif
         }
@@ -1459,6 +1474,7 @@ void s2s_configInit(S2S_BoardCfg* config)
     memset(tmp, 0, sizeof(tmp));
     ini_gets("SCSI", "WiFiSSID", "", tmp, sizeof(tmp), CONFIGFILE);
     if (tmp[0]) memcpy(config->wifiSSID, tmp, sizeof(config->wifiSSID));
+
 
     memset(tmp, 0, sizeof(tmp));
     ini_gets("SCSI", "WiFiPassword", "", tmp, sizeof(tmp), CONFIGFILE);
@@ -2650,7 +2666,7 @@ static void loadImageToggleEject(uint8_t id, const char* next_filename)
 // TODO This forces a swap, the logic should use the deffered pattern
 extern "C" void setPendingImageLoad(uint8_t id, const char* next_filename)
 {
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
     strcpy(g_filenameToLoad, next_filename);
 
     g_pendingLoadIndex = id;
@@ -2659,7 +2675,7 @@ extern "C" void setPendingImageLoad(uint8_t id, const char* next_filename)
 
 extern "C" void loadImage()
 {
-#if defined(CONTROL_BOARD) && !defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+#if defined(CONTROL_BOARD)
    loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // first will eject
    loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // secind will clode
 

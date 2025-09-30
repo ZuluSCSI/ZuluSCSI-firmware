@@ -21,6 +21,7 @@
 #include "sense.h"
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef enum
 {
