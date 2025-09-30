@@ -50,19 +50,25 @@ SECTIONS
     */
     /DISCARD/ : {
 
-       *scanf*(*)
-       *strtod*(*)
-       *libipv4.a:*(*)
-       *libZuluSCSI_platform_RP2MCU.a:ZuluSCSI_platform_network.cpp.o*(*)
-       *libFrameworkArduino.a:cyw43_wrappers.cpp.o*(*)
+        *scanf*(*)
+        *strtod*(*)
+        *libipv4.a:*(*)
+        *liblwip*.a:*(*)
+        *libZuluSCSI_audio_RP2MCU.a:*(*)
+        *libAdafruit*.a:*(*)
+        *libWire.a:*(*)
+        *libSPI.a:*(*)
+        *libZuluSCSI_UI_RP2MCU.a:*(*)
+        *libZuluSCSI_platform_RP2MCU.a:ZuluSCSI_platform_network.cpp.o*(*)
+        *libFrameworkArduino.a:cyw43_wrappers.cpp.o*(*)
 
-       /* gt */
-       *ZuluSCSI_tape.cpp.o*(*)
-       *libAdafruit*.a:*(*)
-       *libWire.a:*(*)
-       *libSPI.a:*(*)
-        
-       *libZuluSCSI_UI_RP2MCU.a:*(*)
+        /* gt */
+        *ZuluSCSI_tape.cpp.o*(*)
+        *ZuluSCSI_mode.cpp.o*(*)
+        *ZuluSCSI_blink.cpp.o*(*)
+        *ZuluSCSI_buffer_control.cpp.o*(*)
+        *uiDiskUtils.cpp.o*(*)
+        *SDNavigator.cpp.o*(*)
     }
 
     .text : {
@@ -71,6 +77,8 @@ SECTIONS
         cyw43_pinMode = 0;
         init_cyw43_wifi = bootloader_main;
         setPendingImageLoad = 0;
+        platform_poll = 0;
+
 
         __logical_binary_start = .;
         KEEP (*(.btldr_vectors))
