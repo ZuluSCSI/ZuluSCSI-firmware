@@ -43,7 +43,18 @@ extern "C" {
 
 extern "C" bool scsiStatusATN()
 {
-    return SCSI_IN(ATN);
+    // Check multiple times to protect against short glitches
+    // on the ATN signal.
+    int deglitch_count = 10; // TODO: Take from .ini
+    do
+    {
+        if (!SCSI_IN(ATN))
+        {
+            return false;
+        }
+        delay_ns(500);
+    } while (deglitch_count-- > 0);
+    return true;
 }
 
 extern "C" bool scsiStatusBSY()
