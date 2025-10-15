@@ -43,7 +43,7 @@ extern "C" {
 
 extern "C" bool scsiStatusATN()
 {
-    return SCSI_IN(ATN);
+    return false; // FIXME: TEST CODE
 }
 
 extern "C" bool scsiStatusBSY()
