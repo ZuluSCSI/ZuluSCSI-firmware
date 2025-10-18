@@ -146,6 +146,7 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     uint32_t vendorExtensions;
 
     uint32_t blockSize;
+    uint32_t tapeLengthMB;
 } scsi_device_settings_t;
 
 
