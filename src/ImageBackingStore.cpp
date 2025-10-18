@@ -475,6 +475,19 @@ void ImageBackingStore::flush()
     }
 }
 
+bool ImageBackingStore::truncate(uint64_t size)
+{
+    if (m_iscontiguous || m_isrom || m_israw || m_isreadonly_attr)
+    {
+        logmsg("ERROR: truncate called on non-writable or non-regular file");
+        return false;
+    }
+    else
+    {
+        return m_fsfile.truncate(size);
+    }
+}
+
 uint64_t ImageBackingStore::position()
 {
 #if ENABLE_COW

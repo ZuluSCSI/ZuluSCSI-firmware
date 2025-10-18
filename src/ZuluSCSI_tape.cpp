@@ -261,6 +261,32 @@ tap_result_t tapWriteFilemark(image_config_t &img) {
     return TAP_OK;
 }
 
+// Write an end-of-medium mark
+tap_result_t tapWriteEOM(image_config_t &img) {
+    uint8_t marker[4];
+    writeLE32(marker, TAP_MARKER_END_MEDIUM);
+
+    if (!img.file.seek(img.tape_pos) || img.file.write(marker, 4) != 4) {
+        return TAP_ERROR;
+    }
+
+    img.tape_pos += 4;
+    return TAP_OK;
+}
+
+// Write an erase gap
+tap_result_t tapWriteEraseGap(image_config_t &img) {
+    uint8_t marker[4];
+    writeLE32(marker, TAP_MARKER_ERASE_GAP);
+
+    if (!img.file.seek(img.tape_pos) || img.file.write(marker, 4) != 4) {
+        return TAP_ERROR;
+    }
+
+    img.tape_pos += 4;
+    return TAP_OK;
+}
+
 // Space forward by records or filemarks
 tap_result_t tapSpaceForward(image_config_t &img, uint32_t count, bool filemarks) {
     tap_record_t record;
@@ -921,8 +947,58 @@ extern "C" int scsiTapeCommand()
     else if (command == 0x19)
     {
         // Erase
-        // Just a stub implementation, fake erase to end of tape
-        img.tape_pos = img.scsiSectors;
+        if (tapIsTapFormat(img))
+        {
+            bool lon = scsiDev.cdb[1] & 1;
+            if (lon)
+            {
+                // Erase from current position to end of tape
+                if (!img.file.isWritable())
+                {
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                    scsiDev.target->sense.asc = WRITE_PROTECTED;
+                }
+                else if (img.file.truncate(img.tape_pos))
+                {
+                    // After truncating, write a new End of Medium marker.
+                    tapWriteEOM(img);
+                    scsiDev.status = GOOD;
+                }
+                else
+                {
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = MEDIUM_ERROR;
+                    scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+                }
+            }
+            else
+            {
+                // Short erase: write an erase gap marker.
+                if (!img.file.isWritable())
+                {
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                    scsiDev.target->sense.asc = WRITE_PROTECTED;
+                }
+                else if (tapWriteEraseGap(img) == TAP_OK)
+                {
+                    scsiDev.status = GOOD;
+                }
+                else
+                {
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = MEDIUM_ERROR;
+                    scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+                }
+            }
+        }
+        else
+        {
+            // Old behavior for non-TAP files
+            img.tape_pos = img.scsiSectors;
+        }
+        scsiDev.phase = STATUS;
     }
     else if (command == 0x01)
     {

@@ -37,6 +37,8 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
 tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size);
 tap_result_t tapWriteRecord(image_config_t &img, const uint8_t *data, uint32_t length);
 tap_result_t tapWriteFilemark(image_config_t &img);
+tap_result_t tapWriteEOM(image_config_t &img);
+tap_result_t tapWriteEraseGap(image_config_t &img);
 tap_result_t tapSpaceForward(image_config_t &img, uint32_t count, bool filemarks);
 tap_result_t tapSpaceBackward(image_config_t &img, uint32_t count, bool filemarks);
 tap_result_t tapRewind(image_config_t &img);
