@@ -675,6 +675,31 @@ static void doSeek(uint32_t lba)
 static void doTapeRead(uint32_t blocks)
 {
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+
+    if (img.tape_length_mb > 0)
+    {
+        uint32_t capacity_mb = img.tape_length_mb;
+        uint64_t capacity_bytes = (uint64_t)capacity_mb * 1024 * 1024;
+        uint32_t block_size = scsiDev.target->liveCfg.bytesPerSector;
+        uint32_t capacity_blocks = capacity_bytes / block_size;
+
+        if (img.tape_pos >= capacity_blocks)
+        {
+            scsiDev.target->sense.eom = true;
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = BLANK_CHECK;
+            scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+            scsiDev.phase = STATUS;
+            return;
+        }
+
+        if (img.tape_pos + blocks > capacity_blocks)
+        {
+            blocks = capacity_blocks - img.tape_pos;
+            scsiDev.target->sense.eom = true;
+        }
+    }
+
     uint32_t capacity_lba = img.get_capacity_lba();
 
     if (img.tape_load_next_file && img.bin_container.isOpen())
@@ -886,6 +911,15 @@ extern "C" int scsiTapeCommand()
 
         if (blocks_to_write > 0)
         {
+            if (img.tape_length_mb > 0 && (img.tape_pos + blocks_to_write * blocklen) / 1024 / 1024 > img.tape_length_mb)
+            {
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = WRITE_PROTECTED;
+                scsiDev.phase = STATUS;
+                return 1;
+            }
+
             // Check if this is a .TAP format file
             if (tapIsTapFormat(img)) {
                 // For .TAP format, calculate the actual record length

@@ -157,6 +157,7 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
 #if ENABLE_COW
     uint32_t cowBitmapSize;
 #endif
+    uint32_t tapeLengthMB;
 } scsi_device_settings_t;
 
 

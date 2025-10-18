@@ -64,6 +64,7 @@ struct image_config_t: public S2S_TargetCfg
     uint32_t tape_mark_index; // a direct relationship to the file in a multi image file tape 
     uint32_t tape_mark_count; // the number of marks
     uint32_t tape_mark_block_offset; // Sum of the the previous image file sizes at the current mark
+    uint32_t tape_length_mb;
     bool     tape_load_next_file;
     // True if there is a subdirectory of images for this target
     bool image_directory;

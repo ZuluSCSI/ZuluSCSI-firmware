@@ -582,6 +582,7 @@ bool findHDDImages()
         if (is_zp) type = S2S_CFG_ZIP100;
 
         g_scsi_settings.initDevice(id, type);
+        scsiDiskGetImageConfig(id).tape_length_mb = g_scsi_settings.getDevice(id)->tapeLengthMB;
         // Open the image file
         if (id < S2S_MAX_TARGETS && is_romdrive)
         {
