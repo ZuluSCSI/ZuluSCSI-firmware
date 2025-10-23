@@ -640,8 +640,11 @@ void platform_late_init()
 #endif
 
 #ifdef ENABLE_AUDIO_OUTPUT_I2S
-    logmsg("ZuluSCSI CD Audio enabled - requires DAC");
-    audio_setup();
+    if (!g_scsi_initiator)
+    {
+        logmsg("ZuluSCSI CD Audio enabled - requires DAC");
+        audio_setup();
+    }
 #endif
 
 #ifdef ZULUSCSI_RM2
@@ -708,12 +711,15 @@ void platform_late_init()
 void platform_post_sd_card_init() 
 {
 #if defined(ENABLE_AUDIO_OUTPUT)
+    if (!g_scsi_initiator)
+    {
 # ifdef ENABLE_AUDIO_OUTPUT_I2S
-    audio_reclock();
+        audio_reclock();
 # elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-    // one-time control setup for DMA channels and second core
-    audio_setup();
+        // one-time control setup for DMA channels and second core
+        audio_setup();
 # endif
+    }
 #endif // ENABLE_AUDIO_OUTPUT
 
 }
@@ -1241,7 +1247,10 @@ void platform_poll()
     adc_poll();
     led_pwm_breath_poll();
 #if defined(ENABLE_AUDIO_OUTPUT_SPDIF) || defined(ENABLE_AUDIO_OUTPUT_I2S)
-    audio_poll();
+    if (!g_scsi_initiator)
+    {
+        audio_poll();
+    }
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
 }
 
