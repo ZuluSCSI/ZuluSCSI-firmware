@@ -285,7 +285,9 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
         memset(cfg.serial, 0, sizeof(cfg.serial));
         strncpy(cfg.serial, tmp, sizeof(cfg.serial));
     }
-
+#if ENABLE_COW
+    cfg.cowBitmapSize = ini_getl(section, "CowBitmapSize", cfg.cowBitmapSize, CONFIGFILE);
+#endif
 }
 
 scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
@@ -341,7 +343,11 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
 #endif
 
     cfgSys.logToSDCard = true;
-    // setting set for all or specific devices
+#if ENABLE_COW
+    cfgSys.cowBufferSize = DEFAULT_COW_BUFFER_SIZE;
+#endif
+
+// setting set for all or specific devices
     cfgDev.deviceType = S2S_CFG_NOT_SET;
     cfgDev.deviceTypeModifier = 0;
     cfgDev.sectorsPerTrack = 0;
@@ -364,6 +370,10 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgDev.vendorExtensions = 0;
 
     cfgDev.blockSize = 0;
+
+#if ENABLE_COW
+    cfgDev.cowBitmapSize = DEFAULT_COW_BUFFER_SIZE;
+#endif
 
     // System-specific defaults
 
@@ -467,6 +477,10 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
 
     cfgSys.maxBusWidth = ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE);
     cfgSys.logToSDCard = ini_getbool("SCSI", "LogToSDCard", cfgSys.logToSDCard, CONFIGFILE);
+
+#if ENABLE_COW
+    cfgSys.cowBufferSize = ini_getl("SCSI", "CowBufferSize", cfgSys.cowBufferSize, CONFIGFILE);
+#endif
 
     initUIPostSDInit(true);
 

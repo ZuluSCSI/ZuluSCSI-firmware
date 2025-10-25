@@ -38,6 +38,7 @@
 #include "ZuluSCSI_cdrom.h"
 #include "ImageBackingStore.h"
 #include "ROMDrive.h"
+#include <new> // For placement new
 #include "QuirksCheck.h"
 #include <minIni.h>
 #include <string.h>
@@ -201,8 +202,8 @@ void scsiDiskResetImages()
 
 void image_config_t::clear()
 {
-    static const image_config_t empty; // Statically zero-initialized
-    *this = empty;
+    this->~image_config_t();
+    new (this) image_config_t();
 }
 
 uint32_t image_config_t::get_capacity_lba()
@@ -423,7 +424,12 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
     img.bin_container.close();
     img.cdrom_binfile_index = -1;
     scsiDiskSetImageConfig(target_idx);
-    img.file = ImageBackingStore(filename, blocksize);
+
+    auto device_config = g_scsi_settings.getDevice(target_idx);
+
+    // Close existing file and construct new one in-place
+    img.file.~ImageBackingStore();
+    new (&img.file) ImageBackingStore(filename, blocksize, device_config);
 
     if (img.file.isOpen())
     {
@@ -678,6 +684,10 @@ bool scsiDiskFilenameValid(const char* name)
             ".rom_loaded", ".rom_bkup", ".cue", ".txt", ".rtf", ".md", ".nfo", ".pdf", ".doc", 
 	    ".ini", ".mid", ".midi", ".aiff", ".mp3", ".m4a",
             ".ori", // Kiosk mode original images
+            ".tmp", // COW dirty files (contains only the writes)
+#ifndef ENABLE_COW
+            ".cow", // If COW is not enabled, we ignore .cow files
+#endif
             NULL
         };
         const char *archive_exts[] = {

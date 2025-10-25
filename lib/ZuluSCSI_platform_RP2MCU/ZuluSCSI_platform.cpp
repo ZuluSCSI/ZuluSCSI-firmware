@@ -447,6 +447,8 @@ void platform_init()
     logmsg("Platform: ", g_platform_name);
     logmsg("FW Version: ", g_log_firmwareversion);
 
+    logmsg( "COW support v0.6" );
+
 #ifdef HAS_DIP_SWITCHES
     if (working_dip)
     {

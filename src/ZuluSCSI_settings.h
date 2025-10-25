@@ -112,6 +112,10 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
     uint8_t maxBusWidth;
 
     bool logToSDCard;
+
+#if ENABLE_COW
+    uint16_t cowBufferSize;
+#endif
 } scsi_system_settings_t;
 
 // This struct should only have new setting added to the end
@@ -146,6 +150,9 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     uint32_t vendorExtensions;
 
     uint32_t blockSize;
+#if ENABLE_COW
+    uint32_t cowBitmapSize;
+#endif
 } scsi_device_settings_t;
 
 
