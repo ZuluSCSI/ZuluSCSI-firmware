@@ -685,7 +685,7 @@ bool scsiDiskFilenameValid(const char* name)
 	    ".ini", ".mid", ".midi", ".aiff", ".mp3", ".m4a",
             ".ori", // Kiosk mode original images
             ".tmp", // COW dirty files (contains only the writes)
-#ifndef ENABLE_COW
+#if ENABLE_COW==0
             ".cow", // If COW is not enabled, we ignore .cow files
 #endif
             NULL

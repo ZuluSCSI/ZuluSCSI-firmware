@@ -40,16 +40,13 @@ extern "C" {
 #include <scsi.h>
 }
 
+#if ENABLE_COW
+#include "COWStorage.h"
+#endif
+
 // SD card sector size is always 512 bytes
 extern SdFs SD;
 #define SD_SECTOR_SIZE 512
-
-
-#if ENABLE_COW
-// Copy-on-Write (COW) default configuration
-#define DEFAULT_COW_BITMAP_SIZE 4096 // 4KB bitmap = 32768 groups max
-#define DEFAULT_COW_BUFFER_SIZE 4096 // 4KB buffer for copy operations
-#endif
 
 // This class wraps SdFat library FsFile to allow access
 // through either FAT filesystem or as a raw sector range.
@@ -71,9 +68,6 @@ public:
     //    ROM:
     //    *.cow (enables copy-on-write)
     ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_config);
-
-    // Destructor to clean up COW resources
-    ~ImageBackingStore();
 
     // Disable copy and move operations entirely
     ImageBackingStore(const ImageBackingStore &) = delete;
@@ -149,49 +143,7 @@ protected:
     bool _internal_open(const char *filename);
 
 #if ENABLE_COW
-    // Copy-on-Write (COW) members
     bool m_iscow;
-
-    FsFile m_fsfile_dirty;           // Overlay file with modified sectors
-    uint8_t *m_cow_bitmap;           // Bitmap tracking which groups are dirty
-    uint32_t m_bitmap_size;          // Size of bitmap in bytes
-    uint32_t m_cow_group_count;      // Total number of groups
-    uint32_t m_cow_group_size;       // Size of each group in sectors
-    uint32_t m_cow_group_size_bytes; // Size of each group in bytes
-    uint32_t m_scsi_block_size_cow;  // SCSI block size for COW operations
-    uint64_t m_current_position_cow; // Track current file position for COW
-
-    // Statistics counters
-    mutable uint64_t m_bytes_written_dirty = 0;     // Bytes written to dirty file
-    mutable uint64_t m_bytes_requested_write = 0;   // Bytes requested to be written by public methods
-    mutable uint64_t m_bytes_read_original_cow = 0; // Bytes read from original file due to COW operations
-
-    // COW helper methods
-    bool initializeCOW(const char *orig_filename, const char *dirty_filename, uint32_t bitmap_max_size, uint32_t scsi_block_size);
-    void cleanupCOW();
-    ssize_t cow_read(void *buf, size_t count);
-    ssize_t cow_write(const void *buf, size_t count);
-
-    // COW internal methods (overloads)
-    ssize_t cow_read(uint32_t from, uint32_t to, void *buf);
-    ssize_t cow_write(uint32_t from, uint32_t to, const void *buf);
-    ssize_t cow_read_single(uint32_t from, uint32_t count, void *buf);
-    void set_position(uint64_t pos);
-
-    // COW statistics
-    void resetStats();
-    void dumpStats();
-
-    // COW bitmap management
-    enum COWImageType
-    {
-        COW_IMG_TYPE_ORIG = 0,
-        COW_IMG_TYPE_DIRTY = 1
-    };
-    COWImageType getGroupImageType(uint32_t group);
-    void setGroupImageType(uint32_t group, COWImageType type);
-    uint32_t groupFromOffset(uint32_t offset) { return offset / m_cow_group_size / m_scsi_block_size_cow; }
-    uint32_t offsetFromGroup(uint32_t group) { return group * m_cow_group_size * m_scsi_block_size_cow; }
-    ssize_t performCopyOnWrite(uint32_t from_offset, uint32_t to_offset);
+    COWStorage m_cow;
 #endif
 };

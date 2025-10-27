@@ -95,13 +95,7 @@ ImageBackingStore
 ### Integration Points
 
 #### Constructor Detection
-```cpp
-// In ImageBackingStore constructor
-if (len > 4 && strcasecmp(filename + len - 4, ".cow") == 0) {
-    // Generate dirty filename by replacing .cow with .tmp
-    // Initialize COW mode
-}
-```
+In ImageBackingStore constructor, if filename ends with ".cow", the cow feature is activated.
 
 #### Transparent Operation Override
 All standard `ImageBackingStore` operations automatically route through COW when enabled:
