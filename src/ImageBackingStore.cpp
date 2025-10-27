@@ -72,7 +72,6 @@ ImageBackingStore::ImageBackingStore()
     m_cow_group_size_bytes = 0;
     m_scsi_block_size_cow = 0;
     m_current_position_cow = 0;
-    m_dirty_filename[0] = '\0';
 #endif
 }
 
@@ -83,16 +82,18 @@ ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_s
     size_t len = strlen(filename);
     if (len > 4 && strcasecmp(filename + len - 4, ".cow") == 0)
     {
+        char dirty_filename[MAX_FILE_PATH + 1];
+
         // Generate dirty filename by replacing .cow extension with .tmp
-        strncpy(m_dirty_filename, filename, len - 4);
-        m_dirty_filename[len - 4] = '\0';
-        strcat(m_dirty_filename, ".tmp");
+        strncpy(dirty_filename, filename, len - 4);
+        dirty_filename[len - 4] = '\0';
+        strcat(dirty_filename, ".tmp");
 
         auto bitmapSize = device_settings->cowBitmapSize;
 
-        if (initializeCOW(filename, m_dirty_filename, bitmapSize, scsi_block_size))
+        if (initializeCOW(filename, dirty_filename, bitmapSize, scsi_block_size))
         {
-            logmsg("---- COW mode enabled for ", filename, " -> ", m_dirty_filename);
+            logmsg("---- COW mode enabled for ", filename, " -> ", dirty_filename);
             return; // COW mode successfully enabled
         }
         else

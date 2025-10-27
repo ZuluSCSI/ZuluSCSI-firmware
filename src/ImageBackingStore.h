@@ -166,8 +166,6 @@ protected:
     mutable uint64_t m_bytes_requested_write = 0;   // Bytes requested to be written by public methods
     mutable uint64_t m_bytes_read_original_cow = 0; // Bytes read from original file due to COW operations
 
-    char m_dirty_filename[MAX_FILE_PATH + 1];
-
     // COW helper methods
     bool initializeCOW(const char *orig_filename, const char *dirty_filename, uint32_t bitmap_max_size, uint32_t scsi_block_size);
     void cleanupCOW();
