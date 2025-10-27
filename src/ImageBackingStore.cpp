@@ -704,7 +704,7 @@ void ImageBackingStore::dumpStats()
         int over_write = 100.0 * (static_cast<double>(m_bytes_read_original_cow + m_bytes_written_dirty) / m_bytes_requested_write - 1);
         char name[MAX_FILE_PATH];
         m_fsfile.getName(name, sizeof(name));
-        logmsg( name, ": write overhead : ", over_write, "% (", (int)m_bytes_read_original_cow, " bytes of original read + ", (int)m_bytes_written_dirty, " bytes of dirty write ) / ", (int)m_bytes_requested_write, " bytes of write");
+        dbgmsg( name, ": write overhead : ", over_write, "% (", (int)m_bytes_read_original_cow, " bytes of original read + ", (int)m_bytes_written_dirty, " bytes of dirty write ) / ", (int)m_bytes_requested_write, " bytes of write");
     }
 }
 
