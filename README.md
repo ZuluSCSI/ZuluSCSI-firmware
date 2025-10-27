@@ -189,7 +189,7 @@ At startup, all files with `.ori` extensions are copied to new volumes. For inst
 
 Restoration takes a significant amount of time, so it should be used with small drives (it takes between 5 and 20 seconds to restore a 40MB hard drive depending on hardware). During the copy, the LED will blink with the pattern ON-OFF-ON-OFF-OFF. Each cycle corresponds to 5MB restored.
 
-Alternatively, you can use the '.cow' extension (short for "Copy-On-Write"). With this option, there will be no copy at startup, but the write speed can suffer a bit, which is typically not an issue in museum setups. The '.cow' feature is not available for the ZuluSCSIv1_1_plus platform due to memory constraints.
+Alternatively, you can use the '.cow' extension (short for "Copy-On-Write"). With this option, there will be no copy at startup, but the write speed can suffer a bit, which is typically not an issue in museum setups. The '.cow' feature is not available for the ZuluSCSIv1_1_plus platform due to memory constraints. See [Copy-On-Write documentation](docs/CopyOnWrite.md) for more information and configuration options.
 
 Rebooting the machine will not restore the files - you need to physically power-cycle the ZuluSCSI device.
 
