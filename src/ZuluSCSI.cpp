@@ -277,6 +277,11 @@ bool createImageFile(const char *imgname, uint64_t size)
   uint64_t remain = size;
 
   int block = 0;
+  bool writing_serial_out = false;
+  char serial_string[128];
+  char *string_marker = serial_string;
+  uint32_t seconds = 0;
+  uint32_t serial_time = 0;
   while (remain > 0)
   {
     uint32_t time_start = millis();
@@ -295,6 +300,34 @@ bool createImageFile(const char *imgname, uint64_t size)
     }
 
     remain -= to_write;
+    uint32_t time = (uint32_t)(millis() - start);
+    // Create a new string to overwrite the previous line every second
+    if(platform_serial_connected() && (time / 1000) > seconds)
+    {
+      int kb_per_s = (size - remain) / time;
+      // "\x1b[2K" is a control charater to clear the current line
+      snprintf(serial_string, sizeof(serial_string),"\r\x1b[2KWrote %lu MB with %lu MB remaining at %d kB/s\r", (uint32_t)((size - remain) / 1048576), (uint32_t)(remain / 1048576), kb_per_s);
+      string_marker = serial_string;
+      writing_serial_out = true;
+      seconds++;
+    }
+
+    // Attempt write to the serial port every 1/4 second
+    if(writing_serial_out && (time / 250) > serial_time)
+    {
+      uint32_t len = strlen(string_marker);
+      uint32_t wrote = 0;
+      if (len > 0)
+      {
+        wrote = platform_write_to_serial((uint8_t*) string_marker, len);
+        string_marker += wrote;
+      }
+      if (strlen(string_marker) == 0)
+      {
+        writing_serial_out = false;
+      }
+      serial_time++;
+    }
 
     UICreateProgress(millis() - time_start, block);
     block++;
