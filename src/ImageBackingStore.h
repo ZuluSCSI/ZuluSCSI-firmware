@@ -34,10 +34,15 @@
 #include <SdFat.h>
 #include "ROMDrive.h"
 #include "ZuluSCSI_config.h"
+#include "ZuluSCSI_settings.h"
 
 extern "C" {
 #include <scsi.h>
 }
+
+#if ENABLE_COW
+#include "COWStorage.h"
+#endif
 
 // SD card sector size is always 512 bytes
 extern SdFs SD;
@@ -61,7 +66,14 @@ public:
     // Special filename formats:
     //    RAW:start:end
     //    ROM:
-    ImageBackingStore(const char *filename, uint32_t scsi_block_size);
+    //    *.cow (enables copy-on-write)
+    ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_config);
+
+    // Disable copy and move operations entirely
+    ImageBackingStore(const ImageBackingStore &) = delete;
+    ImageBackingStore &operator=(const ImageBackingStore &) = delete;
+    ImageBackingStore(ImageBackingStore &&) = delete;
+    ImageBackingStore &operator=(ImageBackingStore &&) = delete;
 
     // Can the image be read?
     bool isOpen();
@@ -129,4 +141,9 @@ protected:
     char m_foldername[MAX_FILE_PATH + 1];
 
     bool _internal_open(const char *filename);
+
+#if ENABLE_COW
+    bool m_iscow;
+    COWStorage m_cow;
+#endif
 };

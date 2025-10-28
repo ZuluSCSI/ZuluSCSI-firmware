@@ -169,17 +169,7 @@ void print_sd_info()
 /* Harddisk image file handling  */
 /*********************************/
 
-// When a file is called e.g. "Create_1024M_HD40.txt",
-// create image file with specified size.
-// Returns true if image file creation succeeded.
-//
-// Parsing rules:
-// - Filename must start with "Create", case-insensitive
-// - Separator can be either underscore, dash or space
-// - Size must start with a number. Unit of k, kb, m, mb, g, gb is supported,
-//   case-insensitive, with 1024 as the base. If no unit, assume MB.
-// - If target filename does not have extension (just .txt), use ".bin"
-bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
+static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char imgname[MAX_FILE_PATH + 1])
 {
   if (strncasecmp(cmd_filename, CREATEFILE, strlen(CREATEFILE)) != 0)
   {
@@ -195,7 +185,7 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
   }
 
   char *unit = nullptr;
-  uint64_t size = strtoul(p, &unit, 10);
+  size = strtoul(p, &unit, 10);
 
   if (size <= 0 || unit <= p)
   {
@@ -255,10 +245,17 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
     strcat(imgname, ".bin");
   }
 
+  return true;
+}
+
+bool createImageFile(const char *imgname, uint64_t size)
+{
+  int namelen = strlen(imgname);
+
   // Check if file exists
   if (namelen <= 5 || SD.exists(imgname))
   {
-    logmsg("---- Image file already exists, skipping '", cmd_filename, "'");
+    logmsg("---- Image file already exists, skipping '", imgname, "'");
     return false;
   }
 
@@ -308,10 +305,41 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
   file.close();
   uint32_t time = millis() - start;
   int kb_per_s = size / time;
-  logmsg("---- Image creation successful, write speed ", kb_per_s, " kB/s, removing '", cmd_filename, "'");
-  SD.remove(cmd_filename);
+  logmsg("---- Image creation successful, write speed ", kb_per_s, " kB/s");
 
   LED_OFF();
+  return true;
+}
+
+// When a file is called e.g. "Create_1024M_HD40.txt",
+// create image file with specified size.
+// Returns true if image file creation succeeded.
+//
+// Parsing rules:
+// - Filename must start with "Create", case-insensitive
+// - Separator can be either underscore, dash or space
+// - Size must start with a number. Unit of k, kb, m, mb, g, gb is supported,
+//   case-insensitive, with 1024 as the base. If no unit, assume MB.
+// - If target filename does not have extension (just .txt), use ".bin"
+bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
+{
+  uint64_t size;
+
+  // Parse the command filename
+  if (!parseCreateCommand(cmd_filename, size, imgname))
+  {
+    return false;
+  }
+
+  // Create the actual image file
+  if (!createImageFile(imgname, size))
+  {
+    return false;
+  }
+
+  // Remove the command file after successful creation
+  logmsg("---- Image creation successful, removing '", cmd_filename, "'");
+  SD.remove(cmd_filename);
   return true;
 }
 

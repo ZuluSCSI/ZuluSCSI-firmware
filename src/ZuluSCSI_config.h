@@ -126,6 +126,11 @@
 #define PREFETCH_BUFFER_SIZE 8192
 #endif
 
+// Enable Copy-on-Write functionality for kiosk environments unless specifically disabled
+#ifndef ENABLE_COW
+#define ENABLE_COW 1
+#endif
+
 // Masks for buttons
 #define EJECT_BTN_MASK (1|2)
 #define USER_BTN_MASK  (4)
