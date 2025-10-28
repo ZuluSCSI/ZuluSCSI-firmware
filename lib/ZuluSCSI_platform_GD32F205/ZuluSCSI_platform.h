@@ -138,6 +138,12 @@ void platform_emergency_log_save();
 typedef void (*sd_callback_t)(uint32_t bytes_complete);
 void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer);
 
+// Check if there is a serial interface connected
+bool platform_serial_connected();
+
+// Write to the serial interface, 0 may returned if the serial interface is not ready
+uint32_t platform_write_to_serial(uint8_t* data, uint32_t len);
+
 // This function is called by scsiPhy.cpp.
 // It resets the systick counter to give 1 millisecond of uninterrupted transfer time.
 // The total number of skips is kept track of to keep the correct time on average.

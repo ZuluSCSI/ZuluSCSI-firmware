@@ -899,6 +899,22 @@ static bool usb_serial_connected()
     return connected;
 }
 
+bool platform_serial_connected()
+{
+    return usb_serial_connected();
+}
+
+uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
+{
+    if (len > 0 && usb_serial_connected() && Serial.availableForWrite())
+    {
+        if (len > CFG_TUD_CDC_EP_BUFSIZE) len = CFG_TUD_CDC_EP_BUFSIZE;
+        return Serial.write(data, len);
+    }
+    return 0;
+}
+
+
 // Send log data to USB UART if USB is connected.
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.

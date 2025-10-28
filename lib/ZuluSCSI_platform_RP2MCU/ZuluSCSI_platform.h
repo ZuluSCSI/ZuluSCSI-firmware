@@ -158,6 +158,12 @@ mass_storage_mode platform_rebooted_into_mass_storage();
 typedef void (*sd_callback_t)(uint32_t bytes_complete);
 void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer);
 
+// Check if there is a serial interface connected
+bool platform_serial_connected();
+
+// Write to the serial interface, 0 may returned if the serial interface is not ready
+uint32_t platform_write_to_serial(uint8_t* data, uint32_t len);
+
 // Reprogram firmware in main program area.
 #ifndef RP2040_DISABLE_BOOTLOADER
 #define PLATFORM_BOOTLOADER_SIZE (128 * 1024)

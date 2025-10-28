@@ -40,7 +40,7 @@ static bool createDirtyFile(const char *dirty_filename, uint64_t size)
         logmsg("---- Dirty file exists but is too small, recreating: ", dirty_filename);
         SD.remove(dirty_filename);
     }
-
+    logmsg("---- COW creating ", (int) (size / 1048576), " MB dirty file: ", dirty_filename);
     return createImageFile(dirty_filename, size);
 }
 

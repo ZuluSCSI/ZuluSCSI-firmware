@@ -548,6 +548,21 @@ static void adc_poll()
     }
 #endif
 }
+bool platform_serial_connected()
+{
+    return usb_serial_ready();
+}
+
+uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
+{
+    if (usb_serial_ready())
+    {
+        if (len > USB_CDC_DATA_PACKET_SIZE) len = USB_CDC_DATA_PACKET_SIZE;
+        usb_serial_send((uint8_t*)data, len);
+        return len;
+    }
+    return 0;
+}
 
 /*****************************************/
 /* Debug logging and watchdog            */
@@ -629,6 +644,8 @@ void show_hardfault(uint32_t *sp)
     uint32_t pc = sp[6];
     uint32_t lr = sp[5];
     uint32_t cfsr = SCB->CFSR;
+    uint32_t bfar = SCB->BFAR;
+    uint32_t mmfar = SCB->MMFAR;
     
     logmsg("--------------");
     logmsg("CRASH!");
@@ -637,6 +654,8 @@ void show_hardfault(uint32_t *sp)
     logmsg("scsiDev.cdb: ", bytearray(scsiDev.cdb, 12));
     logmsg("scsiDev.phase: ", (int)scsiDev.phase);
     logmsg("CFSR: ", cfsr);
+    logmsg("BFAR: ", bfar, (cfsr & (1 << 15)) ? " valid" : " not valid");
+    logmsg("MMFAR: ",mmfar, (cfsr & (1 << 7)) ? " valid" : " not valid");
     logmsg("SP: ", (uint32_t)sp);
     logmsg("PC: ", pc);
     logmsg("LR: ", lr);
