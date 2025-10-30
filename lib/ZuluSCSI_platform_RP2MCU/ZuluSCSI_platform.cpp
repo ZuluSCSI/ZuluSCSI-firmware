@@ -311,6 +311,11 @@ static pin_setup_state_t read_setup_ack_pin()
 mutex g_core1_mutex;
 __attribute__((section(".time_critical.core1_handler")))
 static void core1_handler() {
+
+    // Set stack overflow limit for the second core, with space reserved for exception entry
+    extern uint32_t __StackOneBottom; // From rp23xx-template.ld
+    __asm__("msr msplim, %0": : "r"((uint32_t)&__StackOneBottom + 32) : "memory");
+
     while (1) {
         void (*function)() = (void (*)()) multicore_fifo_pop_blocking();
 
@@ -342,6 +347,11 @@ void platform_init()
 {
     // Make sure second core is stopped
     multicore_reset_core1();
+
+
+    // Set stack overflow limit, with space reserved for exception entry
+    extern uint32_t __StackBottom; // From rp23xx-template.ld
+    __asm__("msr msplim, %0": : "r"((uint32_t)&__StackBottom + 32) : "memory");
 
     pio_clear_instruction_memory(pio0);
     pio_clear_instruction_memory(pio1);
@@ -808,8 +818,27 @@ static void usb_log_poll();
 static void usb_input_poll();
 static usb_input_type_t serial_menu(menu_context_t context);
 
+#ifdef ZULUSCSI_MCU_RP23XX
+static const char *cfsr_desc(uint32_t cfsr)
+{
+    if (cfsr & 0x000000FF) return "MemManage";
+    if (cfsr & 0x0000FF00) return "BusFault";
+    if (cfsr & 0x00010000) return "UndefInstr";
+    if (cfsr & 0x00100000) return "StackOverflow";
+    if (cfsr & 0x01000000) return "Unaligned";
+    if (cfsr & 0x02000000) return "DivByZero";
+    if (cfsr) return "Fault";
+    return "No fault";
+}
+#endif
+
 __attribute__((noinline))
+#ifdef ZULUSCSI_MCU_RP20XX
 void show_hardfault(uint32_t *sp)
+#elif defined(ZULUSCSI_MCU_RP23XX)
+void show_hardfault(uint32_t *sp, uint32_t r4, uint32_t r5, uint32_t r6,
+    uint32_t r7, uint32_t r8, uint32_t r9, uint32_t r10, uint32_t r11)
+#endif
 {
     uint32_t pc = sp[6];
     uint32_t lr = sp[5];
@@ -820,6 +849,11 @@ void show_hardfault(uint32_t *sp)
     logmsg("FW Version: ", g_log_firmwareversion);
     logmsg("scsiDev.cdb: ", bytearray(scsiDev.cdb, 12));
     logmsg("scsiDev.phase: ", (int)scsiDev.phase);
+#ifdef ZULUSCSI_MCU_RP23XX
+    logmsg("CFSR: ", (uint32_t)scb_hw->cfsr, " ", cfsr_desc(scb_hw->cfsr));
+    logmsg("BFAR: ", (uint32_t)scb_hw->bfar, (scb_hw->cfsr & (1 << 15)) ? " valid" : " not valid");
+    logmsg("MMFAR: ", (uint32_t)scb_hw->mmfar, (scb_hw->cfsr & (1 << 7)) ? " valid" : " not valid");
+#endif
     logmsg("SP: ", (uint32_t)sp);
     logmsg("PC: ", pc);
     logmsg("LR: ", lr);
@@ -828,8 +862,15 @@ void show_hardfault(uint32_t *sp)
     logmsg("R2: ", sp[2]);
     logmsg("R3: ", sp[3]);
 #ifdef ZULUSCSI_MCU_RP23XX
-    logmsg("CFSR: ", (uint32_t)scb_hw->cfsr);
-    logmsg("BFAR: ", (uint32_t)scb_hw->bfar);
+    logmsg("R4: ", r4);
+    logmsg("R5: ", r5);
+    logmsg("R6: ", r6);
+    logmsg("R7: ", r7);
+    logmsg("R8: ", r8);
+    logmsg("R9: ", r9);
+    logmsg("R10: ", r10);
+    logmsg("R11: ", r11);
+    logmsg("R12: ", sp[4]);
 #endif
     uint32_t *p = (uint32_t*)((uint32_t)sp & ~3);
 
@@ -867,9 +908,24 @@ void show_hardfault(uint32_t *sp)
 __attribute__((naked, interrupt))
 void isr_hardfault(void)
 {
+#ifdef ZULUSCSI_MCU_RP20XX
     // Copies stack pointer into first argument
     asm("mrs r0, msp\n"
         "bl show_hardfault": : : "r0");
+#elif defined(ZULUSCSI_MCU_RP23XX)
+    // Copies stack pointer and R4..R7 into function arguments
+    // Copies stack pointer and R4..R11 into function arguments
+    // Reuses stack from beginning in case we have overflowed it (we don't need to return)
+    extern uint32_t __StackTop; // From rp2350.ld
+    register uint32_t stacktop asm("r1") = (uint32_t)&__StackTop;
+    asm("mrs r0, msp\n"
+        "msr msp, %0\n"
+        "mov r1, r4\n"
+        "mov r2, r5\n"
+        "mov r3, r6\n"
+        "stmdb sp!, {r7, r8, r9, r10, r11}\n"
+        "bl show_hardfault": : "r"(stacktop) : "r0");
+#endif
 }
 
 

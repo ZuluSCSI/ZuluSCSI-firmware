@@ -318,8 +318,8 @@ SECTIONS
     __StackLimit = ORIGIN(RAM) + LENGTH(RAM);
     __StackOneTop = ORIGIN(SCRATCH_X) + LENGTH(SCRATCH_X);
     __StackTop = ORIGIN(SCRATCH_Y) + LENGTH(SCRATCH_Y);
-    __StackOneBottom = __StackOneTop - SIZEOF(.stack1_dummy);
-    __StackBottom = __StackTop - SIZEOF(.stack_dummy);
+    __StackOneBottom = __scratch_x_end__;
+    __StackBottom = __scratch_y_end__;
     PROVIDE(__stack = __StackTop);
 
     /* picolibc and LLVM */
