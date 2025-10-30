@@ -91,8 +91,8 @@ void save_logfile(bool always = false)
     return;
 #endif
 
-if (!g_log_to_sd)
-  return;
+  if (!g_log_to_sd)
+    return;
   
   static uint32_t prev_log_pos = 0;
   static uint32_t prev_log_len = 0;
