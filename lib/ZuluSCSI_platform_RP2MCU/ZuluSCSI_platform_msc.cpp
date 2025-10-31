@@ -32,15 +32,16 @@
 #include "ZuluSCSI_msc_initiator.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
+#include <device/usbd.h>
 #include <class/msc/msc.h>
 #include <class/msc/msc_device.h>
-
+#include <USB.h>
 #include <pico/mutex.h>
-extern mutex_t __usb_mutex;
 
 #if CFG_TUD_MSC_EP_BUFSIZE < SD_SECTOR_SIZE
   #error "CFG_TUD_MSC_EP_BUFSIZE is too small! It needs to be at least 512 (SD_SECTOR_SIZE)"
 #endif
+#define USBD_MSC_EPSIZE 64
 
 #define DIGITAL_PIN_CYW43_OFFSET 64
 
@@ -61,6 +62,11 @@ static struct {
   uint8_t unitReady = 0;
   uint8_t SDMode = 1;
   uint8_t lun_count_prev_response = 0;
+  uint8_t usbEpOut;
+  uint8_t usbEpIn;
+  uint8_t usbId;
+  bool usbRegistered = false;
+
 } g_MSC;
 
 void platform_msc_lock_set(bool block)
@@ -73,7 +79,7 @@ void platform_msc_lock_set(bool block)
       assert(false);
     }
     
-    g_msc_usb_mutex_held = mutex_try_enter(&__usb_mutex, NULL); // Blocks USB IRQ if not already blocked
+    g_msc_usb_mutex_held = mutex_try_enter(&USB.mutex, NULL); // Blocks USB IRQ if not already blocked
     g_msc_lock = true; // Blocks platform USB polling
   }
   else
@@ -89,7 +95,7 @@ void platform_msc_lock_set(bool block)
     if (g_msc_usb_mutex_held)
     {
       g_msc_usb_mutex_held = false;
-      mutex_exit(&__usb_mutex);
+      mutex_exit(&USB.mutex);
     }
   }
 }
@@ -210,6 +216,16 @@ void platform_enter_msc() {
 
   // MSC is ready for read/write
   g_MSC.unitReady = g_MSC.lun_count;
+  if (!g_MSC.usbRegistered)
+  {
+    USB.disconnect();
+    g_MSC.usbEpIn = USB.registerEndpointIn();
+    g_MSC.usbEpOut = USB.registerEndpointOut();
+    static uint8_t msd_desc[] = { TUD_MSC_DESCRIPTOR(1 /* placeholder */, 0, g_MSC.usbEpOut, g_MSC.usbEpIn, USBD_MSC_EPSIZE) };
+    g_MSC.usbId = USB.registerInterface(1, USBClass::simpleInterface, msd_desc, sizeof(msd_desc), 2, 0);
+    USB.connect();
+    g_MSC.usbRegistered = true;
+  }
 
   if (g_MSC.lun_count_prev_response != 0 &&
       g_MSC.lun_count != g_MSC.lun_count_prev_response)
@@ -218,22 +234,28 @@ void platform_enter_msc() {
     // our response has now changed. We need to re-enumerate to
     // update it.
     g_MSC.lun_count_prev_response = 0;
-    tud_disconnect();
+    USB.disconnect();
     delay(250);
-    tud_connect();
+    USB.connect();
   }
 }
 
 /* perform any cleanup tasks for the MSC-specific functionality */
 void platform_exit_msc() {
-   g_MSC.unitReady = 0;
-   LED_OFF();
+  g_MSC.unitReady = 0;
+  if (g_MSC.usbRegistered)
+  {
+    USB.disconnect();
+    USB.unregisterInterface(g_MSC.usbId);
+    USB.unregisterEndpointOut(g_MSC.usbEpOut);
+    USB.unregisterEndpointIn(g_MSC.usbEpIn);
+    USB.connect();
+    g_MSC.usbRegistered = false;
+  }
+  LED_OFF();
 }
 
 /* TinyUSB mass storage callbacks follow */
-
-// usb framework checks this func exists for mass storage config. no code needed.
-void __USBInstallMassStorage() { }
 
 // Invoked when received SCSI_CMD_INQUIRY
 // fill vendor id, product id and revision with string up to 8, 16, 4 characters respectively

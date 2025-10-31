@@ -49,7 +49,7 @@ SECTIONS
     * reduce the flash usage.
     */
     /DISCARD/ : {
-
+        *fprintf*(*)
         *scanf*(*)
         *strtod*(*)
         *libipv4.a:*(*)
@@ -78,7 +78,7 @@ SECTIONS
         init_cyw43_wifi = bootloader_main;
         setPendingImageLoad = 0;
         platform_poll = 0;
-
+        _vfprintf_r = 0;
 
         __logical_binary_start = .;
         KEEP (*(.btldr_vectors))
