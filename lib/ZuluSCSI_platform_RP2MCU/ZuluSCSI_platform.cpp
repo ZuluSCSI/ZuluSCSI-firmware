@@ -1330,13 +1330,29 @@ void platform_reset_mcu(uint32_t reset_in_ms)
 
 uint8_t platform_get_buttons()
 {
+    static bool init_buttons = false;
     if (!g_controlBoardEnabled) // use legacy button pressing stuff
     {
         uint8_t buttons = 0;
 
     #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-        // pulled to VCC via resistor, sinking when pressed
-        if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+        if (g_scsi_settings.getSystem()->enableCDAudio)
+        {   // pulled to VCC via resistor, sinking when pressed
+            if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+        }
+        else if (!g_controlBoardEnabled)
+        {
+            if (!init_buttons)
+            {
+                init_buttons = true;
+                //        pin             function       pup   pdown  out    state  fast
+                gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_SIO, true, false, false, false, false);
+                gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
+            }
+            // SDA = button 1, SCL = button 2
+            if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
+            if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
+        }
     #elif defined(GPIO_EJECT_BTN)
         // EJECT_BTN = 1, SDA = button 2, SCL = button 4
         if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;

@@ -648,6 +648,13 @@ void initDevices()
 
 void initUIPostSDInit(bool sd_card_present)
 {
+#if  defined(ZULUSCSI_MCU_RP20XX) && defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    // CD Audio uses the I2C pins in this case, do not attempt to init the UI
+    if(g_scsi_settings.getSystem()->enableCDAudio)
+    {
+        return;
+    }
+#endif
     if (!hasScreenBeenInitialized || hasControlBeenInitialized)
     {
         return;

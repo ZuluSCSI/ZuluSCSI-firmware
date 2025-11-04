@@ -1373,7 +1373,7 @@ void s2s_configInit(S2S_BoardCfg* config)
     // Get default values from system preset, if any
     ini_gets("SCSI", "System", "", tmp, sizeof(tmp), CONFIGFILE);
     scsi_system_settings_t *sysCfg = g_scsi_settings.initSystem(tmp);
-
+    initUIPostSDInit(true);
     if (g_scsi_settings.getSystemPreset() != SYS_PRESET_NONE)
     {
         logmsg("Active configuration (using system preset \"", g_scsi_settings.getSystemPresetName(), "\"):");
