@@ -1116,8 +1116,8 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
         logmsg("No SD card detected, please check SD card slot to make sure it is in correctly");
       }
 
-      // if booting and no card found, we want to init the display here as it usually gets inited
-      // from readint the config
+      // if booting and no card found, we want to init the display here as it usually gets initiated
+      // from reading the config
       initUIPostSDInit(false);
     }
     dbgmsg("SD card init failed, sdErrorCode: ", (int)SD.sdErrorCode(),
@@ -1185,6 +1185,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
     scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName);
     g_log_to_sd = g_scsi_settings.getSystem()->logToSDCard;
+    initUIPostSDInit(true);
 
     #ifdef RECLOCKING_SUPPORTED
     zuluscsi_speed_grade_t speed_grade = (zuluscsi_speed_grade_t) g_scsi_settings.getSystem()->speedGrade;

@@ -481,9 +481,6 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
 #if ENABLE_COW
     cfgSys.cowBufferSize = ini_getl("SCSI", "CowBufferSize", cfgSys.cowBufferSize, CONFIGFILE);
 #endif
-
-    initUIPostSDInit(true);
-
     return &cfgSys;
 }
 
