@@ -310,11 +310,11 @@ static pin_setup_state_t read_setup_ack_pin()
 mutex g_core1_mutex;
 __attribute__((section(".time_critical.core1_handler")))
 static void core1_handler() {
-
+#ifdef ZULUSCSI_MCU_RP23XX
     // Set stack overflow limit for the second core, with space reserved for exception entry
     extern uint32_t __StackOneBottom; // From rp23xx-template.ld
     __asm__("msr msplim, %0": : "r"((uint32_t)&__StackOneBottom + 32) : "memory");
-
+#endif
     while (1) {
         void (*function)() = (void (*)()) multicore_fifo_pop_blocking();
 
@@ -347,10 +347,11 @@ void platform_init()
     // Make sure second core is stopped
     multicore_reset_core1();
 
-
+#ifdef ZULUSCSI_MCU_RP23XX
     // Set stack overflow limit, with space reserved for exception entry
     extern uint32_t __StackBottom; // From rp23xx-template.ld
     __asm__("msr msplim, %0": : "r"((uint32_t)&__StackBottom + 32) : "memory");
+#endif
 
     pio_clear_instruction_memory(pio0);
     pio_clear_instruction_memory(pio1);
