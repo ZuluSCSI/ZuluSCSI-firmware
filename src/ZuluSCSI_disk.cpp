@@ -894,6 +894,10 @@ static void doPerformEject(image_config_t &img)
         dbgmsg("------ Device open tray on ID ", (int)target);
         img.ejected = true;
         switchNextImage(img); // Switch media for next time
+        if (g_scsi_settings.getDevice(target)->reinsertImmediately)
+        {
+            doCloseTray(img);
+        }
     }
     else
     {
