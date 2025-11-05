@@ -1275,6 +1275,10 @@ void cdromPerformEject(image_config_t &img)
         img.ejected = true;
         img.cdrom_events = 3; // Media removal
         switchNextImage(img); // Switch media for next time
+        if (g_scsi_settings.getDevice(target)->reinsertImmediately)
+        {
+            cdromCloseTray(img);
+        }
     }
     else
     {

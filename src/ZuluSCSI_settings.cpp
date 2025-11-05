@@ -244,6 +244,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.rightAlignStrings = ini_getbool(section, "RightAlignStrings", cfg.rightAlignStrings , CONFIGFILE);
     cfg.reinsertOnInquiry = ini_getbool(section, "ReinsertCDOnInquiry", cfg.reinsertOnInquiry, CONFIGFILE);
     cfg.reinsertAfterEject = ini_getbool(section, "ReinsertAfterEject", cfg.reinsertAfterEject, CONFIGFILE);
+    cfg.reinsertImmediately = ini_getbool(section, "ReinsertImmediately", cfg.reinsertImmediately, CONFIGFILE);
     cfg.disableMacSanityCheck = ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE);
 
     cfg.sectorSDBegin = ini_getl(section, "SectorSDBegin", cfg.sectorSDBegin, CONFIGFILE);
@@ -362,6 +363,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgDev.rightAlignStrings = false;
     cfgDev.reinsertOnInquiry = true;
     cfgDev.reinsertAfterEject = true;
+    cfgDev.reinsertImmediately = false;
     cfgDev.disableMacSanityCheck = false;
 
     cfgDev.sectorSDBegin = 0;
