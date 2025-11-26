@@ -556,7 +556,7 @@ bool  audio_play_track_index(uint8_t owner,      image_config_t* img,
         logmsg("Error attempting to play CD Audio with no cue/bin image(s)");
         return false;
     }
-    if (img->bin_container.isOpen() && img->bin_container.isDir())
+    if (img->is_multi_bin_cue())
     {
         audio_parent.close();
         audio_file.close();
@@ -687,7 +687,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint32_t start, uint32_t len
         return false;
     }
 
-    if (img->bin_container.isOpen() && img->bin_container.isDir())
+    if (img->is_multi_bin_cue())
     {
         audio_parent.close();
         audio_file.close();
