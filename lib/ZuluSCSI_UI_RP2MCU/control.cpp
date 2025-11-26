@@ -480,19 +480,33 @@ bool initControlBoardHardware()
 
     g_reverseRotary = !cfg->controlBoardReverseRotary;
 
-    if (!initControlBoardI2C())
+#ifdef PLATFORM_HAS_INITIATOR_MODE
+    bool initiator_mode_enabled = platform_is_initiator_mode_enabled();
+#else
+    bool initiator_mode_enabled = false;
+#endif
+
+    if (!initControlBoardI2C() && !initiator_mode_enabled)
     {
         logmsg("Failed to init Control Board Input I2C chip. Disabling Control Board functionality");
 
         // Disable Control board as it couldn't be initalized
         g_controlBoardEnabled = false;
 
+        g_display->setTextSize(1);
+        g_display->setTextColor(SSD1306_WHITE);
         g_display->clearDisplay();
-        g_display->setCursor(0,0);             
+        g_display->setCursor(0,0);
         g_display->print(F("ZuluSCSI Control"));
         g_display->drawLine(0,10,127,10, 1);
-        g_display->setCursor(0,16);             
-        g_display->print(F("Failed to Init I2C chip"));
+        g_display->setCursor(0,16);
+        g_display->print(F("Failed to Init"));
+        g_display->setCursor(0,28);
+        g_display->print(F("I2C GPIO expander"));
+        g_display->setCursor(0,38);
+        g_display->print(F("for navigation"));
+        g_display->setCursor(0,48);
+        g_display->print(F("controls"));
         g_display->display(); 
 
         return false;
