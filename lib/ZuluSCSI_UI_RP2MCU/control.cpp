@@ -241,7 +241,12 @@ static bool splashScreenPoll()
         {
             g_uiStart = ZULUSCSI_UI_START_DONE;
 
-            if (!g_sdcard_present)
+            if (!g_controlBoardEnabled)
+            {
+                changeScreen(SCREEN_NO_CONTROLS_ERROR, SCREEN_ID_NO_PREVIOUS);
+                g_activeScreen->tick();
+            }
+            else if (!g_sdcard_present)
             {
                 switch(g_systemMode)
                 {
@@ -480,41 +485,8 @@ bool initControlBoardHardware()
 
     g_reverseRotary = !cfg->controlBoardReverseRotary;
 
-#ifdef PLATFORM_HAS_INITIATOR_MODE
-    bool initiator_mode_enabled = platform_is_initiator_mode_enabled();
-#else
-    bool initiator_mode_enabled = false;
-#endif
-
-    if (!initControlBoardI2C() && !initiator_mode_enabled)
-    {
-        logmsg("Failed to init Control Board Input I2C chip. Disabling Control Board functionality");
-
-        // Disable Control board as it couldn't be initalized
-        g_controlBoardEnabled = false;
-
-        g_display->setTextSize(1);
-        g_display->setTextColor(SSD1306_WHITE);
-        g_display->clearDisplay();
-        g_display->setCursor(0,0);
-        g_display->print(F("ZuluSCSI Control"));
-        g_display->drawLine(0,10,127,10, 1);
-        g_display->setCursor(0,16);
-        g_display->print(F("Failed to Init"));
-        g_display->setCursor(0,28);
-        g_display->print(F("I2C GPIO expander"));
-        g_display->setCursor(0,38);
-        g_display->print(F("for navigation"));
-        g_display->setCursor(0,48);
-        g_display->print(F("controls"));
-        g_display->display(); 
-
-        return false;
-    }
-
     enableScreen(true);
-
-    g_controlBoardEnabled = true;
+    g_controlBoardEnabled = initControlBoardI2C();
     return true;
 }
 
@@ -699,7 +671,7 @@ void initUIPostSDInit(bool sd_card_present)
         g_uiSplashStartTime = millis();
     }
 
-    logmsg("Control Board is ", g_controlBoardEnabled?"Enabled.":"Disabled.");
+    logmsg("Control Board is ", g_controlBoardEnabled ? "Enabled" : "Disabled");
 }
 
 void updateRotary(int dir)
@@ -777,11 +749,9 @@ void scanForNestedFolders()
 }
 
 /////// THIS IS WHERE WE CAN INIT, THE DEVICE LIST IS VALID HERE
-// Called on sd remove and Device Chnages
+// Called on sd remove and Device Changes
 void stateChange()
 {
-    // printDevices();
-
     g_userInputDetected = true;  // Something changed, so assume the user did interact
 
     sendSDCardStateChangedToScreens(g_sdAvailable);
@@ -811,7 +781,10 @@ void stateChange()
     switch(g_systemMode)
     {
         case SYSTEM_NORMAL:
-            changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
+            if (g_controlBoardEnabled)
+                changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
+            else
+                changeScreen(SCREEN_NO_CONTROLS_ERROR, SCREEN_ID_NO_PREVIOUS);
             g_activeScreen->tick();
             break;
             
@@ -886,11 +859,6 @@ void processRotaryEncoder(uint8_t input_byte)
 // When this is called, the device list is complete, either on startup or on a card swap
 void devicesUpdated()
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     stateChange();
 }
 
@@ -1214,20 +1182,16 @@ extern "C" void binCueInUse(int target_idx, const char *foldername)
 // When a card is removed or inserted. If it's removed then clear the device list
 extern "C" void sdCardStateChanged(bool sdAvailable)
 {
+
     g_sdAvailable = sdAvailable;
 
-    initDevices();
+    if (!hasControlBeenInitialized) return;
 
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
+    initDevices();
 
     if (!sdAvailable) // blank the device map
     {
         patchDevices();
-        // printDevices();
-
         stateChange();
     }
 }
@@ -1235,11 +1199,6 @@ extern "C" void sdCardStateChanged(bool sdAvailable)
 // On startup on when a card has finished been reinserted, this is call. Used to call 2nd pass of device setup
 extern "C" void scsiReinitComplete()
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     patchDevices();
     devicesUpdated();
 }
@@ -1276,95 +1235,91 @@ extern "C" bool mscMode()
 
 extern "C" void controlLoop()
 {
-    if (!g_controlBoardEnabled || splashScreenPoll())
+    if (splashScreenPoll())
     {
         return;
     }
-
     pollUI();
 
-    // Get the input from the control board
-    uint8_t input_byte = getValue();
-
-    processRotaryEncoder(input_byte);
-    processButtons(input_byte);
-
-    if (g_activeScreen != NULL)
+    if (g_controlBoardEnabled)
     {
-        if (g_shortPressed[2])
-        {
-            if (!g_screenSaverActive)
-            {
-                g_activeScreen->shortRotaryPress();
-            }
-            g_userInputDetected = true;
-        }
-        if (g_longPressed[2])
-        {
-            if (!g_screenSaverActive)
-            {
-                g_activeScreen->longRotaryPress();
-            }
-            g_userInputDetected = true;
-        }
-        if (g_shortPressed[0])
-        {
-            if (!g_screenSaverActive)
-            {
-                g_activeScreen->shortUserPress();
-            }
-            g_userInputDetected = true;
-        }
-        if (g_longPressed[0])
-        {
-            if (!g_screenSaverActive)
-            {   
-                g_activeScreen->longUserPress();
-            }
-            g_userInputDetected = true;
-        }
-        if (g_shortPressed[1])
-        {
-            if (!g_screenSaverActive)
-            {
-                g_activeScreen->shortEjectPress();
-            }
-            g_userInputDetected = true;
-        }
-        if (g_longPressed[1])
-        {
-            if (!g_screenSaverActive)
-            {
-                g_activeScreen->longEjectPress();
-            }
-            g_userInputDetected = true;
-        }
+        // Get the input from the control board
+        uint8_t input_byte = getValue();
 
-        screenSaverLoop();
+        processRotaryEncoder(input_byte);
+        processButtons(input_byte);
 
-        if (!g_screenSaverActive)
+        if (g_activeScreen != NULL)
         {
-            if (g_activeScreen != NULL)
+            if (g_shortPressed[2])
             {
-                g_activeScreen->tick();
+                if (!g_screenSaverActive)
+                {
+                    g_activeScreen->shortRotaryPress();
+                }
+                g_userInputDetected = true;
             }
-        }
-        else
-        {
-            drawScreenSaver();
+            if (g_longPressed[2])
+            {
+                if (!g_screenSaverActive)
+                {
+                    g_activeScreen->longRotaryPress();
+                }
+                g_userInputDetected = true;
+            }
+            if (g_shortPressed[0])
+            {
+                if (!g_screenSaverActive)
+                {
+                    g_activeScreen->shortUserPress();
+                }
+                g_userInputDetected = true;
+            }
+            if (g_longPressed[0])
+            {
+                if (!g_screenSaverActive)
+                {   
+                    g_activeScreen->longUserPress();
+                }
+                g_userInputDetected = true;
+            }
+            if (g_shortPressed[1])
+            {
+                if (!g_screenSaverActive)
+                {
+                    g_activeScreen->shortEjectPress();
+                }
+                g_userInputDetected = true;
+            }
+            if (g_longPressed[1])
+            {
+                if (!g_screenSaverActive)
+                {
+                    g_activeScreen->longEjectPress();
+                }
+                g_userInputDetected = true;
+            }
         }
     }
+    screenSaverLoop();
 
+    if (!g_screenSaverActive)
+    {
+        if (g_activeScreen != NULL)
+        {
+            g_activeScreen->tick();
+        }
+    }
+    else
+    {
+        drawScreenSaver();
+    }
     g_userInputDetected = false;
 }
 
 // Create 
 void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
 
     _copyScreen->TotalRetries = 0;
     _copyScreen->TotalErrors  = 0;
@@ -1382,10 +1337,6 @@ void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename)
 
 void UICreateProgress(uint32_t blockTime, uint32_t blockCopied) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
     _copyScreen->BlockTime = blockTime;
     _copyScreen->BlocksCopied = blockCopied;
     _copyScreen->BlocksInBatch = 1;
@@ -1396,10 +1347,6 @@ void UICreateProgress(uint32_t blockTime, uint32_t blockCopied)
 /// Kiosk
 void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCount, uint32_t blockSize, const char *filename)
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
     _copyScreen->TotalRetries = 0;
     _copyScreen->TotalErrors  = 0;
 
@@ -1430,10 +1377,6 @@ void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCo
 
 void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
     _copyScreen->BlockTime = blockTime;
     _copyScreen->BlocksCopied = blockCopied;
     _copyScreen->BlocksInBatch = 1;
@@ -1445,10 +1388,6 @@ void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
 /// Rom copy
 void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize, const char *filename)
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
     _copyScreen->TotalRetries = 0;
     _copyScreen->TotalErrors  = 0;
 
@@ -1464,10 +1403,6 @@ void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCoun
 }
 void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
     _copyScreen->BlockTime = blockTime;
     _copyScreen->BlocksCopied = blocksCopied;
     _copyScreen->BlocksInBatch = 1;
@@ -1482,11 +1417,6 @@ bool g_initiatorMessageToProcess;
 
 void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId)
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     startInitiator(initiatorId);
 
     g_initiatorMessageToProcess = true;
@@ -1516,11 +1446,6 @@ void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId)
 
 void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -1547,10 +1472,6 @@ void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t se
 
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
     _copyScreen->BlockTime = blockTime;
     _copyScreen->BlocksCopied = sectorsCopied;
     _copyScreen->BlocksInBatch = sectorInBatch;
@@ -1561,11 +1482,6 @@ void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsC
 
 void UIInitiatorRetry(uint8_t deviceId) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -1576,11 +1492,6 @@ void UIInitiatorRetry(uint8_t deviceId)
 
 void UIInitiatorSkippedSector(uint8_t deviceId) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -1591,11 +1502,6 @@ void UIInitiatorSkippedSector(uint8_t deviceId)
 
 void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -1604,21 +1510,11 @@ void UIInitiatorTargetFilename(uint8_t deviceId, char *filename)
 
 void UIInitiatorFailedToTransfer(uint8_t deviceId) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     g_initiatorMessageToProcess = true;
 }
 
 void UIInitiatorImagingComplete(uint8_t deviceId) 
 {
-    if (!g_controlBoardEnabled)
-    {
-        return;
-    }
-
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];

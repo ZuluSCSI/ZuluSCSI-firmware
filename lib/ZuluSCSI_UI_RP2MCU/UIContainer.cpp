@@ -38,6 +38,7 @@
 #include "MessageBox.h"
 #include "CopyScreen.h"
 #include "InitiatorMainScreen.h"
+#include "NoControlsErrorScreen.h"
 #include "control.h"
 #include <ZuluSCSI_buffer_control.h>
 
@@ -58,6 +59,7 @@ BrowseScreenFlat *_browseScreenFlat;
 MessageBox *_messageBox;
 CopyScreen *_copyScreen;
 InitiatorMainScreen *_initiatorMainScreen;
+NoControlsErrorScreen *_noControlsErrorScreen;
 
 #if ZULUSCSI_RESERVED_SRAM_LEN == 0
 extern Adafruit_SSD1306 allocated_g_display;
@@ -75,6 +77,7 @@ static BrowseScreenFlat static_browseScreenFlat(&allocated_g_display);
 static MessageBox static_messageBox(&allocated_g_display);
 static CopyScreen static_copyScreen(&allocated_g_display);
 static InitiatorMainScreen static_initiatorMainScreen(&allocated_g_display);
+static NoControlsErrorScreen static_noControlsErrorScreen(&allocated_g_display);
 
 void initScreens()
 {
@@ -91,6 +94,7 @@ void initScreens()
     _messageBox = &static_messageBox;
     _copyScreen = &static_copyScreen;
     _initiatorMainScreen = &static_initiatorMainScreen;
+    _noControlsErrorScreen = &static_noControlsErrorScreen;
 }
 
 #else
@@ -111,6 +115,7 @@ void initScreens()
     _messageBox = new (reserve_buffer_align(sizeof(MessageBox), 4)) MessageBox(g_display);
     _copyScreen = new (reserve_buffer_align(sizeof(CopyScreen), 4)) CopyScreen(g_display);
     _initiatorMainScreen = new (reserve_buffer_align(sizeof(InitiatorMainScreen), 4)) InitiatorMainScreen(g_display);
+    _noControlsErrorScreen = new (reserve_buffer_align(sizeof(NoControlsErrorScreen), 4)) NoControlsErrorScreen(g_display);
 }
 #endif
 // Call new card method on all screens
@@ -129,6 +134,7 @@ void sendSDCardStateChangedToScreens(bool cardIsPresent)
     _messageBox->sdCardStateChange(cardIsPresent);
     _copyScreen->sdCardStateChange(cardIsPresent);
     _initiatorMainScreen->sdCardStateChange(cardIsPresent);
+    _noControlsErrorScreen->sdCardStateChange(cardIsPresent);
 }
 
 // Return a pointer to a screen
@@ -177,6 +183,9 @@ Screen *GetScreen(SCREEN_TYPE type)
 
         case SCREEN_INITIATOR_MAIN:
             return _initiatorMainScreen;
+
+        case SCREEN_NO_CONTROLS_ERROR:
+            return _noControlsErrorScreen;
     }
     return NULL;
 }
@@ -226,6 +235,10 @@ const char *GetScreenName(SCREEN_TYPE type)
 
         case SCREEN_INITIATOR_MAIN:
             return "Initiator Main";
+
+        case SCREEN_NO_CONTROLS_ERROR:
+            return "No Controls Error";
+
     }
     return "Unknown";
 }
