@@ -19,30 +19,26 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
+#pragma once
 #if defined(CONTROL_BOARD)
 
-#ifndef SCREENTYPE_H
-#define SCREENTYPE_H
+#include "Screen.h"
 
-typedef enum
+class NoControlsErrorScreen : public Screen
 {
-    SCREEN_NONE,
-	SCREEN_SPLASH,
-    SCREEN_SETTINGS,
-    SCREEN_MAIN,
-    SCREEN_INFO,
-    SCREEN_INFO_PAGE2,
-    SCREEN_INFO_PAGE3,
-    SCREEN_INFO_PAGE4,
-    SCREEN_BROWSE_TYPE,
-    SCREEN_BROWSE,
-    SCREEN_BROWSE_FLAT,
-    MESSAGE_BOX,
-    SCREEN_COPY,
-    SCREEN_INITIATOR_MAIN,
-    SCREEN_NO_CONTROLS_ERROR
-} SCREEN_TYPE;
+public:
+    NoControlsErrorScreen(Adafruit_SSD1306 *display) : Screen(display), _last_sd_state(false)
+    {
+    }
 
-#endif
+    SCREEN_TYPE screenType() { return SCREEN_NO_CONTROLS_ERROR; }
+
+    void init(int index);
+    void draw();
+    void tick();
+
+private:
+    bool _last_sd_state;
+};
 
 #endif

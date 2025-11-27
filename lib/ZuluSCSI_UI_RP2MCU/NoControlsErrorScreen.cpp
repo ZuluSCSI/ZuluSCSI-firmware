@@ -21,28 +21,46 @@
 
 #if defined(CONTROL_BOARD)
 
-#ifndef SCREENTYPE_H
-#define SCREENTYPE_H
+#include "ui.h"
+#include "NoControlsErrorScreen.h"
+#include "SplashScreen.h"
+#include "ZuluSCSI_log.h"
 
-typedef enum
+#include "cache.h"
+
+extern bool g_sdAvailable;
+
+void NoControlsErrorScreen::init(int index)
 {
-    SCREEN_NONE,
-	SCREEN_SPLASH,
-    SCREEN_SETTINGS,
-    SCREEN_MAIN,
-    SCREEN_INFO,
-    SCREEN_INFO_PAGE2,
-    SCREEN_INFO_PAGE3,
-    SCREEN_INFO_PAGE4,
-    SCREEN_BROWSE_TYPE,
-    SCREEN_BROWSE,
-    SCREEN_BROWSE_FLAT,
-    MESSAGE_BOX,
-    SCREEN_COPY,
-    SCREEN_INITIATOR_MAIN,
-    SCREEN_NO_CONTROLS_ERROR
-} SCREEN_TYPE;
+  Screen::init(index);
+}
 
-#endif
+void NoControlsErrorScreen::draw()
+{
+  _display->setCursor(0,0);
+  _display->print(F("ZuluSCSI Error"));
+  _display->drawLine(0,10,112,10, 1);
+  if (g_sdAvailable)
+  {
+    _display->drawBitmap(115, 0, icon_sd, 12,12, WHITE);
+  }
+  else
+  {
+    _display->drawBitmap(115, 0, icon_nosd, 12,12, WHITE);
+  }
+  _display->setCursor(0,16);
+  _display->print(F("Failed to Init I2C"));
+  _display->setCursor(0,28);
+  _display->print(F("GPIO expander for"));
+  _display->setCursor(0,38);
+  _display->print(F("navigation controls"));
+
+  printCenteredText(g_log_short_firmwareversion, 50);
+}
+
+void NoControlsErrorScreen::tick()
+{
+  Screen::tick();
+}
 
 #endif

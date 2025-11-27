@@ -1136,14 +1136,13 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     do
     {
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
-      if (g_controlBoardEnabled)
+
+      uint32_t input_wait_start = millis();
+      while ((uint32_t)(millis() - input_wait_start) < 500)
       {
-        uint32_t input_wait_start = millis();
-        while ((uint32_t)(millis() - input_wait_start) < 500)
-        {
-          controlLoop();
-        }
+        controlLoop();
       }
+
       platform_reset_watchdog();
       g_sdcard_present = mountSDCard();
 
@@ -1338,12 +1337,10 @@ extern "C" void zuluscsi_main_loop(void)
     diskEjectButtonUpdate(true);
   blink_poll();
 
-  if (g_controlBoardEnabled)
+
+  if (scsiDev.phase == BUS_FREE)
   {
-    if (scsiDev.phase == BUS_FREE)
-    {
-      controlLoop();
-    }
+    controlLoop();
   }
 
 #ifdef ZULUSCSI_NETWORK
@@ -1427,18 +1424,14 @@ extern "C" void zuluscsi_main_loop(void)
         blinkStatus(BLINK_ERROR_NO_SD_CARD);
         platform_reset_watchdog();
         platform_poll();
-        if (g_controlBoardEnabled)
+        uint32_t input_wait_start = millis();
+        while ((uint32_t)(millis() - input_wait_start) < 500)
         {
-          uint32_t input_wait_start = millis();
-          while ((uint32_t)(millis() - input_wait_start) < 500)
+          if (scsiDev.phase == BUS_FREE)
           {
-            if (scsiDev.phase == BUS_FREE)
-            {
-              controlLoop();
-            }
+            controlLoop();
           }
         }
-
       }
     } while (!g_sdcard_present && !g_romdrive_active && !is_initiator && !g_rebooting);
   }
