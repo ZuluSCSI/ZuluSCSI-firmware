@@ -786,10 +786,10 @@ uint8_t platform_no_sd_card_on_init_error_code()
 extern SdFs SD;
 extern uint32_t __StackTop;
 
-void platform_emergency_log_save()
+bool platform_emergency_log_save()
 {
     if (g_rawdrive_active)
-        return;
+        return false;
     platform_set_sd_callback(NULL, NULL);
     SD.begin(SD_CONFIG_CRASH);
     FsFile crashfile = SD.open(CRASHFILE, O_WRONLY | O_CREAT | O_TRUNC);
@@ -803,11 +803,16 @@ void platform_emergency_log_save()
         crashfile = SD.open(CRASHFILE, O_WRONLY | O_CREAT | O_TRUNC);
     }
 
-    uint32_t startpos = 0;
-    crashfile.write(log_get_buffer(&startpos));
-    crashfile.write(log_get_buffer(&startpos));
-    crashfile.flush();
-    crashfile.close();
+    if (crashfile.isOpen())
+    {
+        uint32_t startpos = 0;
+        crashfile.write(log_get_buffer(&startpos));
+        crashfile.write(log_get_buffer(&startpos));
+        crashfile.flush();
+        crashfile.close();
+        return true;
+    }
+    return false;
 }
 
 
@@ -879,10 +884,15 @@ void show_hardfault(uint32_t *sp, uint32_t r4, uint32_t r5, uint32_t r6,
         p += 4;
     }
 
-    platform_emergency_log_save();
+    bool log_saved = platform_emergency_log_save();
 
     while (1)
     {
+        if (!log_saved)
+        {
+            log_saved = platform_emergency_log_save();
+        }
+
         usb_log_poll();
         // Flash the crash address on the LED
         // Short pulse means 0, long pulse means 1
