@@ -1332,7 +1332,7 @@ void platform_reset_mcu(uint32_t reset_in_ms)
 uint8_t platform_get_buttons()
 {
     static bool init_buttons = false;
-    if (!g_controlBoardEnabled) // use legacy button pressing stuff
+    if (!g_displayEnabled) // use legacy button pressing stuff
     {
         uint8_t buttons = 0;
 
@@ -1341,7 +1341,7 @@ uint8_t platform_get_buttons()
         {   // pulled to VCC via resistor, sinking when pressed
             if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
         }
-        else if (!g_controlBoardEnabled)
+        else if (!g_displayEnabled)
         {
             if (!init_buttons)
             {

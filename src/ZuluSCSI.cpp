@@ -1097,10 +1097,6 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 {
   g_sdcard_present = mountSDCard();
 
-  bool orig_g_sdcard_present = g_sdcard_present;
-
-  sdCardStateChanged(g_sdcard_present);
-
   if(!g_sdcard_present)
   {
     if (SD.sdErrorCode() == platform_no_sd_card_on_init_error_code())
@@ -1128,6 +1124,10 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       reinitSCSI();
       if (g_romdrive_active)
       {
+        if (g_displayEnabled)
+        {
+          sdCardStateChanged(g_sdcard_present, g_romdrive_active);
+        }
         logmsg("Enabled ROM drive without SD card");
         return;
       }
@@ -1137,20 +1137,18 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     {
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
 
-      uint32_t input_wait_start = millis();
-      while ((uint32_t)(millis() - input_wait_start) < 500)
+      if (g_displayEnabled)
       {
-        controlLoop();
+        uint32_t input_wait_start = millis();
+        while ((uint32_t)(millis() - input_wait_start) < 500)
+        {
+          controlLoop();
+        }
       }
 
       platform_reset_watchdog();
       g_sdcard_present = mountSDCard();
 
-      if (g_sdcard_present != orig_g_sdcard_present)
-      {
-          sdCardStateChanged(g_sdcard_present);
-      }
-  
     } while (!g_sdcard_present && wait_for_card && !g_rebooting);
     blink_cancel();
     LED_OFF();
@@ -1163,6 +1161,10 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     {
       logmsg("Continuing without SD card");
     }
+  }
+  if (g_displayEnabled)
+  {
+    sdCardStateChanged(g_sdcard_present, g_romdrive_active);
   }
   check_for_unused_update_files();
   firmware_update();
@@ -1338,7 +1340,7 @@ extern "C" void zuluscsi_main_loop(void)
   blink_poll();
 
 
-  if (scsiDev.phase == BUS_FREE)
+  if (g_displayEnabled && scsiDev.phase == BUS_FREE)
   {
     controlLoop();
   }
@@ -1389,7 +1391,10 @@ extern "C" void zuluscsi_main_loop(void)
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
 
-          sdCardStateChanged(false);
+          if (g_displayEnabled)
+          {
+            sdCardStateChanged(g_sdcard_present, g_romdrive_active);
+          }
         }
       }
     }
@@ -1410,26 +1415,27 @@ extern "C" void zuluscsi_main_loop(void)
         blink_cancel();
         LED_OFF();
         logmsg("SD card reinit succeeded");
-
-        sdCardStateChanged(true);
-
         print_sd_info();
         reinitSCSI();
         init_logfile();
         init_eject_button();
         blinkStatus(BLINK_STATUS_OK);
+        if (g_displayEnabled)
+        {
+          sdCardStateChanged(g_sdcard_present, g_romdrive_active);
+        }
       }
       else if (!g_romdrive_active)
       {
         blinkStatus(BLINK_ERROR_NO_SD_CARD);
         platform_reset_watchdog();
         platform_poll();
-        uint32_t input_wait_start = millis();
-        while ((uint32_t)(millis() - input_wait_start) < 500)
+        if (g_displayEnabled)
         {
-          if (scsiDev.phase == BUS_FREE)
+          uint32_t input_wait_start = millis();
+          while (scsiDev.phase == BUS_FREE && (uint32_t)(millis() - input_wait_start) < 500)
           {
-            controlLoop();
+              controlLoop();
           }
         }
       }

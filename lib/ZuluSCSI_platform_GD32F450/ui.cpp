@@ -31,6 +31,7 @@ extern "C" void initUIDisplay() {}
 extern "C" void initUIPostSDInit(bool cardPresent) {}
 
 bool g_controlBoardEnabled = false;
+bool g_displayEnabled = false;
 
 bool g_initiatorMessageToProcess;
 

@@ -23,9 +23,10 @@
 
 #ifndef CONTROL_BOARD
 bool g_controlBoardEnabled = false;
+bool g_displayEnabled = false;
 
 extern "C" void scsiReinitComplete() {}
-extern "C" void sdCardStateChanged(bool sdAvailable) {}
+extern "C" void sdCardStateChanged(bool sdAvailable, bool romdrivePresent) {}
 extern "C" void controlLoop() {}
 extern "C" bool mscMode() { return false; }
 extern "C" void setRootFolder(int target_idx, bool userSet, const char *path) {}

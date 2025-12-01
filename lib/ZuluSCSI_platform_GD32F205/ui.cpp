@@ -22,7 +22,7 @@
 #include "ui.h"
 
 extern "C" void scsiReinitComplete() {}
-extern "C" void sdCardStateChanged(bool sdAvailable) {}
+extern "C" void sdCardStateChanged(bool sdAvailable, bool romdrivePresent) {}
 extern "C" void controlLoop() {}
 extern "C" bool mscMode() { return false; }
 extern "C" void setRootFolder(int target_idx, bool userSet, const char *path) {}
@@ -32,6 +32,7 @@ extern "C" void initUIDisplay() {}
 extern "C" void initUIPostSDInit(bool cardPresent) {}
 
 bool g_controlBoardEnabled = false;
+bool g_displayEnabled = false;
 
 bool g_initiatorMessageToProcess;
 
