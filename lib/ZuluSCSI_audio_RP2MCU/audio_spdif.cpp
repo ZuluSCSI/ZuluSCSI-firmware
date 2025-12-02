@@ -375,7 +375,7 @@ bool audio_is_playing(uint8_t id) {
 
 void audio_setup() {
 #ifdef CONTROL_BOARD
-    if (!g_scsi_settings.getSystem()->enableCDAudio || g_controlBoardEnabled)
+    if (!g_scsi_settings.getSystem()->enableCDAudio || g_controlBoardEnabled || g_displayEnabled)
 #else
     if (!g_scsi_settings.getSystem()->enableCDAudio)
 #endif

@@ -45,7 +45,8 @@ typedef enum
 #define MAX_CATEGORY_NAME_LEN 32
 
 extern "C" void scsiReinitComplete();
-extern "C" void sdCardStateChanged(bool sdAvailable);
+extern "C" void sdCardStateChanged(bool sdAvailable, bool romdrive_present);
+
 
 extern "C" void controlLoop();
 extern "C" bool mscMode();
@@ -60,6 +61,7 @@ extern "C" void initUIPostSDInit(bool cardPresent);
 extern "C" void initScreens();
 
 extern bool g_controlBoardEnabled;
+extern bool g_displayEnabled;
 
 #if defined(CONTROL_BOARD)
 

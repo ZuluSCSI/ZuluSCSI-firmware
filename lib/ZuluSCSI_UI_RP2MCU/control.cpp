@@ -140,6 +140,8 @@ static struct
 int g_pcaAddr = 0x3F;
 
 bool g_controlBoardEnabled = false;
+bool g_displayEnabled = false;
+
 bool hasScreenBeenInitialized = false;
 bool hasControlBeenInitialized = false;
 
@@ -228,6 +230,9 @@ void printDevices()
  */
 static bool splashScreenPoll()
 {
+    if (!g_displayEnabled)
+        return false;
+
     if (g_uiStart != ZULUSCSI_UI_START_DONE)
     {
         if (g_uiStart == ZULUSCSI_UI_START_SPLASH_VERSION && (uint32_t)(millis() - g_uiSplashStartTime) > 1500)
@@ -455,6 +460,7 @@ bool initScreenHardware()
 
         return false;
     }
+    g_displayEnabled = true;
         // Clear the buffer
     g_display->clearDisplay();
     g_display->display();
@@ -752,6 +758,10 @@ void scanForNestedFolders()
 // Called on sd remove and Device Changes
 void stateChange()
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
     g_userInputDetected = true;  // Something changed, so assume the user did interact
 
     sendSDCardStateChangedToScreens(g_sdAvailable);
@@ -1180,21 +1190,21 @@ extern "C" void binCueInUse(int target_idx, const char *foldername)
 }
 
 // When a card is removed or inserted. If it's removed then clear the device list
-extern "C" void sdCardStateChanged(bool sdAvailable)
+extern "C" void sdCardStateChanged(bool sdAvailable, bool romdrivePresent)
 {
 
     g_sdAvailable = sdAvailable;
 
-    if (!hasControlBeenInitialized) return;
-
     initDevices();
 
-    if (!sdAvailable) // blank the device map
+
+    if (!sdAvailable || romdrivePresent) // blank the device map
     {
         patchDevices();
         stateChange();
     }
 }
+
 
 // On startup on when a card has finished been reinserted, this is call. Used to call 2nd pass of device setup
 extern "C" void scsiReinitComplete()
