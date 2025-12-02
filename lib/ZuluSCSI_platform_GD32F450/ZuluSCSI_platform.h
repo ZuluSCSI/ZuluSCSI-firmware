@@ -121,7 +121,7 @@ inline bool platform_rebooted_into_mass_storage() {return false;}
 
 // Reinitialize SD card connection and save log from interrupt context.
 // This can be used in crash handlers.
-void platform_emergency_log_save();
+bool platform_emergency_log_save();
 
 // Set callback that will be called during data transfer to/from SD card.
 // This can be used to implement simultaneous transfer to SCSI bus.

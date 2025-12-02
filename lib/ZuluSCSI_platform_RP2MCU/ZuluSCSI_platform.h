@@ -66,7 +66,7 @@ extern const char *g_platform_name;
 // Debug logging function, can be used to print to e.g. serial port.
 // May get called from interrupt handlers.
 void platform_log(const char *s);
-void platform_emergency_log_save();
+bool platform_emergency_log_save();
 
 // Timing and delay functions.
 // Arduino platform already provides these

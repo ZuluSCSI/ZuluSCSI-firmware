@@ -392,10 +392,10 @@ void platform_log(const char *s)
     }
 }
 
-void platform_emergency_log_save()
+bool platform_emergency_log_save()
 {
     if (g_rawdrive_active)
-        return;
+        return false;
 
     platform_set_sd_callback(NULL, NULL);
 
@@ -410,12 +410,16 @@ void platform_emergency_log_save()
 
         crashfile = SD.open(CRASHFILE, O_WRONLY | O_CREAT | O_TRUNC);
     }
-
-    uint32_t startpos = 0;
-    crashfile.write(log_get_buffer(&startpos));
-    crashfile.write(log_get_buffer(&startpos));
-    crashfile.flush();
-    crashfile.close();
+    if (crashfile.isOpen())
+    {
+        uint32_t startpos = 0;
+        crashfile.write(log_get_buffer(&startpos));
+        crashfile.write(log_get_buffer(&startpos));
+        crashfile.flush();
+        crashfile.close();
+        return true;
+    }
+    return false;
 }
 
 extern uint32_t _estack;
@@ -451,10 +455,14 @@ void show_hardfault(uint32_t *sp)
         p += 4;
     }
 
-    platform_emergency_log_save();
+    bool log_saved = platform_emergency_log_save();
 
     while (1)
     {
+        if (!log_saved)
+        {
+            log_saved = platform_emergency_log_save();
+        }
         // Flash the crash address on the LED
         // Short pulse means 0, long pulse means 1
         int base_delay = 1000;
