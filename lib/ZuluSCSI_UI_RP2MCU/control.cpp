@@ -869,6 +869,11 @@ void processRotaryEncoder(uint8_t input_byte)
 // When this is called, the device list is complete, either on startup or on a card swap
 void devicesUpdated()
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     stateChange();
 }
 
@@ -1209,6 +1214,11 @@ extern "C" void sdCardStateChanged(bool sdAvailable, bool romdrivePresent)
 // On startup on when a card has finished been reinserted, this is call. Used to call 2nd pass of device setup
 extern "C" void scsiReinitComplete()
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     patchDevices();
     devicesUpdated();
 }
@@ -1245,7 +1255,7 @@ extern "C" bool mscMode()
 
 extern "C" void controlLoop()
 {
-    if (splashScreenPoll())
+    if (!g_displayEnabled || splashScreenPoll())
     {
         return;
     }
@@ -1330,6 +1340,10 @@ extern "C" void controlLoop()
 // Create 
 void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename) 
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
 
     _copyScreen->TotalRetries = 0;
     _copyScreen->TotalErrors  = 0;
@@ -1347,6 +1361,11 @@ void UICreateInit(uint64_t blockCount, uint32_t blockSize, const char *filename)
 
 void UICreateProgress(uint32_t blockTime, uint32_t blockCopied) 
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     _copyScreen->BlockTime = blockTime;
     _copyScreen->BlocksCopied = blockCopied;
     _copyScreen->BlocksInBatch = 1;
@@ -1357,6 +1376,11 @@ void UICreateProgress(uint32_t blockTime, uint32_t blockCopied)
 /// Kiosk
 void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCount, uint32_t blockSize, const char *filename)
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     _copyScreen->TotalRetries = 0;
     _copyScreen->TotalErrors  = 0;
 
@@ -1387,6 +1411,11 @@ void UIKioskCopyInit(uint8_t deviceIndex, uint8_t totalDevices, uint64_t blockCo
 
 void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     _copyScreen->BlockTime = blockTime;
     _copyScreen->BlocksCopied = blockCopied;
     _copyScreen->BlocksInBatch = 1;
@@ -1398,6 +1427,11 @@ void UIKioskCopyProgress(uint32_t blockTime, uint32_t blockCopied)
 /// Rom copy
 void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCount, uint32_t blockSize, const char *filename)
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     _copyScreen->TotalRetries = 0;
     _copyScreen->TotalErrors  = 0;
 
@@ -1411,8 +1445,14 @@ void UIRomCopyInit(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t blockCoun
     _copyScreen->setShowRetriesAndErrors(false);
     overrideSplashScreenLoad(SCREEN_COPY, deviceId);
 }
+
 void UIRomCopyProgress(uint8_t deviceId, uint32_t blockTime, uint32_t blocksCopied) 
 {
+        if (!g_displayEnabled)
+    {
+        return;
+    }
+
     _copyScreen->BlockTime = blockTime;
     _copyScreen->BlocksCopied = blocksCopied;
     _copyScreen->BlocksInBatch = 1;
@@ -1427,6 +1467,11 @@ bool g_initiatorMessageToProcess;
 
 void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId)
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     startInitiator(initiatorId);
 
     g_initiatorMessageToProcess = true;
@@ -1456,6 +1501,11 @@ void UIInitiatorScanning(uint8_t deviceId, uint8_t initiatorId)
 
 void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t sectorCount, uint32_t sectorSize) 
 {
+        if (!g_displayEnabled)
+    {
+        return;
+    }
+
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -1482,6 +1532,11 @@ void UIInitiatorReadCapOk(uint8_t deviceId, S2S_CFG_TYPE deviceType, uint64_t se
 
 void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsCopied, uint32_t sectorInBatch) 
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     _copyScreen->BlockTime = blockTime;
     _copyScreen->BlocksCopied = sectorsCopied;
     _copyScreen->BlocksInBatch = sectorInBatch;
@@ -1492,6 +1547,11 @@ void UIInitiatorProgress(uint8_t deviceId, uint32_t blockTime, uint32_t sectorsC
 
 void UIInitiatorRetry(uint8_t deviceId) 
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -1502,6 +1562,11 @@ void UIInitiatorRetry(uint8_t deviceId)
 
 void UIInitiatorSkippedSector(uint8_t deviceId) 
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -1512,6 +1577,11 @@ void UIInitiatorSkippedSector(uint8_t deviceId)
 
 void UIInitiatorTargetFilename(uint8_t deviceId, char *filename) 
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
@@ -1520,11 +1590,21 @@ void UIInitiatorTargetFilename(uint8_t deviceId, char *filename)
 
 void UIInitiatorFailedToTransfer(uint8_t deviceId) 
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     g_initiatorMessageToProcess = true;
 }
 
 void UIInitiatorImagingComplete(uint8_t deviceId) 
 {
+    if (!g_displayEnabled)
+    {
+        return;
+    }
+
     g_initiatorMessageToProcess = true;
 
     DeviceMap *deviceMap = &g_devices[deviceId];
