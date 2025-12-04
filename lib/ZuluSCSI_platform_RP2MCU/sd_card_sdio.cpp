@@ -33,6 +33,14 @@
 #include <SdFat.h>
 #include <SdCard/SdCardInfo.h>
 
+#ifndef SDIO_FALLBACK_CRC_ERROR_COUNT
+#define SDIO_FALLBACK_CRC_ERROR_COUNT 3
+#endif
+
+#ifndef SDIO_FALLBACK_CLK_DIV
+#define SDIO_FALLBACK_CLK_DIV 2
+#endif
+
 static uint32_t g_sdio_ocr; // Operating condition register from card
 static uint32_t g_sdio_rca; // Relative card address
 static cid_t g_sdio_cid;
@@ -42,6 +50,8 @@ static int g_sdio_error_line;
 static sdio_status_t g_sdio_error;
 static uint32_t g_sdio_dma_buf[128];
 static uint32_t g_sdio_sector_count;
+static uint32_t g_sdio_crc_failure_count;
+static int g_sdio_clk_divider = 1;
 
 #define checkReturnOk(call) ((g_sdio_error = (call)) == SDIO_OK ? true : logSDError(__LINE__))
 static bool logSDError(int line)
@@ -184,10 +194,28 @@ bool SdioCard::begin(SdioConfig sdioConfig)
         return false;
     }
 
-    // Increase to 25 MHz clock rate
-    rp2040_sdio_init(1);
+    // Increase clock rate to CPU clock / 5 / clkdiv
+    rp2040_sdio_init(g_sdio_clk_divider);
 
     return true;
+}
+
+static void sdiocard_error_monitor(SdioCard *card, sdio_status_t error)
+{
+    if (error == SDIO_ERR_DATA_CRC || error == SDIO_ERR_WRITE_CRC || error == SDIO_ERR_RESPONSE_CRC)
+    {
+        g_sdio_crc_failure_count++;
+
+        if (g_sdio_crc_failure_count > SDIO_FALLBACK_CRC_ERROR_COUNT &&
+            (int)g_sdio_clk_divider < SDIO_FALLBACK_CLK_DIV)
+        {
+            logmsg("Multiple SDIO CRC errors, reducing clock speed");
+            g_sdio_clk_divider = SDIO_FALLBACK_CLK_DIV;
+
+            SdioConfig defcfg;
+            card->begin(defcfg);
+        }
+    }
 }
 
 uint8_t SdioCard::errorCode() const
@@ -216,7 +244,7 @@ bool SdioCard::isBusy()
 
 uint32_t SdioCard::kHzSdClk()
 {
-    return 0;
+    return platform_sys_clock_in_hz() / g_sdio_clk_divider / 5 / 1000;
 }
 
 bool SdioCard::readCID(cid_t* cid)
@@ -395,6 +423,7 @@ bool SdioCard::writeSector(uint32_t sector, const uint8_t* src)
     if (g_sdio_error != SDIO_OK)
     {
         logmsg("SdioCard::writeSector(", sector, ") failed: ", (int)g_sdio_error);
+        sdiocard_error_monitor(this, g_sdio_error);
     }
 
     return g_sdio_error == SDIO_OK;
@@ -444,6 +473,7 @@ bool SdioCard::writeSectors(uint32_t sector, const uint8_t* src, size_t n)
     {
         logmsg("SdioCard::writeSectors(", sector, ",...,", (int)n, ") failed: ", (int)g_sdio_error);
         stopTransmission(true);
+        sdiocard_error_monitor(this, g_sdio_error);
         return false;
     }
     else
@@ -489,6 +519,7 @@ bool SdioCard::readSector(uint32_t sector, uint8_t* dst)
     if (g_sdio_error != SDIO_OK)
     {
         logmsg("SdioCard::readSector(", sector, ") failed: ", (int)g_sdio_error);
+        sdiocard_error_monitor(this, g_sdio_error);
     }
 
     if (dst != real_dst)
@@ -541,6 +572,7 @@ bool SdioCard::readSectors(uint32_t sector, uint8_t* dst, size_t n)
     {
         logmsg("SdioCard::readSectors(", sector, ",...,", (int)n, ") failed: ", (int)g_sdio_error);
         stopTransmission(true);
+        sdiocard_error_monitor(this, g_sdio_error);
         return false;
     }
     else
