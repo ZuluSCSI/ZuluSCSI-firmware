@@ -181,6 +181,9 @@ To disable a previously programmed ROM drive, create empty file called `HD0.rom`
 If there is a `.bin` file with the same ID as the programmed ROM drive, it overrides the ROM drive.
 There can be at most one ROM drive enabled at a time.
 
+The ROM drive can be removed by creating a file without an extension and in all caps called `CLEAR_ROM` in the root directory of the SD card.
+On successful removal the `CLEAR_ROM` file will be deleted, the ROM drive will no longer be enumerated on the SCSI bus, and the data zeroed out in flash.
+
 Kiosk mode for museums or demonstration setups
 ----------------------------------------------
 The Kiosk mode is designed for vintage computer museums or other demonstration setups, where machines can be used by visitors but need to be easily restored to a pristine state.
