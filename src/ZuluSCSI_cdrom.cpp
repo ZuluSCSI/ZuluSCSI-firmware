@@ -1291,8 +1291,6 @@ void cdromPerformEject(image_config_t &img)
 void cdromReinsertFirstImage(image_config_t &img)
 {
     uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
-    if (g_scsi_settings.getDevice(target)->keepCurrentImageOnBusReset)
-        return;
 
     if (img.image_index > 0)
     {
