@@ -1275,6 +1275,11 @@ void cdromPerformEject(image_config_t &img)
         img.ejected = true;
         img.cdrom_events = 3; // Media removal
         switchNextImage(img); // Switch media for next time
+
+        if (g_scsi_settings.getDevice(target)->reinsertImmediately)
+        {
+            cdromCloseTray(img);
+        }
     }
     else
     {
@@ -1285,10 +1290,14 @@ void cdromPerformEject(image_config_t &img)
 // Reinsert any ejected CDROMs on reboot
 void cdromReinsertFirstImage(image_config_t &img)
 {
+    uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (g_scsi_settings.getDevice(target)->keepCurrentImageOnBusReset)
+        return;
+
     if (img.image_index > 0)
     {
         // Multiple images for this drive, force restart from first one
-        uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
+
         dbgmsg("---- Restarting from first CD-ROM image for ID ", (int)target);
         img.image_index = -1;
         img.current_image[0] = '\0';

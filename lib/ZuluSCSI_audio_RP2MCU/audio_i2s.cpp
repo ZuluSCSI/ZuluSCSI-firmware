@@ -27,12 +27,10 @@
 #include "audio_i2s.h"
 #include <CUEParser.h>
 #include "timings_RP2MCU.h"
-#include "ZuluSCSI_audio.h"
-// #include "ZuluIDE_config.h"
+#include <ZuluSCSI_audio.h>
+#include <ZuluSCSI_settings.h>
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_platform.h"
-// #include "ide_imagefile.h"
-// #include "ide_atapi.h"
 #include <ZuluI2S.h>
 
 
@@ -551,7 +549,7 @@ bool  audio_play_track_index(uint8_t owner,      image_config_t* img,
                             uint8_t start_track, uint8_t start_index, 
                             uint8_t end_track,   uint8_t end_index)
 {
-    if(!img->cuesheetfile && img->cuesheetfile.isOpen())
+    if(!img || !img->cuesheetfile.isOpen())
     {
         logmsg("Error attempting to play CD Audio with no cue/bin image(s)");
         return false;
@@ -573,7 +571,7 @@ bool  audio_play_track_index(uint8_t owner,      image_config_t* img,
     else
         return false;
 
-    if (&img->cuesheetfile != cuesheet_file)
+    if (cuesheet_file == nullptr)
     {
         cuesheet_file = &img->cuesheetfile;
         cuesheet_file->seek(0);
@@ -681,7 +679,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint32_t start, uint32_t len
      if (!audio_idle)
         audio_stop(audio_owner);
 
-    if(!img->cuesheetfile && img->cuesheetfile.isOpen())
+    if(!img || !img->cuesheetfile.isOpen())
     {
         logmsg("Error attempting to play CD Audio with no cue/bin image(s)");
         return false;
@@ -704,7 +702,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint32_t start, uint32_t len
     else
         return false;
 
-    if (&img->cuesheetfile != cuesheet_file)
+    if (cuesheet_file == nullptr)
     {
         cuesheet_file = &img->cuesheetfile;
         cuesheet_file->seek(0);
@@ -903,5 +901,12 @@ void audio_set_file_position(uint8_t id, uint32_t lba)
     setup_playback(id, lba, 0, false);
 }
 
+void audio_reset(uint8_t id)
+{
+    cuesheet_file = nullptr;
+    audio_set_channel(id, AUDIO_CHANNEL_ENABLE_MASK);
+    uint8_t vol = g_scsi_settings.getDevice(id)->vol;
+    audio_set_volume(id, (uint16_t)vol << 8 | vol);
+}
 
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF

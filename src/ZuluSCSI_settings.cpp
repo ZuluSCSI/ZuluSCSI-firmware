@@ -36,7 +36,7 @@
 // SCSI system and device settings
 ZuluSCSISettings g_scsi_settings;
 
-const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000"};
+const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "DOS"};
 const char *devicePresetName[] = {"", "ST32430N"};
 
 // must be in the same order as zuluscsi_speed_grade_t in ZuluSCSI_settings.h
@@ -245,6 +245,8 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.rightAlignStrings = ini_getbool(section, "RightAlignStrings", cfg.rightAlignStrings , CONFIGFILE);
     cfg.reinsertOnInquiry = ini_getbool(section, "ReinsertCDOnInquiry", cfg.reinsertOnInquiry, CONFIGFILE);
     cfg.reinsertAfterEject = ini_getbool(section, "ReinsertAfterEject", cfg.reinsertAfterEject, CONFIGFILE);
+    cfg.reinsertImmediately = ini_getbool(section, "ReinsertAfterEject", cfg.reinsertImmediately, CONFIGFILE);
+    cfg.keepCurrentImageOnBusReset = ini_getbool(section, "KeepCurrentImageOnBusReset", cfg.keepCurrentImageOnBusReset, CONFIGFILE);
     cfg.disableMacSanityCheck = ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE);
 
     cfg.sectorSDBegin = ini_getl(section, "SectorSDBegin", cfg.sectorSDBegin, CONFIGFILE);
@@ -363,6 +365,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgDev.rightAlignStrings = false;
     cfgDev.reinsertOnInquiry = true;
     cfgDev.reinsertAfterEject = true;
+    cfgDev.reinsertImmediately = false;
+    cfgDev.keepCurrentImageOnBusReset = false;
     cfgDev.disableMacSanityCheck = false;
 
     cfgDev.sectorSDBegin = 0;
@@ -415,6 +419,13 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
         cfgSys.quirks = S2S_CFG_QUIRKS_X68000;
         cfgSys.enableSCSI2 = false;
         cfgSys.maxSyncSpeed = 5;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_DOS], presetName))
+    {
+        m_sysPreset = SYS_PRESET_DOS;
+        cfgSys.enableUnitAttention = true;
+        cfgDev.reinsertImmediately = true;
+        cfgDev.keepCurrentImageOnBusReset = true;
     }
     else
     {

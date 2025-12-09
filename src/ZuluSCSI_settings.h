@@ -62,7 +62,9 @@ typedef enum
     SYS_PRESET_MACPLUS,
     SYS_PRESET_MPC3000,
     SYS_PRESET_MEGASTE,
-    SYS_PRESET_X68000
+    SYS_PRESET_X68000,
+    SYS_PRESET_DOS
+
 } scsi_system_preset_t;
 
 typedef enum
@@ -142,6 +144,8 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     bool rightAlignStrings;
     bool reinsertOnInquiry;
     bool reinsertAfterEject;
+    bool reinsertImmediately;
+    bool keepCurrentImageOnBusReset;
     bool disableMacSanityCheck;
 
     uint32_t sectorSDBegin;

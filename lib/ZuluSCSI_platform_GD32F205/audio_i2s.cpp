@@ -22,9 +22,10 @@
 #ifdef ENABLE_AUDIO_OUTPUT_I2S
 #include "audio_i2s.h"
 #include "ZuluSCSI_platform.h"
-#include "ZuluSCSI_audio.h"
+#include <ZuluSCSI_audio.h>
 #include "ZuluSCSI_v1_1_gpio.h"
-#include "ZuluSCSI_log.h"
+#include <ZuluSCSI_log.h>
+#include <ZuluSCSI_settings.h>
 
 extern "C" 
 {
@@ -421,4 +422,10 @@ void audio_set_file_position(uint8_t id, uint32_t lba)
     fpos = 2352 * (uint64_t)lba;
 }
 
+void audio_reset(uint8_t id)
+{
+    audio_set_channel(id, AUDIO_CHANNEL_ENABLE_MASK);
+    uint8_t vol = g_scsi_settings.getDevice(id)->vol;
+    audio_set_volume(id, (uint16_t)vol << 8 | vol);
+}
 #endif // ENABLE_AUDIO_OUTPUT_I2S

@@ -198,3 +198,9 @@ uint32_t audio_get_lba_position();
  * 
 */
 void audio_set_file_position(uint8_t id, uint32_t lba);
+
+
+/**
+ * Resets audio settings for example when inserting a new CD
+ */
+void audio_reset(uint8_t id);
