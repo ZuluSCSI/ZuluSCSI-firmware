@@ -579,7 +579,16 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                     img.bin_container.open(filename);
                     // If bin container is a directory close the file
                     if (img.bin_container.isDir())
+                    {
                         img.bin_container.close();
+                    }
+#ifdef ENABLE_AUDIO_OUTPUT
+                    else
+                    {
+                        // CD image is valid, reset audio 
+                        audio_reset(target_idx);
+                    }
+#endif
                 }
             }
             else
@@ -599,6 +608,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             while (!valid && img.cuesheetfile.openNext(&folder, O_RDONLY))
             {
                 img.cuesheetfile.getName(cuesheetname, sizeof(cuesheetname));
+
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
                     valid = cdromValidateCueSheet(img);
@@ -612,6 +622,9 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             if (valid)
             {
                 img.bin_container.open(foldername);
+#ifdef ENABLE_AUDIO_OUPUT                
+                audio_reset(target_idx);
+#endif
             }
             else
             {
@@ -894,6 +907,10 @@ static void doPerformEject(image_config_t &img)
         dbgmsg("------ Device open tray on ID ", (int)target);
         img.ejected = true;
         switchNextImage(img); // Switch media for next time
+        if (g_scsi_settings.getDevice(target)->reinsertImmediately)
+        {
+            doCloseTray(img);
+        }
     }
     else
     {
