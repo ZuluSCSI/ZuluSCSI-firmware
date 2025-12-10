@@ -262,9 +262,10 @@ void scsiDiskCloseSDCardImages()
         if (!g_DiskImages[i].file.isRom())
         {
             g_DiskImages[i].file.close();
+            g_DiskImages[i].image_directory = false;
+            g_DiskImages[i].bin_container.close();
+            g_DiskImages[i].cuesheetfile.close();
         }
-
-        g_DiskImages[i].cuesheetfile.close();
     }
 }
 
@@ -2619,7 +2620,7 @@ void scsiDiskReset()
     for (int i = 0; i < S2S_MAX_TARGETS; ++i)
     {
         image_config_t &img = g_DiskImages[i];
-        if (img.deviceType == S2S_CFG_OPTICAL)
+        if (img.deviceType == S2S_CFG_OPTICAL && !g_scsi_settings.getDevice(i)->keepCurrentImageOnBusReset)
         {
             cdromReinsertFirstImage(img);
         }
@@ -2631,9 +2632,6 @@ void scsiDiskInit()
 {
     scsiDiskReset();
 }
-
-
-
 
 ///////////// These are so LoadImage works - There is a better way
 
