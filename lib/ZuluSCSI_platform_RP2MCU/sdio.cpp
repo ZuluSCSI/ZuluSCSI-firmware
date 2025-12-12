@@ -173,7 +173,7 @@ sdio_status_t receive_status_register(uint8_t* sds) {
 waitagain:
     while (dma_channel_is_busy(SDIO_DMA_CHB) || dma_channel_is_busy(SDIO_DMA_CH))
     {
-        if ((uint32_t)(millis() - g_sdio.transfer_start_time) > 2)
+        if ((uint32_t)(millis() - g_sdio.transfer_start_time) > 100)
         {
             // Reset the state machine program
             dma_channel_abort(SDIO_DMA_CHB);
