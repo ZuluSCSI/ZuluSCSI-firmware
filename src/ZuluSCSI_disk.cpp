@@ -477,6 +477,12 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as disk drive drive");
             img.deviceType = S2S_CFG_FIXED;
+#ifdef CONTAINER_IMAGE_SUPPORT
+            if (img.file.isContainer())
+            {
+                logmsg("---- Image is inside a ", img.file.containerTypeName(), " container");
+            }
+#endif
         }
         else if (type == S2S_CFG_OPTICAL)
         {
@@ -700,6 +706,11 @@ bool scsiDiskFilenameValid(const char* name)
             ".tmp", // COW dirty files (contains only the writes)
 #if ENABLE_COW==0
             ".cow", // If COW is not enabled, we ignore .cow files
+#endif
+#ifndef CONTAINER_IMAGE_SUPPORT
+            // to avoid container corruption, skip container formats
+            // that would be supported if CONTAINER_IMAGE_SUPPORT was enabled 
+            ".vhd",
 #endif
             NULL
         };

@@ -523,3 +523,15 @@ size_t ImageBackingStore::getFoldername(char* buf, size_t buflen)
 
     return 0;
 }
+
+#ifdef CONTAINER_IMAGE_SUPPORT
+bool ImageBackingStore::isContainer()
+{
+    return m_fsfile.getContainerFormat() != ZuluContainerFs::Container::None;
+}
+
+const char *ImageBackingStore::containerTypeName()
+{
+    return m_fsfile.getContainerNameCstr();
+}
+#endif
