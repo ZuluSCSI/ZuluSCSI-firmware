@@ -676,7 +676,7 @@ static void checkDiskGeometryDivisible(image_config_t &img)
     if (!img.geometrywarningprinted)
     {
         uint32_t sectorsPerHeadTrack = img.sectorsPerTrack * img.headsPerCylinder;
-        if (img.scsiSectors % sectorsPerHeadTrack != 0)
+        if (img.scsiSectors <= 16514064 && img.scsiSectors % sectorsPerHeadTrack != 0)
         {
             logmsg("WARNING: Host used command ", scsiDev.cdb[0],
                 " which is affected by drive geometry. Current settings are ",
