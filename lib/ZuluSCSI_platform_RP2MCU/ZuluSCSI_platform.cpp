@@ -1032,6 +1032,7 @@ static void adc_poll()
 #if PLATFORM_VDD_WARNING_LIMIT_mV > 0
     static bool initialized = false;
     static int lowest_vdd_seen = PLATFORM_VDD_WARNING_LIMIT_mV;
+    static uint32_t pending_warning_time = 0;
 
     if (!initialized)
     {
@@ -1073,13 +1074,20 @@ static void adc_poll()
     const int limit = (700 * 4096) / PLATFORM_VDD_WARNING_LIMIT_mV;
     if (adc_value_max > limit)
     {
-        // Warn once, and then again if we detect even a lower drop.
+        // Keep track of the lowest Vdd, but log only after a delay.
+        // This avoids spurious warnings on power-off.
         int vdd_mV = (700 * 4096) / adc_value_max;
-        if (vdd_mV < lowest_vdd_seen)
+        if (vdd_mV < lowest_vdd_seen - 50)
         {
-            logmsg("WARNING: Detected supply voltage drop to ", vdd_mV, "mV. Verify power supply is adequate.");
-            lowest_vdd_seen = vdd_mV - 50; // Small hysteresis to avoid excessive warnings
+            pending_warning_time = millis();
+            lowest_vdd_seen = vdd_mV;
         }
+    }
+
+    if (pending_warning_time > 0 && (uint32_t)(millis() - pending_warning_time) > PLATFORM_VDD_WARNING_DELAY_ms)
+    {
+        logmsg("WARNING: Detected supply voltage drop to ", lowest_vdd_seen, "mV. Verify power supply is adequate.");
+        pending_warning_time = 0;
     }
 #endif // PLATFORM_VDD_WARNING_LIMIT_mV > 0
 }
