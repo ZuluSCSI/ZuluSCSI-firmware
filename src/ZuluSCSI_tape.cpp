@@ -40,10 +40,6 @@ extern "C" {
 // scsiStartRead is defined in ZuluSCSI_disk.cpp for platforms without non-blocking read
 extern void scsiStartRead(uint8_t* data, uint32_t count, int *parityError);
 
-#ifdef PREFETCH_BUFFER_SIZE
-
-#endif
-
 // Helper function to read little-endian 32-bit value
 static uint32_t readLE32(const uint8_t *data) {
     return (uint32_t)data[0] |
@@ -369,15 +365,6 @@ struct tap_transfer_t {
 
 static tap_transfer_t g_tap_transfer;
 
-#ifdef PREFETCH_BUFFER_SIZE
-static struct {
-    uint8_t buffer[PREFETCH_BUFFER_SIZE];
-    uint32_t position;          // Tape position for prefetch data
-    uint32_t bytes;             // Bytes available in prefetch buffer
-    uint8_t scsiId;             // SCSI ID for this prefetch
-} g_tape_prefetch;
-#endif
-
 // Check if the tape file is in .TAP format
 bool tapIsTapFormat(image_config_t &img) {
     // Check file extension first
@@ -512,12 +499,6 @@ void tapeMediumStartWrite(uint32_t length, bool fixed) {
     scsiDev.dataLen = 0;
     scsiDev.dataPtr = 0;
     scsiDev.postDataOutHook = tapeDataOut;
-
-#ifdef PREFETCH_BUFFER_SIZE
-    // Invalidate tape prefetch buffer
-    g_tape_prefetch.bytes = 0;
-    g_tape_prefetch.position = 0;
-#endif
 }
 
 // .TAP-aware data output handler
