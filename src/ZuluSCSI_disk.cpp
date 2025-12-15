@@ -1822,14 +1822,104 @@ static struct {
     int parityError;
 } g_disk_transfer;
 
+/***********************************/
+/* Prefetch buffer for read access */
+/***********************************/
+
 #ifdef PREFETCH_BUFFER_SIZE
 static struct {
     uint8_t buffer[PREFETCH_BUFFER_SIZE];
-    uint32_t sector;
-    uint32_t bytes;
+    uint32_t firstSector;
+    uint32_t bytesPerSector;
+    uint32_t numSectors;
     uint8_t scsiId;
 } g_scsi_prefetch;
 #endif
+
+// Begin writing to prefetch buffer.
+// If the buffer is not available, returns NULL.
+// Otherwise returns pointer to which caller can write up to maxSectors sectors.
+uint8_t *scsiDiskPrefetchBeginWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *maxSectors)
+{
+#ifdef PREFETCH_BUFFER_SIZE
+    // Verify that there is no current SCSI transfer out of the prefetch buffer
+    if (g_scsi_prefetch.numSectors > 0 && !scsiIsWriteFinished(NULL))
+    {
+        // Check each sector separately
+        for (uint32_t i = 0; i < g_scsi_prefetch.numSectors; i++)
+        {
+            const uint8_t *sector = g_scsi_prefetch.buffer + g_scsi_prefetch.bytesPerSector * i;
+            if (!scsiIsWriteFinished(sector + g_scsi_prefetch.bytesPerSector - 1))
+            {
+                *maxSectors = 0;
+                return nullptr;
+            }
+        }
+    }
+
+    g_scsi_prefetch.scsiId = scsiId;
+    g_scsi_prefetch.firstSector = firstSector;
+    g_scsi_prefetch.bytesPerSector = bytesPerSector;
+    g_scsi_prefetch.numSectors = 0;
+
+    *maxSectors = sizeof(g_scsi_prefetch.buffer) / bytesPerSector;
+    return g_scsi_prefetch.buffer;
+#else
+    *maxSectors = 0;
+    return NULL;
+#endif
+}
+
+// Mark prefetch sectors in buffer as valid.
+// Should be called after scsiDiskPrefetchBeginWrite().
+void scsiDiskPrefetchFinishWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t numSectors)
+{
+#ifdef PREFETCH_BUFFER_SIZE
+    if (scsiId == g_scsi_prefetch.scsiId &&
+        bytesPerSector == g_scsi_prefetch.bytesPerSector &&
+        firstSector == g_scsi_prefetch.firstSector + g_scsi_prefetch.numSectors)
+    {
+        g_scsi_prefetch.numSectors += numSectors;
+    }
+#endif
+}
+
+// Check if data is available from prefetch buffer.
+// If data is not found, returns NULL.
+// Otherwise returns pointer for reading up to numSectors sectors of data, beginning at firstSector.
+const uint8_t *scsiDiskPrefetchRead(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *numSectors)
+{
+#ifdef PREFETCH_BUFFER_SIZE
+    if (scsiId == g_scsi_prefetch.scsiId &&
+        bytesPerSector == g_scsi_prefetch.bytesPerSector &&
+        firstSector >= g_scsi_prefetch.firstSector &&
+        firstSector < g_scsi_prefetch.firstSector + g_scsi_prefetch.numSectors)
+    {
+        // At least one sector found in prefetch
+        uint32_t offset = firstSector - g_scsi_prefetch.firstSector;
+        *numSectors = g_scsi_prefetch.numSectors - offset;
+        return g_scsi_prefetch.buffer + offset * bytesPerSector;
+    }
+#endif
+
+    // No sectors in prefetch
+    *numSectors = 0;
+    return nullptr;
+}
+
+// Invalidate SCSI prefetch buffer.
+// If scsiId is given, only invalidate if that device has data in buffer.
+// If scsiId is not given (value -1), invalidate for all devices.
+void scsiDiskPrefetchInvalidate(uint8_t scsiId)
+{
+#ifdef PREFETCH_BUFFER_SIZE
+    if (scsiId == (uint8_t)-1 || g_scsi_prefetch.scsiId == scsiId)
+    {
+        g_scsi_prefetch.numSectors = 0;
+        g_scsi_prefetch.firstSector = 0;
+    }
+#endif
+}
 
 /*****************/
 /* Write command */
@@ -1880,11 +1970,7 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
         scsiDev.dataLen = 0;
         scsiDev.dataPtr = 0;
 
-#ifdef PREFETCH_BUFFER_SIZE
-        // Invalidate prefetch buffer
-        g_scsi_prefetch.bytes = 0;
-        g_scsi_prefetch.sector = 0;
-#endif
+        scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
 
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
         if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
@@ -2129,20 +2215,18 @@ void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
         scsiDev.dataPtr = 0;
 
 #ifdef PREFETCH_BUFFER_SIZE
-        uint32_t sectors_in_prefetch = g_scsi_prefetch.bytes / bytesPerSector;
-        if (img.scsiId == g_scsi_prefetch.scsiId &&
-            transfer.lba >= g_scsi_prefetch.sector &&
-            transfer.lba < g_scsi_prefetch.sector + sectors_in_prefetch)
+        uint32_t prefetch_sectors = 0;
+        const uint8_t *prefetch_ptr = scsiDiskPrefetchRead(img.scsiId, transfer.lba, bytesPerSector, &prefetch_sectors);
+
+        if (prefetch_ptr)
         {
             // We have the some sectors already in prefetch cache
             scsiEnterPhase(DATA_IN);
 
-            uint32_t start_offset = transfer.lba - g_scsi_prefetch.sector;
-            uint32_t count = sectors_in_prefetch - start_offset;
-            if (count > transfer.blocks) count = transfer.blocks;
-            scsiStartWrite(g_scsi_prefetch.buffer + start_offset * bytesPerSector, count * bytesPerSector);
-            dbgmsg("------ Found ", (int)count, " sectors in prefetch cache");
-            transfer.currentBlock += count;
+            if (prefetch_sectors > transfer.blocks) prefetch_sectors = transfer.blocks;
+            scsiStartWrite(prefetch_ptr, prefetch_sectors * bytesPerSector);
+            dbgmsg("------ Found ", (int)prefetch_sectors, " sectors in prefetch cache");
+            transfer.currentBlock += prefetch_sectors;
         }
 
         if (transfer.currentBlock == transfer.blocks)
@@ -2289,49 +2373,67 @@ static void diskDataIn()
 
 #ifdef PREFETCH_BUFFER_SIZE
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-        int prefetchbytes = img.prefetchbytes;
-        if (prefetchbytes > PREFETCH_BUFFER_SIZE) prefetchbytes = PREFETCH_BUFFER_SIZE;
-        uint32_t prefetch_sectors = prefetchbytes / bytesPerSector;
-        uint32_t img_sector_count = img.file.size() / bytesPerSector;
-        g_scsi_prefetch.sector = transfer.lba + transfer.blocks;
-        g_scsi_prefetch.bytes = 0;
-        g_scsi_prefetch.scsiId = scsiDev.target->cfg->scsiId;
+        int maxPrefetchBytes = img.prefetchbytes;
 
-        if (g_scsi_prefetch.sector + prefetch_sectors > img_sector_count)
-        {
-            // Don't try to read past image end.
-            prefetch_sectors = img_sector_count - g_scsi_prefetch.sector;
-        }
+        uint8_t *prefetchBuffer = NULL;
+        uint32_t prefetchFirstSector = transfer.lba + transfer.blocks;
+        uint32_t maxPrefetchSectors = 0;
+        uint32_t prefetchSectors = 0;
 
-        while (!scsiIsWriteFinished(NULL) && prefetch_sectors > 0 && !scsiDev.resetFlag)
+        while (!scsiIsWriteFinished(NULL) && !scsiDev.resetFlag)
         {
             platform_poll();
             diskEjectButtonUpdate(false);
 
-            // Check if prefetch buffer is free
-            g_disk_transfer.buffer = g_scsi_prefetch.buffer + g_scsi_prefetch.bytes;
-            if (!scsiIsWriteFinished(g_disk_transfer.buffer) ||
-                !scsiIsWriteFinished(g_disk_transfer.buffer + bytesPerSector - 1))
+            // Check if prefetch buffer is available
+            if (!prefetchBuffer)
             {
-                continue;
+                prefetchBuffer = scsiDiskPrefetchBeginWrite(scsiDev.target->cfg->scsiId,
+                    prefetchFirstSector, bytesPerSector, &maxPrefetchSectors);
             }
 
-            // We still have time, prefetch next sectors in case this SCSI request
-            // is part of a longer linear read.
-            g_disk_transfer.bytes_sd = bytesPerSector;
-            g_disk_transfer.bytes_scsi = bytesPerSector; // Tell callback not to send to SCSI
-            platform_set_sd_callback(&diskDataIn_callback, g_disk_transfer.buffer);
-            int status = img.file.read(g_disk_transfer.buffer, bytesPerSector);
-            if (status <= 0)
+            if (prefetchBuffer)
             {
-                logmsg("Prefetch read failed");
-                prefetch_sectors = 0;
-                break;
+                uint32_t img_sector_count = img.file.size() / bytesPerSector;
+                if (prefetchFirstSector + maxPrefetchSectors > img_sector_count)
+                {
+                    // Don't try to read past image end.
+                    maxPrefetchSectors = img_sector_count - prefetchFirstSector;
+                }
+
+                if (maxPrefetchSectors * bytesPerSector > maxPrefetchBytes)
+                {
+                    // Per-image limit on prefetching
+                    maxPrefetchSectors = maxPrefetchBytes / bytesPerSector;
+                }
+
+                if (prefetchSectors >= maxPrefetchSectors)
+                {
+                    // Prefetch done
+                    break;
+                }
+
+                // We still have time, prefetch next sectors in case this SCSI request
+                // is part of a longer linear read. SCSI callback is still invoked so that
+                // it can process the simultaneously running SCSI transfer.
+                g_disk_transfer.bytes_sd = bytesPerSector;
+                g_disk_transfer.bytes_scsi = bytesPerSector; // Tell callback not to send to SCSI
+                platform_set_sd_callback(&diskDataIn_callback, g_disk_transfer.buffer);
+                uint8_t *prefetchSectorPtr = prefetchBuffer + bytesPerSector * prefetchSectors;
+                int status = img.file.read(prefetchSectorPtr, bytesPerSector);
+                if (status != bytesPerSector)
+                {
+                    logmsg("Prefetch read failed: ", status);
+                    break;
+                }
+
+                platform_set_sd_callback(NULL, NULL);
+                prefetchSectors++;
             }
-            g_scsi_prefetch.bytes += status;
-            platform_set_sd_callback(NULL, NULL);
-            prefetch_sectors--;
         }
+
+        scsiDiskPrefetchFinishWrite(scsiDev.target->cfg->scsiId,
+            prefetchFirstSector, bytesPerSector, prefetchSectors);
 #endif
 
         while (!scsiIsWriteFinished(NULL) && !scsiDev.resetFlag)
@@ -2622,10 +2724,7 @@ void scsiDiskReset()
     transfer.currentBlock = 0;
     transfer.multiBlock = 0;
 
-#ifdef PREFETCH_BUFFER_SIZE
-    g_scsi_prefetch.bytes = 0;
-    g_scsi_prefetch.sector = 0;
-#endif
+    scsiDiskPrefetchInvalidate();
 
     // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
     for (int i = 0; i < S2S_MAX_TARGETS; ++i)

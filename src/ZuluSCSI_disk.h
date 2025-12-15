@@ -195,3 +195,23 @@ int8_t scsiParseId(const char scsi_id_text);
 
 // Encode ID as char
 char scsiEncodeID(const uint8_t scsi_id);
+
+// Begin writing to prefetch buffer.
+// If the buffer is not available, returns NULL.
+// Otherwise returns pointer to which caller can write up to maxSectors sectors.
+uint8_t *scsiDiskPrefetchBeginWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *maxSectors);
+
+// Mark prefetch sectors in buffer as valid.
+// Should be called after scsiDiskPrefetchBeginWrite().
+void scsiDiskPrefetchFinishWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t numSectors);
+
+// Check if data is available from prefetch buffer.
+// If data is not found, returns NULL.
+// Otherwise returns pointer for reading up to numSectors sectors of data, beginning at firstSector.
+const uint8_t *scsiDiskPrefetchRead(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *numSectors);
+
+// Invalidate SCSI prefetch buffer
+// Invalidate SCSI prefetch buffer.
+// If scsiId is given, only invalidate if that device has data in buffer.
+// If scsiId is not given (value -1), invalidate for all devices.
+void scsiDiskPrefetchInvalidate(uint8_t scsiId = (uint8_t)-1);
