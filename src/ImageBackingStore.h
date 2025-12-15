@@ -157,6 +157,8 @@ protected:
 
     bool _internal_open(const char *filename);
 
+    void revert_to_noncontiguous();
+
 #if ENABLE_COW
     bool m_iscow;
     COWStorage m_cow;
