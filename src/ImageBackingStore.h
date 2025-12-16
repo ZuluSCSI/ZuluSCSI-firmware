@@ -36,7 +36,7 @@
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
 #ifdef CONTAINER_IMAGE_SUPPORT
-#include <ZCFileFs.h>
+#include <ZCFsFile.h>
 #endif
 extern "C" {
 #include <scsi.h>

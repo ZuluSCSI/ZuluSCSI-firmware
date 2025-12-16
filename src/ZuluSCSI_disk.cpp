@@ -709,7 +709,7 @@ bool scsiDiskFilenameValid(const char* name)
 #endif
 #ifndef CONTAINER_IMAGE_SUPPORT
             // to avoid container corruption, skip container formats
-            // that would be supported if CONTAINER_IMAGE_SUPPORT was enabled 
+            // that would be supported if CONTAINER_IMAGE_SUPPORT was enabled
             ".vhd",
 #endif
             NULL

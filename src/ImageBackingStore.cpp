@@ -145,6 +145,15 @@ bool ImageBackingStore::_internal_open(const char *filename)
 
     if (!m_fsfile.isOpen())
     {
+#ifdef CONTAINER_IMAGE_SUPPORT
+        if (m_fsfile.isUnsupportedContainerType())
+        {
+            logmsg("============ ERROR: Unsupported container image type ============");
+            logmsg("Image is a ", m_fsfile.getContainerNameCstr(), " container but the image type is unsupported.");
+            logmsg("Please use a container with a fixed size or fully allocated image");
+            logmsg("=================================================================");
+        }
+#endif
         return false;
     }
 
