@@ -66,6 +66,7 @@ struct image_config_t: public S2S_TargetCfg
     uint32_t tape_mark_block_offset; // Sum of the the previous image file sizes at the current mark
     uint32_t tape_length_mb;
     bool     tape_load_next_file;
+    bool     tape_is_tap_format; // Use SIMH TAP format for storing tape data
     // True if there is a subdirectory of images for this target
     bool image_directory;
 

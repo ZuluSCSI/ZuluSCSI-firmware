@@ -365,21 +365,6 @@ struct tap_transfer_t {
 
 static tap_transfer_t g_tap_transfer;
 
-// Check if the tape file is in .TAP format
-bool tapIsTapFormat(image_config_t &img) {
-    // Check file extension first
-    char filename[MAX_FILE_PATH];
-    img.file.getFilename(filename, sizeof(filename));
-    char *ext = strrchr(filename, '.');
-    if (ext && (strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".TAP") == 0)) {
-        return true;
-    }
-
-    // Could also check file content here if needed
-    // For now, rely on .tap extension
-    return false;
-}
-
 // .TAP-aware read function
 static void doTapRead(image_config_t &img, uint32_t length, bool fixed) {
     tap_record_t record;
@@ -842,7 +827,7 @@ extern "C" int scsiTapeCommand()
         if (blocks_to_read > 0)
         {
             // Check if this is a .TAP format file
-            if (tapIsTapFormat(img)) {
+            if (img.tape_is_tap_format) {
                 // For .TAP format, use variable/fixed block reading
                 if (fixed) {
                     doTapRead(img, length, true);
@@ -879,7 +864,7 @@ extern "C" int scsiTapeCommand()
             blocks_to_write = 1;
 
             // For .TAP format, allow variable record lengths
-            if (!tapIsTapFormat(img) && length != blocklen)
+            if (!img.tape_is_tap_format && length != blocklen)
             {
                 dbgmsg("------ Host requested variable block ", (int)length, " bytes, blocksize is ", (int)blocklen);
                 scsiDev.status = CHECK_CONDITION;
@@ -902,7 +887,7 @@ extern "C" int scsiTapeCommand()
             }
 
             // Check if this is a .TAP format file
-            if (tapIsTapFormat(img)) {
+            if (img.tape_is_tap_format) {
                 // For .TAP format, calculate the actual record length
                 uint32_t record_length;
                 if (fixed) {
@@ -962,7 +947,7 @@ extern "C" int scsiTapeCommand()
     else if (command == 0x19)
     {
         // Erase
-        if (tapIsTapFormat(img))
+        if (img.tape_is_tap_format)
         {
             bool lon = scsiDev.cdb[1] & 1;
             if (lon)
@@ -1037,7 +1022,7 @@ extern "C" int scsiTapeCommand()
     else if (command == 0x10)
     {
         // WRITE FILEMARKS
-        if (tapIsTapFormat(img)) {
+        if (img.tape_is_tap_format) {
             uint32_t count = scsiDev.cdb[5]; // Number of filemarks to write
             if (count == 0) count = 1; // Default to 1 if not specified
 
@@ -1072,7 +1057,7 @@ extern "C" int scsiTapeCommand()
             (((uint32_t) scsiDev.cdb[3]) << 16) +
             (((uint32_t) scsiDev.cdb[4]) << 8) +
             scsiDev.cdb[5];
-        if (tapIsTapFormat(img)) {
+        if (img.tape_is_tap_format) {
             // Handle .TAP format spacing
             tap_result_t result = TAP_OK;
 

@@ -438,17 +438,32 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         img.scsiSectors = img.file.size() / blocksize;
         img.scsiId = target_idx | S2S_CFG_TARGET_ENABLED;
         img.sdSectorStart = 0;
+        img.tape_is_tap_format = false;
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && !img.file.isFolder())
+        S2S_CFG_TYPE setting_type = (S2S_CFG_TYPE) g_scsi_settings.getDevice(target_idx)->deviceType;
+        if ( setting_type != S2S_CFG_NOT_SET)
+        {
+            type = setting_type;
+        }
+
+        // Detect SIMH .tap format with filename extension
+        char *extension = strrchr(filename, '.');
+        if (type == S2S_CFG_SEQUENTIAL && extension && strcasecmp(extension, ".tap") == 0)
+        {
+            img.tape_is_tap_format = true;
+        }
+
+        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && !img.file.isFolder() && !img.tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
             return false;
         }
+
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || img.file.isFolder())
+        if (img.file.isRom() || type == S2S_CFG_NETWORK || img.file.isFolder() || img.tape_is_tap_format)
         {
-            // ROM is always contiguous, no need to log
+            // Contiguous file doesn't matter for these types
         }
         else if (img.file.isContiguous() && img.file.contiguousRange(&sector_begin, &sector_end))
         {
@@ -466,12 +481,6 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         else
         {
             logmsg("---- WARNING: file ", filename, " is not contiguous. This will increase read latency.");
-        }
-
-        S2S_CFG_TYPE setting_type = (S2S_CFG_TYPE) g_scsi_settings.getDevice(target_idx)->deviceType;
-        if ( setting_type != S2S_CFG_NOT_SET)
-        {
-            type = setting_type;
         }
 
         if (type == S2S_CFG_FIXED)
