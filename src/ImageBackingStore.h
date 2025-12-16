@@ -35,7 +35,9 @@
 #include "ROMDrive.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
-
+#ifdef CONTAINER_IMAGE_SUPPORT
+#include <ZCFsFile.h>
+#endif
 extern "C" {
 #include <scsi.h>
 }
@@ -124,6 +126,12 @@ public:
     // Change image if the image is a folder (used for .cue with multiple .bin)
     bool selectImageFile(const char *filename);
     size_t getFoldername(char* buf, size_t buflen);
+#ifdef CONTAINER_IMAGE_SUPPORT
+    // Return true if the image is contained in a container file like vhd
+    bool isContainer();
+    // Return the name of the container type
+    const char *containerTypeName();
+#endif
 
 protected:
     bool m_iscontiguous;
@@ -131,7 +139,11 @@ protected:
     bool m_isrom;
     bool m_isreadonly_attr;
     romdrive_hdr_t m_romhdr;
+#ifdef CONTAINER_IMAGE_SUPPORT
+    ZuluContainerFs::ZCFsFile m_fsfile;
+#else
     FsFile m_fsfile;
+#endif
     SdCard *m_blockdev;
     uint32_t m_bgnsector;
     uint32_t m_endsector;
