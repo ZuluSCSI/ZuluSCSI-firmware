@@ -245,7 +245,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.rightAlignStrings = ini_getbool(section, "RightAlignStrings", cfg.rightAlignStrings , CONFIGFILE);
     cfg.reinsertOnInquiry = ini_getbool(section, "ReinsertCDOnInquiry", cfg.reinsertOnInquiry, CONFIGFILE);
     cfg.reinsertAfterEject = ini_getbool(section, "ReinsertAfterEject", cfg.reinsertAfterEject, CONFIGFILE);
-    cfg.reinsertImmediately = ini_getbool(section, "ReinsertAfterEject", cfg.reinsertImmediately, CONFIGFILE);
+    cfg.reinsertImmediately = ini_getbool(section, "ReinsertImmediately", cfg.reinsertImmediately, CONFIGFILE);
     cfg.keepCurrentImageOnBusReset = ini_getbool(section, "KeepCurrentImageOnBusReset", cfg.keepCurrentImageOnBusReset, CONFIGFILE);
     cfg.disableMacSanityCheck = ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE);
 
