@@ -204,7 +204,6 @@ void platform_network_poll(bool bus_free)
 		}
 		last_network_status = status;
 	}
-	scsiNetworkPurge();
 	cyw43_arch_poll();
 
 }
