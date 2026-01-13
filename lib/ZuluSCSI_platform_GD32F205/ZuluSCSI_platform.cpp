@@ -208,7 +208,7 @@ void platform_init()
     NVIC_SetPriority(SysTick_IRQn, 0x00U);
 
     // Enable DWT counter to drive delay_ns()
-    g_ns_to_cycles = ((uint64_t)SystemCoreClock << 32) / 1000000000;
+    g_ns_to_cycles = (SystemCoreClock / (1000000000 >> 16)) << 16;
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
