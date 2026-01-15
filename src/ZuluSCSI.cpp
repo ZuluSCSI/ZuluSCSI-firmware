@@ -882,8 +882,14 @@ static void reinitSCSI()
   {
     if (scsiDev.boardCfg.wifiSSID[0] != '\0')
     {
-      platform_network_init(scsiDev.boardCfg.wifiMACAddress);
-      platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+      if ( platform_network_init(scsiDev.boardCfg.wifiMACAddress))
+      {
+        platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+      }
+      else
+      {
+        logmsg("A network SCSI device has been configured but cannot connect to the RM2 WiFi module");
+      }
     }
     else
     {

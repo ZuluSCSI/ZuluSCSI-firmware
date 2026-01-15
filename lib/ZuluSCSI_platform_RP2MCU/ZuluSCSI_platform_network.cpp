@@ -55,16 +55,19 @@ bool platform_network_supported()
 #endif
 }
 
-int platform_network_init(char *mac)
+bool platform_network_init(char *mac)
 {
 	pico_unique_board_id_t board_id;
 	uint8_t set_mac[6], read_mac[6];
 
 	if (!platform_network_supported())
-		return -1;
+		return false;
 
 	// long signal blink at network initialization
-	PICO_W_LED_OFF();
+
+	// Set LED off and check if RM2 communication is working (returns 0 on success)
+	if (0 != cyw43_gpio_set(&cyw43_state, PICO_W_GPIO_LED_PIN, 0))
+		return false;
 	PICO_W_LED_ON();
 	delay(PICO_W_LONG_BLINK_DELAY);
 	PICO_W_LED_OFF();
@@ -113,7 +116,7 @@ int platform_network_init(char *mac)
 
 	network_in_use = true;
 
-	return 0;
+	return true;
 }
 
 void platform_network_add_multicast_address(uint8_t *mac)
