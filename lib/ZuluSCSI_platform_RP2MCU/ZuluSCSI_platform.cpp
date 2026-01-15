@@ -664,7 +664,7 @@ void platform_late_init()
     rm2_pins[CYW43_PIN_INDEX_WL_CS] = GPIO_RM2_CS;
     assert(PICO_OK == cyw43_set_pins_wl(rm2_pins));
     
-        // The iface check turns on the LED on the RM2 early in the init process
+    // The iface check turns on the LED on the RM2 early in the init process
     // Should tell the user that the RM2 is working
     if(platform_network_iface_check())
     {
@@ -672,7 +672,12 @@ void platform_late_init()
     }
     else
     {
-        logmsg("RM2 not found");
+#  if ZULUSCSI_BLASTER
+            logmsg("RM2 not found, upclocking");
+            platform_reclock(SPEED_GRADE_BASE_203MHZ);
+#  else
+            logmsg("RM2 not found");
+#  endif
     }
 #endif 
 
