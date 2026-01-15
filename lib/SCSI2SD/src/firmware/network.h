@@ -38,7 +38,7 @@ extern "C" {
 #define AMIGASCSI_PATCH_SINGLEWRITE_ONLY 	0xA9   // In this mode, data written is always ONLY as one single write command
 
 #ifndef NETWORK_PACKET_QUEUE_SIZE
-# define NETWORK_PACKET_QUEUE_SIZE   20		// must be <= 255
+# define NETWORK_PACKET_QUEUE_SIZE   10		// must be <= 255
 #endif
 
 #define NETWORK_PACKET_MAX_SIZE     1520

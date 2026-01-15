@@ -32,15 +32,8 @@ struct scsiNetworkPacketQueue {
 	uint8_t readIndex;
 };
 
-struct scsiNetworkPacket
-{
-	uint8_t packet[NETWORK_PACKET_MAX_SIZE];
-	uint16_t size;
-	bool full;
-};
 
-static struct scsiNetworkPacketQueue scsiNetworkInboundQueue;
-static struct scsiNetworkPacket scsiNetworkOutbound;
+static struct scsiNetworkPacketQueue scsiNetworkInboundQueue, scsiNetworkOutboundQueue;
 
 struct __attribute__((packed)) wifi_network_entry wifi_network_list[WIFI_NETWORK_LIST_ENTRY_COUNT] = { 0 };
 
@@ -263,7 +256,7 @@ int scsiNetworkCommand()
 			{
 				// no preamble, single packet
 				len = size;
-				log_f("no-preamble write, size %ld (cdb %02x %02x %02x %02x %02x %02x)", len,
+				LOGMSG_F("no-preamble write, size %ld (cdb %02x %02x %02x %02x %02x %02x)", len,
 					scsiDev.cdb[0], scsiDev.cdb[1], scsiDev.cdb[2], scsiDev.cdb[3], scsiDev.cdb[4], scsiDev.cdb[5]);
 			}
 			else
@@ -273,7 +266,7 @@ int scsiNetworkCommand()
 				scsiRead(scsiDev.data, 4, &parityError);
 				if (parityError)
 				{
-					log_f("%s: read of size from host had parity error %d", __func__, parityError);
+					LOGMSG_F("%s: read of size from host had parity error %d", __func__, parityError);
 				}
 				len = (scsiDev.data[0] << 8) + scsiDev.data[1];
 				if (len == 0)
@@ -285,14 +278,14 @@ int scsiNetworkCommand()
 
 			if (len > NETWORK_PACKET_MAX_SIZE)
 			{
-				log_f("%s: attempt to write(6) packet of size %zu", __func__, len);
+				LOGMSG_F("%s: attempt to write(6) packet of size %zu", __func__, len);
 				len = NETWORK_PACKET_MAX_SIZE;
 			}
 
 			scsiRead(scsiNetworkOutboundQueue.packets[scsiNetworkOutboundQueue.writeIndex], len, &parityError);
 			if (parityError)
 			{
-				log_f("%s: read from host of size %zu had parity error %d", __func__, size, parityError);
+				LOGMSG_F("%s: read from host of size %zu had parity error %d", __func__, size, parityError);
 			}
 
 			scsiNetworkOutboundQueue.sizes[scsiNetworkOutboundQueue.writeIndex] = len;
@@ -308,7 +301,7 @@ int scsiNetworkCommand()
 
 			if (scsiNetworkOutboundQueue.writeIndex == scsiNetworkOutboundQueue.readIndex)
 			{
-				log_f("write(6): queue full, having to purge");
+				LOGMSG_F("write(6): queue full, having to purge");
 				scsiNetworkPurge();
 			}
 
@@ -353,7 +346,7 @@ int scsiNetworkCommand()
 			DBGMSG_F("%s: enable interface", __func__);
 			scsiNetworkEnabled = true;
 			memset(&scsiNetworkInboundQueue, 0, sizeof(scsiNetworkInboundQueue));
-			memset(&scsiNetworkOutbound, 0, sizeof(scsiNetworkOutbound));
+			memset(&scsiNetworkOutboundQueue, 0, sizeof(scsiNetworkOutboundQueue));
 		}
 		else
 		{
@@ -548,10 +541,15 @@ int scsiNetworkPurge(void)
 	if (!scsiNetworkEnabled)
 		return 0;
 
-	if (scsiNetworkOutbound.full)
+	while (scsiNetworkOutboundQueue.readIndex != scsiNetworkOutboundQueue.writeIndex)
 	{
-		platform_network_send(scsiNetworkOutbound.packet, scsiNetworkOutbound.size);
-		scsiNetworkOutbound.full = false;
+		platform_network_send(scsiNetworkOutboundQueue.packets[scsiNetworkOutboundQueue.readIndex], scsiNetworkOutboundQueue.sizes[scsiNetworkOutboundQueue.readIndex]);
+
+		if (scsiNetworkOutboundQueue.readIndex == NETWORK_PACKET_QUEUE_SIZE - 1)
+			scsiNetworkOutboundQueue.readIndex = 0;
+		else
+			scsiNetworkOutboundQueue.readIndex++;
+
 		sent++;
 	}
 
