@@ -41,6 +41,9 @@ extern "C" {
 static const char defaultMAC[] = { 0x00, 0x80, 0x19, 0xc0, 0xff, 0xee };
 
 static bool network_in_use = false;
+static char wifi_reconnect_ssid[32 + 1] = {0};
+static char wifi_reconnect_password[63 + 1] = {0};
+
 
 bool platform_network_supported()
 {
@@ -81,7 +84,6 @@ int platform_network_init(char *mac)
 	if (mac == NULL || (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 && mac[3] == 0 && mac[4] == 0 && mac[5] == 0))
 	{
 		mac = (char *)&set_mac;
-		char octal_strings[8][4] = {0};
 		memcpy(mac, defaultMAC, sizeof(set_mac));
 
 		// retain Dayna vendor but use a device id specific to this board
@@ -124,9 +126,17 @@ void platform_network_add_multicast_address(uint8_t *mac)
 		logmsg( __func__, ": cyw43_wifi_update_multicast_filter: ", ret);
 }
 
+static bool platform_network_wifi_reconnect()
+{
+		return platform_network_wifi_join(wifi_reconnect_ssid, wifi_reconnect_password);
+}
+
 bool platform_network_wifi_join(char *ssid, char *password)
 {
 	int ret;
+
+	strlcpy(wifi_reconnect_ssid, ssid, sizeof(wifi_reconnect_ssid));
+	strlcpy(wifi_reconnect_password, ssid, sizeof(wifi_reconnect_password));
 
 	if (!platform_network_supported())
 		return false;
@@ -363,7 +373,9 @@ void cyw43_cb_process_ethernet(void *cb_data, int itf, size_t len, const uint8_t
 
 void cyw43_cb_tcpip_set_link_down(cyw43_t *self, int itf)
 {
-	logmsg("Disassociated from Wi-Fi SSID \"",  (char *)self->ap_ssid,"\"");
+	logmsg("Disassociated from Wi-Fi SSID \"",  wifi_reconnect_ssid,"\"");
+	logmsg("Attempting reconnect");
+	platform_network_wifi_reconnect();
 }
 
 void cyw43_cb_tcpip_set_link_up(cyw43_t *self, int itf)
