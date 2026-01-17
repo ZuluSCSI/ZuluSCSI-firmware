@@ -49,24 +49,29 @@ static uint8_t sbufswap = 0;
 // tracking for audio playback
 static uint8_t audio_owner; // SCSI ID or 0xFF when idle
 static volatile bool audio_paused = false;
-static ImageBackingStore* audio_file;
+static FsFile audio_file;
 static volatile uint64_t fpos;
 static volatile uint32_t fleft;
 extern bool g_audio_stopped;
 
 
 // historical playback status information
-static audio_status_code audio_last_status[S2S_MAX_TARGETS] = {ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
-                                                 ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS};
+static audio_status_code audio_last_status[S2S_MAX_TARGETS + 1] = {
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, 
+    ASC_NO_STATUS
+};
 
 // volume information for targets
-static volatile uint16_t volumes[S2S_MAX_TARGETS] = {
-    DEFAULT_VOLUME_LEVEL, DEFAULT_VOLUME_LEVEL, DEFAULT_VOLUME_LEVEL, DEFAULT_VOLUME_LEVEL,
-    DEFAULT_VOLUME_LEVEL, DEFAULT_VOLUME_LEVEL, DEFAULT_VOLUME_LEVEL, DEFAULT_VOLUME_LEVEL
+static volatile uint16_t volumes[S2S_MAX_TARGETS + 1] = {
+    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
+    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, 
+    DEFAULT_VOLUME_LEVEL_2CH
 };
-static volatile uint16_t channels[S2S_MAX_TARGETS] = {
+static volatile uint16_t channels[S2S_MAX_TARGETS + 1] = {
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
-    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK
+    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
+    AUDIO_CHANNEL_ENABLE_MASK
 };
 
 bool audio_is_active() {
@@ -75,7 +80,7 @@ bool audio_is_active() {
 
 
 bool audio_is_playing(uint8_t id) {
-    return audio_owner == (id & S2S_CFG_TARGET_ID_BITS);
+    return audio_owner == (id);
 }
 
 
@@ -152,14 +157,14 @@ void audio_setup()
 static void audio_adjust(uint8_t owner, int16_t* buffer, size_t length)
 {
     uint8_t volume[2]; 
-    uint16_t packed_volume = volumes[owner & S2S_CFG_TARGET_ID_BITS];
+    uint16_t packed_volume = volumes[owner];
     volume[0] = packed_volume >> 8;
     volume[1] = packed_volume & 0xFF;
 
     // enable or disable based on the channel information for both output
     // ports, where the high byte and mask control the right channel, and
     // the low control the left channel    
-    uint16_t chn = channels[owner & S2S_CFG_TARGET_ID_BITS] & AUDIO_CHANNEL_ENABLE_MASK;
+    uint16_t chn = channels[owner] & AUDIO_CHANNEL_ENABLE_MASK;
     if (!(chn >> 8))
     {
         volume[0] = 0;
@@ -195,7 +200,7 @@ void audio_poll()
     } else if (fleft == 0) {
         // out of data to read but still working on remainder
         return;
-    } else if (!audio_file->isOpen()) {
+    } else if (!audio_file.isOpen()) {
         // closed elsewhere, maybe disk ejected?
         dbgmsg("------ Playback stop due to closed file");
         audio_stop(audio_owner);
@@ -219,16 +224,16 @@ void audio_poll()
  
         uint16_t toRead = AUDIO_BUFFER_HALF_SIZE;
         if (fleft < toRead) toRead = fleft;
-        if (audio_file->position() != fpos) {
+        if (audio_file.position() != fpos) {
             // should be uncommon due to SCSI command restrictions on devices
             // playing audio; if this is showing up in logs a different approach
             // will be needed to avoid seek performance issues on FAT32 vols
             dbgmsg("------ Audio seek required on ", audio_owner);
-            if (!audio_file->seek(fpos)) {
+            if (!audio_file.seek(fpos)) {
                 logmsg("Audio error, unable to seek to ", fpos, ", ID:", audio_owner);
             }
         }
-        ssize_t read_length = audio_file->read(audiobuf, AUDIO_BUFFER_HALF_SIZE);
+        ssize_t read_length = audio_file.read(audiobuf, AUDIO_BUFFER_HALF_SIZE);
         
         if ( read_length < AUDIO_BUFFER_HALF_SIZE )
         {
@@ -273,12 +278,24 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
         return false;
     }
 
-    audio_file = &img->file;
-    if (!audio_file->isOpen()) {
+    if(!img || !img->cuesheetfile.isOpen())
+    {
+        logmsg("Error attempting to play CD Audio with no cue/bin image(s)");
+        return false;
+    }
+
+    if (img->bin_container.isOpen() && img->bin_container.isFile())
+    {
+        audio_file.close();
+        audio_file = img->bin_container;
+    }
+
+    if (!audio_file.isOpen()) {
         logmsg("File not open for audio playback, ", owner);
         return false;
     }
-    uint64_t len = audio_file->size();
+    uint64_t len = audio_file.size();
+
     if (start > len) 
     {
         logmsg("File playback request start (", start, ":", len, ") outside file bounds");
@@ -299,17 +316,17 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
     }
 
     // read in initial sample buffers
-    if (!audio_file->seek(start))
+    if (!audio_file.seek(start))
     {
         logmsg("Sample file failed start seek to ", start);
         return false;
     }
-    ssize_t read_length = audio_file->read(sample_circ_buf, AUDIO_BUFFER_SIZE);
+    ssize_t read_length = audio_file.read(sample_circ_buf, AUDIO_BUFFER_SIZE);
     if ( read_length < AUDIO_BUFFER_SIZE)
     {
         if ( read_length < 0)
         {
-            logmsg("Playback file read error: ", read_length);    
+            logmsg("Playback file read error: ", read_length);
             return false;
         }
         else
@@ -322,12 +339,12 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
     audio_adjust(owner, (int16_t*)sample_circ_buf, AUDIO_BUFFER_SIZE / 2);
  
     // prepare initial tracking state
-    fpos = audio_file->position();
+    fpos = audio_file.position();
     fleft -= AUDIO_BUFFER_SIZE;
     sbufswap = swap;
     sbufst_a = READY;
     sbufst_b = READY;
-    audio_owner = owner & S2S_CFG_TARGET_ID_BITS;
+    audio_owner = owner;
     audio_last_status[audio_owner] = ASC_PLAYING;
     audio_paused = false;
     g_audio_stopped = false;
@@ -338,10 +355,9 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
 
 bool audio_set_paused(uint8_t id, bool paused)
 {
-    if (audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return false;
+    if (audio_owner != id) return false;
     else if (audio_paused && paused) return false;
     else if (!audio_paused && !paused) return false;
-
 
 
     if (paused) 
@@ -373,7 +389,7 @@ bool audio_set_paused(uint8_t id, bool paused)
 
 void audio_stop(uint8_t id)
 {
-    if (audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return;
+    if (audio_owner != id) return;
 
     spi_disable(ODE_I2S_SPI);
     dma_channel_disable(ODE_DMA, ODE_DMA_CH);
@@ -387,29 +403,29 @@ void audio_stop(uint8_t id)
 
 audio_status_code audio_get_status_code(uint8_t id)
 {
-    audio_status_code tmp = audio_last_status[id & S2S_CFG_TARGET_ID_BITS];
+    audio_status_code tmp = audio_last_status[id];
     if (tmp == ASC_COMPLETED || tmp == ASC_ERRORED) {
-        audio_last_status[id & S2S_CFG_TARGET_ID_BITS] = ASC_NO_STATUS;
+        audio_last_status[id] = ASC_NO_STATUS;
     }
     return tmp;
 }
 
 uint16_t audio_get_volume(uint8_t id)
 {
-    return volumes[id & S2S_CFG_TARGET_ID_BITS];
+    return volumes[id];
 }
 
 void audio_set_volume(uint8_t id, uint16_t vol)
 {
-    volumes[id & S2S_CFG_TARGET_ID_BITS] = vol;
+    volumes[id] = vol;
 }
 
 uint16_t audio_get_channel(uint8_t id) {
-    return channels[id & S2S_CFG_TARGET_ID_BITS];
+    return channels[id];
 }
 
 void audio_set_channel(uint8_t id, uint16_t chn) {
-    channels[id & S2S_CFG_TARGET_ID_BITS] = chn;
+    channels[id] = chn;
 }
 
 uint64_t audio_get_file_position()
@@ -428,4 +444,91 @@ void audio_reset(uint8_t id)
     uint8_t vol = g_scsi_settings.getDevice(id)->vol;
     audio_set_volume(id, (uint16_t)vol << 8 | vol);
 }
+
+typedef struct {
+    uint8_t riff[4];
+    uint32_t filesize;
+    uint8_t wave[4];
+    uint8_t fmt[4];
+    uint32_t fmt_len;
+    uint16_t fmt_type;
+    uint16_t channelcount;
+    uint32_t samplerate;
+    uint32_t byterate;
+    uint16_t bytes_per_step;
+    uint16_t bits_per_sample;
+    uint8_t data[4];
+    uint32_t data_len;
+} wav_header_t;
+
+bool audio_play_wav(const char *filename)
+{
+    if (audio_is_active()) audio_stop(audio_owner);
+
+    if (!audio_file.open(filename, O_RDONLY))
+    {
+        logmsg("Failed to open WAV: ", filename, " ", audio_file.getError());
+        return false;
+    }
+
+    // Set owner to wave file playback owner
+    audio_owner = S2S_MAX_TARGETS;
+
+    // Read WAV file header and verify suitable format
+    wav_header_t hdr = {};
+    if (audio_file.read(&hdr, sizeof(hdr)) != sizeof(hdr) ||
+        memcmp(hdr.riff, "RIFF", 4) != 0 ||
+        memcmp(hdr.wave, "WAVE", 4) != 0 ||
+        memcmp(hdr.fmt, "fmt ", 4) != 0)
+    {
+        logmsg("Invalid WAV file header in ", filename, ": ",
+                bytearray((uint8_t*)&hdr, 16));
+        return false;
+    }
+
+    if (hdr.fmt_type != 1 ||
+        hdr.channelcount != 2 ||
+        hdr.samplerate != 44100 ||
+        hdr.bits_per_sample != 16)
+    {
+        logmsg("Only stereo 16-bit 44100 Hz PCM WAV is supported, file ", filename, " has"
+            " format ", (int)hdr.fmt_type,
+            " channelcount ", (int)hdr.channelcount,
+            " samplerate ", (int)hdr.samplerate,
+            " bits_per_sample ", (int)hdr.bits_per_sample);
+        return false;
+    }
+
+    ssize_t read_length = audio_file.read(sample_circ_buf, AUDIO_BUFFER_SIZE);
+    if ( read_length < AUDIO_BUFFER_SIZE)
+    {
+        if ( read_length < 0)
+        {
+            logmsg("Playback file read error: ", read_length);    
+            return false;
+        }
+        else
+        {
+            // pad buffer with zeros
+            memset(sample_circ_buf + read_length, 0, AUDIO_BUFFER_SIZE - read_length);
+        }
+
+    }
+    audio_adjust(audio_owner, (int16_t*)sample_circ_buf, AUDIO_BUFFER_SIZE / 2);
+ 
+
+    audio_last_status[audio_owner] = ASC_PLAYING;
+    sbufswap = false;
+    audio_paused = false;
+    g_audio_stopped = false;
+
+    fleft = audio_file.size() - hdr.data_len - AUDIO_BUFFER_SIZE;
+    fpos = audio_file.position();
+    sbufst_a = READY;
+    sbufst_b = READY;
+
+    audio_start_dma();
+    return true;
+}
+
 #endif // ENABLE_AUDIO_OUTPUT_I2S

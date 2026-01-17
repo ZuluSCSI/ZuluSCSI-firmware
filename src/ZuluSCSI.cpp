@@ -62,6 +62,7 @@
 #include "ZuluSCSI_msc.h"
 #include "ZuluSCSI_blink.h"
 #include "ZuluSCSI_buffer_control.h"
+#include "ZuluSCSI_audio.h"
 #include "ROMDrive.h"
 
 #include "ui.h"
@@ -1292,6 +1293,13 @@ extern "C" void zuluscsi_setup(void)
   logmsg("Clock set to: ", (int) platform_sys_clock_in_hz(), "Hz");
 #if ZULUSCSI_RESERVED_SRAM_LEN > 0
     dbgmsg("Shared buffer has ", (int) reserve_buffer_left(), " bytes left out of ", (int) ZULUSCSI_RESERVED_SRAM_LEN, " bytes total");
+#endif
+#if defined(STARTUPSOUND) && defined(ENABLE_AUDIO_OUTPUT)
+  if (g_sdcard_present && SD.exists(STARTUPSOUND))
+  {
+    logmsg("Playing " STARTUPSOUND);
+    audio_play_wav(STARTUPSOUND);
+  }
 #endif
     logmsg("Firmware initialization complete!");
 }

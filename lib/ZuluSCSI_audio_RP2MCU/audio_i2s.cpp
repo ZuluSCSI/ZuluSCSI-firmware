@@ -84,37 +84,44 @@ static CUETrackInfo current_track = {0};
 
 // historical playback status information
 #if S2S_MAX_TARGETS == 16
-static audio_status_code audio_last_status[S2S_MAX_TARGETS] = {
+static audio_status_code audio_last_status[S2S_MAX_TARGETS + 1] = {
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
-    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, 
+    ASC_NO_STATUS
 };
 // volume information for targets
-static volatile uint16_t volumes[S2S_MAX_TARGETS] = {
+static volatile uint16_t volumes[S2S_MAX_TARGETS + 1] = {
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
-    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH
+    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
+    DEFAULT_VOLUME_LEVEL_2CH
 };
-static volatile uint16_t channel[S2S_MAX_TARGETS] = {
+static volatile uint16_t channel[S2S_MAX_TARGETS + 1] = {
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
-    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK
+    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
+    AUDIO_CHANNEL_ENABLE_MASK
 };
 #else
-static audio_status_code audio_last_status[S2S_MAX_TARGETS] = {
+// Max targets + 1 (+1 being a separate id for wav playback)
+static audio_status_code audio_last_status[S2S_MAX_TARGETS + 1] = {
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
-    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS};
+    ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, 
+    ASC_NO_STATUS};
 // volume information for targets
-static volatile uint16_t volumes[S2S_MAX_TARGETS] = {
+static volatile uint16_t volumes[S2S_MAX_TARGETS + 1] = {
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
-    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH
+    DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
+    DEFAULT_VOLUME_LEVEL_2CH
 };
-static volatile uint16_t channel[S2S_MAX_TARGETS] = {
+static volatile uint16_t channel[S2S_MAX_TARGETS + 1] = {
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
-    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK
+    AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
+    AUDIO_CHANNEL_ENABLE_MASK
 };
 #endif
 
@@ -670,6 +677,54 @@ bool  audio_play_track_index(uint8_t owner,      image_config_t* img,
     return audio_play(owner, img, start_lba, end_lba - start_lba, false);
 }
 
+
+static void audio_start_dma()
+{
+    // read in initial sample buffers
+    if (within_gap)
+    {
+        sbufst_a = READY;
+        sbufst_b = READY;
+        memset(output_buf_a, 0, sizeof(output_buf_a));
+        memset(output_buf_b, 0, sizeof(output_buf_b));
+    }
+    else
+    {
+        sbufst_a = STALE;
+        sbufst_b = STALE;
+        sbufsel = B;
+        audio_poll();
+        sbufsel = A;
+        audio_poll();
+    }
+    // setup the two DMA units to hand-off to each other
+    // to maintain a stable bitstream these need to run without interruption
+	snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CHA);
+	channel_config_set_transfer_data_size(&snd_dma_a_cfg, DMA_SIZE_32);
+	channel_config_set_dreq(&snd_dma_a_cfg, i2s.getPioDreq());
+	channel_config_set_read_increment(&snd_dma_a_cfg, true);
+	channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CHB);
+    channel_config_set_high_priority(&snd_dma_a_cfg, true);
+	dma_channel_configure(SOUND_DMA_CHA, &snd_dma_a_cfg, i2s.getPioFIFOAddr(),
+			output_buf_a, AUDIO_OUT_BUFFER_SIZE, false);
+    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHA );
+    // dma_irqn_set_channel_enabled(I2S_DMA_IRQ_NUM, SOUND_DMA_CHA, true);
+    // dma_channel_set_irq0_enabled(SOUND_DMA_CHA, true);
+	snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
+	channel_config_set_transfer_data_size(&snd_dma_b_cfg, DMA_SIZE_32);
+	channel_config_set_dreq(&snd_dma_b_cfg, i2s.getPioDreq());
+	channel_config_set_read_increment(&snd_dma_b_cfg, true);
+	channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHA);
+    channel_config_set_high_priority(&snd_dma_b_cfg, true);
+	dma_channel_configure(SOUND_DMA_CHB, &snd_dma_b_cfg, i2s.getPioFIFOAddr(),
+			output_buf_b, AUDIO_OUT_BUFFER_SIZE, false);
+    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHB );
+    // dma_irqn_set_channel_enabled(I2S_DMA_IRQ_NUM, SOUND_DMA_CHB, true);
+    // dma_channel_set_irq0_enabled(SOUND_DMA_CHB, true);
+    // ready to go
+    dma_channel_start(SOUND_DMA_CHA);
+}
+
 bool audio_play(uint8_t owner, image_config_t* img, uint32_t start, uint32_t length, bool swap) {
     dbgmsg("------ Audio playback lba start ", (int) start, ", length ", (int)(length));
     // Per Annex C terminate playback immediately if already in progress on
@@ -739,52 +794,10 @@ bool audio_play(uint8_t owner, image_config_t* img, uint32_t start, uint32_t len
     audio_paused = false;
     audio_playing = true;
     audio_idle = false;
-
-    // read in initial sample buffers
-    if (within_gap)
-    {
-        sbufst_a = READY;
-        sbufst_b = READY;
-        memset(output_buf_a, 0, sizeof(output_buf_a));
-        memset(output_buf_b, 0, sizeof(output_buf_b));
-    }
-    else
-    {
-        sbufst_a = STALE;
-        sbufst_b = STALE;
-        sbufsel = B;
-        audio_poll();
-        sbufsel = A;
-        audio_poll();
-    }
-    // setup the two DMA units to hand-off to each other
-    // to maintain a stable bitstream these need to run without interruption
-	snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CHA);
-	channel_config_set_transfer_data_size(&snd_dma_a_cfg, DMA_SIZE_32);
-	channel_config_set_dreq(&snd_dma_a_cfg, i2s.getPioDreq());
-	channel_config_set_read_increment(&snd_dma_a_cfg, true);
-	channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CHB);
-    channel_config_set_high_priority(&snd_dma_a_cfg, true);
-	dma_channel_configure(SOUND_DMA_CHA, &snd_dma_a_cfg, i2s.getPioFIFOAddr(),
-			output_buf_a, AUDIO_OUT_BUFFER_SIZE, false);
-    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHA );
-    // dma_irqn_set_channel_enabled(I2S_DMA_IRQ_NUM, SOUND_DMA_CHA, true);
-    // dma_channel_set_irq0_enabled(SOUND_DMA_CHA, true);
-	snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
-	channel_config_set_transfer_data_size(&snd_dma_b_cfg, DMA_SIZE_32);
-	channel_config_set_dreq(&snd_dma_b_cfg, i2s.getPioDreq());
-	channel_config_set_read_increment(&snd_dma_b_cfg, true);
-	channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHA);
-    channel_config_set_high_priority(&snd_dma_b_cfg, true);
-	dma_channel_configure(SOUND_DMA_CHB, &snd_dma_b_cfg, i2s.getPioFIFOAddr(),
-			output_buf_b, AUDIO_OUT_BUFFER_SIZE, false);
-    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHB );
-    // dma_irqn_set_channel_enabled(I2S_DMA_IRQ_NUM, SOUND_DMA_CHB, true);
-    // dma_channel_set_irq0_enabled(SOUND_DMA_CHB, true);
-    // ready to go
-    dma_channel_start(SOUND_DMA_CHA);
+    audio_start_dma();
     return true;
 }
+
 
 bool audio_set_paused(uint8_t id, bool paused) {
     if (audio_idle) return false;
@@ -909,4 +922,72 @@ void audio_reset(uint8_t id)
     audio_set_volume(id, (uint16_t)vol << 8 | vol);
 }
 
-#endif // ENABLE_AUDIO_OUTPUT_SPDIF
+typedef struct {
+    uint8_t riff[4];
+    uint32_t filesize;
+    uint8_t wave[4];
+    uint8_t fmt[4];
+    uint32_t fmt_len;
+    uint16_t fmt_type;
+    uint16_t channelcount;
+    uint32_t samplerate;
+    uint32_t byterate;
+    uint16_t bytes_per_step;
+    uint16_t bits_per_sample;
+    uint8_t data[4];
+    uint32_t data_len;
+} wav_header_t;
+
+bool audio_play_wav(const char *filename)
+{
+    if (!audio_idle) audio_stop(audio_owner);
+
+    if (!audio_file.open(filename, O_RDONLY))
+    {
+        logmsg("Failed to open WAV: ", filename, " ", audio_file.getError());
+        return false;
+    }
+
+    // Set owner to wave file playback owner
+    audio_owner = S2S_MAX_TARGETS;
+    // Read WAV file header and verify suitable format
+    wav_header_t hdr = {};
+    if (audio_file.read(&hdr, sizeof(hdr)) != sizeof(hdr) ||
+        memcmp(hdr.riff, "RIFF", 4) != 0 ||
+        memcmp(hdr.wave, "WAVE", 4) != 0 ||
+        memcmp(hdr.fmt, "fmt ", 4) != 0)
+    {
+        logmsg("Invalid WAV file header in ", filename, ": ",
+                bytearray((uint8_t*)&hdr, 16));
+        return false;
+    }
+
+    if (hdr.fmt_type != 1 ||
+        hdr.channelcount != 2 ||
+        hdr.samplerate != 44100 ||
+        hdr.bits_per_sample != 16)
+    {
+        logmsg("Only stereo 16-bit 44100 Hz PCM WAV is supported, file ", filename, " has"
+            " format ", (int)hdr.fmt_type,
+            " channelcount ", (int)hdr.channelcount,
+            " samplerate ", (int)hdr.samplerate,
+            " bits_per_sample ", (int)hdr.bits_per_sample);
+        return false;
+    }
+
+
+    audio_last_status[audio_owner] = ASC_PLAYING;
+    audio_paused = false;
+    audio_playing = true;
+    audio_idle = false;
+
+    last_track_reached = true;
+    within_gap = false;
+    fleft = hdr.data_len;
+    fpos = sizeof(hdr);
+
+    audio_start_dma();
+    return true;
+}
+
+#endif // ENABLE_AUDIO_OUTPUT_I2S

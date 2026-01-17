@@ -204,3 +204,8 @@ void audio_set_file_position(uint8_t id, uint32_t lba);
  * Resets audio settings for example when inserting a new CD
  */
 void audio_reset(uint8_t id);
+
+/**
+ * Play a wave file
+ */
+bool audio_play_wav(const char *filename);
