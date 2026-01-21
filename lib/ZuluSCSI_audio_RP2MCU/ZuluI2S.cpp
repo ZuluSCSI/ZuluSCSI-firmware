@@ -41,7 +41,7 @@ I2S::~I2S() {
 }
 
 bool I2S::setBCLK(pin_size_t pin) {
-    if (_running || (pin > 28)) {
+    if (_running) {
         return false;
     }
     _pinBCLK = pin;
@@ -49,7 +49,7 @@ bool I2S::setBCLK(pin_size_t pin) {
 }
 
 bool I2S::setDATA(pin_size_t pin) {
-    if (_running || (pin > 29)) {
+    if (_running) {
         return false;
     }
     _pinDOUT = pin;
@@ -83,6 +83,8 @@ bool I2S::begin(PIO pio, uint sm) {
     if (_running)
         return true;
     _pio = pio;
+    if (_pinDOUT > 31 || (_pinBCLK + 1) > 31)
+        pio_set_gpio_base(_pio, 16);
     _sm = sm;
     _running = true;
     pio_sm_claim(_pio, _sm);
