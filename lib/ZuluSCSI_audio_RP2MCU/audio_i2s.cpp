@@ -542,7 +542,17 @@ void audio_poll() {
         fleft -= toRead;
     }
 
-
+#ifdef RP2MCU_CPU_PARITY_CORE1
+// Wide acceleration makes use of the 2nd core for parity calculations
+// Processing audio on the first core does decrease throughput on data transfers
+    if (sbufst_a == FILLING) {
+        sbufst_a = PROCESSING;
+        snd_process_a();
+    } else if (sbufst_b == FILLING) {
+        sbufst_b = PROCESSING;
+        snd_process_b();
+    }
+#else
     if (sbufst_a == FILLING) {
         sbufst_a = PROCESSING;
         multicore_fifo_push_blocking((uintptr_t) &snd_process_a);
@@ -550,6 +560,7 @@ void audio_poll() {
         sbufst_b = PROCESSING;
         multicore_fifo_push_blocking((uintptr_t) &snd_process_b);
     }
+#endif
 }
 
 bool  audio_play_track_index(uint8_t owner,      image_config_t* img, 
@@ -697,6 +708,24 @@ static void audio_start_dma()
         sbufsel = A;
         audio_poll();
     }
+
+   // read in initial sample buffers
+    if (within_gap)
+    {
+        sbufst_a = READY;
+        sbufst_b = READY;
+        memset(output_buf_a, 0, sizeof(output_buf_a));
+        memset(output_buf_b, 0, sizeof(output_buf_b));
+    }
+    else
+    {
+        sbufst_a = STALE;
+        sbufst_b = STALE;
+        sbufsel = B;
+        audio_poll();
+        sbufsel = A;
+        audio_poll();
+    }
     // setup the two DMA units to hand-off to each other
     // to maintain a stable bitstream these need to run without interruption
 	snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CHA);
@@ -708,9 +737,8 @@ static void audio_start_dma()
 	dma_channel_configure(SOUND_DMA_CHA, &snd_dma_a_cfg, i2s.getPioFIFOAddr(),
 			output_buf_a, AUDIO_OUT_BUFFER_SIZE, false);
     hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHA );
-    // dma_irqn_set_channel_enabled(I2S_DMA_IRQ_NUM, SOUND_DMA_CHA, true);
-    // dma_channel_set_irq0_enabled(SOUND_DMA_CHA, true);
-	snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
+    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CHA, true);
+    snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
 	channel_config_set_transfer_data_size(&snd_dma_b_cfg, DMA_SIZE_32);
 	channel_config_set_dreq(&snd_dma_b_cfg, i2s.getPioDreq());
 	channel_config_set_read_increment(&snd_dma_b_cfg, true);
@@ -719,8 +747,7 @@ static void audio_start_dma()
 	dma_channel_configure(SOUND_DMA_CHB, &snd_dma_b_cfg, i2s.getPioFIFOAddr(),
 			output_buf_b, AUDIO_OUT_BUFFER_SIZE, false);
     hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHB );
-    // dma_irqn_set_channel_enabled(I2S_DMA_IRQ_NUM, SOUND_DMA_CHB, true);
-    // dma_channel_set_irq0_enabled(SOUND_DMA_CHB, true);
+    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CHB, true);
     // ready to go
     dma_channel_start(SOUND_DMA_CHA);
 }

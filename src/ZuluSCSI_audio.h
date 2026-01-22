@@ -69,7 +69,7 @@ enum audio_status_code {
  */
 bool audio_is_playing(uint8_t id);
 
-#if defined(ENABLE_AUDIO_OUTPUT) && !defined(ZULUSCSI_BLASTER)
+#if defined(ENABLE_AUDIO_OUTPUT) && (defined(ZULUSCSI_V1_1_plus) || defined(ENABLE_AUDIO_OUTPUT_SPDIF))
 /**
  * Begins audio playback for a file.
  *
@@ -82,7 +82,7 @@ bool audio_is_playing(uint8_t id);
  */
 bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end, bool swap);
 
-#elif defined(ENABLE_AUDIO_OUTPUT_I2S) && defined(ZULUSCSI_BLASTER)
+#elif defined(ENABLE_AUDIO_OUTPUT_I2S)
 /**
  * Begins audio playback for a file.
  *
@@ -184,7 +184,7 @@ void audio_set_channel(uint8_t id, uint16_t chn);
 */
 uint64_t audio_get_file_position();
 
-#ifdef ZULUSCSI_BLASTER
+#if defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
 /**
  * Gets the LBA position in the audio image
  * 

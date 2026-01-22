@@ -634,7 +634,8 @@ void platform_late_init()
         gpio_conf(SCSI_IN_RST,    GPIO_FUNC_SIO, true, false, false, true, false);
 
 #if defined(ZULUSCSI_WIDE)
-    logmsg("Wide board runs at base speed of ",(int) platform_sys_clock_in_hz(), "Hz");
+    logmsg("Reclock Wide based boards to standardized speed");
+    platform_reclock(SPEED_GRADE_BASE_155MHZ);
 #elif defined(ZULUSCSI_BLASTER)
     logmsg("Reclock Blaster based boards to standardized speed");
     platform_reclock(SPEED_GRADE_BASE_155MHZ);
