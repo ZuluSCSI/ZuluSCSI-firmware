@@ -41,6 +41,7 @@
 #define CONFIGFILE  "zuluscsi.ini"
 #define LOGFILE     "zululog.txt"
 #define CRASHFILE   "zuluerr.txt"
+#define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
 
 // Prefix for command file to create new image (case-insensitive)
