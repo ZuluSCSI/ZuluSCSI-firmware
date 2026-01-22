@@ -105,6 +105,7 @@
     #define GPIO_I2S_WS   9
     #define GPIO_I2S_DOUT 10
     #define I2S_DMA_IRQ_NUM DMA_IRQ_2
+    #define I2S_DMA_IRQ_IDX 2
 #endif
 
 

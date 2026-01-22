@@ -117,6 +117,7 @@
     #define GPIO_I2S_WS   46
     #define GPIO_I2S_DOUT 47
     #define I2S_DMA_IRQ_NUM DMA_IRQ_0
+    #define I2S_DMA_IRQ_IDX 0
 #endif
 
 #define SCSI_DMA_IRQ_IDX 3

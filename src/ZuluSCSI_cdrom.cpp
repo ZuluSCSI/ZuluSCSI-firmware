@@ -1369,7 +1369,7 @@ void cdromGetAudioPlaybackStatus(uint8_t *status, uint32_t *current_lba, bool cu
             *status = (uint8_t) audio_get_status_code(target);
         }
     }
-# ifdef ZULUSCSI_BLASTER
+# if  defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
     *current_lba = audio_get_lba_position();
 # else
     *current_lba = audio_get_file_position() / 2352;
@@ -1405,7 +1405,7 @@ static void doPlayAudio(uint32_t lba, uint32_t length)
     }
 #endif
 
-#if defined(ENABLE_AUDIO_OUTPUT) && !defined(ZULUSCSI_BLASTER)
+#if defined(ENABLE_AUDIO_OUTPUT) && !(defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE))
     dbgmsg("------ CD-ROM Play Audio request at ", lba, " for ", length, " sectors");
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
@@ -1478,7 +1478,7 @@ static void doPlayAudio(uint32_t lba, uint32_t length)
         scsiDev.target->sense.asc = 0x6400; // ILLEGAL MODE FOR THIS TRACK
         scsiDev.phase = STATUS;
     }
-#elif defined(ENABLE_AUDIO_OUTPUT_I2S) && defined(ZULUSCSI_BLASTER)
+#elif defined(ENABLE_AUDIO_OUTPUT_I2S) && (defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE))
     dbgmsg("------ CD-ROM Play Audio request at ", (int)lba, " for ", (int)length, " sectors");
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
@@ -1519,7 +1519,7 @@ static void doPlayAudio(uint32_t lba, uint32_t length)
 static void doPlayAudioTrackIndex(uint8_t start_track, uint8_t start_index, uint8_t end_track, uint8_t end_index)
 {
 #if defined(ENABLE_AUDIO_OUTPUT)
-# if defined(ZULUSCSI_BLASTER)
+# if defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
     dbgmsg("------ CD-ROM Play Audio request at track:index ", (int)start_track, ":", (int)start_index, " until ", (int)end_track, ":", (int)end_index);
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
@@ -1709,11 +1709,19 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
     else if (readend > img.file.size())
     {
         uint32_t sectors_available = (img.file.size() - offset) / trackinfo.sector_length;
-        if (!img.file.isFolder() || sectors_available == 0)
+        if (!img.is_multi_bin_cue() || sectors_available == 0)
         {
             // This is really past the end of the CD
-            logmsg("WARNING: Host attempted CD read at sector ", lba, "+", length,
-              ", exceeding image size ", img.file.size());
+            if (img.is_multi_bin_cue())
+            {
+                logmsg("WARNING: Host attempted CD read track ", (int) trackinfo.track_number, " at lba ", (int) lba, "+", (int)length,
+                " with zero sectors available");
+            }
+            else
+            {
+                logmsg("WARNING: Host attempted CD read at sector ", (int)lba, "+", (int)length,
+                ", exceeding image size ", ((int)img.file.size()) < 0 ? img.file.size() : (int)img.file.size());
+            }
             scsiDev.status = CHECK_CONDITION;
             scsiDev.target->sense.code = ILLEGAL_REQUEST;
             scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
