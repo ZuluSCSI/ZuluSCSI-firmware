@@ -1360,7 +1360,7 @@ extern "C" void zuluscsi_main_loop(void)
   }
 
 #ifdef ZULUSCSI_NETWORK
-  platform_network_poll();
+  platform_network_poll(scsiDev.phase == BUS_FREE);
 #endif // ZULUSCSI_NETWORK
 
 #ifdef PLATFORM_HAS_INITIATOR_MODE
