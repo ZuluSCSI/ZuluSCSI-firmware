@@ -41,6 +41,9 @@ extern "C" {
 static const char defaultMAC[] = { 0x00, 0x80, 0x19, 0xc0, 0xff, 0xee };
 
 static bool network_in_use = false;
+static bool g_wifi_reconnect = false;
+static char g_wifi_reconnect_ssid[32 + 1] = {0};
+static char g_wifi_reconnect_password[63 + 1] = {0};
 
 bool platform_network_supported()
 {
@@ -55,16 +58,19 @@ bool platform_network_supported()
 #endif
 }
 
-int platform_network_init(char *mac)
+bool platform_network_init(char *mac)
 {
 	pico_unique_board_id_t board_id;
 	uint8_t set_mac[6], read_mac[6];
 
 	if (!platform_network_supported())
-		return -1;
+		return false;
 
 	// long signal blink at network initialization
-	PICO_W_LED_OFF();
+
+	// Set LED off and check if RM2 communication is working (returns 0 on success)
+	if (0 != cyw43_gpio_set(&cyw43_state, PICO_W_GPIO_LED_PIN, 0))
+		return false;
 	PICO_W_LED_ON();
 	delay(PICO_W_LONG_BLINK_DELAY);
 	PICO_W_LED_OFF();
@@ -81,7 +87,6 @@ int platform_network_init(char *mac)
 	if (mac == NULL || (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 && mac[3] == 0 && mac[4] == 0 && mac[5] == 0))
 	{
 		mac = (char *)&set_mac;
-		char octal_strings[8][4] = {0};
 		memcpy(mac, defaultMAC, sizeof(set_mac));
 
 		// retain Dayna vendor but use a device id specific to this board
@@ -113,7 +118,7 @@ int platform_network_init(char *mac)
 
 	network_in_use = true;
 
-	return 0;
+	return true;
 }
 
 void platform_network_add_multicast_address(uint8_t *mac)
@@ -124,12 +129,21 @@ void platform_network_add_multicast_address(uint8_t *mac)
 		logmsg( __func__, ": cyw43_wifi_update_multicast_filter: ", ret);
 }
 
+static bool platform_network_wifi_reconnect()
+{
+	return platform_network_wifi_join(g_wifi_reconnect_ssid, g_wifi_reconnect_password);
+}
+
+
 bool platform_network_wifi_join(char *ssid, char *password)
 {
 	int ret;
 
 	if (!platform_network_supported())
 		return false;
+
+	strlcpy(g_wifi_reconnect_ssid, ssid, sizeof(g_wifi_reconnect_ssid));
+	strlcpy(g_wifi_reconnect_password, ssid, sizeof(g_wifi_reconnect_password));
 
 	if (password == NULL || password[0] == 0)
 	{
@@ -158,8 +172,14 @@ bool platform_network_wifi_join(char *ssid, char *password)
 	return (ret == 0);
 }
 
-void platform_network_poll()
+void platform_network_poll(bool bus_free)
 {
+	if (bus_free && g_wifi_reconnect)
+	{
+		platform_network_wifi_reconnect();
+		g_wifi_reconnect = false;
+	}
+
 	static int last_network_status = CYW43_LINK_DOWN;
 	if (!network_in_use)
 		return;
@@ -363,7 +383,8 @@ void cyw43_cb_process_ethernet(void *cb_data, int itf, size_t len, const uint8_t
 
 void cyw43_cb_tcpip_set_link_down(cyw43_t *self, int itf)
 {
-	logmsg("Disassociated from Wi-Fi SSID \"",  (char *)self->ap_ssid,"\"");
+	logmsg("Disassociated from Wi-Fi SSID \"",  g_wifi_reconnect_ssid,"\" reconnecting");
+	g_wifi_reconnect = true;
 }
 
 void cyw43_cb_tcpip_set_link_up(cyw43_t *self, int itf)

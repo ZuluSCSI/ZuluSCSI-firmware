@@ -139,7 +139,7 @@ static const size_t wire_buf_len WIRE_BUFFER_SIZE;
 // tracking for audio playback
 static uint8_t audio_owner; // SCSI ID or 0xFF when idle
 static volatile bool audio_paused = false;
-static ImageBackingStore* audio_file;
+static FsFile audio_file;
 static uint64_t fpos;
 static uint32_t fleft;
 
@@ -433,7 +433,7 @@ void audio_poll() {
     } else if (fleft == 0) {
         // out of data to read but still working on remainder
         return;
-    } else if (!audio_file->isOpen()) {
+    } else if (!audio_file.isOpen()) {
         // closed elsewhere, maybe disk ejected?
         dbgmsg("------ Playback stop due to closed file");
         audio_stop(audio_owner);
@@ -456,16 +456,16 @@ void audio_poll() {
     platform_set_sd_callback(NULL, NULL);
     uint16_t toRead = AUDIO_BUFFER_SIZE;
     if (fleft < toRead) toRead = fleft;
-    if (audio_file->position() != fpos) {
+    if (audio_file.position() != fpos) {
         // should be uncommon due to SCSI command restrictions on devices
         // playing audio; if this is showing up in logs a different approach
         // will be needed to avoid seek performance issues on FAT32 vols
         dbgmsg("------ Audio seek required on ", audio_owner);
-        if (!audio_file->seek(fpos)) {
+        if (!audio_file.seek(fpos)) {
             logmsg("Audio error, unable to seek to ", fpos, ", ID:", audio_owner);
         }
     }
-    if (audio_file->read(audiobuf, toRead) != toRead) {
+    if (audio_file.read(audiobuf, toRead) != toRead) {
         logmsg("Audio sample data underrun");
     }
     fpos += toRead;
@@ -478,78 +478,8 @@ void audio_poll() {
     }
 }
 
-bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end, bool swap) {
-    // stop any existing playback first
-    if (audio_is_active()) audio_stop(audio_owner);
-
-    // dbgmsg("Request to play ('", file, "':", start, ":", end, ")");
-
-    // verify audio file is present and inputs are (somewhat) sane
-    if (owner == 0xFF) {
-        logmsg("Illegal audio owner");
-        return false;
-    }
-    if (start >= end) {
-        logmsg("Invalid range for audio (", start, ":", end, ")");
-        return false;
-    }
-    platform_set_sd_callback(NULL, NULL);
-    audio_file = &img->file;
-    if (!audio_file->isOpen()) {
-        logmsg("File not open for audio playback, ", owner);
-        return false;
-    }
-    uint64_t len = audio_file->size();
-    if (start > len) {
-        logmsg("File playback request start (", start, ":", len, ") outside file bounds");
-        return false;
-    }
-    // truncate playback end to end of file
-    // we will not consider this to be an error at the moment
-    if (end > len) {
-        dbgmsg("------ Truncate audio play request end ", end, " to file size ", len);
-        end = len;
-    }
-    fleft = end - start;
-    if (fleft <= 2 * AUDIO_BUFFER_SIZE) {
-        logmsg("File playback request (", start, ":", end, ") too short");
-        return false;
-    }
-
-    // read in initial sample buffers
-    if (!audio_file->seek(start)) {
-        logmsg("Sample file failed start seek to ", start);
-        return false;
-    }
-    if (audio_file->read(sample_buf_a, AUDIO_BUFFER_SIZE) != AUDIO_BUFFER_SIZE) {
-        logmsg("File playback start returned fewer bytes than allowed");
-        return false;
-    }
-    if (audio_file->read(sample_buf_b, AUDIO_BUFFER_SIZE) != AUDIO_BUFFER_SIZE) {
-        logmsg("File playback start returned fewer bytes than allowed");
-        return false;
-    }
-
-    // prepare initial tracking state
-    fpos = audio_file->position();
-    fleft -= AUDIO_BUFFER_SIZE * 2;
-    sbufsel = A;
-    sbufpos = 0;
-    sbufswap = swap;
-    sbufst_a = READY;
-    sbufst_b = READY;
-    audio_owner = owner & S2S_CFG_TARGET_ID_BITS;
-    audio_last_status[audio_owner] = ASC_PLAYING;
-    audio_paused = false;
-
-    // prepare the wire buffers
-    for (uint16_t i = 0; i < WIRE_BUFFER_SIZE; i++) {
-        wire_buf_a[i] = 0;
-        wire_buf_b[i] = 0;
-    }
-    sfcnt = 0;
-    invert = 0;
-
+static void audio_start_dma()
+{
     // setup the two DMA units to hand-off to each other
     // to maintain a stable bitstream these need to run without interruption
 	snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CHA);
@@ -574,6 +504,92 @@ bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end
 
     // ready to go
     dma_channel_start(SOUND_DMA_CHA);
+}
+
+bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end, bool swap) {
+    // stop any existing playback first
+    if (audio_is_active()) audio_stop(audio_owner);
+
+    // dbgmsg("Request to play ('", file, "':", start, ":", end, ")");
+
+    // verify audio file is present and inputs are (somewhat) sane
+    if (owner == 0xFF) {
+        logmsg("Illegal audio owner");
+        return false;
+    }
+    if (start >= end) {
+        logmsg("Invalid range for audio (", start, ":", end, ")");
+        return false;
+    }
+    platform_set_sd_callback(NULL, NULL);
+
+    if(!img || !img->cuesheetfile.isOpen())
+    {
+        logmsg("Error attempting to play CD Audio with no cue/bin image(s)");
+        return false;
+    }
+
+    if (img->bin_container.isOpen() && img->bin_container.isFile())
+    {
+        audio_file.close();
+        audio_file = img->bin_container;
+    }
+
+    if (!audio_file.isOpen()) {
+        logmsg("File not open for audio playback, ", owner);
+        return false;
+    }
+    uint64_t len = audio_file.size();
+    if (start > len) {
+        logmsg("File playback request start (", start, ":", len, ") outside file bounds");
+        return false;
+    }
+    // truncate playback end to end of file
+    // we will not consider this to be an error at the moment
+    if (end > len) {
+        dbgmsg("------ Truncate audio play request end ", end, " to file size ", len);
+        end = len;
+    }
+    fleft = end - start;
+    if (fleft <= 2 * AUDIO_BUFFER_SIZE) {
+        logmsg("File playback request (", start, ":", end, ") too short");
+        return false;
+    }
+
+    // read in initial sample buffers
+    if (!audio_file.seek(start)) {
+        logmsg("Sample file failed start seek to ", start);
+        return false;
+    }
+    if (audio_file.read(sample_buf_a, AUDIO_BUFFER_SIZE) != AUDIO_BUFFER_SIZE) {
+        logmsg("File playback start returned fewer bytes than allowed");
+        return false;
+    }
+    if (audio_file.read(sample_buf_b, AUDIO_BUFFER_SIZE) != AUDIO_BUFFER_SIZE) {
+        logmsg("File playback start returned fewer bytes than allowed");
+        return false;
+    }
+
+    // prepare initial tracking state
+    fpos = audio_file.position();
+    fleft -= AUDIO_BUFFER_SIZE * 2;
+    sbufsel = A;
+    sbufpos = 0;
+    sbufswap = swap;
+    sbufst_a = READY;
+    sbufst_b = READY;
+    audio_owner = owner & S2S_CFG_TARGET_ID_BITS;
+    audio_last_status[audio_owner] = ASC_PLAYING;
+    audio_paused = false;
+
+    // prepare the wire buffers
+    for (uint16_t i = 0; i < WIRE_BUFFER_SIZE; i++) {
+        wire_buf_a[i] = 0;
+        wire_buf_b[i] = 0;
+    }
+    sfcnt = 0;
+    invert = 0;
+    audio_start_dma();
     return true;
 }
 
@@ -655,4 +671,96 @@ void audio_reset(uint8_t id)
     uint8_t vol = g_scsi_settings.getDevice(id)->vol;
     audio_set_volume(id, (uint16_t)vol << 8 | vol);
 }
+
+typedef struct {
+    uint8_t riff[4];
+    uint32_t filesize;
+    uint8_t wave[4];
+    uint8_t fmt[4];
+    uint32_t fmt_len;
+    uint16_t fmt_type;
+    uint16_t channelcount;
+    uint32_t samplerate;
+    uint32_t byterate;
+    uint16_t bytes_per_step;
+    uint16_t bits_per_sample;
+    uint8_t data[4];
+    uint32_t data_len;
+} wav_header_t;
+
+bool audio_play_wav(const char *filename)
+{
+    if (audio_is_active()) audio_stop(audio_owner);
+
+    if (!audio_file.open(filename, O_RDONLY))
+    {
+        logmsg("Failed to open WAV: ", filename, " ", audio_file.getError());
+        return false;
+    }
+
+    // Set owner to wave file playback owner
+    audio_owner = S2S_MAX_TARGETS;
+
+    // Read WAV file header and verify suitable format
+    wav_header_t hdr = {};
+    if (audio_file.read(&hdr, sizeof(hdr)) != sizeof(hdr) ||
+        memcmp(hdr.riff, "RIFF", 4) != 0 ||
+        memcmp(hdr.wave, "WAVE", 4) != 0 ||
+        memcmp(hdr.fmt, "fmt ", 4) != 0)
+    {
+        logmsg("Invalid WAV file header in ", filename, ": ",
+                bytearray((uint8_t*)&hdr, 16));
+        return false;
+    }
+
+    if (hdr.fmt_type != 1 ||
+        hdr.channelcount != 2 ||
+        hdr.samplerate != 44100 ||
+        hdr.bits_per_sample != 16)
+    {
+        logmsg("Only stereo 16-bit 44100 Hz PCM WAV is supported, file ", filename, " has"
+            " format ", (int)hdr.fmt_type,
+            " channelcount ", (int)hdr.channelcount,
+            " samplerate ", (int)hdr.samplerate,
+            " bits_per_sample ", (int)hdr.bits_per_sample);
+        return false;
+    }
+
+    // Using audio_file.readBytes (Arduino) instead of audio_file.read (SDFat) because
+    // audio_file.read would throw an error that looked like this:
+    // SDIO checksum error in reception: block 0 calculated 0x4FB4BE553E2415D9 expected 0x0000000000000000
+    if (audio_file.readBytes(sample_buf_a, AUDIO_BUFFER_SIZE) != AUDIO_BUFFER_SIZE) {
+        logmsg("File playback start returned fewer bytes than allowed");
+        return false;
+    }
+
+    if (audio_file.readBytes(sample_buf_b, AUDIO_BUFFER_SIZE) != AUDIO_BUFFER_SIZE) {
+        logmsg("File playback start returned fewer bytes than allowed");
+        return false;
+    }
+
+    // prepare initial tracking state
+    fpos = audio_file.position();
+    fleft = audio_file.size() - hdr.data_len - 2 * AUDIO_BUFFER_SIZE;
+    sbufsel = A;
+    sbufpos = 0;
+    sbufswap = false;
+    sbufst_a = READY;
+    sbufst_b = READY;
+    audio_owner = audio_owner & S2S_CFG_TARGET_ID_BITS;
+    audio_last_status[audio_owner] = ASC_PLAYING;
+    audio_paused = false;
+
+    // prepare the wire buffers
+    for (uint16_t i = 0; i < WIRE_BUFFER_SIZE; i++) {
+        wire_buf_a[i] = 0;
+        wire_buf_b[i] = 0;
+    }
+    sfcnt = 0;
+    invert = 0;
+
+    audio_start_dma();
+    return true;
+}
+
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF

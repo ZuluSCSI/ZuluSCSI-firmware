@@ -62,6 +62,7 @@
 #include "ZuluSCSI_msc.h"
 #include "ZuluSCSI_blink.h"
 #include "ZuluSCSI_buffer_control.h"
+#include "ZuluSCSI_audio.h"
 #include "ROMDrive.h"
 
 #include "ui.h"
@@ -883,8 +884,14 @@ static void reinitSCSI()
   {
     if (scsiDev.boardCfg.wifiSSID[0] != '\0')
     {
-      platform_network_init(scsiDev.boardCfg.wifiMACAddress);
-      platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+      if ( platform_network_init(scsiDev.boardCfg.wifiMACAddress))
+      {
+        platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+      }
+      else
+      {
+        logmsg("A network SCSI device has been configured but cannot connect to the RM2 WiFi module");
+      }
     }
     else
     {
@@ -1288,6 +1295,13 @@ extern "C" void zuluscsi_setup(void)
 #if ZULUSCSI_RESERVED_SRAM_LEN > 0
     dbgmsg("Shared buffer has ", (int) reserve_buffer_left(), " bytes left out of ", (int) ZULUSCSI_RESERVED_SRAM_LEN, " bytes total");
 #endif
+#if defined(STARTUPSOUND) && defined(ENABLE_AUDIO_OUTPUT)
+  if (g_sdcard_present && SD.exists(STARTUPSOUND))
+  {
+    logmsg("Playing " STARTUPSOUND);
+    audio_play_wav(STARTUPSOUND);
+  }
+#endif
     logmsg("Firmware initialization complete!");
 }
 
@@ -1347,7 +1361,7 @@ extern "C" void zuluscsi_main_loop(void)
   }
 
 #ifdef ZULUSCSI_NETWORK
-  platform_network_poll();
+  platform_network_poll(scsiDev.phase == BUS_FREE);
 #endif // ZULUSCSI_NETWORK
 
 #ifdef PLATFORM_HAS_INITIATOR_MODE
