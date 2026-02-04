@@ -60,7 +60,7 @@ struct image_config_t: public S2S_TargetCfg
     uint8_t ejectButton;
 
     // For tape drive emulation
-    uint32_t tape_pos; // current position in blocks
+    uint64_t tape_pos; // current position in blocks
     uint32_t tape_mark_index; // a direct relationship to the file in a multi image file tape 
     uint32_t tape_mark_count; // the number of marks
     uint32_t tape_mark_block_offset; // Sum of the the previous image file sizes at the current mark

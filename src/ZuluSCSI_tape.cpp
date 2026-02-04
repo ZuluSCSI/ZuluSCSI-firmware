@@ -352,7 +352,7 @@ struct tap_transfer_t {
     uint32_t bytes_written;     // Bytes written so far
     bool is_fixed_mode;         // Fixed vs variable block mode
     bool header_written;        // Has 4-byte header been written?
-    uint32_t file_pos_start;    // File position at start of record
+    uint64_t file_pos_start;    // File position at start of record
 
     // Fields for data transfer management (similar to g_disk_transfer)
     uint8_t* buffer;            // Buffer for data transfer
@@ -366,12 +366,16 @@ struct tap_transfer_t {
 static tap_transfer_t g_tap_transfer;
 
 // .TAP-aware read function
-static void doTapRead(image_config_t &img, uint32_t length, bool fixed) {
+static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed) {
+    
     tap_record_t record;
     uint8_t *buffer = scsiDev.data;
     uint32_t buffer_size = sizeof(scsiDev.data);
+    uint32_t block_size = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t length = 0;
 
     if (fixed) {
+        length = blocks * block_size;
         // Fixed block mode - read exactly one record, fail if length doesn't match
         tap_result_t result = tapReadRecordForward(img, record, buffer, buffer_size);
 
@@ -396,7 +400,12 @@ static void doTapRead(image_config_t &img, uint32_t length, bool fixed) {
             scsiDev.phase = STATUS;
             return;
         }
-
+        /**
+         * This seem to be an issue, you can't read a single block with this implementation
+         * You have to read the full record otherwise this error occurs
+         * The tapReadRecordForward will have to saved off for the record
+         * to enable sequential block reading
+         */
         // Check if record length matches requested length
         if (record.length != length) {
             dbgmsg("------ TAP fixed block length mismatch: requested=", (int)length, " actual=", (int)record.length);
@@ -410,7 +419,9 @@ static void doTapRead(image_config_t &img, uint32_t length, bool fixed) {
         scsiDev.dataLen = record.length;
         scsiDev.phase = DATA_IN;
     } else {
+        length = blocks; // blocks is number of bytes
         // Variable block mode - read one record, return its length
+
         tap_result_t result = tapReadRecordForward(img, record, buffer,
                                                    length < buffer_size ? length : buffer_size);
 
@@ -568,7 +579,7 @@ void tapeDataOut() {
             uint32_t needed = g_tap_transfer.record_length - g_tap_transfer.bytes_written;
             uint32_t to_read = (needed < bufsize) ? needed : bufsize;
 
-            scsiStartRead(&scsiDev.data[g_tap_transfer.bytes_scsi_started],
+            scsiRead(&scsiDev.data[g_tap_transfer.bytes_scsi_started],
                          to_read, &g_tap_transfer.parityError);
             g_tap_transfer.bytes_scsi_started += to_read;
         }
@@ -604,7 +615,6 @@ void tapeDataOut() {
         img.tape_pos += 4;
 
         dbgmsg("------ TAP record complete, final position=", (int)img.tape_pos);
-        scsiFinishWrite();
 
         // Mark transfer as complete
         transfer.currentBlock = transfer.blocks;
@@ -730,7 +740,6 @@ static void doTapeRead(uint32_t blocks)
                             " file position ", (int)(img.tape_pos - img.tape_mark_block_offset), " ends with file mark ",
                             (int)(img.tape_mark_index + 1), "/", (int) img.tape_mark_count, passed_filemarker ? " reached" : " not reached");
             scsiDiskStartRead(img.tape_pos - img.tape_mark_block_offset, blocks);
-            scsiFinishWrite();
             img.tape_pos += blocks;
         }
 
@@ -802,41 +811,51 @@ extern "C" int scsiTapeCommand()
             (((uint32_t) scsiDev.cdb[3]) << 8) +
             scsiDev.cdb[4];
 
-        // Host can request either multiple fixed-length blocks, or a single variable length one.
-        // If host requests variable length block, we return one blocklen sized block.
-        uint32_t blocklen = scsiDev.target->liveCfg.bytesPerSector;
-        uint32_t blocks_to_read = length;
-        if (!fixed)
+        if (length > 0)
         {
-            blocks_to_read = 1;
-
-            bool underlength = (length > blocklen);
-            bool overlength = (length < blocklen);
-            if (overlength || (underlength && !supress_invalid_length))
+            // Host can request either multiple fixed-length blocks, or a single variable length one.
+            // If host requests variable length block, we return one blocklen sized block.
+            uint32_t blocklen = scsiDev.target->liveCfg.bytesPerSector;
+            uint32_t blocks_to_read = length;
+            if (!fixed || (fixed && supress_invalid_length))
             {
-                dbgmsg("------ Host requested variable block max ", (int)length, " bytes, blocksize is ", (int)blocklen);
-                scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = ILLEGAL_REQUEST;
-                scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-                scsiDev.phase = STATUS;
-                return 1;
-            }
-        }
+                blocks_to_read = 1;
 
-
-        if (blocks_to_read > 0)
-        {
-            // Check if this is a .TAP format file
-            if (img.tape_is_tap_format) {
-                // For .TAP format, use variable/fixed block reading
-                if (fixed) {
-                    doTapRead(img, length, true);
-                } else {
-                    doTapRead(img, length, false);
+                bool underlength = (length > blocklen);
+                bool overlength = (length < blocklen);
+                if (fixed || (supress_invalid_length && (overlength || !underlength)))
+                {
+                    if (fixed)
+                    {
+                        dbgmsg("----- Host set both fixed block length and supress invalid length indicator which is invalid");
+                    }
+                    else
+                    {
+                        dbgmsg("------ Host requested variable block max ", (int)length, " bytes, blocksize is ", (int)blocklen);
+                    }
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                    scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+                    scsiDev.phase = STATUS;
+                    return 1;
                 }
-            } else {
-                // Use existing multi-file tape logic
-                doTapeRead(blocks_to_read);
+            }
+
+
+            if (blocks_to_read > 0)
+            {
+                // Check if this is a .TAP format file
+                if (img.tape_is_tap_format) {
+                    // For .TAP format, use variable/fixed block reading
+                    if (fixed) {
+                        doTapRead(img, blocks_to_read, true);
+                    } else {
+                        doTapRead(img, length, false);
+                    }
+                } else {
+                    // Use existing multi-file tape logic
+                    doTapeRead(blocks_to_read);
+                }
             }
         }
     }
@@ -858,6 +877,7 @@ extern "C" int scsiTapeCommand()
         // Host can request either multiple fixed-length blocks, or a single variable length one.
         // Only single block length is supported currently.
         uint32_t blocklen = scsiDev.target->liveCfg.bytesPerSector;
+        dbgmsg("Tape write blocks: ", (int)length, " blocksize ", (int) blocklen, " fixed=", (int) fixed);
         uint32_t blocks_to_write = length;
         if (!fixed)
         {
@@ -881,7 +901,8 @@ extern "C" int scsiTapeCommand()
             {
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = ILLEGAL_REQUEST;
-                scsiDev.target->sense.asc = WRITE_PROTECTED;
+                scsiDev.target->sense.asc = VOLUME_OVERFLOW;
+                scsiDev.target->sense.info = length;
                 scsiDev.phase = STATUS;
                 return 1;
             }
@@ -1014,8 +1035,10 @@ extern "C" int scsiTapeCommand()
         scsiDev.data[1] = (blocklen >> 16) & 0xFF; // Maximum block length (MSB)
         scsiDev.data[2] = (blocklen >>  8) & 0xFF;
         scsiDev.data[3] = (blocklen >>  0) & 0xFF; // Maximum block length (LSB)
+        // If a variable block size tape drive is supported
+        // set Minimum block to a different value
         scsiDev.data[4] = (blocklen >>  8) & 0xFF; // Minimum block length (MSB)
-        scsiDev.data[5] = (blocklen >>  8) & 0xFF; // Minimum block length (MSB)
+        scsiDev.data[5] = (blocklen >>  0) & 0xFF; // Minimum block length (LSB)
         scsiDev.dataLen = 6;
         scsiDev.phase = DATA_IN;
     }

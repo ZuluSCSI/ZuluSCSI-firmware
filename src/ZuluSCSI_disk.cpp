@@ -450,6 +450,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         char *extension = strrchr(filename, '.');
         if (type == S2S_CFG_SEQUENTIAL && extension && strcasecmp(extension, ".tap") == 0)
         {
+            logmsg("---- SIMH simulated tape drive format detected with extension ", extension);
             img.tape_is_tap_format = true;
         }
 
