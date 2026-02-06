@@ -541,7 +541,11 @@ void platform_init()
 #endif
 
 #ifdef GPIO_EJECT_BTN
+# ifdef GPIO_EJECT_BTN_INTERNAL_PULL_UP
+    gpio_conf(GPIO_EJECT_BTN, GPIO_FUNC_SIO,  true,false, false,  false, false);
+# else
     gpio_conf(GPIO_EJECT_BTN, GPIO_FUNC_SIO, false,false, false,  false, false);
+# endif
 #endif
 
 
