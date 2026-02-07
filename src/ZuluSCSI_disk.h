@@ -42,6 +42,17 @@ extern "C" {
 #include <scsi.h>
 }
 
+// Optimal size for read block from SCSI bus
+// For platforms with nonblocking transfer, this can be large.
+// For Akai MPC60 compatibility this has to be at least 5120
+#ifndef PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE
+#ifdef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
+#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 65536
+#else
+#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 8192
+#endif
+#endif
+
 // Extended configuration stored alongside the normal SCSI2SD target information
 struct image_config_t: public S2S_TargetCfg
 {
@@ -59,14 +70,6 @@ struct image_config_t: public S2S_TargetCfg
     // default option of '0' disables this functionality
     uint8_t ejectButton;
 
-    // For tape drive emulation
-    uint64_t tape_pos; // current position in blocks
-    uint32_t tape_mark_index; // a direct relationship to the file in a multi image file tape 
-    uint32_t tape_mark_count; // the number of marks
-    uint32_t tape_mark_block_offset; // Sum of the the previous image file sizes at the current mark
-    uint32_t tape_length_mb;
-    bool     tape_load_next_file;
-    bool     tape_is_tap_format; // Use SIMH TAP format for storing tape data
     // True if there is a subdirectory of images for this target
     bool image_directory;
 
@@ -94,6 +97,7 @@ struct image_config_t: public S2S_TargetCfg
     // the bin file for the cue sheet, the directory for multi bin files, or closed if neither
     FsFile bin_container;
 
+
     inline bool is_multi_bin_cue() {return bin_container.isOpen() && bin_container.isDir();}
 
     // Right-align vendor / product type strings
@@ -108,6 +112,9 @@ struct image_config_t: public S2S_TargetCfg
 
     // Warning about geometry settings
     bool geometrywarningprinted;
+
+    // Set the device type
+    void setDeviceType(S2S_CFG_TYPE device_type);
 
     // Clear any image state to zeros
     void clear();

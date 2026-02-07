@@ -36,6 +36,7 @@
 #  include "ZuluSCSI_audio.h"
 #endif
 #include "ZuluSCSI_cdrom.h"
+#include "ZuluSCSI_tape.h"
 #include "ImageBackingStore.h"
 #include "ROMDrive.h"
 #include <new> // For placement new
@@ -78,17 +79,6 @@ extern "C" {
 // to reduce the dead time between end of SCSI transfer and finishing of SD write.
 #ifndef PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE
 #define PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE 512
-#endif
-
-// Optimal size for read block from SCSI bus
-// For platforms with nonblocking transfer, this can be large.
-// For Akai MPC60 compatibility this has to be at least 5120
-#ifndef PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE
-#ifdef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
-#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 65536
-#else
-#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 8192
-#endif
 #endif
 
 #ifndef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
@@ -200,8 +190,21 @@ void scsiDiskResetImages()
     }
 }
 
+void image_config_t::setDeviceType(S2S_CFG_TYPE device_type)
+{
+    deviceType = device_type;
+    if (deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        tapeInit(scsiId & S2S_CFG_TARGET_ID_BITS);
+    }
+}
+
 void image_config_t::clear()
 {
+    if (deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        tapeDeinit(S2S_CFG_TARGET_ID_BITS & scsiId);
+    }
     this->~image_config_t();
     new (this) image_config_t();
 }
@@ -314,7 +317,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     memset(img.revision, 0, sizeof(img.revision));
     memset(img.serial, 0, sizeof(img.serial));
 
-    img.deviceType = devCfg->deviceType;
+    img.setDeviceType((S2S_CFG_TYPE)devCfg->deviceType);
     img.deviceTypeModifier = devCfg->deviceTypeModifier;
     img.sectorsPerTrack = devCfg->sectorsPerTrack;
     img.headsPerCylinder = devCfg->headsPerCylinder;
@@ -438,7 +441,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         img.scsiSectors = img.file.size() / blocksize;
         img.scsiId = target_idx | S2S_CFG_TARGET_ENABLED;
         img.sdSectorStart = 0;
-        img.tape_is_tap_format = false;
+        bool tape_is_tap_format = false;
 
         S2S_CFG_TYPE setting_type = (S2S_CFG_TYPE) g_scsi_settings.getDevice(target_idx)->deviceType;
         if ( setting_type != S2S_CFG_NOT_SET)
@@ -451,10 +454,10 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         if (type == S2S_CFG_SEQUENTIAL && extension && strcasecmp(extension, ".tap") == 0)
         {
             logmsg("---- SIMH simulated tape drive format detected with extension ", extension);
-            img.tape_is_tap_format = true;
+            tape_is_tap_format = true;
         }
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && !img.file.isFolder() && !img.tape_is_tap_format)
+        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && !img.file.isFolder() && !tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
@@ -462,7 +465,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         }
 
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || img.file.isFolder() || img.tape_is_tap_format)
+        if (img.file.isRom() || type == S2S_CFG_NETWORK || img.file.isFolder() || tape_is_tap_format)
         {
             // Contiguous file doesn't matter for these types
         }
@@ -487,7 +490,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         if (type == S2S_CFG_FIXED)
         {
             logmsg("---- Configuring as disk drive drive");
-            img.deviceType = S2S_CFG_FIXED;
+            img.setDeviceType(S2S_CFG_FIXED);
 #ifdef CONTAINER_IMAGE_SUPPORT
             if (img.file.isContainer())
             {
@@ -498,7 +501,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         else if (type == S2S_CFG_OPTICAL)
         {
             logmsg("---- Configuring as CD-ROM drive");
-            img.deviceType = S2S_CFG_OPTICAL;
+            img.setDeviceType(S2S_CFG_OPTICAL);
             if (g_scsi_settings.getDevice(target_idx)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
             {
                 logmsg("---- Plextor 0xD8 vendor extension enabled");
@@ -507,40 +510,35 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         else if (type == S2S_CFG_FLOPPY_14MB)
         {
             logmsg("---- Configuring as floppy drive");
-            img.deviceType = S2S_CFG_FLOPPY_14MB;
+            img.setDeviceType(S2S_CFG_FLOPPY_14MB);
         }
         else if (type == S2S_CFG_MO)
         {
             logmsg("---- Configuring as magneto-optical");
-            img.deviceType = S2S_CFG_MO;
+            img.setDeviceType(S2S_CFG_MO);
         }
 #ifdef ZULUSCSI_NETWORK
         else if (type == S2S_CFG_NETWORK)
         {
             logmsg("---- Configuring as network based on image name");
-            img.deviceType = S2S_CFG_NETWORK;
+            img.setDeviceType(S2S_CFG_NETWORK);
         }
 #endif // ZULUSCSI_NETWORK
         else if (type == S2S_CFG_REMOVABLE)
         {
             logmsg("---- Configuring as removable drive");
-            img.deviceType = S2S_CFG_REMOVABLE;
+            img.setDeviceType(S2S_CFG_REMOVABLE);
         }
         else if (type == S2S_CFG_SEQUENTIAL)
         {
             logmsg("---- Configuring as tape drive");
-            img.deviceType = S2S_CFG_SEQUENTIAL;
-            img.tape_mark_count = 1;
-            scsiDev.target->sense.filemark = false;
-            scsiDev.target->sense.eom = false;
-            img.tape_mark_index = 0;
-            img.tape_mark_block_offset = 0;
-            img.tape_load_next_file = true;
+            img.setDeviceType(S2S_CFG_SEQUENTIAL);
+            tapeSetIsTap(target_idx, tape_is_tap_format);
         }
         else if (type == S2S_CFG_ZIP100)
         {
             logmsg("---- Configuration as Iomega Zip100");
-            img.deviceType = S2S_CFG_ZIP100;
+            img.setDeviceType(S2S_CFG_ZIP100);
             if(img.file.size() != ZIP100_DISK_SIZE)
             {
                 logmsg("---- Zip 100 disk (", (int)img.file.size(), " bytes) is not exactly ", ZIP100_DISK_SIZE, " bytes, may not work correctly");
@@ -660,16 +658,19 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             img.bin_container.open(name);
             FsFile file;
             bool valid = false;
-            img.tape_mark_count = 0;
+            uint32_t tape_mark_count = 0;
             while(file.openNext(&img.bin_container))
             {
                 file.getName(name, sizeof(name));
                 if(!file.isDir() && !file.isHidden() && scsiDiskFilenameValid(name))
                 {
                     valid = true;
-                    img.tape_mark_count++;
+                    tape_mark_count++;
                 }
             }
+
+            setTapeMarkCount(target_idx, tape_mark_count);
+            
             if (!valid)
             {
                 // if there are no valid image files, create one
@@ -1185,7 +1186,7 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
         int ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
         if (buf[0] != '\0')
         {
-            img.deviceType = g_scsi_settings.getDevice(target_idx)->deviceType;
+            img.setDeviceType((S2S_CFG_TYPE)g_scsi_settings.getDevice(target_idx)->deviceType);
             return ret;
         }
         else if (img.image_index > 0)
@@ -2050,6 +2051,11 @@ void diskDataOut()
     scsiEnterPhase(DATA_OUT);
 
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    if (img.deviceType == S2S_CFG_SEQUENTIAL && tapeIsTap())
+    {
+        tapeTapDataOut();
+        return;
+    }
     uint32_t blockcount = (transfer.blocks - transfer.currentBlock);
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
 

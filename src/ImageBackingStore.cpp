@@ -196,7 +196,7 @@ void ImageBackingStore::revert_to_noncontiguous()
         // Revert from direct SD card access to filesystem based access.
         // Keep the seek position.
         m_iscontiguous = false;
-        m_fsfile.seek(m_cursector * SD_SECTOR_SIZE);
+        m_fsfile.seek((m_cursector - m_bgnsector) * SD_SECTOR_SIZE);
     }
 }
 
@@ -426,7 +426,7 @@ ssize_t ImageBackingStore::read(void* buf, size_t count)
 
 ssize_t ImageBackingStore::write(const void* buf, size_t count)
 {
-#if ENABLE_COW
+    #if ENABLE_COW
     // Handle Copy-on-Write mode
     if (m_iscow)
     {

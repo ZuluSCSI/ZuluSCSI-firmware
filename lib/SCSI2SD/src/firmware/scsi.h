@@ -102,6 +102,7 @@ typedef struct
 
 	ScsiSense sense;
 
+	
 	uint16_t unitAttention; // Set to the sense qualifier key to be returned.
 	uint8_t unitAttentionStop; // Indicates if unit attention has to be stopped.
 
@@ -116,8 +117,6 @@ typedef struct
 	uint8_t started; // Controlled by START STOP UNIT
 
 	uint8_t busWidth; // 0: 8-bit, 1: 16-bit, 2: 32-bit
-
-	uint8_t tapeMarkCount; // Number of times tape mark has been reached
 } TargetState;
 
 typedef struct
