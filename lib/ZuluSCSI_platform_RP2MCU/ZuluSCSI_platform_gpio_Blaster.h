@@ -118,6 +118,10 @@
 #define DIP_DBGLOG      SWO_PIN
 #define DIP_TERM        SCSI_OUT_REQ
 
+// Ejection button
+#define GPIO_EJECT_BTN 3
+#define GPIO_EJECT_BTN_INTERNAL_PULL_UP
+
 // RM2 pins
 #define GPIO_RM2_ON   0
 #define GPIO_RM2_DATA 1
