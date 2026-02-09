@@ -447,7 +447,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             tape_is_tap_format = true;
         }
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && !img.file.isFolder() && !tape_is_tap_format)
+        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && !img.file.isFolder() && !tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
@@ -455,7 +455,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         }
 
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || img.file.isFolder() || tape_is_tap_format)
+        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || img.file.isFolder() || tape_is_tap_format)
         {
             // Contiguous file doesn't matter for these types
         }
@@ -513,6 +513,17 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Configuring as network based on image name");
             img.setDeviceType(S2S_CFG_NETWORK);
         }
+        else if (type == S2S_CFG_AMIGAWIFI)
+        {
+            if (!platform_network_supported())
+            {
+                logmsg("---- Error: network not supported on this device, ignoring ", filename);
+                img.file.close();
+                return false;
+            }
+            logmsg("---- Configuring as network based on image name");
+            img.deviceType = S2S_CFG_AMIGAWIFI;
+        }
 #endif // ZULUSCSI_NETWORK
         else if (type == S2S_CFG_REMOVABLE)
         {
@@ -536,7 +547,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             }
         }
 
-        if (type != S2S_CFG_OPTICAL && type != S2S_CFG_NETWORK)
+        if (type != S2S_CFG_OPTICAL && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI)
         {
             autoConfigGeometry(img);
         }
@@ -549,7 +560,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Vendor / product id set from image file name");
         }
 
-        if (type == S2S_CFG_NETWORK)
+        if (type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI)
         {
             // prefetch not used, skip emitting log message
         }
@@ -1474,7 +1485,7 @@ bool scsiDiskCheckAnyNetworkDevicesConfigured()
 {
     for (int i = 0; i < S2S_MAX_TARGETS; i++)
     {
-        if (g_DiskImages[i].file.isOpen() && (g_DiskImages[i].scsiId & S2S_CFG_TARGET_ENABLED) && g_DiskImages[i].deviceType == S2S_CFG_NETWORK)
+        if (g_DiskImages[i].file.isOpen() && (g_DiskImages[i].scsiId & S2S_CFG_TARGET_ENABLED) && (g_DiskImages[i].deviceType == S2S_CFG_NETWORK || g_DiskImages[i].deviceType == S2S_CFG_AMIGAWIFI))
         {
             return true;
         }
@@ -1754,7 +1765,7 @@ static void doReadCapacity()
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
     uint32_t capacity;
 
-    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK))
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI))
     {
         capacity = 1;
     }
