@@ -60,6 +60,14 @@ struct image_config_t: public S2S_TargetCfg
     // default option of '0' disables this functionality
     uint8_t ejectButton;
 
+    // Eject function for fixed disks
+    bool ejectFixedDiskEnable;
+    bool ejectFixedDiskReadOnly;
+    uint32_t ejectFixedDiskDelay;
+    bool ejectFixedDiskPending;
+    uint32_t ejectFixedDiskTimer;
+    bool ejectFixedDiskWriteBlocked;
+
     // For tape drive emulation
     uint32_t tape_pos; // current position in blocks
     uint32_t tape_mark_index; // a direct relationship to the file in a multi image file tape 
@@ -122,6 +130,9 @@ private:
 // Call with 'true' only if ejections should be performed immediately (typically when not busy)
 // Returns a mask of the buttons that registered an 'eject' action.
 uint8_t diskEjectButtonUpdate(bool immediate);
+
+// Check if pending disk ejects are due to be executed
+void diskEjectDelayCheck(void);
 
 // Reset all image configuration to empty reset state, close all images.
 void scsiDiskResetImages();

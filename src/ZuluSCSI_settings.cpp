@@ -238,6 +238,9 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.ejectButton = ini_getl(section, "EjectButton", cfg.ejectButton, CONFIGFILE);
     cfg.ejectBlinkTimes = ini_getl(section, "EjectBlinkTimes", cfg.ejectBlinkTimes, CONFIGFILE);
     cfg.ejectBlinkPeriod = ini_getl(section, "EjectBlinkPeriod", cfg.ejectBlinkPeriod, CONFIGFILE);
+    cfg.ejectFixedDiskEnable = ini_getl(section, "EnableEjectFixedDisk", cfg.ejectFixedDiskEnable, CONFIGFILE);
+    cfg.ejectFixedDiskReadOnly = ini_getl(section, "EjectFixedDiskReadOnly", cfg.ejectFixedDiskReadOnly, CONFIGFILE);
+    cfg.ejectFixedDiskDelay = ini_getl(section, "EjectFixedDiskDelay", cfg.ejectFixedDiskDelay, CONFIGFILE);
 
     cfg.vol = ini_getl(section, "CDAVolume", cfg.vol, CONFIGFILE) & 0xFF;
 
@@ -360,6 +363,9 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgDev.ejectButton = 0;
     cfgDev.ejectBlinkTimes = 20;
     cfgDev.ejectBlinkPeriod = 50;
+    cfgDev.ejectFixedDiskEnable = false;
+    cfgDev.ejectFixedDiskDelay = 0;
+    cfgDev.ejectFixedDiskReadOnly = false;
     cfgDev.vol = DEFAULT_VOLUME_LEVEL;
     
     cfgDev.nameFromImage = false;
