@@ -54,6 +54,7 @@ struct image_config_t: public S2S_TargetCfg
     uint8_t cdrom_events;
     bool reinsert_on_inquiry; // Reinsert on Inquiry command (to reinsert automatically after boot)
     bool reinsert_after_eject; // Reinsert next image after ejection
+    bool eject_on_stop; // Eject image on START STOP UNIT with start = 0
 
     // selects a physical button channel that will cause an eject action
     // default option of '0' disables this functionality

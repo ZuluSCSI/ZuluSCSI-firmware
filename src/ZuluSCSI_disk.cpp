@@ -324,6 +324,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     img.prefetchbytes = devCfg->prefetchBytes;
     img.reinsert_on_inquiry = devCfg->reinsertOnInquiry;
     img.reinsert_after_eject = devCfg->reinsertAfterEject;
+    img.eject_on_stop = devCfg->ejectOnStop;
     img.ejectButton = devCfg->ejectButton;
     img.vendorExtensions = devCfg->vendorExtensions;
 
@@ -2365,29 +2366,24 @@ int scsiDiskCommand()
         // START STOP UNIT
         // Enable or disable media access operations.
         //int immed = scsiDev.cdb[1] & 1;
-        int start = scsiDev.cdb[4] & 1;
-        if ((scsiDev.cdb[4] & 2) || img.deviceType == S2S_CFG_ZIP100)
+        bool start = scsiDev.cdb[4] & 1;
+        bool eject = scsiDev.cdb[4] & 2;
+        if (start)
         {
-            // Device load & eject
-            if (start)
-            {
-                doCloseTray(img);
-            }
-            else
-            {
-                // Eject and switch image
-                doPerformEject(img);
-            }
-        }
-        else if (start)
-        {
+            // Start device and close tray if open
             scsiDev.target->started = 1;
+            doCloseTray(img);
+        }
+        else if (eject || img.deviceType == S2S_CFG_ZIP100 || img.eject_on_stop)
+        {
+            // Eject and switch image
+            doPerformEject(img);
         }
         else
         {
+            // Stop device
             scsiDev.target->started = 0;
         }
-
     }
     else if (likely(command == 0x08))
     {
