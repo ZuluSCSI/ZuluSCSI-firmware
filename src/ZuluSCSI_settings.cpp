@@ -294,6 +294,8 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     }
 #if ENABLE_COW
     cfg.cowBitmapSize = ini_getl(section, "CowBitmapSize", cfg.cowBitmapSize, CONFIGFILE);
+    cfg.cowButton = ini_getl(section, "CowButton", cfg.cowButton, CONFIGFILE);
+    cfg.cowButtonInvert = ini_getl(section, "CowButtonInvert", cfg.cowButtonInvert, CONFIGFILE);
 #endif
 }
 
@@ -386,6 +388,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
 
 #if ENABLE_COW
     cfgDev.cowBitmapSize = DEFAULT_COW_BUFFER_SIZE;
+    cfgDev.cowButton = 0;
+    cfgDev.cowButtonInvert = false;
 #endif
 
     // System-specific defaults

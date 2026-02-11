@@ -160,6 +160,8 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     uint32_t blockSize;
 #if ENABLE_COW
     uint32_t cowBitmapSize;
+    uint8_t cowButton;
+    bool cowButtonInvert;
 #endif
 } scsi_device_settings_t;
 
