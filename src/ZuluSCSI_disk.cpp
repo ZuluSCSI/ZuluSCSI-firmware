@@ -324,6 +324,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     img.prefetchbytes = devCfg->prefetchBytes;
     img.reinsert_on_inquiry = devCfg->reinsertOnInquiry;
     img.reinsert_after_eject = devCfg->reinsertAfterEject;
+    img.eject_on_stop = devCfg->ejectOnStop;
     img.ejectButton = devCfg->ejectButton;
     img.vendorExtensions = devCfg->vendorExtensions;
 
@@ -2373,7 +2374,7 @@ int scsiDiskCommand()
             scsiDev.target->started = 1;
             doCloseTray(img);
         }
-        else if (eject || img.deviceType == S2S_CFG_ZIP100)
+        else if (eject || img.deviceType == S2S_CFG_ZIP100 || img.eject_on_stop)
         {
             // Eject and switch image
             doPerformEject(img);
