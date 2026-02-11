@@ -71,6 +71,7 @@
 
 // Status LED pins
 #define LED_PIN      33
+#define LED_PIN_ALTERNATE  5
 
 // SD card pins in SDIO mode
 #define SDIO_CLK 34

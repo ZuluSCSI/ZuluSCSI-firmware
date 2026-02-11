@@ -342,6 +342,50 @@ static void __no_inline_not_in_flash_func(set_flash_clock)()
 }
 #endif
 
+#ifdef ZULUSCSI_BLASTER
+static int platform_get_led_pin()
+{
+    // Workaround for LED pin connection issue on PCB revision 2026c.
+    // The normal LED pin GPIO33 is shorted to GND, and LED is connected to GPIO5 instead.
+    // Use a short pulse at low drive strength to detect the misconnection.
+    // GPIO pull-up itself is too weak to overcome 74LVTH125 hold current.
+
+    int led_pin = LED_PIN;
+    gpio_put(led_pin, false);
+    gpio_set_function(led_pin, GPIO_FUNC_SIO);
+    gpio_set_pulls(led_pin, true, false);
+    gpio_set_drive_strength(led_pin, GPIO_DRIVE_STRENGTH_2MA);
+    gpio_set_dir(led_pin, true);
+
+    gpio_put(led_pin, true);
+    delayMicroseconds(10);
+    bool state = gpio_get(led_pin);
+    gpio_put(led_pin, false);
+
+    if (state)
+    {
+        // Normal LED pin works
+        gpio_set_drive_strength(led_pin, GPIO_DRIVE_STRENGTH_8MA);
+        return led_pin;
+    }
+    else
+    {
+        // Normal LED pin is shorted to GND
+        // Use alternate LED pin, disable main pin
+        gpio_set_dir(led_pin, false);
+        gpio_set_oeover(led_pin, GPIO_OVERRIDE_LOW);
+
+        gpio_set_drive_strength(LED_PIN_ALTERNATE, GPIO_DRIVE_STRENGTH_8MA);
+        return LED_PIN_ALTERNATE;
+    }
+}
+#else
+static int platform_get_led_pin()
+{
+    return LED_PIN;
+}
+#endif
+
 void platform_init()
 {
     // Make sure second core is stopped
@@ -520,14 +564,14 @@ void platform_init()
     gpio_conf(SDIO_D2,        GPIO_FUNC_SIO, true, false, false, true, true);
 
     // LED pin
-    gpio_conf(LED_PIN,        GPIO_FUNC_PWM, false,false, true,  false, false);
-    g_led_pwm.slice = pwm_gpio_to_slice_num(LED_PIN);
-    g_led_pwm.chan = pwm_gpio_to_channel(LED_PIN);
+    int led_pin = platform_get_led_pin();
+    gpio_conf(led_pin,        GPIO_FUNC_PWM, false,false, true,  false, false);
+    g_led_pwm.slice = pwm_gpio_to_slice_num(led_pin);
+    g_led_pwm.chan = pwm_gpio_to_channel(led_pin);
     pwm_config led_pwm_config = pwm_get_default_config();
     pwm_config_set_wrap(&led_pwm_config, PLATFORM_LED_PWM_WRAP);
     pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, g_led_pwm.level_off);
     pwm_init(g_led_pwm.slice, &led_pwm_config, true);
-
 
 #ifdef GPIO_I2C_SDA
     // I2C pins
@@ -780,7 +824,8 @@ void platform_led_breath(bool breath, uint32_t period_ms)
 void platform_disable_led(void)
 {
     //        pin      function       pup   pdown  out    state fast
-    gpio_conf(LED_PIN, GPIO_FUNC_SIO, false,false, false, false, false);
+    int led_pin = platform_get_led_pin();
+    gpio_conf(led_pin, GPIO_FUNC_SIO, false,false, false, false, false);
     logmsg("Disabling status LED");
 }
 
