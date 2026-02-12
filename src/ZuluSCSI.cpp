@@ -889,7 +889,7 @@ static void reinitSCSI()
     {
       if ( platform_network_init(scsiDev.boardCfg.wifiMACAddress))
       {
-        platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+        platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword, false);
       }
       else
       {

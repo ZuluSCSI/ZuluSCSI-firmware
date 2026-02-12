@@ -42,6 +42,11 @@ static const char defaultMAC[] = { 0x00, 0x80, 0x19, 0xc0, 0xff, 0xee };
 
 static bool network_in_use = false;
 
+// WiFi reconnection state (file-static so wifi_join can reset on credential change)
+static uint32_t wifi_reconnect_time = 0;
+static uint32_t wifi_reconnect_interval = WIFI_RECONNECT_INTERVAL;
+static int wifi_reconnect_attempts = 0;
+
 bool platform_network_supported()
 {
 	/* from cores/rp2040/RP2040Support.h */
@@ -84,7 +89,6 @@ bool platform_network_init(char *mac)
 	if (mac == NULL || (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 && mac[3] == 0 && mac[4] == 0 && mac[5] == 0))
 	{
 		mac = (char *)&set_mac;
-		char octal_strings[8][4] = {0};
 		memcpy(mac, defaultMAC, sizeof(set_mac));
 
 		// retain Dayna vendor but use a device id specific to this board
@@ -127,32 +131,45 @@ void platform_network_add_multicast_address(uint8_t *mac)
 		logmsg( __func__, ": cyw43_wifi_update_multicast_filter: ", ret);
 }
 
-bool platform_network_wifi_join(char *ssid, char *password)
+bool platform_network_wifi_join(char *ssid, char *password, bool reconnect)
 {
 	int ret;
 
 	if (!platform_network_supported())
 		return false;
 
+	// Explicit join (e.g. SCSI command with new credentials) resets reconnect state
+	if (!reconnect)
+	{
+		wifi_reconnect_attempts = 0;
+		wifi_reconnect_interval = WIFI_RECONNECT_INTERVAL;
+		wifi_reconnect_time = millis();
+	}
+
 	if (password == NULL || password[0] == 0)
 	{
-		logmsg("Connecting to Wi-Fi SSID \"", ssid, "\" with no authentication");
+		if (!reconnect)
+			logmsg("Connecting to Wi-Fi SSID \"", ssid, "\" with no authentication");
 		ret = cyw43_arch_wifi_connect_async(ssid, NULL, CYW43_AUTH_OPEN);
 	}
 	else
 	{
-		logmsg("Connecting to Wi-Fi SSID \"", ssid, "\" with WPA/WPA2 PSK");
+		if (!reconnect)
+			logmsg("Connecting to Wi-Fi SSID \"", ssid, "\" with WPA/WPA2 PSK");
 		ret = cyw43_arch_wifi_connect_async(ssid, password, CYW43_AUTH_WPA2_MIXED_PSK);
 	}
 
 	if (ret == 0)
 	{
-		// Short single blink at start of connection sequence
-		PICO_W_LED_OFF();
-		delay(PICO_W_SHORT_BLINK_DELAY);
-		PICO_W_LED_ON();
-		delay(PICO_W_SHORT_BLINK_DELAY);
-		PICO_W_LED_OFF();
+		if (!reconnect)
+		{
+			// Short single blink at start of connection sequence
+			PICO_W_LED_OFF();
+			delay(PICO_W_SHORT_BLINK_DELAY);
+			PICO_W_LED_ON();
+			delay(PICO_W_SHORT_BLINK_DELAY);
+			PICO_W_LED_OFF();
+		}
 	}
 	else
 	{
@@ -173,22 +190,47 @@ void platform_network_poll()
 		switch (status)
 		{
 			case CYW43_LINK_NOIP:
-				logmsg("WiFi connected to ", ssid, " but was not assigned in an IP");
+				logmsg("Wi-Fi connected to ", ssid, " but was not assigned an IP");
 				break;
 			case CYW43_LINK_BADAUTH:
 				logmsg("Wi-Fi authentication failure connecting to \"", ssid, "\", please check the setting \"WiFiPassword\" in ", CONFIGFILE);
 				break;
 			case CYW43_LINK_NONET:
-				logmsg("Wi-Fi SSID ", ssid, " not found, possible of out range or down");
+				logmsg("Wi-Fi SSID ", ssid, " not found, possible out of range or down");
 				break;
 			case CYW43_LINK_FAIL:
-				logmsg("WiFi connection to ", ssid, " failed");
+				logmsg("Wi-Fi connection to ", ssid, " failed");
 				break;
 		}
-		last_network_status = status;
+		wifi_reconnect_time = millis();
 	}
-	cyw43_arch_poll();
 
+	// Reset reconnect state when link comes back up
+	if (status == CYW43_LINK_JOIN || status == CYW43_LINK_NOIP)
+	{
+		wifi_reconnect_attempts = 0;
+		wifi_reconnect_interval = WIFI_RECONNECT_INTERVAL;
+	}
+
+	if (status <= CYW43_LINK_DOWN
+		&& status != CYW43_LINK_BADAUTH
+		&& ssid[0] != '\0'
+		&& scsiDev.phase == BUS_FREE
+		&& wifi_reconnect_attempts < WIFI_RECONNECT_MAX_ATTEMPTS
+		&& (uint32_t)(millis() - wifi_reconnect_time) > wifi_reconnect_interval)
+	{
+		wifi_reconnect_time = millis();
+		wifi_reconnect_attempts++;
+		logmsg("Attempting Wi-Fi reconnection to \"", ssid, "\" (attempt ", wifi_reconnect_attempts, "/", WIFI_RECONNECT_MAX_ATTEMPTS, ")");
+		platform_network_wifi_join(ssid, scsiDev.boardCfg.wifiPassword, true);
+		wifi_reconnect_interval *= 2;
+
+		if (wifi_reconnect_attempts >= WIFI_RECONNECT_MAX_ATTEMPTS)
+			logmsg("Wi-Fi reconnection limit reached, no further attempts will be made");
+	}
+
+	last_network_status = status;
+	cyw43_arch_poll();
 }
 
 int platform_network_send(uint8_t *buf, size_t len)
@@ -388,4 +430,6 @@ void cyw43_cb_tcpip_set_link_up(cyw43_t *self, int itf)
 }
 
 }
+#else
+bool platform_network_supported() { return false; }
 #endif // ZULUSCSI_NETWORK
