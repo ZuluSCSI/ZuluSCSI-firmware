@@ -326,6 +326,11 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     img.reinsert_after_eject = devCfg->reinsertAfterEject;
     img.eject_on_stop = devCfg->ejectOnStop;
     img.ejectButton = devCfg->ejectButton;
+    img.ejectFixedDiskEnable = devCfg->ejectFixedDiskEnable;
+    img.ejectFixedDiskDelay = devCfg->ejectFixedDiskDelay;
+    img.ejectFixedDiskReadOnly = devCfg->ejectFixedDiskReadOnly;
+    img.ejectFixedDiskPending = false;
+    img.ejectFixedDiskWriteBlocked = false;
     img.vendorExtensions = devCfg->vendorExtensions;
 
 #ifdef ENABLE_AUDIO_OUTPUT
@@ -916,21 +921,55 @@ static void doCloseTray(image_config_t &img)
 static void doPerformEject(image_config_t &img)
 {
     uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
-    if (!img.ejected)
+    if (img.deviceType == S2S_CFG_FIXED)
     {
-        blink_cancel();
-        blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
-        dbgmsg("------ Device open tray on ID ", (int)target);
-        img.ejected = true;
-        switchNextImage(img); // Switch media for next time
-        if (g_scsi_settings.getDevice(target)->reinsertImmediately)
+        if (img.ejectFixedDiskReadOnly)
         {
-            doCloseTray(img);
+            // Set drive to read-only
+            dbgmsg("------ Setting fixed disk read-only on ID ", (int)target);
+            img.ejectFixedDiskWriteBlocked = true;
+            blink_cancel();
+            blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);
+
+            if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
+            {
+                dbgmsg("------ Posting UNIT ATTENTION after read-only change");
+                scsiDev.targets[target].unitAttention = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+            }
+        }
+        else if (switchNextImage(img))
+        {
+            // Image switch successful
+            img.ejected = false;
+            img.reinsert_after_eject = false;
+            blink_cancel();
+            blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);
+
+            if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
+            {
+                dbgmsg("------ Posting UNIT ATTENTION after disk image change");
+                scsiDev.targets[target].unitAttention = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+            }
         }
     }
     else
     {
-        doCloseTray(img);
+        if (!img.ejected)
+        {
+            blink_cancel();
+            blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
+            dbgmsg("------ Device open tray on ID ", (int)target);
+            img.ejected = true;
+            switchNextImage(img); // Switch media for next time
+            if (g_scsi_settings.getDevice(target)->reinsertImmediately)
+            {
+                doCloseTray(img);
+            }
+        }
+        else
+        {
+            doCloseTray(img);
+        }
     }
 }
 
@@ -1164,33 +1203,35 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
     }
     else
     {
-        img.image_index++;
-        if (img.image_index > IMAGE_INDEX_MAX || img.image_index < 0)
+        while (1)
         {
-            img.image_index = 0;
-        }
+            img.image_index++;
+            if (img.image_index > IMAGE_INDEX_MAX || img.image_index < 0)
+            {
+                img.image_index = 0;
+            }
 
-        char key[5] = "IMG0";
-        key[3] = '0' + img.image_index;
+            char key[5] = "IMG0";
+            key[3] = '0' + img.image_index;
 
-        int ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
-        if (buf[0] != '\0')
-        {
-            img.deviceType = g_scsi_settings.getDevice(target_idx)->deviceType;
-            return ret;
-        }
-        else if (img.image_index > 0)
-        {
-            // there may be more than one image but we've ran out of new ones
-            // wrap back to the first image
-            img.image_index = -1;
-            return scsiDiskGetNextImageName(img, buf, buflen);
-        }
-        else
-        {
-
-            img.image_index = -1;
-            return 0;
+            int ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+            if (buf[0] != '\0')
+            {
+                img.deviceType = g_scsi_settings.getDevice(target_idx)->deviceType;
+                return ret;
+            }
+            else if (img.image_index > 0)
+            {
+                // there may be more than one image but we've ran out of new ones
+                // wrap back to the first image
+                img.image_index = -1;
+                // Rerun loop
+            }
+            else
+            {
+                img.image_index = -1;
+                return 0;
+            }
         }
     }
 }
@@ -1342,6 +1383,25 @@ static void diskEjectAction(uint8_t buttonId)
                 logmsg("Eject button ", (int)buttonId, " pressed, passing to device SCSI ID: ", (int)i);
                 doPerformEject(img);
             }
+            else if (img.deviceType == S2S_CFG_FIXED
+                    && img.ejectFixedDiskEnable)
+            {
+                found = true;
+                uint8_t target = img.scsiId & 7;
+                if (!img.ejectFixedDiskPending && !img.ejectFixedDiskWriteBlocked)
+                {
+                    logmsg("Eject button ", (int)buttonId, " pressed, scheduling eject for fixed disk SCSI ID: ", (int)i);
+                    img.ejectFixedDiskPending = true;
+                    img.ejectFixedDiskTimer = millis();
+                    blink_cancel();
+                    // Blink with f/4 until eject completed
+                    blinkStatus((uint32_t)(-1), g_scsi_settings.getDevice(target)->ejectBlinkPeriod * 4);
+                }
+                else
+                {
+                    logmsg("Eject button ", (int)buttonId, " pressed, but eject in progress or already ejected for SCSI ID: ", (int)i);
+                }
+            }
         }
     }
 
@@ -1380,7 +1440,27 @@ uint8_t diskEjectButtonUpdate(bool immediate)
                 mask = mask << 1;
             }
         }
+
+        diskEjectDelayCheck();
+
         return ejectors;
+    }
+}
+
+void diskEjectDelayCheck(void)
+{
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        image_config_t &img = g_DiskImages[i];
+        if (img.ejectFixedDiskPending)
+        {
+            if ((uint32_t)(millis() - img.ejectFixedDiskTimer) > img.ejectFixedDiskDelay) {
+                logmsg("Eject delay with no write activity expired, performing eject for SCSI ID: ", (int)i);
+                img.ejectFixedDiskPending = false;
+                blink_cancel();
+                doPerformEject(img);
+            }
+        }
     }
 }
 
@@ -1734,7 +1814,7 @@ int doTestUnitReady()
         scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED;
         scsiDev.phase = STATUS;
     }
-    else if (img.ejected)
+    else if (img.ejected && img.deviceType != S2S_CFG_FIXED)
     {
         ready = 0;
         scsiDev.status = CHECK_CONDITION;
@@ -1855,8 +1935,8 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
 
     if (unlikely(blockDev.state & DISK_WP) ||
         unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_OPTICAL) ||
-        unlikely(!img.file.isWritable()))
-
+        unlikely(!img.file.isWritable()) ||
+        unlikely(img.ejectFixedDiskWriteBlocked))
     {
         logmsg("WARNING: Host attempted write to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         scsiDev.status = CHECK_CONDITION;
@@ -1889,6 +1969,12 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
         g_scsi_prefetch.bytes = 0;
         g_scsi_prefetch.sector = 0;
 #endif
+
+        if (img.ejectFixedDiskPending)
+        {
+            // Reset timer due to write access
+            img.ejectFixedDiskTimer = millis();
+        }
 
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
         if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
@@ -2553,7 +2639,7 @@ int scsiDiskCommand()
 
         scsiDev.phase = DATA_IN;
     }
-    else if (!img.file.isWritable())
+    else if (!img.file.isWritable() || img.ejectFixedDiskWriteBlocked)
     {
         // Special handling for ROM drive to make SCSI2SD code report it as read-only
         blockDev.state |= DISK_WP;

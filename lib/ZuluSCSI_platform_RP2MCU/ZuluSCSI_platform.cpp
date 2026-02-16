@@ -91,6 +91,7 @@ static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
 static bool g_led_state = false;
+static uint8_t g_console_buttons = 0;
 static struct {
     uint32_t slice;
     uint32_t chan;
@@ -108,7 +109,9 @@ typedef enum
     USB_INPUT_REBOOT_IMAGES_MSC,
     USB_INPUT_REBOOT,
     USB_INPUT_TOGGLE_DEBUG,
-    USB_INPUT_LOG_TO_SD
+    USB_INPUT_LOG_TO_SD,
+    USB_INPUT_BUTTON_1,
+    USB_INPUT_BUTTON_2
 }
 usb_input_type_t;
 
@@ -1437,6 +1440,12 @@ uint8_t platform_get_buttons()
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
         if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
     #endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+        // Virtual buttons from console
+        if (g_console_buttons != 0)
+        {
+            buttons |= g_console_buttons;
+            g_console_buttons = 0;
+        }
 
         // Simple debouncing logic: handle button releases after 100 ms delay.
         static uint32_t debounce;
@@ -1762,6 +1771,12 @@ static usb_input_type_t serial_menu(menu_context_t context)
             case 'l':
                 input_type = USB_INPUT_LOG_TO_SD;
                 break;
+            case '1':
+                input_type = USB_INPUT_BUTTON_1;
+                break;
+            case '2':
+                input_type = USB_INPUT_BUTTON_2;
+                break;
             case 'Y':
             case 'y':
                 yes_keyed = true;
@@ -1792,6 +1807,8 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'i' - reboot with images presented as USB drives\r\n"
                 "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
+                "    '1' - push function button 1 (eject, switch image)\r\n"
+                "    '2' - push function button 2 (eject, switch image)\r\n"
                 "  press 'y' after a command to confirm and execute"
             );
         }
@@ -1828,6 +1845,14 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     logmsg("Exiting mass storage");
                     *scratch0 = 0;
                     break;
+                case USB_INPUT_BUTTON_1:
+                    logmsg("Pushed function button 1");
+                    g_console_buttons |= 1;
+                    break;
+                case USB_INPUT_BUTTON_2:
+                    logmsg("Pushed function button 2");
+                    g_console_buttons |= 2;
+                    break;
                 default:
                     *scratch0 = 0;
                     input_type = USB_INPUT_NONE;
@@ -1852,11 +1877,17 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 case USB_INPUT_TOGGLE_DEBUG:
                     logmsg("Turn debug ", g_log_debug ? "off" : "on", ", press 'y' to engage or any key to clear");
                     break;
-                    case USB_INPUT_LOG_TO_SD:
+                case USB_INPUT_LOG_TO_SD:
                     logmsg("Turn logging to SD Card ", g_log_to_sd ? "off" : "on", ", press 'y' to engage or any key to clear");
                     break;
                 case USB_INPUT_EXIT_MSC:
                     logmsg("Exit mass storage mode, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_BUTTON_1:
+                    logmsg("Push function button 1, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_BUTTON_2:
+                    logmsg("Push function button 2, press 'y' to engage or any key to clear");
                     break;
                 default:
                     input_type = USB_INPUT_NONE;
