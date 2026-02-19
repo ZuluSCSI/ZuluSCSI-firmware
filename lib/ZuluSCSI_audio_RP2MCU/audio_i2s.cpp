@@ -759,7 +759,7 @@ bool audio_play(uint8_t owner, image_config_t* img, uint32_t start, uint32_t len
     // interrupted later due to hardware limitations
     // stop any existing playback first
      if (!audio_idle)
-        audio_stop(audio_owner);
+        audio_stop();
 
     if(!img || !img->cuesheetfile.isOpen())
     {
@@ -784,7 +784,8 @@ bool audio_play(uint8_t owner, image_config_t* img, uint32_t start, uint32_t len
     else
         return false;
 
-    if (cuesheet_file == nullptr)
+    // read in cue sheet file on first read or a different SCSI device was playing
+    if (cuesheet_file == nullptr || owner != audio_owner)
     {
         cuesheet_file = &img->cuesheetfile;
         cuesheet_file->seek(0);
@@ -842,7 +843,7 @@ bool audio_set_paused(uint8_t id, bool paused) {
 }
 
 void audio_stop(uint8_t id) {
-    if (audio_idle || (id & S2S_CFG_TARGET_ID_BITS) != audio_owner) return;
+    if (id != 0xFF && (audio_idle || (id & S2S_CFG_TARGET_ID_BITS) != audio_owner)) return;
 
     memset(&current_track, 0, sizeof(current_track));
     memset(output_buf_a, 0, sizeof(output_buf_a));
@@ -861,7 +862,7 @@ void audio_stop(uint8_t id) {
     dma_channel_abort(SOUND_DMA_CHA);
     dma_channel_abort(SOUND_DMA_CHB);
     // idle the subsystem
-    audio_last_status[id] = ASC_COMPLETED;
+    audio_last_status[audio_owner] = ASC_COMPLETED;
     audio_paused = false;
     audio_playing = false;
     audio_idle = true;
@@ -967,7 +968,7 @@ typedef struct {
 
 bool audio_play_wav(const char *filename)
 {
-    if (!audio_idle) audio_stop(audio_owner);
+    if (!audio_idle) audio_stop();
 
     if (!audio_file.open(filename, O_RDONLY))
     {
