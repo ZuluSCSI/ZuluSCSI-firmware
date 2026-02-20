@@ -2115,19 +2115,19 @@ extern "C" int scsiCDRomCommand()
         // terminate audio playback if active on this target (MMC-1 Annex C)
         audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 #endif
-        if ((scsiDev.cdb[4] & 2))
+
+        bool start = scsiDev.cdb[4] & 1;
+        bool eject = scsiDev.cdb[4] & 2;
+
+        // CD-ROM load & eject
+        if (start)
         {
-            // CD-ROM load & eject
-            int start = scsiDev.cdb[4] & 1;
-            if (start)
-            {
-                cdromCloseTray(img);
-            }
-            else
-            {
-                // Eject and switch image
-                cdromPerformEject(img);
-            }
+            cdromCloseTray(img);
+        }
+        else if (eject || img.eject_on_stop)
+        {
+            // Eject and switch image
+            cdromPerformEject(img);
         }
     }
     else if (command == 0x25)
