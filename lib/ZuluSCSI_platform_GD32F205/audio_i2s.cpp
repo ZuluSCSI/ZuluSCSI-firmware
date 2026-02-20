@@ -263,7 +263,7 @@ void audio_poll()
 
 bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end, bool swap)
 {
-    if (audio_is_active()) audio_stop(audio_owner);
+    if (audio_is_active()) audio_stop();
 
 
     // verify audio file is present and inputs are (somewhat) sane
@@ -389,7 +389,7 @@ bool audio_set_paused(uint8_t id, bool paused)
 
 void audio_stop(uint8_t id)
 {
-    if (audio_owner != id) return;
+    if (id != 0xFF && audio_owner != id) return;
 
     spi_disable(ODE_I2S_SPI);
     dma_channel_disable(ODE_DMA, ODE_DMA_CH);
