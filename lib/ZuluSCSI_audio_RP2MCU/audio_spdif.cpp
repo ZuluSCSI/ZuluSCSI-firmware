@@ -508,7 +508,7 @@ static void audio_start_dma()
 
 bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end, bool swap) {
     // stop any existing playback first
-    if (audio_is_active()) audio_stop(audio_owner);
+    if (audio_is_active()) audio_stop();
 
     // dbgmsg("Request to play ('", file, "':", start, ":", end, ")");
 
@@ -608,7 +608,7 @@ bool audio_set_paused(uint8_t id, bool paused) {
 }
 
 void audio_stop(uint8_t id) {
-    if (audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return;
+    if (id != 0xFF && audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return;
 
     // to help mute external hardware, send a bunch of '0' samples prior to
     // halting the datastream; easiest way to do this is invalidating the

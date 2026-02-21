@@ -71,6 +71,7 @@
 
 // Status LED pins
 #define LED_PIN      33
+#define LED_PIN_ALTERNATE  5
 
 // SD card pins in SDIO mode
 #define SDIO_CLK 34
@@ -117,6 +118,10 @@
 #define DIP_INITIATOR   SCSI_OUT_ACK
 #define DIP_DBGLOG      SWO_PIN
 #define DIP_TERM        SCSI_OUT_REQ
+
+// Ejection button
+#define GPIO_EJECT_BTN 3
+#define GPIO_EJECT_BTN_INTERNAL_PULL_UP
 
 // RM2 pins
 #define GPIO_RM2_ON   0

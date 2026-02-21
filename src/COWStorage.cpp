@@ -4,6 +4,8 @@
 
 #include <cassert>
 #include "ZuluSCSI_log.h"
+#include "ZuluSCSI_platform.h"
+#include "ZuluSCSI_blink.h"
 #include "ZuluSCSI.h"
 #include <SdFat.h>
 
@@ -53,19 +55,49 @@ COWStorage::~COWStorage()
 bool COWStorage::initialize(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_settings)
 {
     size_t len = strlen(filename);
-    if (len <= 3 || strcasecmp(filename + len - 4, ".cow") != 0)
-	{
-		// Not a .cow file
-		return false;
-	}
 
-	// Generate dirty filename by replacing .cow extension with .tmp
-	char dirty_filename[MAX_FILE_PATH + 1];
-	strncpy(dirty_filename, filename, len - 4);
-	dirty_filename[len - 4] = '\0';
-	strcat(dirty_filename, ".tmp");
+    uint8_t btn_config = device_settings->cowButton;
+    uint8_t btn_configmask = 0;
+    uint8_t btn_bitmask = 0;
 
-	auto bitmap_max_size = device_settings->cowBitmapSize;
+    if (btn_config > 0 && btn_config <= 8)
+    {
+        btn_configmask = 1 << (btn_config - 1);
+        btn_bitmask = platform_get_buttons() & (EJECT_BTN_MASK | USER_BTN_MASK);
+
+        if (device_settings->cowButtonInvert)
+        {
+            btn_bitmask = btn_bitmask ^ (EJECT_BTN_MASK | USER_BTN_MASK);
+        }
+    }
+
+    // Activate COW if requested by button or file extension
+    if (len > 3 && (btn_configmask & btn_bitmask))
+    {
+        if (strncasecmp("raw:", filename, 4) == 0 || strncasecmp("rom:", filename, 4) == 0)
+        {
+            // Not a regular file
+            return false;
+        }
+
+        logmsg("---- COW requested by button: ", btn_config);
+        blink_cancel();
+        // Blink 10x50ms
+        blinkStatus(10, 50);
+    }
+    else if (len <= 3 || strcasecmp(filename + len - 4, ".cow") != 0)
+    {
+        // Not a .cow file
+        return false;
+    }
+
+    // Generate dirty filename by replacing .cow extension with .tmp
+    char dirty_filename[MAX_FILE_PATH + 1];
+    strncpy(dirty_filename, filename, len - 4);
+    dirty_filename[len - 4] = '\0';
+    strcat(dirty_filename, ".tmp");
+
+    auto bitmap_max_size = device_settings->cowBitmapSize;
 
     logmsg("---- Initializing COW for image: ", filename);
     logmsg("---- Bitmap max size: ", (int)bitmap_max_size, " bytes");

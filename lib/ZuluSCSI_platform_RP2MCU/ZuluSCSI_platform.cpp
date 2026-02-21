@@ -91,6 +91,7 @@ static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
 static bool g_led_state = false;
+static uint8_t g_console_buttons = 0;
 static struct {
     uint32_t slice;
     uint32_t chan;
@@ -108,7 +109,9 @@ typedef enum
     USB_INPUT_REBOOT_IMAGES_MSC,
     USB_INPUT_REBOOT,
     USB_INPUT_TOGGLE_DEBUG,
-    USB_INPUT_LOG_TO_SD
+    USB_INPUT_LOG_TO_SD,
+    USB_INPUT_BUTTON_1,
+    USB_INPUT_BUTTON_2
 }
 usb_input_type_t;
 
@@ -342,6 +345,50 @@ static void __no_inline_not_in_flash_func(set_flash_clock)()
 }
 #endif
 
+#ifdef ZULUSCSI_BLASTER
+static int platform_get_led_pin()
+{
+    // Workaround for LED pin connection issue on PCB revision 2026c.
+    // The normal LED pin GPIO33 is shorted to GND, and LED is connected to GPIO5 instead.
+    // Use a short pulse at low drive strength to detect the misconnection.
+    // GPIO pull-up itself is too weak to overcome 74LVTH125 hold current.
+
+    int led_pin = LED_PIN;
+    gpio_put(led_pin, false);
+    gpio_set_function(led_pin, GPIO_FUNC_SIO);
+    gpio_set_pulls(led_pin, true, false);
+    gpio_set_drive_strength(led_pin, GPIO_DRIVE_STRENGTH_2MA);
+    gpio_set_dir(led_pin, true);
+
+    gpio_put(led_pin, true);
+    delayMicroseconds(10);
+    bool state = gpio_get(led_pin);
+    gpio_put(led_pin, false);
+
+    if (state)
+    {
+        // Normal LED pin works
+        gpio_set_drive_strength(led_pin, GPIO_DRIVE_STRENGTH_8MA);
+        return led_pin;
+    }
+    else
+    {
+        // Normal LED pin is shorted to GND
+        // Use alternate LED pin, disable main pin
+        gpio_set_dir(led_pin, false);
+        gpio_set_oeover(led_pin, GPIO_OVERRIDE_LOW);
+
+        gpio_set_drive_strength(LED_PIN_ALTERNATE, GPIO_DRIVE_STRENGTH_8MA);
+        return LED_PIN_ALTERNATE;
+    }
+}
+#else
+static int platform_get_led_pin()
+{
+    return LED_PIN;
+}
+#endif
+
 void platform_init()
 {
     // Make sure second core is stopped
@@ -520,14 +567,14 @@ void platform_init()
     gpio_conf(SDIO_D2,        GPIO_FUNC_SIO, true, false, false, true, true);
 
     // LED pin
-    gpio_conf(LED_PIN,        GPIO_FUNC_PWM, false,false, true,  false, false);
-    g_led_pwm.slice = pwm_gpio_to_slice_num(LED_PIN);
-    g_led_pwm.chan = pwm_gpio_to_channel(LED_PIN);
+    int led_pin = platform_get_led_pin();
+    gpio_conf(led_pin,        GPIO_FUNC_PWM, false,false, true,  false, false);
+    g_led_pwm.slice = pwm_gpio_to_slice_num(led_pin);
+    g_led_pwm.chan = pwm_gpio_to_channel(led_pin);
     pwm_config led_pwm_config = pwm_get_default_config();
     pwm_config_set_wrap(&led_pwm_config, PLATFORM_LED_PWM_WRAP);
     pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, g_led_pwm.level_off);
     pwm_init(g_led_pwm.slice, &led_pwm_config, true);
-
 
 #ifdef GPIO_I2C_SDA
     // I2C pins
@@ -541,7 +588,11 @@ void platform_init()
 #endif
 
 #ifdef GPIO_EJECT_BTN
+# ifdef GPIO_EJECT_BTN_INTERNAL_PULL_UP
+    gpio_conf(GPIO_EJECT_BTN, GPIO_FUNC_SIO,  true,false, false,  false, false);
+# else
     gpio_conf(GPIO_EJECT_BTN, GPIO_FUNC_SIO, false,false, false,  false, false);
+# endif
 #endif
 
 
@@ -776,7 +827,8 @@ void platform_led_breath(bool breath, uint32_t period_ms)
 void platform_disable_led(void)
 {
     //        pin      function       pup   pdown  out    state fast
-    gpio_conf(LED_PIN, GPIO_FUNC_SIO, false,false, false, false, false);
+    int led_pin = platform_get_led_pin();
+    gpio_conf(led_pin, GPIO_FUNC_SIO, false,false, false, false, false);
     logmsg("Disabling status LED");
 }
 
@@ -1388,6 +1440,12 @@ uint8_t platform_get_buttons()
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
         if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
     #endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+        // Virtual buttons from console
+        if (g_console_buttons != 0)
+        {
+            buttons |= g_console_buttons;
+            g_console_buttons = 0;
+        }
 
         // Simple debouncing logic: handle button releases after 100 ms delay.
         static uint32_t debounce;
@@ -1713,6 +1771,12 @@ static usb_input_type_t serial_menu(menu_context_t context)
             case 'l':
                 input_type = USB_INPUT_LOG_TO_SD;
                 break;
+            case '1':
+                input_type = USB_INPUT_BUTTON_1;
+                break;
+            case '2':
+                input_type = USB_INPUT_BUTTON_2;
+                break;
             case 'Y':
             case 'y':
                 yes_keyed = true;
@@ -1743,6 +1807,8 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'i' - reboot with images presented as USB drives\r\n"
                 "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
+                "    '1' - push function button 1 (eject, switch image)\r\n"
+                "    '2' - push function button 2 (eject, switch image)\r\n"
                 "  press 'y' after a command to confirm and execute"
             );
         }
@@ -1779,6 +1845,14 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     logmsg("Exiting mass storage");
                     *scratch0 = 0;
                     break;
+                case USB_INPUT_BUTTON_1:
+                    logmsg("Pushed function button 1");
+                    g_console_buttons |= 1;
+                    break;
+                case USB_INPUT_BUTTON_2:
+                    logmsg("Pushed function button 2");
+                    g_console_buttons |= 2;
+                    break;
                 default:
                     *scratch0 = 0;
                     input_type = USB_INPUT_NONE;
@@ -1803,11 +1877,17 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 case USB_INPUT_TOGGLE_DEBUG:
                     logmsg("Turn debug ", g_log_debug ? "off" : "on", ", press 'y' to engage or any key to clear");
                     break;
-                    case USB_INPUT_LOG_TO_SD:
+                case USB_INPUT_LOG_TO_SD:
                     logmsg("Turn logging to SD Card ", g_log_to_sd ? "off" : "on", ", press 'y' to engage or any key to clear");
                     break;
                 case USB_INPUT_EXIT_MSC:
                     logmsg("Exit mass storage mode, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_BUTTON_1:
+                    logmsg("Push function button 1, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_BUTTON_2:
+                    logmsg("Push function button 2, press 'y' to engage or any key to clear");
                     break;
                 default:
                     input_type = USB_INPUT_NONE;

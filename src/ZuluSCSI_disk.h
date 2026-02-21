@@ -65,10 +65,19 @@ struct image_config_t: public S2S_TargetCfg
     uint8_t cdrom_events;
     bool reinsert_on_inquiry; // Reinsert on Inquiry command (to reinsert automatically after boot)
     bool reinsert_after_eject; // Reinsert next image after ejection
+    bool eject_on_stop; // Eject image on START STOP UNIT with start = 0
 
     // selects a physical button channel that will cause an eject action
     // default option of '0' disables this functionality
     uint8_t ejectButton;
+
+    // Eject function for fixed disks
+    bool ejectFixedDiskEnable;
+    bool ejectFixedDiskReadOnly;
+    uint32_t ejectFixedDiskDelay;
+    bool ejectFixedDiskPending;
+    uint32_t ejectFixedDiskTimer;
+    bool ejectFixedDiskWriteBlocked;
 
     // True if there is a subdirectory of images for this target
     bool image_directory;
@@ -130,6 +139,9 @@ private:
 // Call with 'true' only if ejections should be performed immediately (typically when not busy)
 // Returns a mask of the buttons that registered an 'eject' action.
 uint8_t diskEjectButtonUpdate(bool immediate);
+
+// Check if pending disk ejects are due to be executed
+void diskEjectDelayCheck(void);
 
 // Reset all image configuration to empty reset state, close all images.
 void scsiDiskResetImages();

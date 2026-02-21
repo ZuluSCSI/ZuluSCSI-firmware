@@ -238,6 +238,9 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.ejectButton = ini_getl(section, "EjectButton", cfg.ejectButton, CONFIGFILE);
     cfg.ejectBlinkTimes = ini_getl(section, "EjectBlinkTimes", cfg.ejectBlinkTimes, CONFIGFILE);
     cfg.ejectBlinkPeriod = ini_getl(section, "EjectBlinkPeriod", cfg.ejectBlinkPeriod, CONFIGFILE);
+    cfg.ejectFixedDiskEnable = ini_getl(section, "EnableEjectFixedDisk", cfg.ejectFixedDiskEnable, CONFIGFILE);
+    cfg.ejectFixedDiskReadOnly = ini_getl(section, "EjectFixedDiskReadOnly", cfg.ejectFixedDiskReadOnly, CONFIGFILE);
+    cfg.ejectFixedDiskDelay = ini_getl(section, "EjectFixedDiskDelay", cfg.ejectFixedDiskDelay, CONFIGFILE);
 
     cfg.vol = ini_getl(section, "CDAVolume", cfg.vol, CONFIGFILE) & 0xFF;
 
@@ -246,6 +249,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.reinsertOnInquiry = ini_getbool(section, "ReinsertCDOnInquiry", cfg.reinsertOnInquiry, CONFIGFILE);
     cfg.reinsertAfterEject = ini_getbool(section, "ReinsertAfterEject", cfg.reinsertAfterEject, CONFIGFILE);
     cfg.reinsertImmediately = ini_getbool(section, "ReinsertImmediately", cfg.reinsertImmediately, CONFIGFILE);
+    cfg.ejectOnStop = ini_getbool(section, "EjectOnStop", cfg.ejectOnStop, CONFIGFILE);
     cfg.keepCurrentImageOnBusReset = ini_getbool(section, "KeepCurrentImageOnBusReset", cfg.keepCurrentImageOnBusReset, CONFIGFILE);
     cfg.disableMacSanityCheck = ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE);
 
@@ -291,6 +295,8 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     }
 #if ENABLE_COW
     cfg.cowBitmapSize = ini_getl(section, "CowBitmapSize", cfg.cowBitmapSize, CONFIGFILE);
+    cfg.cowButton = ini_getl(section, "CowButton", cfg.cowButton, CONFIGFILE);
+    cfg.cowButtonInvert = ini_getl(section, "CowButtonInvert", cfg.cowButtonInvert, CONFIGFILE);
 #endif
 }
 
@@ -360,6 +366,9 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgDev.ejectButton = 0;
     cfgDev.ejectBlinkTimes = 20;
     cfgDev.ejectBlinkPeriod = 50;
+    cfgDev.ejectFixedDiskEnable = false;
+    cfgDev.ejectFixedDiskDelay = 0;
+    cfgDev.ejectFixedDiskReadOnly = false;
     cfgDev.vol = DEFAULT_VOLUME_LEVEL;
     
     cfgDev.nameFromImage = false;
@@ -367,6 +376,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgDev.reinsertOnInquiry = true;
     cfgDev.reinsertAfterEject = true;
     cfgDev.reinsertImmediately = false;
+    cfgDev.ejectOnStop = false;
     cfgDev.keepCurrentImageOnBusReset = false;
     cfgDev.disableMacSanityCheck = false;
 
@@ -379,6 +389,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
 
 #if ENABLE_COW
     cfgDev.cowBitmapSize = DEFAULT_COW_BUFFER_SIZE;
+    cfgDev.cowButton = 0;
+    cfgDev.cowButtonInvert = false;
 #endif
 
     // System-specific defaults
