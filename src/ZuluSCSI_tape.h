@@ -4,6 +4,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <scsi.h>
 
 // Forward declaration
 struct image_config_t;
@@ -13,8 +14,12 @@ struct image_config_t;
 #define TAP_MARKER_ERASE_GAP   0xFFFFFFFE  // Erase gap marker
 #define TAP_MARKER_END_MEDIUM  0xFFFFFFFF  // End of medium marker
 
-#define TAPE_BLOCK_SIZE_MAX 64 * 1024 // max value 0xFFFFFF
-#define TAPE_BLOCK_SIZE_MIN 1 // max value 0xFFFF
+#define TAPE_TAP_BLOCK_SIZE_MAX (SCSI2SD_BUFFER_SIZE / 2) // max value 0xFFFFFF
+#define TAPE_TAP_BLOCK_SIZE_MIN 64 // max value 0xFFFF
+
+#define TAPE_BLOCK_SIZE_MAX (MAX_SECTOR_SIZE) // max value 0xFFFFFF
+#define TAPE_BLOCK_SIZE_MIN 64 // max value 0xFFFF
+
 
 // .TAP record structure for parsing
 struct tap_record_t {
@@ -72,13 +77,16 @@ tap_result_t tapWriteRecord(image_config_t &img, const uint8_t *data, uint32_t l
 tap_result_t tapWriteFilemark(image_config_t &img);
 tap_result_t tapWriteEOM(image_config_t &img);
 tap_result_t tapWriteEraseGap(image_config_t &img);
-tap_result_t tapSpaceForward(image_config_t &img, uint32_t count, bool filemarks);
-tap_result_t tapSpaceBackward(image_config_t &img, uint32_t count, bool filemarks);
+tap_result_t tapSpaceForward(image_config_t &img, uint32_t& actual, uint32_t count, bool filemarks);
+tap_result_t tapSpaceBackward(image_config_t &img, uint32_t& actual, uint32_t count, bool filemarks);
 tap_result_t tapRewind(image_config_t &img);
 
 // .TAP format SCSI write operations
 void tapMediumStartWrite(uint32_t length, bool fixed);
 void tapeTapDataOut();
 void tapeDataOut();
+
+int scsiTapeMaxSectors();
+int scsiTapeMinSectors();
 
 extern "C" int scsiTapeCommand();

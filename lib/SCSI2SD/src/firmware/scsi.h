@@ -74,7 +74,7 @@ typedef enum
 
 // Maximum value for bytes-per-sector.
 #ifndef MAX_SECTOR_SIZE
-#define MAX_SECTOR_SIZE 8192
+#define MAX_SECTOR_SIZE (8 * 1024)
 #endif
 
 #ifndef MIN_SECTOR_SIZE

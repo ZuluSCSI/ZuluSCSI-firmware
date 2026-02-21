@@ -81,22 +81,6 @@ extern "C" {
 #define PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE 512
 #endif
 
-#ifndef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
-// For platforms that do not have non-blocking read from SCSI bus
-void scsiStartRead(uint8_t* data, uint32_t count, int *parityError)
-{
-    scsiRead(data, count, parityError);
-}
-void scsiFinishRead(uint8_t* data, uint32_t count, int *parityError)
-{
-
-}
-bool scsiIsReadFinished(const uint8_t *data)
-{
-    return true;
-}
-#endif
-
 int8_t scsiParseId(const char scsi_id_text)
 {
     if (scsi_id_text >= '0' && scsi_id_text <= '9')
@@ -534,6 +518,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Configuring as tape drive");
             img.setDeviceType(S2S_CFG_SEQUENTIAL);
             tapeSetIsTap(target_idx, tape_is_tap_format);
+            logmsg("---- Medium block size max is ", tape_is_tap_format ? TAPE_TAP_BLOCK_SIZE_MAX : TAPE_BLOCK_SIZE_MAX);
         }
         else if (type == S2S_CFG_ZIP100)
         {
@@ -1214,14 +1199,24 @@ void scsiDiskLoadConfig(int target_idx)
     char filename[MAX_FILE_PATH];
     image_config_t &img = g_DiskImages[target_idx];
     img.image_index = IMAGE_INDEX_MAX;
+    int blocksize = 0;
     if (scsiDiskGetNextImageName(img, filename, sizeof(filename)))
     {
-        // set the default block size now that we know the device type
-        if (g_scsi_settings.getDevice(target_idx)->blockSize == 0)
+        if (img.deviceType == S2S_CFG_SEQUENTIAL && (scsiDev.targets[target_idx].liveCfg.bytesPerSector != 0))
         {
-          g_scsi_settings.getDevice(target_idx)->blockSize = img.deviceType == S2S_CFG_OPTICAL ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
+            // For tape drives, keep byte per sector between SD card reinserts as it can be set by the OS
+            blocksize = scsiDev.targets[target_idx].liveCfg.bytesPerSector;
+            g_scsi_settings.getDevice(target_idx)->blockSize = blocksize;
         }
-        int blocksize = getBlockSize(filename, target_idx);
+        else
+        {
+            if (g_scsi_settings.getDevice(target_idx)->blockSize == 0)
+            {
+                // set the default block size now that we know the device type
+                g_scsi_settings.getDevice(target_idx)->blockSize = img.deviceType == S2S_CFG_OPTICAL ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
+            }
+            blocksize = getBlockSize(filename, target_idx);
+        }
         logmsg("-- Opening '", filename, "' for id: ", target_idx);
         scsiDiskOpenHDDImage(target_idx, filename, 0, blocksize, (S2S_CFG_TYPE) img.deviceType, img.use_prefix);
     }
