@@ -53,7 +53,7 @@ SECTIONS
         *scanf*(*)
         *strtod*(*)
         *libipv4.a:*(*)
-        *liblwip*.a:*(*)
+        *liblwip.a:*(*)
         *libZuluSCSI_audio_RP2MCU.a:*(*)
         *libAdafruit*.a:*(*)
         *libWire.a:*(*)

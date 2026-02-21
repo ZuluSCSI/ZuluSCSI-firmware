@@ -82,9 +82,22 @@ void scsiFinishWrite();
 // If data is NULL, checks if all writes have completed.
 bool scsiIsWriteFinished(const uint8_t *data);
 
+// For platforms that do not have non-blocking read from SCSI bus
+inline void scsiStartRead(uint8_t* data, uint32_t count, int *parityError)
+{
+    scsiRead(data, count, parityError);
+}
+
+inline void scsiFinishRead(uint8_t* data, uint32_t count, int *parityError)
+{
+
+}
+
 // Always returns true as reads are blocking
-// If data is NULL, checks if all reads have completed.
-bool scsiIsReadFinished(const uint8_t *data);
+inline bool scsiIsReadFinished(const uint8_t *data)
+{
+    return true;
+}
 
 #define s2s_getScsiRateKBs() 0
 

@@ -121,6 +121,9 @@ public:
     // Result is only valid for regular files, not raw or flash access
     uint64_t position();
 
+    // Truncate the file to the specified size.
+    bool truncate(uint64_t size);
+
     size_t getFilename(char* buf, size_t buflen);
 
     // Change image if the image is a folder (used for .cue with multiple .bin)
@@ -153,6 +156,8 @@ protected:
     char m_foldername[MAX_FILE_PATH + 1];
 
     bool _internal_open(const char *filename);
+
+    void revert_to_noncontiguous();
 
 #if ENABLE_COW
     bool m_iscow;
