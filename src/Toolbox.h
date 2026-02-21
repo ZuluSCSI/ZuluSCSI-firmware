@@ -20,8 +20,10 @@
 #pragma once
 
 #define MAX_MAC_PATH 32
-#define CD_IMG_DIR "CD%c"
+#define MAX_FILE_LISTING_FILES 100
+#define ENTRY_SIZE 40
 
+#define CD_IMG_DIR "CD%c"
 
 #define TOOLBOX_LIST_FILES     0xD0
 #define TOOLBOX_GET_FILE       0xD1

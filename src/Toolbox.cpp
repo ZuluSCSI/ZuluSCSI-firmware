@@ -31,10 +31,6 @@ extern "C" {
 #include <mode.h>
 }
 
-
-const uint8_t MAX_FILE_LISTING_FILES = 100;
-
-
 extern "C" int8_t scsiToolboxEnabled()
 {
     static int8_t enabled = -1;
@@ -47,11 +43,16 @@ extern "C" int8_t scsiToolboxEnabled()
 }
 
 
-static bool toolboxFilenameValid(const char* name, bool isCD = false)
+static bool toolboxFilenameValid(const char* name, const bool isCD = false)
 {
     if(strlen(name) == 0)
     {
         dbgmsg("toolbox: Ignoring filename empty file name");
+        return false;
+    }
+    if(name[0] == '.')
+    {
+        dbgmsg("toolbox: Ignoring hidden file ", name);
         return false;
     }
     if (isCD)
@@ -107,14 +108,17 @@ static void doCountFiles(const char * dir_name, bool isCD = false)
 static void onListFiles(const char * dir_name, bool isCD = false) {
     FsFile dir;
     FsFile file;
-    const size_t ENTRY_SIZE = 40;
 
     memset(scsiDev.data, 0, ENTRY_SIZE * (MAX_FILE_LISTING_FILES + 1));
     char name[MAX_FILE_PATH] = {0};
     uint8_t index = 0;
     uint8_t file_entry[ENTRY_SIZE] = {0};
 
-    dir.open(dir_name);
+    if (!dir.open(dir_name)) {
+        if (!isCD && (!SD.mkdir(dir_name) || !dir.open(dir_name))) {
+            logmsg("ERROR: Could not open or create BlueSCSI Toolbox shared dir: ", dir_name);
+        }
+    }
     dir.rewindDirectory();
     while (file.openNext(&dir, O_RDONLY))
     {   
@@ -139,7 +143,7 @@ static void onListFiles(const char * dir_name, bool isCD = false) {
         for(int i = 0; i < MAX_MAC_PATH + 1 ; i++) {
             file_entry[i + 2] = name[i];   // bytes 2 - 34
         }
-        file_entry[35] = 0; //(size >> 32) & 0xff;
+        file_entry[35] = (size >> 32) & 0xff;
         file_entry[36] = (size >> 24) & 0xff;
         file_entry[37] = (size >> 16) & 0xff;
         file_entry[38] = (size >> 8) & 0xff;
@@ -214,7 +218,7 @@ static void onListDevices()
         const S2S_TargetCfg* cfg = s2s_getConfigById(i);
         if (cfg && (cfg->scsiId & S2S_CFG_TARGET_ENABLED))
         {
-            scsiDev.data[i] = (int)cfg->deviceType; // 2 == cd
+            scsiDev.data[i] = static_cast<int>(cfg->deviceType); // 2 == cd
         }
         else
         {
@@ -224,6 +228,7 @@ static void onListDevices()
     scsiDev.dataLen = S2S_MAX_TARGETS;
     scsiDev.phase = DATA_IN;
 }
+
 // Returns API version and capability flags
 static void onGetCapabilities()
 {
@@ -297,7 +302,7 @@ static void onSetNextCD(const char * img_dir)
     switchNextImage(img, full_path);
 }
 
-FsFile gFile; // global so we can keep it open while transfering.
+FsFile gFile; // global so we can keep it open while transferring.
 void onGetFile10(char * dir_name) {
     uint8_t index = scsiDev.cdb[1];
 
@@ -353,7 +358,7 @@ void onGetFile10(char * dir_name) {
 }
 
 /*
-  Prepares a file for receving. The file name is null terminated in the scsi data.
+  Prepares a file for receiving. The file name is null terminated in the scsi data.
 */
 static void onSendFilePrep(char * dir_name)
 {
@@ -397,9 +402,9 @@ static void onSendFile10(void)
         scsiDev.target->sense.code = ILLEGAL_REQUEST;
         //SCSI_ASC_INVALID_FIELD_IN_CDB
         scsiDev.phase = STATUS;
+        return;
     }
 
-    // Number of bytes sent this request, 1..512.
     // CDB[6] = block count for new block-based encoding (0 = use legacy CDB[1-2])
     uint8_t block_count = scsiDev.cdb[6];
     uint16_t bytes_sent;
@@ -415,28 +420,30 @@ static void onSendFile10(void)
     }
     // 512 byte offset of where to put these bytes.
     uint32_t offset     = ((uint32_t)scsiDev.cdb[3] << 16) | ((uint32_t)scsiDev.cdb[4] << 8) | scsiDev.cdb[5];
-    const uint16_t BUFSIZE   = 512;
-    uint8_t buf[BUFSIZE];
 
     // Do not allow buffer overrun
-    if (bytes_sent > BUFSIZE)
+    if (bytes_sent > sizeof(scsiDev.data))
     {
         dbgmsg("TOOLBOX SEND FILE 10 ILLEGAL DATA SIZE");
         gFile.close();
         scsiDev.status = CHECK_CONDITION;
         scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.phase = STATUS;
+        return;
     }
 
     scsiEnterPhase(DATA_OUT);
-    scsiRead(buf, bytes_sent, NULL);
+    scsiRead(scsiDev.data, bytes_sent, NULL);
     gFile.seekCur(offset * 512);
-    gFile.write(buf, bytes_sent);
+    gFile.write(scsiDev.data, bytes_sent);
     if(gFile.getWriteError())
     {
         gFile.clearWriteError();
         gFile.close();
         scsiDev.status = CHECK_CONDITION;
         scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.phase = STATUS;
+        return;
     }
     //scsiDev.phase = STATUS;
 }
@@ -522,7 +529,7 @@ extern "C" int scsiToolboxCommand()
     {
         char img_dir[4];
         dbgmsg("TOOLBOX_SET_NEXT_CD");
-        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, static_cast<int>(img.scsiId) & S2S_CFG_TARGET_ID_BITS);
         onSetNextCD(img_dir);
     }
     else if(unlikely(command == TOOLBOX_METADATA))
@@ -534,7 +541,7 @@ extern "C" int scsiToolboxCommand()
     {
         char img_dir[4];
         dbgmsg("TOOLBOX_COUNT_CDS");
-        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, static_cast<int>(img.scsiId) & S2S_CFG_TARGET_ID_BITS);
         doCountFiles(img_dir, true);
     }
     else
