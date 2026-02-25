@@ -1191,7 +1191,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
     char presetName[32];
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
-    scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName);
+    scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName, true);
     g_log_to_sd = g_scsi_settings.getSystem()->logToSDCard;
     initUIPostSDInit(true);
 

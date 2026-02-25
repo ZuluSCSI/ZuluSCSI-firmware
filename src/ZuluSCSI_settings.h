@@ -172,12 +172,12 @@ public:
     // Initialize settings for all devices with a preset configuration,
     //  or return the default config if unknown system type.
     // Then overwrite any settings with those in the CONFIGFILE
-    scsi_system_settings_t *initSystem(const char *presetName);
+    scsi_system_settings_t *initSystem(const char *presetName, bool disable_logging = false);
 
     // Copy any shared device setting done the initSystemSettings as default settings, 
     // or return the default config if unknown device type.
     // Then overwrite any settings with those in the CONFIGFILE
-    scsi_device_settings_t *initDevice(uint8_t scsiId, S2S_CFG_TYPE type);
+    scsi_device_settings_t *initDevice(uint8_t scsiId, S2S_CFG_TYPE type, bool disable_logging = false);
     // return the system settings struct to read values
     scsi_system_settings_t *getSystem();
 

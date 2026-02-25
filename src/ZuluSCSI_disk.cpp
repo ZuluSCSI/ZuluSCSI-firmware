@@ -879,7 +879,7 @@ static void scsiDiskSetConfig(int target_idx)
     }
 #endif
 
-    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType);
+    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType, true);
 }
 
 // Compares the prefix of both files and the scsi ID
