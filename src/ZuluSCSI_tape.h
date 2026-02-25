@@ -86,7 +86,7 @@ void tapMediumStartWrite(uint32_t length, bool fixed);
 void tapeTapDataOut();
 void tapeDataOut();
 
-int scsiTapeMaxSectors();
-int scsiTapeMinSectors();
+int scsiTapeMaxSectorSize();
+int scsiTapeMinSectorSize();
 
 extern "C" int scsiTapeCommand();

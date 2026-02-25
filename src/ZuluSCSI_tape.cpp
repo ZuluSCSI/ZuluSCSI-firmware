@@ -41,7 +41,7 @@ extern "C" {
 #include <scsi.h>
 }
 
-tape_drive_t  **g_tape_drive = {nullptr};
+tape_drive_t  **g_tape_drive = nullptr;
 
 // scsiStartRead is defined in ZuluSCSI_disk.cpp for platforms without non-blocking read
 extern void scsiStartRead(uint8_t* data, uint32_t count, int *parityError);
@@ -68,18 +68,29 @@ void tapeInit(uint8_t scsi_id)
     if (g_tape_drive == nullptr)
     {
         g_tape_drive = new tape_drive_t*[S2S_MAX_TARGETS];
+        if (g_tape_drive == nullptr)
+            logmsg("Ran out of memory allocating g_tape_drive in ", __FILE__, " on line ", __LINE__ - 2);
+        assert(g_tape_drive != nullptr);
+
+        for (uint8_t i = 0; i < S2S_MAX_TARGETS; ++i)
+        {
+            g_tape_drive[i] = nullptr;
+        }
     }
+
     g_tape_drive[scsi_id] = new tape_drive_t;
-    
+    if (g_tape_drive[scsi_id] == nullptr)
+        logmsg("Ran out of memory allocating g_tape_drive[", (int) scsi_id,"] on SCSI ID ", (int) scsi_id," in ", __FILE__, " on line ", __LINE__ - 2);
+    assert(g_tape_drive[scsi_id] != nullptr);
 
     tape_drive_t *drive_info =  g_tape_drive[scsi_id];
 
     // Make sure there is enough memory
-    assert(!(g_tape_drive == nullptr && drive_info == nullptr));
 
     scsiDev.targets[scsi_id].sense.filemark = false;
     scsiDev.targets[scsi_id].sense.eom = false;
 
+    drive_info->tape_pos = 0;
     drive_info->tape_length_mb = 0;
     drive_info->tape_mark_count = 1;
     drive_info->tape_mark_index = 0;
@@ -95,10 +106,13 @@ void tapeDeinit(uint8_t scsi_id)
     {
         for (uint8_t id = 0; id < S2S_MAX_TARGETS; id++)
         {
-            delete g_tape_drive[id];
-            g_tape_drive[id] = nullptr;
+            if (g_tape_drive[id] != nullptr)
+            {
+                delete g_tape_drive[id];
+                g_tape_drive[id] = nullptr;
+            }
         }
-        delete g_tape_drive;
+        delete[] g_tape_drive;
         g_tape_drive = nullptr;
 
     }
@@ -106,10 +120,11 @@ void tapeDeinit(uint8_t scsi_id)
     {
         delete g_tape_drive[scsi_id];
         g_tape_drive[scsi_id] = nullptr;
+
         bool empty_array = true;
         for (uint8_t id = 0; id < S2S_MAX_TARGETS; id++)
         {
-            if (g_tape_drive[scsi_id] != nullptr)
+            if (g_tape_drive[id] != nullptr)
             {
                 empty_array = false;
                 break;
@@ -117,7 +132,7 @@ void tapeDeinit(uint8_t scsi_id)
         }
         if (empty_array)
         {
-            delete g_tape_drive;
+            delete[] g_tape_drive;
             g_tape_drive = nullptr;
         }
     }
@@ -537,19 +552,25 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed) {
         scsiEnterPhase(DATA_IN);
 
         // Use two buffers alternately for formatting sector data
-        uint32_t result_length = block_size;
-        if (block_size > scsiTapeMaxSectors())
+        if (block_size > scsiTapeMaxSectorSize() || (block_size * 2) > sizeof(scsiDev.data))
         {
-            logmsg("doTapRead() block size, ", (int) block_size, ", is larger than the max size: ", (int) scsiTapeMaxSectors());
-            scsiDev.target->sense.filemark = true;
+            if (block_size > scsiTapeMaxSectorSize())
+            {
+                logmsg("doTapRead() block size, ", (int) block_size, ", is larger than the max size: ", (int) scsiTapeMaxSectorSize());
+            }
+            if ((block_size * 2) > sizeof(scsiDev.data))
+            {
+                logmsg("doTapRead() block size, ", (int) block_size, ", is larger than the allocated buffer size: ", (int) sizeof(scsiDev.data) / 2);
+            }
             scsiDev.status = CHECK_CONDITION;
             scsiDev.target->sense.code = MEDIUM_ERROR;
             scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
             scsiDev.phase = STATUS;
             return;
         }
+
         uint8_t *buf0 = scsiDev.data;
-        uint8_t *buf1 = scsiDev.data + result_length;
+        uint8_t *buf1 = scsiDev.data + block_size;
         // Format the sectors for transfer
         for (uint32_t idx = 0; idx < blocks; idx++)
         {
@@ -560,11 +581,11 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed) {
             // Verify that previous write using this buffer has finished
             uint8_t *buf = ((idx & 1) ? buf1 : buf0);
             uint32_t start = millis();
-            while (!scsiIsWriteFinished(buf + result_length - 1) && !scsiDev.resetFlag)
+            while (!scsiIsWriteFinished(buf + block_size - 1) && !scsiDev.resetFlag)
             {
                 if ((uint32_t)(millis() - start) > 5000)
                 {
-                    logmsg("doTapReadCD() fixed length timeout waiting for previous to finish");
+                    logmsg("doTapRead() fixed length timeout waiting for previous to finish");
                     scsiDev.resetFlag = 1;
                 }
                 platform_poll();
@@ -577,7 +598,7 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed) {
             // divide evenly to fill the blocksize
             do
             {
-                tap_result_t result = tapReadRecordForward(img, record, buf + bytes_read, result_length - bytes_read);
+                tap_result_t result = tapReadRecordForward(img, record, buf + bytes_read, block_size - bytes_read);
                 if (result != TAP_OK)
                     scsiFinishWrite();
 
@@ -627,7 +648,7 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed) {
                 return;
             }
 
-            scsiStartWrite(buf, result_length);
+            scsiStartWrite(buf, block_size);
 
             // Reset the watchdog while the transfer is progressing.
             // If the host stops transferring, the watchdog will eventually expire.
@@ -1125,14 +1146,14 @@ static void doRewind()
     tape_info->tape_load_next_file = true;
 }
 
-int scsiTapeMaxSectors()
+int scsiTapeMaxSectorSize()
 {
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     return tape_info->tape_is_tap_format ? TAPE_TAP_BLOCK_SIZE_MAX : TAPE_BLOCK_SIZE_MAX;
 }
 
-int scsiTapeMinSectors()
+int scsiTapeMinSectorSize()
 {
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
@@ -1379,20 +1400,14 @@ extern "C" int scsiTapeCommand()
     else if (command == 0x05)
     {
         // READ BLOCK LIMITS
-        uint32_t max_block_size = TAPE_BLOCK_SIZE_MAX;
-        uint32_t min_block_size = TAPE_BLOCK_SIZE_MIN;
-
-        if (tape_info->tape_is_tap_format)
-        {
-            max_block_size = TAPE_TAP_BLOCK_SIZE_MAX;
-            min_block_size = TAPE_TAP_BLOCK_SIZE_MIN;
-        } 
+        uint32_t max_block_size = scsiTapeMaxSectorSize();
+        uint32_t min_block_size = scsiTapeMinSectorSize();
         scsiDev.data[0] = 0; // Reserved
         scsiDev.data[1] = (max_block_size >> 16) & 0xFF; // Maximum block length (MSB)
         scsiDev.data[2] = (max_block_size >>  8) & 0xFF;
-        scsiDev.data[3] = (max_block_size >>  0) & 0xFF; // Maximum block length (LSB)
+        scsiDev.data[3] = (max_block_size      ) & 0xFF; // Maximum block length (LSB)
         scsiDev.data[4] = (min_block_size >>  8) & 0xFF; // Minimum block length (MSB)
-        scsiDev.data[5] = (min_block_size >>  0) & 0xFF; // Minimum block length (LSB)
+        scsiDev.data[5] = (min_block_size      ) & 0xFF; // Minimum block length (LSB)
         scsiDev.dataLen = 6;
         scsiDev.phase = DATA_IN;
     }

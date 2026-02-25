@@ -222,20 +222,20 @@ int modeSelectCDAudioControlPage(int pageLen, int idx)
 }
 
 
-int modeMaxSectors()
+int modeMaxSectorSize()
 {
     if (scsiDev.target->cfg->deviceType == S2S_CFG_TYPE::S2S_CFG_SEQUENTIAL)
     {
-        return scsiTapeMaxSectors();
+        return scsiTapeMaxSectorSize();
     }
     return MAX_SECTOR_SIZE;
 
 }
-int modeMinSectors()
+int modeMinSectorSize()
 {
     if (scsiDev.target->cfg->deviceType == S2S_CFG_TYPE::S2S_CFG_SEQUENTIAL)
     {
-        return scsiTapeMinSectors();
+        return scsiTapeMinSectorSize();
     }
     return MIN_SECTOR_SIZE;
 }

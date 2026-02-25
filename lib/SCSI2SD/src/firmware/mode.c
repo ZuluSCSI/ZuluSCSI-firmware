@@ -654,8 +654,8 @@ static void doModeSelect(void)
 				(((uint32_t)scsiDev.data[idx+5]) << 16) |
 				(((uint32_t)scsiDev.data[idx+6]) << 8) |
 				scsiDev.data[idx+7];
-			if ((bytesPerSector < modeMinSectors()) ||
-				(bytesPerSector > modeMaxSectors()))
+			if ((bytesPerSector < modeMinSectorSize()) ||
+				(bytesPerSector > modeMaxSectorSize()))
 			{
 				goto bad;
 			}
@@ -694,8 +694,8 @@ static void doModeSelect(void)
 					scsiDev.data[idx+13];
 
 				// Sane values only, ok ?
-				if ((bytesPerSector < modeMinSectors()) ||
-					(bytesPerSector > modeMaxSectors()))
+				if ((bytesPerSector < modeMinSectorSize()) ||
+					(bytesPerSector > modeMaxSectorSize()))
 				{
 					goto bad;
 				}
