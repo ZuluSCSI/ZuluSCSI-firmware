@@ -44,6 +44,17 @@
  */
 #define AUDIO_CHANNEL_ENABLE_MASK 0x0201
 
+/**
+ * The audio start up sound is treated as one above the last SCSI ID 
+ */
+#define MAX_AUDIO_TARGETS (S2S_MAX_TARGETS + 1)
+
+/**
+ * Audio startup playback owner
+ */
+#define AUDIO_STARTUP_PLAYBACK_OWNER S2S_MAX_TARGETS
+
+
 /*
  * Status codes for audio playback, matching the SCSI 'audio status codes'.
  *
@@ -125,8 +136,9 @@ bool audio_set_paused(uint8_t id, bool pause);
  * Stops audio playback.
  *
  * \param id     The SCSI ID to stop audio playback on. If id == 0xFF stop audio on all devices
+ * \param startup_skip  If true don't stop playing the startup audio 
  */
-void audio_stop(uint8_t id = 0xFF);
+void audio_stop(uint8_t id = 0xFF, bool startup_skip = false);
 
 /**
  * Provides SCSI 'audio status code' for the given target. Depending on the

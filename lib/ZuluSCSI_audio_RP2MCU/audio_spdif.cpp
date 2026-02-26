@@ -607,8 +607,9 @@ bool audio_set_paused(uint8_t id, bool paused) {
     return true;
 }
 
-void audio_stop(uint8_t id) {
+void audio_stop(uint8_t id, bool startup_skip) {
     if (id != 0xFF && audio_owner != (id & S2S_CFG_TARGET_ID_BITS)) return;
+    if (startup_skip && audio_owner == AUDIO_STARTUP_PLAYBACK_OWNER) return;
 
     // to help mute external hardware, send a bunch of '0' samples prior to
     // halting the datastream; easiest way to do this is invalidating the

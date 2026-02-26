@@ -2713,7 +2713,7 @@ void scsiDiskReset()
 #endif
 
 #ifdef ENABLE_AUDIO_OUTPUT
-    audio_stop();
+    audio_stop(0xFF, true);
 #endif
     // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
     for (int i = 0; i < S2S_MAX_TARGETS; ++i)
