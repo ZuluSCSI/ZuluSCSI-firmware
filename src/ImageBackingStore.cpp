@@ -189,6 +189,17 @@ bool ImageBackingStore::_internal_open(const char *filename)
     return true;
 }
 
+void ImageBackingStore::revert_to_noncontiguous()
+{
+    if (m_iscontiguous && !m_israw && m_fsfile.isOpen())
+    {
+        // Revert from direct SD card access to filesystem based access.
+        // Keep the seek position.
+        m_iscontiguous = false;
+        m_fsfile.seek((m_cursector - m_bgnsector) * SD_SECTOR_SIZE);
+    }
+}
+
 bool ImageBackingStore::isOpen()
 {
 #if ENABLE_COW
@@ -342,7 +353,7 @@ bool ImageBackingStore::seek(uint64_t pos)
     if (m_iscontiguous && (uint64_t)sectornum * SD_SECTOR_SIZE != pos)
     {
         dbgmsg("---- Unaligned access to image, falling back to SdFat access mode");
-        m_iscontiguous = false;
+        revert_to_noncontiguous();
     }
 
     if (m_iscontiguous)
@@ -377,7 +388,7 @@ ssize_t ImageBackingStore::read(void* buf, size_t count)
     if (m_iscontiguous && (uint64_t)sectorcount * SD_SECTOR_SIZE != count)
     {
         dbgmsg("---- Unaligned access to image, falling back to SdFat access mode");
-        m_iscontiguous = false;
+        revert_to_noncontiguous();
     }
 
     if (m_iscontiguous && m_blockdev)
@@ -415,7 +426,7 @@ ssize_t ImageBackingStore::read(void* buf, size_t count)
 
 ssize_t ImageBackingStore::write(const void* buf, size_t count)
 {
-#if ENABLE_COW
+    #if ENABLE_COW
     // Handle Copy-on-Write mode
     if (m_iscow)
     {
@@ -427,7 +438,7 @@ ssize_t ImageBackingStore::write(const void* buf, size_t count)
     if (m_iscontiguous && (uint64_t)sectorcount * SD_SECTOR_SIZE != count)
     {
         dbgmsg("---- Unaligned access to image, falling back to SdFat access mode");
-        m_iscontiguous = false;
+        revert_to_noncontiguous();
     }
 
     if (m_iscontiguous && m_blockdev)
@@ -472,6 +483,23 @@ void ImageBackingStore::flush()
     if (!m_iscontiguous && !m_isrom && !m_isreadonly_attr)
     {
         m_fsfile.flush();
+    }
+}
+
+bool ImageBackingStore::truncate(uint64_t size)
+{
+    if (m_isrom || m_israw || m_isreadonly_attr)
+    {
+        logmsg("ERROR: truncate called on non-writable or non-regular file");
+        return false;
+    }
+    else
+    {
+        if (m_iscontiguous)
+        {
+            revert_to_noncontiguous();
+        }
+        return m_fsfile.truncate(size);
     }
 }
 

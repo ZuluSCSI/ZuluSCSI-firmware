@@ -163,6 +163,7 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     uint8_t cowButton;
     bool cowButtonInvert;
 #endif
+    uint32_t tapeLengthMB;
 } scsi_device_settings_t;
 
 
