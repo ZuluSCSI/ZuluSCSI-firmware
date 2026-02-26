@@ -20,8 +20,10 @@
 #pragma once
 
 #define MAX_MAC_PATH 32
-#define CD_IMG_DIR "CD%c"
+#define MAX_FILE_LISTING_FILES 100
+#define ENTRY_SIZE 40
 
+#define CD_IMG_DIR "CD%c"
 
 #define TOOLBOX_LIST_FILES     0xD0
 #define TOOLBOX_GET_FILE       0xD1
@@ -32,6 +34,18 @@
 #define TOOLBOX_TOGGLE_DEBUG   0xD6
 #define TOOLBOX_LIST_CDS       0xD7
 #define TOOLBOX_SET_NEXT_CD    0xD8
-#define TOOLBOX_LIST_DEVICES   0xD9
+#define TOOLBOX_METADATA       0xD9
+#define TOOLBOX_LIST_DEVICES   0xD9  // Legacy alias for METADATA
 #define TOOLBOX_COUNT_CDS      0xDA
 #define OPEN_RETRO_SCSI_TOO_MANY_FILES 0x0001
+
+// 0xD9 Metadata subcommands (CDB[1])
+#define TOOLBOX_SUBCMD_LIST_DEVICES     0x00
+#define TOOLBOX_SUBCMD_GET_CAPABILITIES 0x01
+
+// Capability flags for TOOLBOX_SUBCMD_GET_CAPABILITIES
+#define TOOLBOX_CAP_LARGE_TRANSFERS     0x01  // Supports transfers larger than 512 bytes
+#define TOOLBOX_CAP_LARGE_SEND       0x02  // Supports 32KB send file chunks
+
+// Current Toolbox API version
+#define TOOLBOX_API_VERSION             0
