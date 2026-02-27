@@ -35,7 +35,8 @@ struct tap_record_t {
 struct tape_drive_t
 {
     // For tape drive emulation
-    uint64_t tape_pos; // current position in bytes
+    uint64_t file_pos; // current file position in bytes (for simh tap format does not correspond to lba)
+    uint64_t data_pos; // Virtual current position in tape in bytes (corresponds to lba)
     uint32_t tape_length_mb;
     uint32_t tape_mark_index; // a direct relationship to the file in a multi image file tape 
     uint32_t tape_mark_count; // the number of marks
@@ -49,6 +50,7 @@ struct tape_drive_t
 enum tap_result_t {
     TAP_OK = 0,
     TAP_END_OF_TAPE,
+    TAP_END_OF_DATA,
     TAP_BEGINNING_OF_TAPE,
     TAP_FILEMARK,
     TAP_ERROR

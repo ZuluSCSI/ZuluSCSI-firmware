@@ -90,6 +90,8 @@ typedef enum
 typedef struct
 {
 	uint16_t bytesPerSector;
+	uint8_t tapeDensity;
+	uint8_t tapeBufferedMode; // Buffered mode field from MODE SELECT byte 2
 } LiveCfg;
 
 typedef struct
@@ -117,6 +119,8 @@ typedef struct
 	uint8_t started; // Controlled by START STOP UNIT
 
 	uint8_t busWidth; // 0: 8-bit, 1: 16-bit, 2: 32-bit
+
+	uint8_t tapeBOM; // Beginning of Medium flag (tape at position 0)
 } TargetState;
 
 typedef struct

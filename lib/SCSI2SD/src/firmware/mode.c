@@ -330,8 +330,9 @@ static void doModeSense(
 	case S2S_CFG_SEQUENTIAL:
 		mediumType = 0; // reserved
 		deviceSpecificParam =
-			(blockDev.state & DISK_WP) ? 0x80 : 0;
-		density = 0x13; // DAT Data Storage, X3B5/88-185A 
+			((blockDev.state & DISK_WP) ? 0x80 : 0) |
+			((scsiDev.target->liveCfg.tapeBufferedMode & 0x7) << 4);
+		density = scsiDev.target->liveCfg.tapeDensity;
 		break;
 
 	case S2S_CFG_MO:
@@ -646,26 +647,44 @@ static void doModeSelect(void)
 			idx = 4;
 		}
 
+		// Store device-specific parameter byte (byte 2 for 6-byte, byte 3 for 10-byte)
+		// For sequential devices this contains buffered mode in bits 6-4
+		if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+		{
+			uint8_t devSpecific = (scsiDev.cdb[0] == 0x55) ? scsiDev.data[3] : scsiDev.data[2];
+			scsiDev.target->liveCfg.tapeBufferedMode = (devSpecific >> 4) & 0x7;
+		}
+
 		// The unwritten rule.  Blocksizes are normally set using the
 		// block descriptor value, not by changing page 0x03.
 		if (blockDescLen >= 8)
 		{
+			// Store density code for sequential devices
+			if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.target->liveCfg.tapeDensity = scsiDev.data[idx];
+			}
+
 			uint32_t bytesPerSector =
 				(((uint32_t)scsiDev.data[idx+5]) << 16) |
 				(((uint32_t)scsiDev.data[idx+6]) << 8) |
 				scsiDev.data[idx+7];
-			if ((bytesPerSector < modeMinSectorSize()) ||
-				(bytesPerSector > modeMaxSectorSize()))
+
+			// Sane values only, ok ?
+			if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL && bytesPerSector == 0)
+			{
+				// value okay, setting to variable length transfers for tape
+			}
+			else if ((bytesPerSector < modeMinSectorSize()) ||
+					(bytesPerSector > modeMaxSectorSize()))
 			{
 				goto bad;
 			}
-			else
+
+			scsiDev.target->liveCfg.bytesPerSector = bytesPerSector;
+			if (bytesPerSector != scsiDev.target->cfg->bytesPerSector)
 			{
-				scsiDev.target->liveCfg.bytesPerSector = bytesPerSector;
-				if (bytesPerSector != scsiDev.target->cfg->bytesPerSector)
-				{
-					s2s_configSave(scsiDev.target->targetId, bytesPerSector);
-				}
+				s2s_configSave(scsiDev.target->targetId, bytesPerSector);
 			}
 		}
 		idx += blockDescLen;
@@ -694,7 +713,11 @@ static void doModeSelect(void)
 					scsiDev.data[idx+13];
 
 				// Sane values only, ok ?
-				if ((bytesPerSector < modeMinSectorSize()) ||
+				if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL && bytesPerSector == 0)
+				{
+					// value okay, setting to variable length transfers for tape
+				}
+				else if ((bytesPerSector < modeMinSectorSize()) ||
 					(bytesPerSector > modeMaxSectorSize()))
 				{
 					goto bad;

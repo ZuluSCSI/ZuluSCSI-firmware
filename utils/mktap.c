@@ -6,12 +6,11 @@
 
 void write_record(FILE *out_file, const unsigned char *data, int length) {
     uint32_t record_len = length;
-    if (record_len % 2 != 0) {
-        record_len++;
-    }
 
+    // SIMH spec: header/trailer contain actual data length, not padded length
     fwrite(&record_len, sizeof(uint32_t), 1, out_file);
     fwrite(data, 1, length, out_file);
+    // Pad to even length (data on tape is always even-aligned)
     if (length % 2 != 0) {
         fputc(0, out_file);
     }
@@ -123,7 +122,9 @@ void handle_list(int argc, char *argv[]) {
             break; // End of tape
         } else {
             printf("Record %d: Data Record, Length: %u bytes\n", record_num++, record_len);
-            fseek(in_file, record_len, SEEK_CUR);
+            // Skip past data + padding byte (if odd length) to reach trailer
+            uint32_t padded_len = (record_len + 1) & ~1;
+            fseek(in_file, padded_len, SEEK_CUR);
             uint32_t trailing_len;
             if (fread(&trailing_len, sizeof(uint32_t), 1, in_file) != 1 || trailing_len != record_len) {
                 fprintf(stderr, "Error: Mismatched record length at record %d\n", record_num - 1);

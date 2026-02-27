@@ -249,7 +249,7 @@ static void process_DataIn()
 	if ((scsiDev.dataPtr >= scsiDev.dataLen) &&
 		(transfer.currentBlock == transfer.blocks))
 	{
-		enter_Status(GOOD);
+		enter_Status(scsiDev.status);
 	}
 }
 
@@ -541,10 +541,14 @@ static void process_Command()
 			{
 				scsiDev.data[2] |= scsiDev.target->sense.filemark ? 1 << 7 : 0;
 				scsiDev.data[2] |= scsiDev.target->sense.eom ? 1 << 6 : 0;
+				scsiDev.data[2] |= scsiDev.target->sense.ili ? 1 << 5 : 0;
 				scsiDev.data[3] = scsiDev.target->sense.info >> 24;
 				scsiDev.data[4] = scsiDev.target->sense.info >> 16;
 				scsiDev.data[5] = scsiDev.target->sense.info >> 8;
 				scsiDev.data[6] = scsiDev.target->sense.info;
+				// QIC drive vendor-specific sense bytes (Caliper/Sankyo/Wangtek)
+				// Byte 9 bit 3: BOM (Beginning of Medium)
+				scsiDev.data[9] = scsiDev.target->tapeBOM ? (1 << 3) : 0;
 			}
 			else
 			{
@@ -1346,7 +1350,9 @@ void scsiInit()
 			scsiDev.targets[i].targetId = cfg->scsiId & S2S_CFG_TARGET_ID_BITS;
 			scsiDev.targets[i].cfg = cfg;
 
-			scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;
+		scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;
+			scsiDev.targets[i].liveCfg.tapeDensity = cfg->tapeDensity;
+			scsiDev.targets[i].liveCfg.tapeBufferedMode = 0;
 		}
 		else
 		{
@@ -1382,6 +1388,8 @@ void scsiInit()
 			scsiDev.targets[i].syncOffset = 0;
 			scsiDev.targets[i].syncPeriod = 0;
 		}
+
+		scsiDev.targets[i].tapeBOM = (cfg && cfg->deviceType == S2S_CFG_SEQUENTIAL) ? 1 : 0;
 
 		// Always "start" the device. Many systems (eg. Apple System 7)
 		// won't respond properly to
