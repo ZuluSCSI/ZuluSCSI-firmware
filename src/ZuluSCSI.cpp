@@ -1297,8 +1297,11 @@ extern "C" void zuluscsi_setup(void)
 #if defined(STARTUPSOUND) && defined(ENABLE_AUDIO_OUTPUT)
   if (g_sdcard_present && SD.exists(STARTUPSOUND))
   {
-    logmsg("Playing " STARTUPSOUND);
-    audio_play_wav(STARTUPSOUND);
+    if (g_scsi_settings.getSystem()->enableCDAudio)
+    {
+      logmsg("Playing " STARTUPSOUND);
+      audio_play_wav(STARTUPSOUND);
+    }
   }
 #endif
     logmsg("Firmware initialization complete!");

@@ -49,10 +49,14 @@
  */
 #define MAX_AUDIO_TARGETS (S2S_MAX_TARGETS + 1)
 
+
 /**
  * Audio startup playback owner
  */
 #define AUDIO_STARTUP_PLAYBACK_OWNER S2S_MAX_TARGETS
+
+
+#define AUDIO_OWNER_MASK (S2S_CFG_TARGET_ID_BITS | AUDIO_STARTUP_PLAYBACK_OWNER)
 
 
 /*
