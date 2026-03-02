@@ -84,7 +84,7 @@ static CUETrackInfo current_track = {0};
 
 // historical playback status information
 #if S2S_MAX_TARGETS == 16
-static audio_status_code audio_last_status[S2S_MAX_TARGETS + 1] = {
+static audio_status_code audio_last_status[MAX_AUDIO_TARGETS] = {
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
@@ -92,14 +92,14 @@ static audio_status_code audio_last_status[S2S_MAX_TARGETS + 1] = {
     ASC_NO_STATUS
 };
 // volume information for targets
-static volatile uint16_t volumes[S2S_MAX_TARGETS + 1] = {
+static volatile uint16_t volumes[MAX_AUDIO_TARGETS] = {
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH
 };
-static volatile uint16_t channel[S2S_MAX_TARGETS + 1] = {
+static volatile uint16_t channel[MAX_AUDIO_TARGETS] = {
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
@@ -108,17 +108,17 @@ static volatile uint16_t channel[S2S_MAX_TARGETS + 1] = {
 };
 #else
 // Max targets + 1 (+1 being a separate id for wav playback)
-static audio_status_code audio_last_status[S2S_MAX_TARGETS + 1] = {
+static audio_status_code audio_last_status[MAX_AUDIO_TARGETS] = {
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, 
     ASC_NO_STATUS};
 // volume information for targets
-static volatile uint16_t volumes[S2S_MAX_TARGETS + 1] = {
+static volatile uint16_t volumes[MAX_AUDIO_TARGETS] = {
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH
 };
-static volatile uint16_t channel[S2S_MAX_TARGETS + 1] = {
+static volatile uint16_t channel[MAX_AUDIO_TARGETS] = {
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK
@@ -417,7 +417,7 @@ bool audio_is_active() {
 
 bool audio_is_playing(uint8_t id) {
 //    return audio_playing;
-    return audio_owner == (id & S2S_CFG_TARGET_ID_BITS) && audio_playing;
+    return audio_owner == (id & AUDIO_OWNER_MASK) && audio_playing;
 }
 
 void audio_setup() {
@@ -842,8 +842,9 @@ bool audio_set_paused(uint8_t id, bool paused) {
     return true;
 }
 
-void audio_stop(uint8_t id) {
-    if (id != 0xFF && (audio_idle || (id & S2S_CFG_TARGET_ID_BITS) != audio_owner)) return;
+void audio_stop(uint8_t id, bool startup_skip) {
+    if (id != 0xFF && (audio_idle || (id & AUDIO_OWNER_MASK) != audio_owner)) return;
+    if (startup_skip && audio_owner == AUDIO_STARTUP_PLAYBACK_OWNER) return;
 
     memset(&current_track, 0, sizeof(current_track));
     memset(output_buf_a, 0, sizeof(output_buf_a));
@@ -977,7 +978,8 @@ bool audio_play_wav(const char *filename)
     }
 
     // Set owner to wave file playback owner
-    audio_owner = S2S_MAX_TARGETS;
+    audio_owner = AUDIO_STARTUP_PLAYBACK_OWNER;
+    audio_reset(audio_owner);
     // Read WAV file header and verify suitable format
     wav_header_t hdr = {};
     if (audio_file.read(&hdr, sizeof(hdr)) != sizeof(hdr) ||
