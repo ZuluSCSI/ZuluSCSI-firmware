@@ -26,3 +26,6 @@ int modeSenseCDAudioControlPage(int pc, int idx, int pageCode, int* pageFound);
 int modeSenseCDCapabilitiesPage(int pc, int idx, int pageCode, int* pageFound);
 
 int modeSelectCDAudioControlPage(int pageLen, int idx);
+
+int modeMaxSectorSize();
+int modeMinSectorSize();
