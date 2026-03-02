@@ -529,7 +529,7 @@ extern "C" int scsiToolboxCommand()
     {
         char img_dir[4];
         dbgmsg("TOOLBOX_SET_NEXT_CD");
-        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, static_cast<int>(img.scsiId) & S2S_CFG_TARGET_ID_BITS);
+        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         onSetNextCD(img_dir);
     }
     else if(unlikely(command == TOOLBOX_METADATA))
@@ -541,7 +541,7 @@ extern "C" int scsiToolboxCommand()
     {
         char img_dir[4];
         dbgmsg("TOOLBOX_COUNT_CDS");
-        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, static_cast<int>(img.scsiId) & S2S_CFG_TARGET_ID_BITS);
+        snprintf(img_dir, sizeof(img_dir), CD_IMG_DIR, scsiEncodeID(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         doCountFiles(img_dir, true);
     }
     else
