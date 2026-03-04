@@ -28,6 +28,10 @@
 #   define PLATFORM_REVISION "1.0"
 #   define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_ASYNC_50
 #   include "ZuluSCSI_v1_0_gpio.h"
+// \todo this needs to verified because 1.0 uses the SPI instead of SDIO 
+#   define PLATFORM_OPTIMAL_MIN_SD_WRITE_SIZE 4096
+#   define PLATFORM_OPTIMAL_MAX_SD_WRITE_SIZE 65536
+#   define PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE 8192
 #else
 #   define PLATFORM_NAME "ZuluSCSI v1.1+"
 #   define PLATFORM_REVISION "1.1+"

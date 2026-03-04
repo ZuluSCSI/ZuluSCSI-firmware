@@ -433,6 +433,8 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.vendorExtensions =  log_ini_getl(section, "VendorExtensions", cfg.vendorExtensions, CONFIGFILE, log_settings);
 
     cfg.blockSize = log_ini_getl(section, "BlockSize", cfg.blockSize, CONFIGFILE, log_settings);
+    cfg.tapeLengthMB = log_ini_getl(section, "TapeLengthMB", cfg.tapeLengthMB, CONFIGFILE, log_settings);
+    cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings);
 
 
 #if ENABLE_COW
@@ -559,6 +561,10 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     cfgDev.cowButton = 0;
     cfgDev.cowButtonInvert = false;
 #endif
+
+    cfgDev.tapeLengthMB = 0; // Default tape length in MB is unlimited
+    cfgDev.tapeDensity = 0x10; // Default density: QIC-150
+
 
     // System-specific defaults
 

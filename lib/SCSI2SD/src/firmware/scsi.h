@@ -74,7 +74,7 @@ typedef enum
 
 // Maximum value for bytes-per-sector.
 #ifndef MAX_SECTOR_SIZE
-#define MAX_SECTOR_SIZE 8192
+#define MAX_SECTOR_SIZE (8 * 1024)
 #endif
 
 #ifndef MIN_SECTOR_SIZE
@@ -90,6 +90,8 @@ typedef enum
 typedef struct
 {
 	uint16_t bytesPerSector;
+	uint8_t tapeDensity;
+	uint8_t tapeBufferedMode; // Buffered mode field from MODE SELECT byte 2
 } LiveCfg;
 
 typedef struct
@@ -102,6 +104,7 @@ typedef struct
 
 	ScsiSense sense;
 
+	
 	uint16_t unitAttention; // Set to the sense qualifier key to be returned.
 	uint8_t unitAttentionStop; // Indicates if unit attention has to be stopped.
 
@@ -117,7 +120,7 @@ typedef struct
 
 	uint8_t busWidth; // 0: 8-bit, 1: 16-bit, 2: 32-bit
 
-	uint8_t tapeMarkCount; // Number of times tape mark has been reached
+	uint8_t tapeBOM; // Beginning of Medium flag (tape at position 0)
 } TargetState;
 
 typedef struct

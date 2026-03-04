@@ -56,19 +56,19 @@ extern bool g_audio_stopped;
 
 
 // historical playback status information
-static audio_status_code audio_last_status[S2S_MAX_TARGETS + 1] = {
+static audio_status_code audio_last_status[MAX_AUDIO_TARGETS] = {
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS,
     ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, ASC_NO_STATUS, 
     ASC_NO_STATUS
 };
 
 // volume information for targets
-static volatile uint16_t volumes[S2S_MAX_TARGETS + 1] = {
+static volatile uint16_t volumes[MAX_AUDIO_TARGETS] = {
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH,
     DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, DEFAULT_VOLUME_LEVEL_2CH, 
     DEFAULT_VOLUME_LEVEL_2CH
 };
-static volatile uint16_t channels[S2S_MAX_TARGETS + 1] = {
+static volatile uint16_t channels[MAX_AUDIO_TARGETS] = {
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK, AUDIO_CHANNEL_ENABLE_MASK,
     AUDIO_CHANNEL_ENABLE_MASK
@@ -387,9 +387,10 @@ bool audio_set_paused(uint8_t id, bool paused)
     return true;
 }
 
-void audio_stop(uint8_t id)
+void audio_stop(uint8_t id, bool startup_skip)
 {
     if (id != 0xFF && audio_owner != id) return;
+    if (startup_skip && audio_owner == AUDIO_STARTUP_PLAYBACK_OWNER) return;
 
     spi_disable(ODE_I2S_SPI);
     dma_channel_disable(ODE_DMA, ODE_DMA_CH);

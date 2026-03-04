@@ -42,6 +42,17 @@ extern "C" {
 #include <scsi.h>
 }
 
+// Optimal size for read block from SCSI bus
+// For platforms with nonblocking transfer, this can be large.
+// For Akai MPC60 compatibility this has to be at least 5120
+#ifndef PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE
+#ifdef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
+#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 65536
+#else
+#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 8192
+#endif
+#endif
+
 // Extended configuration stored alongside the normal SCSI2SD target information
 struct image_config_t: public S2S_TargetCfg
 {
@@ -68,12 +79,6 @@ struct image_config_t: public S2S_TargetCfg
     uint32_t ejectFixedDiskTimer;
     bool ejectFixedDiskWriteBlocked;
 
-    // For tape drive emulation
-    uint32_t tape_pos; // current position in blocks
-    uint32_t tape_mark_index; // a direct relationship to the file in a multi image file tape 
-    uint32_t tape_mark_count; // the number of marks
-    uint32_t tape_mark_block_offset; // Sum of the the previous image file sizes at the current mark
-    bool     tape_load_next_file;
     // True if there is a subdirectory of images for this target
     bool image_directory;
 
@@ -101,6 +106,7 @@ struct image_config_t: public S2S_TargetCfg
     // the bin file for the cue sheet, the directory for multi bin files, or closed if neither
     FsFile bin_container;
 
+
     inline bool is_multi_bin_cue() {return bin_container.isOpen() && bin_container.isDir();}
 
     // Right-align vendor / product type strings
@@ -115,6 +121,9 @@ struct image_config_t: public S2S_TargetCfg
 
     // Warning about geometry settings
     bool geometrywarningprinted;
+
+    // Set the device type
+    void setDeviceType(S2S_CFG_TYPE device_type);
 
     // Clear any image state to zeros
     void clear();
@@ -206,3 +215,23 @@ int8_t scsiParseId(const char scsi_id_text);
 
 // Encode ID as char
 char scsiEncodeID(const uint8_t scsi_id);
+
+// Begin writing to prefetch buffer.
+// If the buffer is not available, returns NULL.
+// Otherwise returns pointer to which caller can write up to maxSectors sectors.
+uint8_t *scsiDiskPrefetchBeginWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *maxSectors);
+
+// Mark prefetch sectors in buffer as valid.
+// Should be called after scsiDiskPrefetchBeginWrite().
+void scsiDiskPrefetchFinishWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t numSectors);
+
+// Check if data is available from prefetch buffer.
+// If data is not found, returns NULL.
+// Otherwise returns pointer for reading up to numSectors sectors of data, beginning at firstSector.
+const uint8_t *scsiDiskPrefetchRead(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *numSectors);
+
+// Invalidate SCSI prefetch buffer
+// Invalidate SCSI prefetch buffer.
+// If scsiId is given, only invalidate if that device has data in buffer.
+// If scsiId is not given (value -1), invalidate for all devices.
+void scsiDiskPrefetchInvalidate(uint8_t scsiId = (uint8_t)-1);

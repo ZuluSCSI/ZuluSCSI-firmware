@@ -29,6 +29,8 @@
 #include "ZuluSCSI_audio.h"
 #endif
 #include "ZuluSCSI_cdrom.h"
+#include "ZuluSCSI_tape.h"
+#include <scsi.h>
 #include "ZuluSCSI_log.h"
 
 extern "C" {
@@ -217,4 +219,23 @@ int modeSelectCDAudioControlPage(int pageLen, int idx)
 #else
     return 0;
 #endif
+}
+
+
+int modeMaxSectorSize()
+{
+    if (scsiDev.target->cfg->deviceType == S2S_CFG_TYPE::S2S_CFG_SEQUENTIAL)
+    {
+        return scsiTapeMaxSectorSize();
+    }
+    return MAX_SECTOR_SIZE;
+
+}
+int modeMinSectorSize()
+{
+    if (scsiDev.target->cfg->deviceType == S2S_CFG_TYPE::S2S_CFG_SEQUENTIAL)
+    {
+        return scsiTapeMinSectorSize();
+    }
+    return MIN_SECTOR_SIZE;
 }
