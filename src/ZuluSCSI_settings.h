@@ -207,7 +207,7 @@ public:
 protected:
     // Set default drive vendor / product info after the image file
     // is loaded and the device type is known.
-    void setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type);
+    void setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type, bool log_settings);
 
     // Settings for the specific device
     const char **deviceInitST32430N(uint8_t scsiId);
