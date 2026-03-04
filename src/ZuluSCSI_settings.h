@@ -174,12 +174,12 @@ public:
     // Initialize settings for all devices with a preset configuration,
     //  or return the default config if unknown system type.
     // Then overwrite any settings with those in the CONFIGFILE
-    scsi_system_settings_t *initSystem(const char *presetName);
+    scsi_system_settings_t *initSystem(const char *presetName, bool disable_logging = false);
 
     // Copy any shared device setting done the initSystemSettings as default settings, 
     // or return the default config if unknown device type.
     // Then overwrite any settings with those in the CONFIGFILE
-    scsi_device_settings_t *initDevice(uint8_t scsiId, S2S_CFG_TYPE type);
+    scsi_device_settings_t *initDevice(uint8_t scsiId, S2S_CFG_TYPE type, bool disable_logging = false);
     // return the system settings struct to read values
     scsi_system_settings_t *getSystem();
 
@@ -209,7 +209,7 @@ public:
 protected:
     // Set default drive vendor / product info after the image file
     // is loaded and the device type is known.
-    void setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type);
+    void setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type, bool log_settings);
 
     // Settings for the specific device
     const char **deviceInitST32430N(uint8_t scsiId);
