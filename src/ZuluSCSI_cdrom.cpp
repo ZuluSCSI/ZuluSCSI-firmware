@@ -1895,9 +1895,13 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
 
     // Use two buffers alternately for formatting sector data
     uint32_t result_length = sector_length + (field_q_subchannel ? 16 : 0) + (add_fake_headers ? 304 : 0);
-    uint8_t *buf0 = scsiDev.data;
-    uint8_t *buf1 = scsiDev.data + result_length;
     bool sequential_file_read = sector_length > 0 && skip_begin == 0;
+    uint32_t direct_sectors_per_buffer = 0;
+    if (sequential_file_read && !add_fake_headers && !field_q_subchannel &&
+        result_length == (uint32_t)sector_length)
+    {
+        direct_sectors_per_buffer = (sizeof(scsiDev.data) / 2) / result_length;
+    }
     auto failRead = [&](const char *operation, uint32_t failed_lba)
     {
         logmsg("CD-ROM ", operation, " failed at LBA ", (int)failed_lba,
@@ -1915,108 +1919,163 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
         return;
     }
 
-    // Format the sectors for transfer
-    for (uint32_t idx = 0; idx < length; idx++)
+    if (direct_sectors_per_buffer > 1)
     {
-        platform_poll();
-        diskEjectButtonUpdate(false);
+        uint32_t direct_buffer_bytes = direct_sectors_per_buffer * result_length;
+        uint8_t *buf0 = scsiDev.data;
+        uint8_t *buf1 = scsiDev.data + direct_buffer_bytes;
 
-        if (!sequential_file_read && sector_length > 0 &&
-            !img.file.seek(offset + idx * trackinfo.sector_length + skip_begin))
+        for (uint32_t idx = 0; idx < length; )
         {
-            failRead("seek", lba + idx);
-            return;
-        }
-
-        // Verify that previous write using this buffer has finished
-        uint8_t *buf = ((idx & 1) ? buf1 : buf0);
-        uint8_t *bufstart = buf;
-        uint32_t start = millis();
-        while (!scsiIsWriteFinished(buf + result_length - 1) && !scsiDev.resetFlag)
-        {
-            if ((uint32_t)(millis() - start) > 5000)
-            {
-                logmsg("doReadCD() timeout waiting for previous to finish");
-                scsiDev.resetFlag = 1;
-            }
             platform_poll();
             diskEjectButtonUpdate(false);
+
+            uint32_t sectors_this_time = length - idx;
+            if (sectors_this_time > direct_sectors_per_buffer)
+            {
+                sectors_this_time = direct_sectors_per_buffer;
+            }
+            uint32_t transfer_bytes = sectors_this_time * result_length;
+
+            // Verify that previous write using this buffer has finished
+            uint8_t *buf = (((idx / direct_sectors_per_buffer) & 1) ? buf1 : buf0);
+            uint32_t start = millis();
+            while (!scsiIsWriteFinished(buf + transfer_bytes - 1) && !scsiDev.resetFlag)
+            {
+                if ((uint32_t)(millis() - start) > 5000)
+                {
+                    logmsg("doReadCD() timeout waiting for previous to finish");
+                    scsiDev.resetFlag = 1;
+                }
+                platform_poll();
+                diskEjectButtonUpdate(false);
+            }
+            if (scsiDev.resetFlag) break;
+
+            if (img.file.read(buf, transfer_bytes) != transfer_bytes)
+            {
+                failRead("read", lba + idx);
+                return;
+            }
+
+            scsiStartWrite(buf, transfer_bytes);
+            idx += sectors_this_time;
+
+            // Reset the watchdog while the transfer is progressing.
+            // If the host stops transferring, the watchdog will eventually expire.
+            // This is needed to avoid hitting the watchdog if the host performs
+            // a large transfer compared to its transfer speed.
+            platform_reset_watchdog();
         }
-        if (scsiDev.resetFlag) break;
-        if ((g_scsi_settings.getDevice(img.scsiId & S2S_CFG_TARGET_ID_BITS)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR))
+    }
+    else
+    {
+        uint8_t *buf0 = scsiDev.data;
+        uint8_t *buf1 = scsiDev.data + result_length;
+
+        // Format the sectors for transfer
+        for (uint32_t idx = 0; idx < length; idx++)
         {
-            if (sector_length > 0)
+            platform_poll();
+            diskEjectButtonUpdate(false);
+
+            if (!sequential_file_read && sector_length > 0 &&
+                !img.file.seek(offset + idx * trackinfo.sector_length + skip_begin))
             {
-                // User data
-                if (img.file.read(buf, sector_length) != sector_length)
-                {
-                    failRead("read", lba + idx);
-                    return;
-                }
-                buf += sector_length;
+                failRead("seek", lba + idx);
+                return;
             }
+
+            // Verify that previous write using this buffer has finished
+            uint8_t *buf = ((idx & 1) ? buf1 : buf0);
+            uint8_t *bufstart = buf;
+            uint32_t start = millis();
+            while (!scsiIsWriteFinished(buf + result_length - 1) && !scsiDev.resetFlag)
+            {
+                if ((uint32_t)(millis() - start) > 5000)
+                {
+                    logmsg("doReadCD() timeout waiting for previous to finish");
+                    scsiDev.resetFlag = 1;
+                }
+                platform_poll();
+                diskEjectButtonUpdate(false);
+            }
+            if (scsiDev.resetFlag) break;
+            if ((g_scsi_settings.getDevice(img.scsiId & S2S_CFG_TARGET_ID_BITS)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR))
+            {
+                if (sector_length > 0)
+                {
+                    // User data
+                    if (img.file.read(buf, sector_length) != sector_length)
+                    {
+                        failRead("read", lba + idx);
+                        return;
+                    }
+                    buf += sector_length;
+                }
+            }
+            else
+            {
+                if (add_fake_headers)
+                {
+                    // 12-byte data sector sync pattern
+                    *buf++ = 0x00;
+                    for (int i = 0; i < 10; i++)
+                    {
+                        *buf++ = 0xFF;
+                    }
+                    *buf++ = 0x00;
+
+                    // 4-byte data sector header
+                    LBA2MSFBCD(lba + idx, buf, false);
+                    buf += 3;
+                    *buf++ = 0x01; // Mode 1
+                }
+
+                if (sector_length > 0)
+                {
+                    // User data
+                    if (img.file.read(buf, sector_length) != sector_length)
+                    {
+                        failRead("read", lba + idx);
+                        return;
+                    }
+                    buf += sector_length;
+                }
+
+                if (add_fake_headers)
+                {
+                    // 288 bytes of ECC
+                    memset(buf, 0, 288);
+                    buf += 288;
+                }
+
+                if (field_q_subchannel)
+                {
+                    // Formatted Q subchannel data
+                    // Refer to table 354 in T10/1545-D MMC-4 Revision 5a
+                    // and ECMA-130 22.3.3
+                    *buf++ = (trackinfo.track_mode == CUETrack_AUDIO ? 0x10 : 0x14); // Control & ADR
+                    *buf++ = trackinfo.track_number;
+                    *buf++ = (lba + idx >= trackinfo.data_start) ? 1 : 0; // Index number (0 = pregap)
+                    int32_t rel = (int32_t)(lba + idx) - (int32_t)trackinfo.data_start;
+                    LBA2MSF(rel, buf, true); buf += 3;
+                    *buf++ = 0;
+                    LBA2MSF(lba + idx, buf, false); buf += 3;
+                    *buf++ = 0; *buf++ = 0; // CRC (optional)
+                    *buf++ = 0; *buf++ = 0; *buf++ = 0; // (pad)
+                    *buf++ = 0; // No P subchannel
+                }
+            }
+            assert(buf == bufstart + result_length);
+            scsiStartWrite(bufstart, result_length);
+
+            // Reset the watchdog while the transfer is progressing.
+            // If the host stops transferring, the watchdog will eventually expire.
+            // This is needed to avoid hitting the watchdog if the host performs
+            // a large transfer compared to its transfer speed.
+            platform_reset_watchdog();
         }
-        else 
-        {
-            if (add_fake_headers)
-            {
-                // 12-byte data sector sync pattern
-                *buf++ = 0x00;
-                for (int i = 0; i < 10; i++)
-                {
-                    *buf++ = 0xFF;
-                }
-                *buf++ = 0x00;
-
-                // 4-byte data sector header
-                LBA2MSFBCD(lba + idx, buf, false);
-                buf += 3;
-                *buf++ = 0x01; // Mode 1
-            }
-
-            if (sector_length > 0)
-            {
-                // User data
-                if (img.file.read(buf, sector_length) != sector_length)
-                {
-                    failRead("read", lba + idx);
-                    return;
-                }
-                buf += sector_length;
-            }
-
-            if (add_fake_headers)
-            {
-                // 288 bytes of ECC
-                memset(buf, 0, 288);
-                buf += 288;
-            }
-
-            if (field_q_subchannel)
-            {
-                // Formatted Q subchannel data
-                // Refer to table 354 in T10/1545-D MMC-4 Revision 5a
-                // and ECMA-130 22.3.3
-                *buf++ = (trackinfo.track_mode == CUETrack_AUDIO ? 0x10 : 0x14); // Control & ADR
-                *buf++ = trackinfo.track_number;
-                *buf++ = (lba + idx >= trackinfo.data_start) ? 1 : 0; // Index number (0 = pregap)
-                int32_t rel = (int32_t)(lba + idx) - (int32_t)trackinfo.data_start;
-                LBA2MSF(rel, buf, true); buf += 3;
-                *buf++ = 0;
-                LBA2MSF(lba + idx, buf, false); buf += 3;
-                *buf++ = 0; *buf++ = 0; // CRC (optional)
-                *buf++ = 0; *buf++ = 0; *buf++ = 0; // (pad)
-                *buf++ = 0; // No P subchannel
-            }
-        }
-        assert(buf == bufstart + result_length);
-        scsiStartWrite(bufstart, result_length);
-
-        // Reset the watchdog while the transfer is progressing.
-        // If the host stops transferring, the watchdog will eventually expire.
-        // This is needed to avoid hitting the watchdog if the host performs
-        // a large transfer compared to its transfer speed.
-        platform_reset_watchdog();
     }
 
     scsiFinishWrite();
