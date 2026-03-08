@@ -55,7 +55,43 @@ extern "C" bool scsiStatusBSY()
 /************************/
 
 volatile uint8_t g_scsi_sts_selection;
+volatile uint8_t g_scsi_sts_selection_initiator;
 volatile uint8_t g_scsi_ctrl_bsy;
+
+static uint8_t pack_selection_status(uint8_t sel_bits)
+{
+    int sel_id = -1;
+
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        if (scsiDev.targets[i].targetId < S2S_MAX_TARGETS && scsiDev.targets[i].cfg)
+        {
+            if (sel_bits & (1 << scsiDev.targets[i].targetId))
+            {
+                sel_id = scsiDev.targets[i].targetId;
+                break;
+            }
+        }
+    }
+
+    if (sel_id < 0)
+    {
+        return 0;
+    }
+
+    g_scsi_sts_selection_initiator = 0xFF;
+    for (int id = 0; id < 8; id++)
+    {
+        if (id != sel_id && (sel_bits & (1 << id)))
+        {
+            g_scsi_sts_selection_initiator = id;
+            break;
+        }
+    }
+
+    uint8_t atn_flag = SCSI_IN(ATN) ? SCSI_STS_SELECTION_ATN : 0;
+    return SCSI_STS_SELECTION_SUCCEEDED | atn_flag | sel_id;
+}
 
 void scsi_bsy_deassert_interrupt()
 {
@@ -63,23 +99,10 @@ void scsi_bsy_deassert_interrupt()
     {
         // Check if any of the targets we simulate is selected
         uint8_t sel_bits = SCSI_IN_DATA();
-        int sel_id = -1;
-        for (int i = 0; i < S2S_MAX_TARGETS; i++)
+        uint8_t sel_status = pack_selection_status(sel_bits);
+        if (sel_status != 0)
         {
-            if (scsiDev.targets[i].targetId < S2S_MAX_TARGETS && scsiDev.targets[i].cfg)
-            {
-                if (sel_bits & (1 << scsiDev.targets[i].targetId))
-                {
-                    sel_id = scsiDev.targets[i].targetId;
-                    break;
-                }
-            }
-        }
-
-        if (sel_id >= 0)
-        {
-            uint8_t atn_flag = SCSI_IN(ATN) ? SCSI_STS_SELECTION_ATN : 0;
-            g_scsi_sts_selection = SCSI_STS_SELECTION_SUCCEEDED | atn_flag | sel_id;
+            g_scsi_sts_selection = sel_status;
         }
 
         // selFlag is required for Philips P2000C which releases it after 600ns
@@ -101,6 +124,13 @@ extern "C" bool scsiStatusSEL()
     }
 
     return SCSI_IN(SEL);
+}
+
+extern "C" bool scsiPhyReselect(uint8_t targetId, uint8_t initiatorId)
+{
+    (void)targetId;
+    (void)initiatorId;
+    return false;
 }
 
 /************************/
@@ -127,6 +157,7 @@ extern "C" void scsiPhyReset(void)
 {
     SCSI_RELEASE_OUTPUTS();
     g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
     g_scsi_ctrl_bsy = 0;
 
     /* Implement here code to enable two interrupts:

@@ -81,31 +81,54 @@ extern "C" bool scsiStatusBSY()
 /* SCSI selection logic */
 /************************/
 
+static SCSI_PHASE g_scsi_phase;
 volatile uint8_t g_scsi_sts_selection;
+volatile uint8_t g_scsi_sts_selection_initiator;
 volatile uint8_t g_scsi_ctrl_bsy;
+
+static uint8_t pack_selection_status(uint8_t sel_bits)
+{
+    int sel_id = -1;
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        if (scsiDev.targets[i].targetId <= 7 && scsiDev.targets[i].cfg)
+        {
+            if (sel_bits & (1 << scsiDev.targets[i].targetId))
+            {
+                sel_id = scsiDev.targets[i].targetId;
+                break;
+            }
+        }
+    }
+
+    if (sel_id < 0)
+    {
+        return 0;
+    }
+
+    g_scsi_sts_selection_initiator = 0xFF;
+    for (int id = 0; id < 8; id++)
+    {
+        if (id != sel_id && (sel_bits & (1 << id)))
+        {
+            g_scsi_sts_selection_initiator = id;
+            break;
+        }
+    }
+
+    uint8_t atn_flag = SCSI_IN(ATN) ? SCSI_STS_SELECTION_ATN : 0;
+    return SCSI_STS_SELECTION_SUCCEEDED | atn_flag | sel_id;
+}
 
 static void scsi_bsy_deassert_interrupt()
 {
     if (!SCSI_IN(BSY) && ((g_moved_select_in && SCSI_IN(ODE_SEL)) || (!g_moved_select_in && SCSI_IN(SEL))))
     {
         uint8_t sel_bits = SCSI_IN_DATA();
-        int sel_id = -1;
-        for (int i = 0; i < S2S_MAX_TARGETS; i++)
+        uint8_t sel_status = pack_selection_status(sel_bits);
+        if (sel_status != 0)
         {
-            if (scsiDev.targets[i].targetId <= 7 && scsiDev.targets[i].cfg)
-            {
-                if (sel_bits & (1 << scsiDev.targets[i].targetId))
-                {
-                    sel_id = scsiDev.targets[i].targetId;
-                    break;
-                }
-            }
-        }
-
-        if (sel_id >= 0)
-        {
-            uint8_t atn_flag = SCSI_IN(ATN) ? SCSI_STS_SELECTION_ATN : 0;
-            g_scsi_sts_selection = SCSI_STS_SELECTION_SUCCEEDED | atn_flag | sel_id;
+            g_scsi_sts_selection = sel_status;
         }
 
         // selFlag is required for Philips P2000C which releases it after 600ns
@@ -132,6 +155,75 @@ extern "C" bool scsiStatusSEL()
     }
     return SCSI_IN(SEL);
      
+}
+
+extern "C" bool scsiPhyReselect(uint8_t targetId, uint8_t initiatorId)
+{
+    if (initiatorId > 7 || targetId >= S2S_MAX_TARGETS)
+    {
+        return false;
+    }
+
+    if (SCSI_IN(BSY) || scsiStatusSEL())
+    {
+        return false;
+    }
+
+    s2s_delay_us(1);
+    if (SCSI_IN(BSY) || scsiStatusSEL())
+    {
+        return false;
+    }
+
+    g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
+    scsiDev.selFlag = 0;
+    g_scsi_phase = RESELECTION;
+    scsiLogPhaseChange(RESELECTION);
+    SCSI_OUT(BSY, 1);
+    for (int wait = 0; wait < 10; wait++)
+    {
+        s2s_delay_us(1);
+        if (SCSI_IN_DATA() != 0)
+        {
+            SCSI_OUT(BSY, 0);
+            g_scsi_phase = BUS_FREE;
+            return false;
+        }
+    }
+
+    SCSI_OUT(IO, 1);
+    SCSI_OUT(SEL, 1);
+    s2s_delay_us(1);
+    SCSI_OUT_DATA((1u << targetId) | (1u << initiatorId));
+    s2s_delay_us(1);
+    SCSI_OUT(BSY, 0);
+
+    uint32_t waitStart_ms = s2s_getTime_ms();
+    while (!SCSI_IN(BSY) &&
+           !scsiDev.resetFlag &&
+           s2s_elapsedTime_ms(waitStart_ms) < 250)
+    {
+        platform_poll();
+    }
+
+    if (!SCSI_IN(BSY))
+    {
+        SCSI_RELEASE_DATA_REQ();
+        SCSI_OUT(SEL, 0);
+        SCSI_OUT(IO, 0);
+        g_scsi_phase = BUS_FREE;
+        return false;
+    }
+
+    SCSI_OUT(BSY, 1);
+    s2s_delay_us(1);
+    SCSI_RELEASE_DATA_REQ();
+    SCSI_OUT(SEL, 0);
+    g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
+    scsiDev.selFlag = 0;
+    return true;
 }
 
 /************************/
@@ -201,6 +293,7 @@ extern "C" void scsiPhyReset(void)
     scsi_accel_dma_stopWrite();
 
     g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
     g_scsi_ctrl_bsy = 0;
     g_scsi_writereq.count = 0;
     init_irqs();
@@ -224,8 +317,6 @@ extern "C" void scsiPhyReset(void)
 /************************/
 /* SCSI bus phase logic */
 /************************/
-
-static SCSI_PHASE g_scsi_phase;
 
 extern "C" void scsiEnterPhase(int phase)
 {
@@ -295,6 +386,7 @@ void scsiEnterBusFree(void)
 {
     g_scsi_phase = BUS_FREE;
     g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
     g_scsi_ctrl_bsy = 0;
     scsiDev.cdbLen = 0;
     
@@ -644,5 +736,3 @@ static void init_irqs()
         NVIC_EnableIRQ(SCSI_SEL_IRQn);
     }
 }
-
-
