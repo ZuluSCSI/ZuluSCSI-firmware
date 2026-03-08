@@ -2289,6 +2289,87 @@ static void scsiDiskStartWriteAndVerify(uint32_t lba, uint32_t blocks)
     }
 }
 
+static void scsiDiskVerifyMedium(uint32_t lba, uint32_t blocks)
+{
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t capacity = img.file.size() / bytesPerSector;
+
+    dbgmsg("------ Verify medium ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+    if (unlikely(((uint64_t) lba) + blocks > capacity))
+    {
+        logmsg("WARNING: Host attempted verify at sector ", (int)lba, "+", (int)blocks,
+              ", exceeding image size ", (int)capacity, " sectors (",
+              (int)bytesPerSector, "B/sector)");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+    }
+    else if (blocks == 0)
+    {
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+    else
+    {
+        uint32_t maxBlocksPerChunk = sizeof(scsiDev.data) / bytesPerSector;
+        if (maxBlocksPerChunk == 0)
+        {
+            maxBlocksPerChunk = 1;
+        }
+
+        transfer.lba = lba;
+        if (!img.file.seek((uint64_t)lba * bytesPerSector))
+        {
+            logmsg("Seek to ", lba, " failed during VERIFY for SCSI ID ", (int)scsiDev.target->targetId);
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = NO_SEEK_COMPLETE;
+            scsiDev.phase = STATUS;
+            return;
+        }
+
+        for (uint32_t verifiedBlocks = 0; verifiedBlocks < blocks; )
+        {
+            platform_poll();
+            diskEjectButtonUpdate(false);
+            if (scsiDev.resetFlag)
+            {
+                return;
+            }
+
+            uint32_t chunkBlocks = blocks - verifiedBlocks;
+            if (chunkBlocks > maxBlocksPerChunk)
+            {
+                chunkBlocks = maxBlocksPerChunk;
+            }
+            uint32_t chunkBytes = chunkBlocks * bytesPerSector;
+            if (img.file.read(scsiDev.data, chunkBytes) != chunkBytes)
+            {
+                uint32_t failingLba = lba + verifiedBlocks;
+                transfer.lba = failingLba;
+                scsiDev.target->sense.info = failingLba;
+                logmsg("SD card read failed during VERIFY at sector ", (int)failingLba,
+                      " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = MEDIUM_ERROR;
+                scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
+                scsiDev.phase = STATUS;
+                return;
+            }
+
+            verifiedBlocks += chunkBlocks;
+            transfer.lba = lba + verifiedBlocks;
+            platform_reset_watchdog();
+        }
+
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+}
+
 static void scsiDiskHandleVerify(uint64_t lba, uint32_t blocks, bool compareData)
 {
     if (lba > UINT32_MAX)
@@ -2306,22 +2387,7 @@ static void scsiDiskHandleVerify(uint64_t lba, uint32_t blocks, bool compareData
         return;
     }
 
-    // We do not perform a real media scan yet, but still validate the
-    // requested LBA span.
-    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint32_t capacity = img.file.size() / scsiDev.target->liveCfg.bytesPerSector;
-    if (unlikely(lba + blocks > capacity))
-    {
-        scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
-        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
-        scsiDev.phase = STATUS;
-    }
-    else
-    {
-        scsiDev.status = GOOD;
-        scsiDev.phase = STATUS;
-    }
+    scsiDiskVerifyMedium((uint32_t)lba, blocks);
 }
 
 static void diskVerifyDataOut()
