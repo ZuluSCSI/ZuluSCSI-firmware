@@ -1756,6 +1756,35 @@ static void doFormatUnitHeader(void)
 /* ReadCapacity command */
 /************************/
 
+static uint64_t getCapacityBlocks(image_config_t &img, uint32_t bytesPerSector)
+{
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI))
+    {
+        return 1;
+    }
+    return img.file.size() / bytesPerSector;
+}
+
+static void storeBe32(uint8_t *dest, uint32_t value)
+{
+    dest[0] = value >> 24;
+    dest[1] = value >> 16;
+    dest[2] = value >> 8;
+    dest[3] = value;
+}
+
+static void storeBe64(uint8_t *dest, uint64_t value)
+{
+    dest[0] = value >> 56;
+    dest[1] = value >> 48;
+    dest[2] = value >> 40;
+    dest[3] = value >> 32;
+    dest[4] = value >> 24;
+    dest[5] = value >> 16;
+    dest[6] = value >> 8;
+    dest[7] = value;
+}
+
 static void doReadCapacity()
 {
     uint32_t lba = (((uint32_t) scsiDev.cdb[2]) << 24) +
@@ -1766,16 +1795,7 @@ static void doReadCapacity()
 
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-    uint32_t capacity;
-
-    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI))
-    {
-        capacity = 1;
-    }
-    else
-    {
-        capacity = img.file.size() / bytesPerSector;
-    }
+    uint64_t capacity = getCapacityBlocks(img, bytesPerSector);
 
     if (!pmi && lba)
     {
@@ -1790,23 +1810,68 @@ static void doReadCapacity()
     }
     else if (capacity > 0)
     {
-        uint32_t highestBlock = capacity - 1;
+        uint32_t highestBlock = capacity - 1 > UINT32_MAX ? UINT32_MAX : (uint32_t)(capacity - 1);
 
 	if (pmi && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD)
 	{
 		highestBlock = 0x00001053;
 	}
-        scsiDev.data[0] = highestBlock >> 24;
-        scsiDev.data[1] = highestBlock >> 16;
-        scsiDev.data[2] = highestBlock >> 8;
-        scsiDev.data[3] = highestBlock;
-
-        uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-        scsiDev.data[4] = bytesPerSector >> 24;
-        scsiDev.data[5] = bytesPerSector >> 16;
-        scsiDev.data[6] = bytesPerSector >> 8;
-        scsiDev.data[7] = bytesPerSector;
+        storeBe32(scsiDev.data, highestBlock);
+        storeBe32(scsiDev.data + 4, bytesPerSector);
         scsiDev.dataLen = 8;
+        scsiDev.phase = DATA_IN;
+    }
+    else
+    {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = NOT_READY;
+        scsiDev.target->sense.asc = MEDIUM_NOT_PRESENT;
+        scsiDev.phase = STATUS;
+    }
+}
+
+static void doReadCapacity16()
+{
+    uint64_t lba =
+        (((uint64_t) scsiDev.cdb[2]) << 56) +
+        (((uint64_t) scsiDev.cdb[3]) << 48) +
+        (((uint64_t) scsiDev.cdb[4]) << 40) +
+        (((uint64_t) scsiDev.cdb[5]) << 32) +
+        (((uint64_t) scsiDev.cdb[6]) << 24) +
+        (((uint64_t) scsiDev.cdb[7]) << 16) +
+        (((uint64_t) scsiDev.cdb[8]) << 8) +
+        scsiDev.cdb[9];
+    uint32_t allocationLength =
+        (((uint32_t) scsiDev.cdb[10]) << 24) +
+        (((uint32_t) scsiDev.cdb[11]) << 16) +
+        (((uint32_t) scsiDev.cdb[12]) << 8) +
+        scsiDev.cdb[13];
+    int pmi = scsiDev.cdb[14] & 1;
+
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint64_t capacity = getCapacityBlocks(img, bytesPerSector);
+
+    if (!pmi && lba)
+    {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+        scsiDev.phase = STATUS;
+    }
+    else if (capacity > 0)
+    {
+        uint64_t highestBlock = capacity - 1;
+
+        if (pmi && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD)
+        {
+            highestBlock = 0x00001053;
+        }
+
+        memset(scsiDev.data, 0, 32);
+        storeBe64(scsiDev.data, highestBlock);
+        storeBe32(scsiDev.data + 8, bytesPerSector);
+        scsiDev.dataLen = allocationLength < 32 ? allocationLength : 32;
         scsiDev.phase = DATA_IN;
     }
     else
@@ -2625,6 +2690,52 @@ int scsiDiskCommand()
 
         scsiDiskStartRead(lba, blocks);
     }
+    else if (unlikely(command == 0xA8))
+    {
+        // READ(12)
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[6]) << 24) +
+            (((uint32_t) scsiDev.cdb[7]) << 16) +
+            (((uint32_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+
+        scsiDiskStartRead(lba, blocks);
+    }
+    else if (unlikely(command == 0x88))
+    {
+        // READ(16)
+        uint64_t lba =
+            (((uint64_t) scsiDev.cdb[2]) << 56) +
+            (((uint64_t) scsiDev.cdb[3]) << 48) +
+            (((uint64_t) scsiDev.cdb[4]) << 40) +
+            (((uint64_t) scsiDev.cdb[5]) << 32) +
+            (((uint64_t) scsiDev.cdb[6]) << 24) +
+            (((uint64_t) scsiDev.cdb[7]) << 16) +
+            (((uint64_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[10]) << 24) +
+            (((uint32_t) scsiDev.cdb[11]) << 16) +
+            (((uint32_t) scsiDev.cdb[12]) << 8) +
+            scsiDev.cdb[13];
+
+        if (lba > UINT32_MAX)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+            scsiDev.phase = STATUS;
+        }
+        else
+        {
+            scsiDiskStartRead((uint32_t)lba, blocks);
+        }
+    }
     else if (likely(command == 0x0A))
     {
         // WRITE(6)
@@ -2651,6 +2762,52 @@ int scsiDiskCommand()
             scsiDev.cdb[8];
 
         scsiDiskStartWrite(lba, blocks);
+    }
+    else if (unlikely(command == 0xAA))
+    {
+        // WRITE(12)
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[6]) << 24) +
+            (((uint32_t) scsiDev.cdb[7]) << 16) +
+            (((uint32_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+
+        scsiDiskStartWrite(lba, blocks);
+    }
+    else if (unlikely(command == 0x8A))
+    {
+        // WRITE(16)
+        uint64_t lba =
+            (((uint64_t) scsiDev.cdb[2]) << 56) +
+            (((uint64_t) scsiDev.cdb[3]) << 48) +
+            (((uint64_t) scsiDev.cdb[4]) << 40) +
+            (((uint64_t) scsiDev.cdb[5]) << 32) +
+            (((uint64_t) scsiDev.cdb[6]) << 24) +
+            (((uint64_t) scsiDev.cdb[7]) << 16) +
+            (((uint64_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[10]) << 24) +
+            (((uint32_t) scsiDev.cdb[11]) << 16) +
+            (((uint32_t) scsiDev.cdb[12]) << 8) +
+            scsiDev.cdb[13];
+
+        if (lba > UINT32_MAX)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+            scsiDev.phase = STATUS;
+        }
+        else
+        {
+            scsiDiskStartWrite((uint32_t)lba, blocks);
+        }
     }
     else if (unlikely(command == 0x2E))
     {
@@ -2685,6 +2842,22 @@ int scsiDiskCommand()
     {
         // READ CAPACITY
         doReadCapacity();
+    }
+    else if (unlikely(command == 0x9E))
+    {
+        // SERVICE ACTION IN(16)
+        if ((scsiDev.cdb[1] & 0x1F) == 0x10)
+        {
+            // READ CAPACITY(16)
+            doReadCapacity16();
+        }
+        else
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
     }
     else if (unlikely(command == 0x0B))
     {
