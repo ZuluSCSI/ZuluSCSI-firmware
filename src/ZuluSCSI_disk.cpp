@@ -1992,8 +1992,9 @@ static struct {
 } g_disk_transfer;
 
 static struct {
-    bool active;
-} g_disk_verify;
+    bool verify;
+    bool write_and_verify;
+} g_disk_data_out;
 
 /***********************************/
 /* Prefetch buffer for read access */
@@ -2163,16 +2164,17 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
     }
 }
 
-static void diskVerifyStop()
+static void diskSpecialDataOutStop()
 {
-    g_disk_verify.active = false;
+    g_disk_data_out.verify = false;
+    g_disk_data_out.write_and_verify = false;
     scsiDev.dataPtr = 0;
     scsiDev.dataLen = 0;
 }
 
-static void diskVerifyError(uint8_t sense_code, uint16_t asc)
+static void diskSpecialDataOutError(uint8_t sense_code, uint16_t asc)
 {
-    diskVerifyStop();
+    diskSpecialDataOutStop();
     scsiDev.status = CHECK_CONDITION;
     scsiDev.target->sense.code = sense_code;
     scsiDev.target->sense.asc = asc;
@@ -2206,6 +2208,8 @@ static void scsiDiskStartVerify(uint32_t lba, uint32_t blocks)
     else if (blocks == 0)
     {
         // No data phase and no medium access are required.
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
     }
     else
     {
@@ -2216,12 +2220,82 @@ static void scsiDiskStartVerify(uint32_t lba, uint32_t blocks)
         scsiDev.phase = DATA_OUT;
         scsiDev.dataLen = 0;
         scsiDev.dataPtr = 0;
-        g_disk_verify.active = true;
+        g_disk_data_out.verify = true;
+        g_disk_data_out.write_and_verify = false;
 
         if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
         {
             logmsg("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
-            diskVerifyError(MEDIUM_ERROR, NO_SEEK_COMPLETE);
+            diskSpecialDataOutError(MEDIUM_ERROR, NO_SEEK_COMPLETE);
+        }
+    }
+}
+
+static void scsiDiskStartWriteAndVerify(uint32_t lba, uint32_t blocks)
+{
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
+        // Floppies are supposed to be slow. Some systems can't handle a floppy
+        // without an access time
+        s2s_delay_ms(10);
+    }
+
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t capacity = img.file.size() / bytesPerSector;
+
+    dbgmsg("------ Write and verify ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+    if (unlikely(blockDev.state & DISK_WP) ||
+        unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_OPTICAL) ||
+        unlikely(!img.file.isWritable()) ||
+        unlikely(img.ejectFixedDiskWriteBlocked))
+    {
+        logmsg("WARNING: Host attempted WRITE AND VERIFY to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = WRITE_PROTECTED;
+        scsiDev.phase = STATUS;
+    }
+    else if (unlikely(((uint64_t) lba) + blocks > capacity))
+    {
+        logmsg("WARNING: Host attempted WRITE AND VERIFY at sector ", (int)lba, "+", (int)blocks,
+              ", exceeding image size ", (int)capacity, " sectors (",
+              (int)bytesPerSector, "B/sector)");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+    }
+    else if (blocks == 0)
+    {
+        // No data phase and no medium access are required.
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+    else
+    {
+        transfer.multiBlock = true;
+        transfer.lba = lba;
+        transfer.blocks = blocks;
+        transfer.currentBlock = 0;
+        scsiDev.phase = DATA_OUT;
+        scsiDev.dataLen = 0;
+        scsiDev.dataPtr = 0;
+        g_disk_data_out.verify = false;
+        g_disk_data_out.write_and_verify = true;
+
+        scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
+
+        if (img.ejectFixedDiskPending)
+        {
+            // Reset timer due to write access
+            img.ejectFixedDiskTimer = millis();
+        }
+
+        if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
+        {
+            logmsg("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
+            diskSpecialDataOutError(MEDIUM_ERROR, NO_SEEK_COMPLETE);
         }
     }
 }
@@ -2254,6 +2328,11 @@ static void scsiDiskHandleVerify(uint64_t lba, uint32_t blocks, bool compareData
         scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
         scsiDev.phase = STATUS;
     }
+    else
+    {
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
 }
 
 static void diskVerifyDataOut()
@@ -2282,7 +2361,7 @@ static void diskVerifyDataOut()
     scsiRead(compareBuffer, chunkBytes, &parityError);
     if (parityError && (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
     {
-        diskVerifyError(ABORTED_COMMAND, SCSI_PARITY_ERROR);
+        diskSpecialDataOutError(ABORTED_COMMAND, SCSI_PARITY_ERROR);
         return;
     }
 
@@ -2290,7 +2369,7 @@ static void diskVerifyDataOut()
     {
         logmsg("SD card read failed during VERIFY at sector ", (int)(transfer.lba + transfer.currentBlock),
               " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
-        diskVerifyError(MEDIUM_ERROR, UNRECOVERED_READ_ERROR);
+        diskSpecialDataOutError(MEDIUM_ERROR, UNRECOVERED_READ_ERROR);
         return;
     }
 
@@ -2303,7 +2382,7 @@ static void diskVerifyDataOut()
             uint32_t failingLba = transfer.lba + transfer.currentBlock + block;
             transfer.lba = failingLba;
             scsiDev.target->sense.info = failingLba;
-            diskVerifyError(MISCOMPARE, MISCOMPARE_DURING_VERIFY_OPERATION);
+            diskSpecialDataOutError(MISCOMPARE, MISCOMPARE_DURING_VERIFY_OPERATION);
             return;
         }
     }
@@ -2313,7 +2392,89 @@ static void diskVerifyDataOut()
 
     if (transfer.currentBlock == transfer.blocks)
     {
-        diskVerifyStop();
+        diskSpecialDataOutStop();
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+}
+
+static void diskWriteVerifyDataOut()
+{
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t halfBufferSize = sizeof(scsiDev.data) / 2;
+    uint32_t remainingBlocks = transfer.blocks - transfer.currentBlock;
+    uint32_t maxBlocksPerChunk = halfBufferSize / bytesPerSector;
+    if (maxBlocksPerChunk == 0)
+    {
+        maxBlocksPerChunk = 1;
+    }
+    uint32_t chunkBlocks = remainingBlocks;
+    if (chunkBlocks > maxBlocksPerChunk)
+    {
+        chunkBlocks = maxBlocksPerChunk;
+    }
+    uint32_t chunkBytes = chunkBlocks * bytesPerSector;
+    uint32_t chunkLba = transfer.lba + transfer.currentBlock;
+    uint64_t chunkOffset = (uint64_t)chunkLba * bytesPerSector;
+    uint8_t *writeBuffer = scsiDev.data;
+    uint8_t *verifyBuffer = scsiDev.data + halfBufferSize;
+
+    scsiEnterPhase(DATA_OUT);
+
+    int parityError = 0;
+    scsiRead(writeBuffer, chunkBytes, &parityError);
+    if (parityError && (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
+    {
+        diskSpecialDataOutError(ABORTED_COMMAND, SCSI_PARITY_ERROR);
+        return;
+    }
+
+    if (img.file.write(writeBuffer, chunkBytes) != chunkBytes)
+    {
+        logmsg("SD card write failed during WRITE AND VERIFY at sector ", (int)chunkLba,
+              " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
+        diskSpecialDataOutError(MEDIUM_ERROR, WRITE_ERROR_AUTO_REALLOCATION_FAILED);
+        return;
+    }
+
+    img.file.flush();
+
+    if (!img.file.seek(chunkOffset))
+    {
+        logmsg("Seek to ", chunkLba, " failed during WRITE AND VERIFY for SCSI ID ", (int)scsiDev.target->targetId);
+        diskSpecialDataOutError(MEDIUM_ERROR, NO_SEEK_COMPLETE);
+        return;
+    }
+
+    if (img.file.read(verifyBuffer, chunkBytes) != chunkBytes)
+    {
+        logmsg("SD card read failed during WRITE AND VERIFY at sector ", (int)chunkLba,
+              " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
+        diskSpecialDataOutError(MEDIUM_ERROR, UNRECOVERED_READ_ERROR);
+        return;
+    }
+
+    for (uint32_t block = 0; block < chunkBlocks; block++)
+    {
+        uint8_t *writeSector = writeBuffer + block * bytesPerSector;
+        uint8_t *verifySector = verifyBuffer + block * bytesPerSector;
+        if (memcmp(writeSector, verifySector, bytesPerSector) != 0)
+        {
+            uint32_t failingLba = chunkLba + block;
+            transfer.lba = failingLba;
+            scsiDev.target->sense.info = failingLba;
+            diskSpecialDataOutError(MISCOMPARE, MISCOMPARE_DURING_VERIFY_OPERATION);
+            return;
+        }
+    }
+
+    transfer.currentBlock += chunkBlocks;
+    platform_reset_watchdog();
+
+    if (transfer.currentBlock == transfer.blocks)
+    {
+        diskSpecialDataOutStop();
         scsiDev.status = GOOD;
         scsiDev.phase = STATUS;
     }
@@ -2798,7 +2959,8 @@ int scsiDiskCommand()
     int commandHandled = 1;
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
 
-    g_disk_verify.active = false;
+    g_disk_data_out.verify = false;
+    g_disk_data_out.write_and_verify = false;
 
     uint8_t command = scsiDev.cdb[0];
     if (unlikely(command == 0x1B))
@@ -2974,11 +3136,62 @@ int scsiDiskCommand()
     else if (unlikely(command == 0x2E || command == 0xAE || command == 0x8E))
     {
         // WRITE AND VERIFY
-        // Do not claim success unless verify semantics are actually implemented.
-        scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
-        scsiDev.target->sense.asc = INVALID_COMMAND_OPERATION_CODE;
-        scsiDev.phase = STATUS;
+        uint64_t lba = 0;
+        uint32_t blocks = 0;
+
+        if (command == 0x2E)
+        {
+            lba =
+                (((uint32_t) scsiDev.cdb[2]) << 24) +
+                (((uint32_t) scsiDev.cdb[3]) << 16) +
+                (((uint32_t) scsiDev.cdb[4]) << 8) +
+                scsiDev.cdb[5];
+            blocks =
+                (((uint32_t) scsiDev.cdb[7]) << 8) +
+                scsiDev.cdb[8];
+        }
+        else if (command == 0xAE)
+        {
+            lba =
+                (((uint32_t) scsiDev.cdb[2]) << 24) +
+                (((uint32_t) scsiDev.cdb[3]) << 16) +
+                (((uint32_t) scsiDev.cdb[4]) << 8) +
+                scsiDev.cdb[5];
+            blocks =
+                (((uint32_t) scsiDev.cdb[6]) << 24) +
+                (((uint32_t) scsiDev.cdb[7]) << 16) +
+                (((uint32_t) scsiDev.cdb[8]) << 8) +
+                scsiDev.cdb[9];
+        }
+        else
+        {
+            lba =
+                (((uint64_t) scsiDev.cdb[2]) << 56) +
+                (((uint64_t) scsiDev.cdb[3]) << 48) +
+                (((uint64_t) scsiDev.cdb[4]) << 40) +
+                (((uint64_t) scsiDev.cdb[5]) << 32) +
+                (((uint64_t) scsiDev.cdb[6]) << 24) +
+                (((uint64_t) scsiDev.cdb[7]) << 16) +
+                (((uint64_t) scsiDev.cdb[8]) << 8) +
+                scsiDev.cdb[9];
+            blocks =
+                (((uint32_t) scsiDev.cdb[10]) << 24) +
+                (((uint32_t) scsiDev.cdb[11]) << 16) +
+                (((uint32_t) scsiDev.cdb[12]) << 8) +
+                scsiDev.cdb[13];
+        }
+
+        if (lba > UINT32_MAX)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+            scsiDev.phase = STATUS;
+        }
+        else
+        {
+            scsiDiskStartWriteAndVerify((uint32_t)lba, blocks);
+        }
     }
     else if (unlikely(command == 0x04))
     {
@@ -3164,7 +3377,11 @@ void scsiDiskPoll()
     else if (scsiDev.phase == DATA_OUT &&
         transfer.currentBlock != transfer.blocks)
     {
-        if (g_disk_verify.active)
+        if (g_disk_data_out.write_and_verify)
+        {
+            diskWriteVerifyDataOut();
+        }
+        else if (g_disk_data_out.verify)
         {
             diskVerifyDataOut();
         }
@@ -3212,7 +3429,8 @@ void scsiDiskReset()
     transfer.blocks = 0;
     transfer.currentBlock = 0;
     transfer.multiBlock = 0;
-    g_disk_verify.active = false;
+    g_disk_data_out.verify = false;
+    g_disk_data_out.write_and_verify = false;
 
     scsiDiskPrefetchInvalidate();
 
