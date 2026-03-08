@@ -395,6 +395,10 @@ void platform_init()
     // Make sure second core is stopped
     multicore_reset_core1();
 
+    // Keep negotiated sync limits aligned with the currently selected timing set
+    // even when no explicit reclocking profile is applied.
+    update_sync_period_limits();
+
 #ifdef ZULUSCSI_MCU_RP23XX
     // Set stack overflow limit, with space reserved for exception entry
     extern uint32_t __StackBottom; // From rp23xx-template.ld

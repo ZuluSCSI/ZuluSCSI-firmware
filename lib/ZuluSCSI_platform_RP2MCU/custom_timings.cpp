@@ -198,11 +198,21 @@ bool CustomTimings::set_timings_from_file()
     candidate.audio.audio_clocked = ini_getbool(audio_section, "clk_for_audio", candidate.audio.audio_clocked, CUSTOM_TIMINGS_FILE);
 
     *g_zuluscsi_timings = candidate;
+    update_sync_period_limits();
+
+    if (force_sync > 0)
+    {
+        uint8_t adjusted_force_sync = calculate_sync_period_limit(g_zuluscsi_timings, force_sync);
+        if (adjusted_force_sync != force_sync)
+        {
+            logmsg("Adjusting forced sync period from ", (int)force_sync, " to ",
+                (int)adjusted_force_sync, " to match the RP2 DATA OUT timing floor");
+        }
+        force_sync = adjusted_force_sync;
+    }
+
     g_force_sync = force_sync;
     g_force_offset = force_offset;
-    g_max_sync_20_period = g_zuluscsi_timings->scsi_20.max_sync;
-    g_max_sync_10_period = g_zuluscsi_timings->scsi_10.max_sync;
-    g_max_sync_5_period = g_zuluscsi_timings->scsi_5.max_sync;
 
     if (g_force_sync > 0)
     {
