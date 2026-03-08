@@ -1590,14 +1590,14 @@ extern "C" int scsiTapeCommand()
             // Handle result
             if (result == TAP_END_OF_TAPE) {
                 scsiDev.target->sense.eom = true;
-                scsiDev.status = MEDIUM_ERROR;
+                scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = BLANK_CHECK;
                 scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
                 if (set_sense_info)
                     scsiDev.target->sense.info = count - actual;
                 scsiDev.phase = STATUS;
             } else if (result == TAP_BEGINNING_OF_TAPE) {
-                scsiDev.target->sense.eom = true;
+                scsiDev.target->sense.eom = false;
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = NO_SENSE;
                 scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;

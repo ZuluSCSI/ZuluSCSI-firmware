@@ -52,6 +52,12 @@ static void process_Command(void);
 
 static void doReserveRelease(void);
 
+static struct {
+	int active;
+	int phase;
+	uint8_t cdbLen;
+} g_scsi_disconnect_state;
+
 void enter_BusFree()
 {
 	// This delay probably isn't needed for most SCSI hosts, but it won't
@@ -786,6 +792,7 @@ static void scsiReset()
 		scsiDev.targets[i].busWidth = 0;
 	}
 	scsiDev.minSyncPeriod = 0;
+	g_scsi_disconnect_state.active = 0;
 
 	scsiDiskReset();
 
@@ -826,6 +833,8 @@ static void enter_SelectionPhase()
 	scsiDev.postDataOutHook = NULL;
 
 	scsiDev.needSyncNegotiationAck = 0;
+	g_scsi_disconnect_state.active = 0;
+	g_scsi_sts_selection_initiator = 0xFF;
 }
 
 static void process_SelectionPhase()
@@ -910,7 +919,8 @@ static void process_SelectionPhase()
 		// Save our initiator now that we're no longer in a time-critical
 		// section.
 		// SCSI1/SASI initiators may not set their own ID.
-		scsiDev.initiatorId = (selStatus >> 3) & 0x7;
+		scsiDev.initiatorId =
+			(g_scsi_sts_selection_initiator <= 7) ? g_scsi_sts_selection_initiator : -1;
 
 		// Wait until the end of the selection phase.
 		uint32_t selTimerBegin = s2s_getTime_ms();
@@ -1256,7 +1266,8 @@ void scsiPoll(void)
 	break;
 
 	case RESELECTION:
-		// Not currently supported!
+		// Command-specific code performs the actual reconnect once it is ready
+		// to resume the disconnected command.
 	break;
 
 	case COMMAND:
@@ -1400,109 +1411,70 @@ void scsiInit()
 	firstInit = 0;
 }
 
-/* TODO REENABLE
 void scsiDisconnect()
 {
+	if (!scsiDev.target || !scsiDev.discPriv || g_scsi_disconnect_state.active)
+	{
+		return;
+	}
+
+	g_scsi_disconnect_state.active = 1;
+	g_scsi_disconnect_state.phase = scsiDev.phase;
+	g_scsi_disconnect_state.cdbLen = scsiDev.cdbLen;
+	scsiDev.savedDataPtr = scsiDev.dataPtr;
+
 	scsiEnterPhase(MESSAGE_IN);
-	scsiWriteByte(0x02); // save data pointer
-	scsiWriteByte(0x04); // disconnect msg.
+	scsiWriteByte(0x02); // SAVE DATA POINTER
+	scsiWriteByte(0x04); // DISCONNECT
 
-	// For now, the caller is responsible for tracking the disconnected
-	// state, and calling scsiReconnect.
-	// Ideally the client would exit their loop and we'd implement this
-	// as part of scsiPoll
-	int phase = scsiDev.phase;
+	if (scsiDev.resetFlag)
+	{
+		g_scsi_disconnect_state.active = 0;
+		return;
+	}
+
 	enter_BusFree();
-	scsiDev.phase = phase;
+	scsiDev.phase = RESELECTION;
+	scsiDev.cdbLen = g_scsi_disconnect_state.cdbLen;
 }
-*/
 
-/* TODO REENABLE
 int scsiReconnect()
 {
-	int reconnected = 0;
-
-	int sel = SCSI_ReadFilt(SCSI_Filt_SEL);
-	int bsy = SCSI_ReadFilt(SCSI_Filt_BSY);
-	if (!sel && !bsy)
+	if (!g_scsi_disconnect_state.active ||
+		!scsiDev.target ||
+		scsiDev.initiatorId < 0 ||
+		scsiDev.resetFlag)
 	{
-		s2s_delay_us(1);
-		sel = SCSI_ReadFilt(SCSI_Filt_SEL);
-		bsy = SCSI_ReadFilt(SCSI_Filt_BSY);
+		return 0;
 	}
 
-	if (!sel && !bsy)
+	if (!scsiPhyReselect(scsiDev.target->targetId, scsiDev.initiatorId))
 	{
-		// Arbitrate.
-		s2s_ledOn();
-		uint8_t scsiIdMask = 1 << scsiDev.target->targetId;
-		SCSI_Out_Bits_Write(scsiIdMask);
-		SCSI_Out_Ctl_Write(1); // Write bits manually.
-		SCSI_SetPin(SCSI_Out_BSY);
-
-		s2s_delay_us(3); // arbitrate delay. 2.4us.
-
-		uint8_t dbx = scsiReadDBxPins();
-		sel = SCSI_ReadFilt(SCSI_Filt_SEL);
-		if (sel || ((dbx ^ scsiIdMask) > scsiIdMask))
-		{
-			// Lost arbitration.
-			SCSI_Out_Ctl_Write(0);
-			SCSI_ClearPin(SCSI_Out_BSY);
-			s2s_ledOff();
-		}
-		else
-		{
-			// Won arbitration
-			SCSI_SetPin(SCSI_Out_SEL);
-			s2s_delay_us(1); // Bus clear + Bus settle.
-
-			// Reselection phase
-			SCSI_CTL_PHASE_Write(__scsiphase_io);
-			SCSI_Out_Bits_Write(scsiIdMask | (1 << scsiDev.initiatorId));
-			scsiDeskewDelay(); // 2 deskew delays
-			scsiDeskewDelay(); // 2 deskew delays
-			SCSI_ClearPin(SCSI_Out_BSY);
-			s2s_delay_us(1);  // Bus Settle Delay
-
-			uint32_t waitStart_ms = getTime_ms();
-			bsy = SCSI_ReadFilt(SCSI_Filt_BSY);
-			// Wait for initiator.
-			while (
-				!bsy &&
-				!scsiDev.resetFlag &&
-				(elapsedTime_ms(waitStart_ms) < 250))
-			{
-				bsy = SCSI_ReadFilt(SCSI_Filt_BSY);
-			}
-
-			if (bsy)
-			{
-				SCSI_SetPin(SCSI_Out_BSY);
-				scsiDeskewDelay(); // 2 deskew delays
-				scsiDeskewDelay(); // 2 deskew delays
-				SCSI_ClearPin(SCSI_Out_SEL);
-
-				// Prepare for the initial IDENTIFY message.
-				SCSI_Out_Ctl_Write(0);
-				scsiEnterPhase(MESSAGE_IN);
-
-				// Send identify command
-				scsiWriteByte(0x80);
-
-				scsiEnterPhase(scsiDev.phase);
-				reconnected = 1;
-			}
-			else
-			{
-				// reselect timeout.
-				SCSI_Out_Ctl_Write(0);
-				SCSI_ClearPin(SCSI_Out_SEL);
-				SCSI_CTL_PHASE_Write(0);
-				s2s_ledOff();
-			}
-		}
+		return 0;
 	}
-	return reconnected;
+
+	// Prepare for the initial IDENTIFY message.
+	scsiDev.atnFlag = 0;
+	scsiDev.selFlag = 0;
+	scsiDev.cdbLen = g_scsi_disconnect_state.cdbLen;
+	scsiDev.dataPtr = scsiDev.savedDataPtr;
+	scsiEnterPhase(MESSAGE_IN);
+	scsiWriteByte(0x80 | (scsiDev.lun & 0x7));
+
+	if (scsiDev.resetFlag)
+	{
+		g_scsi_disconnect_state.active = 0;
+		return 0;
+	}
+
+	scsiDev.phase = g_scsi_disconnect_state.phase;
+	scsiDev.cdbLen = g_scsi_disconnect_state.cdbLen;
+	scsiDev.dataPtr = scsiDev.savedDataPtr;
+	if (scsiDev.phase >= 0)
+	{
+		scsiEnterPhase(scsiDev.phase);
+	}
+
+	g_scsi_disconnect_state.active = 0;
+	return 1;
 }
-*/
