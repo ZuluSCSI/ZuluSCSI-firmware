@@ -44,6 +44,30 @@ static bool network_in_use = false;
 static bool g_wifi_reconnect = false;
 static char g_wifi_reconnect_ssid[32 + 1] = {0};
 static char g_wifi_reconnect_password[63 + 1] = {0};
+static bool g_wifi_scan_restore_connection = false;
+static bool g_wifi_scan_suspend_reconnect = false;
+
+static void platform_network_wifi_store_reconnect_credentials(const char *ssid, const char *password)
+{
+	if (ssid != NULL)
+		strlcpy(g_wifi_reconnect_ssid, ssid, sizeof(g_wifi_reconnect_ssid));
+	else
+		g_wifi_reconnect_ssid[0] = '\0';
+
+	if (password != NULL)
+		strlcpy(g_wifi_reconnect_password, password, sizeof(g_wifi_reconnect_password));
+	else
+		g_wifi_reconnect_password[0] = '\0';
+}
+
+static void platform_network_wifi_schedule_reconnect()
+{
+	if (g_wifi_reconnect_ssid[0] == '\0')
+		return;
+
+	g_wifi_scan_suspend_reconnect = false;
+	g_wifi_reconnect = true;
+}
 
 bool platform_network_supported()
 {
@@ -142,8 +166,7 @@ bool platform_network_wifi_join(char *ssid, char *password)
 	if (!platform_network_supported())
 		return false;
 
-	strlcpy(g_wifi_reconnect_ssid, ssid, sizeof(g_wifi_reconnect_ssid));
-	strlcpy(g_wifi_reconnect_password, ssid, sizeof(g_wifi_reconnect_password));
+	platform_network_wifi_store_reconnect_credentials(ssid, password);
 
 	if (password == NULL || password[0] == 0)
 	{
@@ -174,6 +197,13 @@ bool platform_network_wifi_join(char *ssid, char *password)
 
 void platform_network_poll(bool bus_free)
 {
+	if (g_wifi_scan_restore_connection && !cyw43_wifi_scan_active(&cyw43_state))
+	{
+		logmsg("Wi-Fi scan complete, reconnecting to \"", g_wifi_reconnect_ssid, "\"");
+		g_wifi_scan_restore_connection = false;
+		platform_network_wifi_schedule_reconnect();
+	}
+
 	if (bus_free && g_wifi_reconnect)
 	{
 		platform_network_wifi_reconnect();
@@ -295,9 +325,40 @@ int platform_network_wifi_start_scan()
 	if (cyw43_wifi_scan_active(&cyw43_state))
 		return -1;
 
+	int status = cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA);
+	if (status != CYW43_LINK_DOWN)
+	{
+		if (g_wifi_reconnect_ssid[0] == '\0' && scsiDev.boardCfg.wifiSSID[0] != '\0')
+			platform_network_wifi_store_reconnect_credentials(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+
+		if (g_wifi_reconnect_ssid[0] != '\0')
+		{
+			logmsg("Temporarily disconnecting from Wi-Fi SSID \"", g_wifi_reconnect_ssid, "\" to scan for hotspots");
+			g_wifi_scan_restore_connection = true;
+			g_wifi_scan_suspend_reconnect = true;
+			cyw43_arch_disable_sta_mode();
+			cyw43_arch_enable_sta_mode();
+		}
+		else
+		{
+			logmsg("Wi-Fi scan requested while connected, but reconnect credentials are not available");
+		}
+	}
+
 	cyw43_wifi_scan_options_t scan_options = { 0 };
 	memset(wifi_network_list, 0, sizeof(wifi_network_list));
-	return cyw43_wifi_scan(&cyw43_state, &scan_options, NULL, platform_network_wifi_scan_result);
+	int ret = cyw43_wifi_scan(&cyw43_state, &scan_options, NULL, platform_network_wifi_scan_result);
+	if (ret != 0)
+	{
+		logmsg("Failed to start Wi-Fi scan: ", ret);
+		if (g_wifi_scan_restore_connection)
+		{
+			g_wifi_scan_restore_connection = false;
+			platform_network_wifi_schedule_reconnect();
+		}
+	}
+
+	return ret;
 }
 
 int platform_network_wifi_scan_finished()
@@ -383,6 +444,12 @@ void cyw43_cb_process_ethernet(void *cb_data, int itf, size_t len, const uint8_t
 
 void cyw43_cb_tcpip_set_link_down(cyw43_t *self, int itf)
 {
+	if (g_wifi_scan_suspend_reconnect)
+	{
+		logmsg("Disassociated from Wi-Fi to scan for hotspots");
+		return;
+	}
+
 	logmsg("Disassociated from Wi-Fi SSID \"",  g_wifi_reconnect_ssid,"\" reconnecting");
 	g_wifi_reconnect = true;
 }
