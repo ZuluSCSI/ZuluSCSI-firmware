@@ -1991,6 +1991,10 @@ static struct {
     int parityError;
 } g_disk_transfer;
 
+static struct {
+    bool active;
+} g_disk_verify;
+
 /***********************************/
 /* Prefetch buffer for read access */
 /***********************************/
@@ -2156,6 +2160,132 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
             scsiDev.target->sense.asc = NO_SEEK_COMPLETE;
             scsiDev.phase = STATUS;
         }
+    }
+}
+
+static void diskVerifyStop()
+{
+    g_disk_verify.active = false;
+    scsiDev.dataPtr = 0;
+    scsiDev.dataLen = 0;
+}
+
+static void diskVerifyError(uint8_t sense_code, uint16_t asc)
+{
+    diskVerifyStop();
+    scsiDev.status = CHECK_CONDITION;
+    scsiDev.target->sense.code = sense_code;
+    scsiDev.target->sense.asc = asc;
+    scsiDev.phase = STATUS;
+}
+
+static void scsiDiskStartVerify(uint32_t lba, uint32_t blocks)
+{
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
+        // Floppies are supposed to be slow. Some systems can't handle a floppy
+        // without an access time
+        s2s_delay_ms(10);
+    }
+
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t capacity = img.file.size() / bytesPerSector;
+
+    dbgmsg("------ Verify ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+    if (unlikely(((uint64_t) lba) + blocks > capacity))
+    {
+        logmsg("WARNING: Host attempted verify at sector ", (int)lba, "+", (int)blocks,
+              ", exceeding image size ", (int)capacity, " sectors (",
+              (int)bytesPerSector, "B/sector)");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+    }
+    else if (blocks == 0)
+    {
+        // No data phase and no medium access are required.
+    }
+    else
+    {
+        transfer.multiBlock = true;
+        transfer.lba = lba;
+        transfer.blocks = blocks;
+        transfer.currentBlock = 0;
+        scsiDev.phase = DATA_OUT;
+        scsiDev.dataLen = 0;
+        scsiDev.dataPtr = 0;
+        g_disk_verify.active = true;
+
+        if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
+        {
+            logmsg("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
+            diskVerifyError(MEDIUM_ERROR, NO_SEEK_COMPLETE);
+        }
+    }
+}
+
+static void diskVerifyDataOut()
+{
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t compareBufferSize = sizeof(scsiDev.data) / 2;
+    uint32_t remainingBlocks = transfer.blocks - transfer.currentBlock;
+    uint32_t maxBlocksPerChunk = compareBufferSize / bytesPerSector;
+    if (maxBlocksPerChunk == 0)
+    {
+        maxBlocksPerChunk = 1;
+    }
+    uint32_t chunkBlocks = remainingBlocks;
+    if (chunkBlocks > maxBlocksPerChunk)
+    {
+        chunkBlocks = maxBlocksPerChunk;
+    }
+    uint32_t chunkBytes = chunkBlocks * bytesPerSector;
+    uint8_t *compareBuffer = scsiDev.data;
+    uint8_t *diskBuffer = scsiDev.data + compareBufferSize;
+
+    scsiEnterPhase(DATA_OUT);
+
+    int parityError = 0;
+    scsiRead(compareBuffer, chunkBytes, &parityError);
+    if (parityError && (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
+    {
+        diskVerifyError(ABORTED_COMMAND, SCSI_PARITY_ERROR);
+        return;
+    }
+
+    if (img.file.read(diskBuffer, chunkBytes) != chunkBytes)
+    {
+        logmsg("SD card read failed during VERIFY at sector ", (int)(transfer.lba + transfer.currentBlock),
+              " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
+        diskVerifyError(MEDIUM_ERROR, UNRECOVERED_READ_ERROR);
+        return;
+    }
+
+    for (uint32_t block = 0; block < chunkBlocks; block++)
+    {
+        uint8_t *compareSector = compareBuffer + block * bytesPerSector;
+        uint8_t *diskSector = diskBuffer + block * bytesPerSector;
+        if (memcmp(compareSector, diskSector, bytesPerSector) != 0)
+        {
+            uint32_t failingLba = transfer.lba + transfer.currentBlock + block;
+            transfer.lba = failingLba;
+            scsiDev.target->sense.info = failingLba;
+            diskVerifyError(MISCOMPARE, MISCOMPARE_DURING_VERIFY_OPERATION);
+            return;
+        }
+    }
+
+    transfer.currentBlock += chunkBlocks;
+    platform_reset_watchdog();
+
+    if (transfer.currentBlock == transfer.blocks)
+    {
+        diskVerifyStop();
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
     }
 }
 
@@ -2638,6 +2768,8 @@ int scsiDiskCommand()
     int commandHandled = 1;
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
 
+    g_disk_verify.active = false;
+
     uint8_t command = scsiDev.cdb[0];
     if (unlikely(command == 0x1B))
     {
@@ -2910,21 +3042,32 @@ int scsiDiskCommand()
     else if (unlikely(command == 0x2F))
     {
         // VERIFY
-        // TODO: When they supply data to verify, we should read the data and
-        // verify it. If they don't supply any data, just say success.
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[7]) << 8) +
+            scsiDev.cdb[8];
+
         if ((scsiDev.cdb[1] & 0x02) == 0)
         {
             // They are asking us to do a medium verification with no data
-            // comparison. Assume success, do nothing.
+            // comparison. We don't perform a real media scan yet, but still
+            // validate the requested LBA span.
+            uint32_t capacity = img.file.size() / scsiDev.target->liveCfg.bytesPerSector;
+            if (unlikely(((uint64_t) lba) + blocks > capacity))
+            {
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+                scsiDev.phase = STATUS;
+            }
         }
         else
         {
-            // TODO. This means they are supplying data to verify against.
-            // Technically we should probably grab the data and compare it.
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-            scsiDev.phase = STATUS;
+            scsiDiskStartVerify(lba, blocks);
         }
     }
     else if (unlikely(command == 0x37))
@@ -2972,7 +3115,14 @@ void scsiDiskPoll()
     else if (scsiDev.phase == DATA_OUT &&
         transfer.currentBlock != transfer.blocks)
     {
-        diskDataOut();
+        if (g_disk_verify.active)
+        {
+            diskVerifyDataOut();
+        }
+        else
+        {
+            diskDataOut();
+        }
     }
 
     if (scsiDev.phase == STATUS && scsiDev.target)
@@ -3013,6 +3163,7 @@ void scsiDiskReset()
     transfer.blocks = 0;
     transfer.currentBlock = 0;
     transfer.multiBlock = 0;
+    g_disk_verify.active = false;
 
     scsiDiskPrefetchInvalidate();
 
