@@ -2226,6 +2226,36 @@ static void scsiDiskStartVerify(uint32_t lba, uint32_t blocks)
     }
 }
 
+static void scsiDiskHandleVerify(uint64_t lba, uint32_t blocks, bool compareData)
+{
+    if (lba > UINT32_MAX)
+    {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+        return;
+    }
+
+    if (compareData)
+    {
+        scsiDiskStartVerify((uint32_t)lba, blocks);
+        return;
+    }
+
+    // We do not perform a real media scan yet, but still validate the
+    // requested LBA span.
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t capacity = img.file.size() / scsiDev.target->liveCfg.bytesPerSector;
+    if (unlikely(lba + blocks > capacity))
+    {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+    }
+}
+
 static void diskVerifyDataOut()
 {
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
@@ -2941,7 +2971,7 @@ int scsiDiskCommand()
             scsiDiskStartWrite((uint32_t)lba, blocks);
         }
     }
-    else if (unlikely(command == 0x2E))
+    else if (unlikely(command == 0x2E || command == 0xAE || command == 0x8E))
     {
         // WRITE AND VERIFY
         // Do not claim success unless verify semantics are actually implemented.
@@ -3042,7 +3072,7 @@ int scsiDiskCommand()
     else if (unlikely(command == 0x2F))
     {
         // VERIFY
-        uint32_t lba =
+        uint64_t lba =
             (((uint32_t) scsiDev.cdb[2]) << 24) +
             (((uint32_t) scsiDev.cdb[3]) << 16) +
             (((uint32_t) scsiDev.cdb[4]) << 8) +
@@ -3051,24 +3081,43 @@ int scsiDiskCommand()
             (((uint32_t) scsiDev.cdb[7]) << 8) +
             scsiDev.cdb[8];
 
-        if ((scsiDev.cdb[1] & 0x02) == 0)
-        {
-            // They are asking us to do a medium verification with no data
-            // comparison. We don't perform a real media scan yet, but still
-            // validate the requested LBA span.
-            uint32_t capacity = img.file.size() / scsiDev.target->liveCfg.bytesPerSector;
-            if (unlikely(((uint64_t) lba) + blocks > capacity))
-            {
-                scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = ILLEGAL_REQUEST;
-                scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
-                scsiDev.phase = STATUS;
-            }
-        }
-        else
-        {
-            scsiDiskStartVerify(lba, blocks);
-        }
+        scsiDiskHandleVerify(lba, blocks, (scsiDev.cdb[1] & 0x02) != 0);
+    }
+    else if (unlikely(command == 0xAF))
+    {
+        // VERIFY(12)
+        uint64_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[6]) << 24) +
+            (((uint32_t) scsiDev.cdb[7]) << 16) +
+            (((uint32_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+
+        scsiDiskHandleVerify(lba, blocks, (scsiDev.cdb[1] & 0x02) != 0);
+    }
+    else if (unlikely(command == 0x8F))
+    {
+        // VERIFY(16)
+        uint64_t lba =
+            (((uint64_t) scsiDev.cdb[2]) << 56) +
+            (((uint64_t) scsiDev.cdb[3]) << 48) +
+            (((uint64_t) scsiDev.cdb[4]) << 40) +
+            (((uint64_t) scsiDev.cdb[5]) << 32) +
+            (((uint64_t) scsiDev.cdb[6]) << 24) +
+            (((uint64_t) scsiDev.cdb[7]) << 16) +
+            (((uint64_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[10]) << 24) +
+            (((uint32_t) scsiDev.cdb[11]) << 16) +
+            (((uint32_t) scsiDev.cdb[12]) << 8) +
+            scsiDev.cdb[13];
+
+        scsiDiskHandleVerify(lba, blocks, (scsiDev.cdb[1] & 0x02) != 0);
     }
     else if (unlikely(command == 0x37))
     {
