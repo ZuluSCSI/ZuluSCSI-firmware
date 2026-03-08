@@ -38,7 +38,7 @@ static bool readIniIntRange(const char *section, const char *key, int32_t curren
     if (value < min_value || value > max_value)
     {
         logmsg("Invalid value for [", section, "] ", key, " in ", CUSTOM_TIMINGS_FILE,
-            ": ", value, " (expected ", min_value, "..", max_value, ")");
+            ": ", (int)value, " (expected ", (int)min_value, "..", (int)max_value, ")");
         return false;
     }
 
