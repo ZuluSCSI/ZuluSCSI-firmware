@@ -211,8 +211,7 @@ bool platform_reclock(zuluscsi_speed_grade_t speed_grade)
             {
 
                 logmsg("Using custom timings found in \"", CUSTOM_TIMINGS_FILE, "\" for reclocking");
-                ct.set_timings_from_file();
-                do_reclock = true;
+                do_reclock = ct.set_timings_from_file();
             }
             else
             {
