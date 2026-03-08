@@ -41,11 +41,38 @@ extern "C" {
 static const char defaultMAC[] = { 0x00, 0x80, 0x19, 0xc0, 0xff, 0xee };
 
 static bool network_in_use = false;
+static bool g_wifi_reconnect = true;
+static char g_wifi_reconnect_ssid[32 + 1] = {0};
+static char g_wifi_reconnect_password[63 + 1] = {0};
 
 // WiFi reconnection state (file-static so wifi_join can reset on credential change)
 static uint32_t wifi_reconnect_time = 0;
-static uint32_t wifi_reconnect_interval = WIFI_RECONNECT_INTERVAL;
+static uint32_t wifi_reconnect_interval = WIFI_RECONNECT_START_INTERVAL;
 static int wifi_reconnect_attempts = 0;
+static bool g_wifi_scan_restore_connection = false;
+static bool g_wifi_scan_suspend_reconnect = false;
+
+static void platform_network_wifi_store_reconnect_credentials(const char *ssid, const char *password)
+{
+	if (ssid != NULL)
+		strlcpy(g_wifi_reconnect_ssid, ssid, sizeof(g_wifi_reconnect_ssid));
+	else
+		g_wifi_reconnect_ssid[0] = '\0';
+
+	if (password != NULL)
+		strlcpy(g_wifi_reconnect_password, password, sizeof(g_wifi_reconnect_password));
+	else
+		g_wifi_reconnect_password[0] = '\0';
+}
+
+static void platform_network_wifi_schedule_reconnect()
+{
+	if (g_wifi_reconnect_ssid[0] == '\0')
+		return;
+
+	g_wifi_scan_suspend_reconnect = false;
+	g_wifi_reconnect = true;
+}
 
 bool platform_network_supported()
 {
@@ -138,11 +165,12 @@ bool platform_network_wifi_join(char *ssid, char *password, bool reconnect)
 	if (!platform_network_supported())
 		return false;
 
+	platform_network_wifi_store_reconnect_credentials(ssid, password);
 	// Explicit join (e.g. SCSI command with new credentials) resets reconnect state
 	if (!reconnect)
 	{
 		wifi_reconnect_attempts = 0;
-		wifi_reconnect_interval = WIFI_RECONNECT_INTERVAL;
+		wifi_reconnect_interval = WIFI_RECONNECT_START_INTERVAL;
 		wifi_reconnect_time = millis();
 	}
 
@@ -161,15 +189,12 @@ bool platform_network_wifi_join(char *ssid, char *password, bool reconnect)
 
 	if (ret == 0)
 	{
-		if (!reconnect)
-		{
-			// Short single blink at start of connection sequence
-			PICO_W_LED_OFF();
-			delay(PICO_W_SHORT_BLINK_DELAY);
-			PICO_W_LED_ON();
-			delay(PICO_W_SHORT_BLINK_DELAY);
-			PICO_W_LED_OFF();
-		}
+		// Short single blink at start of connection sequence
+		PICO_W_LED_OFF();
+		delay(PICO_W_SHORT_BLINK_DELAY);
+		PICO_W_LED_ON();
+		delay(PICO_W_SHORT_BLINK_DELAY);
+		PICO_W_LED_OFF();
 	}
 	else
 	{
@@ -180,53 +205,54 @@ bool platform_network_wifi_join(char *ssid, char *password, bool reconnect)
 
 void platform_network_poll()
 {
+	if (g_wifi_scan_restore_connection && !cyw43_wifi_scan_active(&cyw43_state))
+	{
+		logmsg("Wi-Fi scan complete, reconnecting to \"", g_wifi_reconnect_ssid, "\"");
+		g_wifi_scan_restore_connection = false;
+		platform_network_wifi_schedule_reconnect();
+	}
+
 	static int last_network_status = CYW43_LINK_DOWN;
 	if (!network_in_use)
 		return;
 	int status = cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA);
-	char * ssid = scsiDev.boardCfg.wifiSSID;
-	if ((last_network_status != status) && (status == CYW43_LINK_BADAUTH || status == CYW43_LINK_NONET || status == CYW43_LINK_FAIL || status == CYW43_LINK_NOIP))
+	char * ssid = (g_wifi_reconnect_ssid[0]) ? g_wifi_reconnect_ssid : scsiDev.boardCfg.wifiSSID;
+	if (status == CYW43_LINK_BADAUTH || status == CYW43_LINK_NONET || status == CYW43_LINK_FAIL || status == CYW43_LINK_NOIP)
 	{
-		switch (status)
+		if (last_network_status != status)
 		{
-			case CYW43_LINK_NOIP:
-				logmsg("Wi-Fi connected to ", ssid, " but was not assigned an IP");
-				break;
-			case CYW43_LINK_BADAUTH:
-				logmsg("Wi-Fi authentication failure connecting to \"", ssid, "\", please check the setting \"WiFiPassword\" in ", CONFIGFILE);
-				break;
-			case CYW43_LINK_NONET:
-				logmsg("Wi-Fi SSID ", ssid, " not found, possible out of range or down");
-				break;
-			case CYW43_LINK_FAIL:
-				logmsg("Wi-Fi connection to ", ssid, " failed");
-				break;
+			switch (status)
+			{
+				case CYW43_LINK_NOIP:
+					logmsg("Wi-Fi connected to ", ssid, " but was not assigned an IP");
+					break;
+				case CYW43_LINK_BADAUTH:
+					logmsg("Wi-Fi authentication failure connecting to \"", ssid, "\", please check the setting \"WiFiPassword\" in ", CONFIGFILE);
+					break;
+				case CYW43_LINK_NONET:
+					logmsg("Wi-Fi SSID ", ssid, " not found, possible out of range or down");
+					break;
+				case CYW43_LINK_FAIL:
+					logmsg("Wi-Fi connection to ", ssid, " failed");
+					break;
+			}
 		}
-		wifi_reconnect_time = millis();
 	}
 
-	// Reset reconnect state when link comes back up
-	if (status == CYW43_LINK_JOIN || status == CYW43_LINK_NOIP)
-	{
-		wifi_reconnect_attempts = 0;
-		wifi_reconnect_interval = WIFI_RECONNECT_INTERVAL;
-	}
-
-	if (status <= CYW43_LINK_DOWN
-		&& status != CYW43_LINK_BADAUTH
+	if (g_wifi_reconnect
 		&& ssid[0] != '\0'
 		&& scsiDev.phase == BUS_FREE
-		&& wifi_reconnect_attempts < WIFI_RECONNECT_MAX_ATTEMPTS
 		&& (uint32_t)(millis() - wifi_reconnect_time) > wifi_reconnect_interval)
 	{
+		
 		wifi_reconnect_time = millis();
 		wifi_reconnect_attempts++;
-		logmsg("Attempting Wi-Fi reconnection to \"", ssid, "\" (attempt ", wifi_reconnect_attempts, "/", WIFI_RECONNECT_MAX_ATTEMPTS, ")");
-		platform_network_wifi_join(ssid, scsiDev.boardCfg.wifiPassword, true);
-		wifi_reconnect_interval *= 2;
+		wifi_reconnect_interval += WIFI_RECONNECT_INCREMENT_INTERVAL;
+		if (wifi_reconnect_interval > WIFI_RECONECT_MAX_INTERVAL)
+			wifi_reconnect_interval = WIFI_RECONECT_MAX_INTERVAL;
+		logmsg("Attempting Wi-Fi reconnection to \"", ssid, "\" attempts: ", wifi_reconnect_attempts, " next attempt in ", (int)wifi_reconnect_interval / 1000, " seconds");
+		platform_network_wifi_join(ssid, (g_wifi_reconnect_password[0]) ? g_wifi_reconnect_password : scsiDev.boardCfg.wifiPassword, true);
 
-		if (wifi_reconnect_attempts >= WIFI_RECONNECT_MAX_ATTEMPTS)
-			logmsg("Wi-Fi reconnection limit reached, no further attempts will be made");
 	}
 
 	last_network_status = status;
@@ -319,9 +345,40 @@ int platform_network_wifi_start_scan()
 	if (cyw43_wifi_scan_active(&cyw43_state))
 		return -1;
 
+	int status = cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA);
+	if (status != CYW43_LINK_DOWN)
+	{
+		if (g_wifi_reconnect_ssid[0] == '\0' && scsiDev.boardCfg.wifiSSID[0] != '\0')
+			platform_network_wifi_store_reconnect_credentials(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+
+		if (g_wifi_reconnect_ssid[0] != '\0')
+		{
+			logmsg("Temporarily disconnecting from Wi-Fi SSID \"", g_wifi_reconnect_ssid, "\" to scan for hotspots");
+			g_wifi_scan_restore_connection = true;
+			g_wifi_scan_suspend_reconnect = true;
+			cyw43_arch_disable_sta_mode();
+			cyw43_arch_enable_sta_mode();
+		}
+		else
+		{
+			logmsg("Wi-Fi scan requested while connected, but reconnect credentials are not available");
+		}
+	}
+
 	cyw43_wifi_scan_options_t scan_options = { 0 };
 	memset(wifi_network_list, 0, sizeof(wifi_network_list));
-	return cyw43_wifi_scan(&cyw43_state, &scan_options, NULL, platform_network_wifi_scan_result);
+	int ret = cyw43_wifi_scan(&cyw43_state, &scan_options, NULL, platform_network_wifi_scan_result);
+	if (ret != 0)
+	{
+		logmsg("Failed to start Wi-Fi scan: ", ret);
+		if (g_wifi_scan_restore_connection)
+		{
+			g_wifi_scan_restore_connection = false;
+			platform_network_wifi_schedule_reconnect();
+		}
+	}
+
+	return ret;
 }
 
 int platform_network_wifi_scan_finished()
@@ -407,7 +464,14 @@ void cyw43_cb_process_ethernet(void *cb_data, int itf, size_t len, const uint8_t
 
 void cyw43_cb_tcpip_set_link_down(cyw43_t *self, int itf)
 {
-	logmsg("Disassociated from Wi-Fi SSID \"",  (char *)self->ap_ssid,"\"");
+	if (g_wifi_scan_suspend_reconnect)
+	{
+		logmsg("Disassociated from Wi-Fi to scan for hotspots");
+		return;
+	}
+
+	logmsg("Disassociated from Wi-Fi SSID \"",  g_wifi_reconnect_ssid,"\" reconnecting");
+	g_wifi_reconnect = true;
 }
 
 void cyw43_cb_tcpip_set_link_up(cyw43_t *self, int itf)
@@ -417,15 +481,9 @@ void cyw43_cb_tcpip_set_link_up(cyw43_t *self, int itf)
 	if (ssid)
 	{
 		logmsg("Successfully connected to Wi-Fi SSID \"",ssid,"\"");
-		// blink LED 3 times when connected
-		PICO_W_LED_OFF();
-		for (uint8_t i = 0; i < 3; i++)
-		{
-			delay(PICO_W_SHORT_BLINK_DELAY);
-			PICO_W_LED_ON();
-			delay(PICO_W_SHORT_BLINK_DELAY);
-			PICO_W_LED_OFF();
-		}
+		wifi_reconnect_attempts = 0;
+		wifi_reconnect_interval = WIFI_RECONNECT_START_INTERVAL;
+		g_wifi_reconnect = false;
 	}
 }
 
