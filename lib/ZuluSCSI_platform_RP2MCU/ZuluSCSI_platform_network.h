@@ -25,10 +25,10 @@ extern "C" {
 #endif
 
 bool platform_network_supported();
-void platform_network_poll(bool bus_free);
+void platform_network_poll();
 bool platform_network_init(char *mac);
 void platform_network_add_multicast_address(uint8_t *mac);
-bool platform_network_wifi_join(char *ssid, char *password);
+bool platform_network_wifi_join(char *ssid, char *password, bool reconnect);
 int platform_network_wifi_start_scan();
 int platform_network_wifi_scan_finished();
 void platform_network_wifi_dump_scan_list();

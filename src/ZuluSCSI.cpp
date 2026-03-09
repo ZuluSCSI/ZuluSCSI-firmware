@@ -489,11 +489,12 @@ bool findHDDImages()
       bool is_zp = (tolower(name[0]) == 'z' && tolower(name[1]) == 'p');
 #ifdef ZULUSCSI_NETWORK
       bool is_ne = (tolower(name[0]) == 'n' && tolower(name[1]) == 'e');
+      bool is_am = (tolower(name[0]) == 'a' && tolower(name[1]) == 'm');
 #endif // ZULUSCSI_NETWORK
 
       if (is_hd || is_cd || is_fd || is_mo || is_re || is_tp || is_zp
 #ifdef ZULUSCSI_NETWORK
-        || is_ne
+        || is_ne || is_am
 #endif // ZULUSCSI_NETWORK
       )
       {
@@ -563,7 +564,7 @@ bool findHDDImages()
         int blk = getBlockSize(name, id);
 
 #ifdef ZULUSCSI_NETWORK
-        if (is_ne && !platform_network_supported())
+        if ((is_ne || is_am) && !platform_network_supported())
         {
           logmsg("-- Ignoring ", fullname, ", networking is not supported on this hardware");
           continue;
@@ -577,6 +578,7 @@ bool findHDDImages()
         if (is_mo) type = S2S_CFG_MO;
 #ifdef ZULUSCSI_NETWORK
         if (is_ne) type = S2S_CFG_NETWORK;
+        if (is_am) type = S2S_CFG_AMIGAWIFI;
 #endif // ZULUSCSI_NETWORK
         if (is_re) type = S2S_CFG_REMOVABLE;
         if (is_tp) type = S2S_CFG_SEQUENTIAL;
@@ -643,7 +645,7 @@ bool findHDDImages()
     {
       int capacity_kB = ((uint64_t)cfg->scsiSectors * cfg->bytesPerSector) / 1024;
 
-      if (cfg->deviceType == S2S_CFG_NETWORK)
+      if (cfg->deviceType == S2S_CFG_NETWORK || cfg->deviceType == S2S_CFG_AMIGAWIFI)
       {
         logmsg("SCSI ID: ", (int)(cfg->scsiId & S2S_CFG_TARGET_ID_BITS),
               ", Type: ", (int)cfg->deviceType,
@@ -887,7 +889,7 @@ static void reinitSCSI()
     {
       if ( platform_network_init(scsiDev.boardCfg.wifiMACAddress))
       {
-        platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword);
+        platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword, false);
       }
       else
       {
@@ -1365,7 +1367,7 @@ extern "C" void zuluscsi_main_loop(void)
   }
 
 #ifdef ZULUSCSI_NETWORK
-  platform_network_poll(scsiDev.phase == BUS_FREE);
+  platform_network_poll();
 #endif // ZULUSCSI_NETWORK
 
 #ifdef PLATFORM_HAS_INITIATOR_MODE
