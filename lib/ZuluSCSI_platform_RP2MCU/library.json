@@ -9,6 +9,6 @@
     "platforms": "*",
     "dependencies":
     {
-        "CUEParser": "https://github.com/rabbitholecomputing/CUEParser#v2026.03.06"
+        "CUEParser": "https://github.com/rabbitholecomputing/CUEParser#virtualize"
     }
 }
