@@ -340,8 +340,10 @@ static void __no_inline_not_in_flash_func(set_flash_clock)()
     //
     // In practice most of the code is in cache or RAM, so the performance effect
     // of higher clocks is not huge.
+    uint32_t saved_interrupts = save_and_disable_interrupts();
     rom_flash_exit_xip();
     rom_flash_select_xip_read_mode(BOOTROM_XIP_MODE_EBH_QUAD, 3);
+    restore_interrupts(saved_interrupts);
 }
 #endif
 
