@@ -124,16 +124,16 @@
 #define SCSI_DMA_IRQ_NUM DMA_IRQ_3
 
 // Other pins
-#define SWO_PIN 32
+#define SWO_PIN 44 // 32 - using eject header as swo
 
 // DIP switch pins
 #define HAS_DIP_SWITCHES
 #define DIP_INITIATOR   SCSI_OUT_ACK
-#define DIP_DBGLOG      SWO_PIN
+#define DIP_DBGLOG      32 // SWO_PIN
 #define DIP_TERM        SCSI_OUT_REQ
 
 // Ejection button
-#define GPIO_EJECT_BTN 44
+// #define GPIO_EJECT_BTN 44
 
 // Parity generation lookup table would be too large for 16-bit bus.
 // Instead use CPU-based generation, which is fast enough on RP2350

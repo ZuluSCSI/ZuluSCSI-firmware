@@ -391,6 +391,8 @@ static int platform_get_led_pin()
 }
 #endif
 
+static void adc_poll(bool print_voltage = false);
+
 void platform_init()
 {
     // Make sure second core is stopped
@@ -533,6 +535,8 @@ void platform_init()
     g_log_debug = false;
     logmsg ("SCSI termination is handled by a hardware jumper");
 #endif  // HAS_DIP_SWITCHES
+    // init VDDIO voltage rail ADC
+    adc_poll();
 
     /* Note: the below notice and attribution is required to be preserved and displayed by
      * copies of this software, in accordance to section 7b of GPLv3 license.
@@ -544,6 +548,8 @@ void platform_init()
     logmsg(" ZuluSCSI RPi platform support is developed by Rabbit Hole Computing");
     logmsg(" and provided to you under GNU General Public License version 3.");
     logmsg("=========================================================================");
+    // Delay should be long enough to print out value
+    adc_poll(true);
 
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
@@ -1084,10 +1090,13 @@ static void usb_input_poll()
     serial_menu(MENU_CONTEXT_TARGET_MAIN);
 }
 
-// Use ADC to implement supply voltage monitoring for the +3.0V rail.
-// This works by sampling the temperature sensor channel, which has
-// a voltage of 0.7 V, allowing to calculate the VDD voltage.
-static void adc_poll()
+/**
+ * Use ADC to implement supply voltage monitoring for the +3.0V or +3.3V rail.
+ * This works by sampling the temperature sensor channel, which has
+ * a voltage of 0.7 V, allowing to calculate the VDD voltage.
+ * \param print_voltage prints the voltage regardless of limit
+*/ 
+static void adc_poll(bool print_voltage)
 {
 #if PLATFORM_VDD_WARNING_LIMIT_mV > 0
     static bool initialized = false;
@@ -1125,6 +1134,18 @@ static void adc_poll()
     {
         int adc_value = adc_fifo_get();
         if (adc_value > adc_value_max) adc_value_max = adc_value;
+    }
+
+    if (print_voltage)
+    {
+        int vdd_mV = (700 * 4096) / adc_value_max;
+#ifdef ZULUSCSI_RP2040
+        char vdd_rail[] = "3.0V";
+#else 
+        char vdd_rail[] = "3.3V";
+#endif
+        logmsg("Voltage at boot is ", vdd_mV, "mV on the ", vdd_rail, " rail");
+        return;
     }
 
     // adc_value = 700mV * 4096 / Vdd
