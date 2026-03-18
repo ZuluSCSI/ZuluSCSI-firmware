@@ -535,9 +535,12 @@ void platform_init()
     g_log_debug = false;
     logmsg ("SCSI termination is handled by a hardware jumper");
 #endif  // HAS_DIP_SWITCHES
+
+// Skip with SPDIF because of bootloader linking issue
+#ifndef ENABLE_AUDIO_OUTPUT_SPDIF 
     // init VDDIO voltage rail ADC
     adc_poll();
-
+#endif
     /* Note: the below notice and attribution is required to be preserved and displayed by
      * copies of this software, in accordance to section 7b of GPLv3 license.
      */
@@ -548,9 +551,12 @@ void platform_init()
     logmsg(" ZuluSCSI RPi platform support is developed by Rabbit Hole Computing");
     logmsg(" and provided to you under GNU General Public License version 3.");
     logmsg("=========================================================================");
+
+// Skip with SPDIF because of bootloader linking issue
+#ifndef ENABLE_AUDIO_OUTPUT_SPDIF
     // Delay should be long enough to print out value
     adc_poll(true);
-
+#endif
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
     uint8_t response_jedec[4] = {0};
@@ -609,6 +615,12 @@ void platform_init()
 // late_init() only runs in main application, SCSI not needed in bootloader
 void platform_late_init()
 {
+// Print of VDDIO for SPDIF enabled devices late to avoid bootloader linking issue
+#ifdef ENABLE_AUDIO_OUTPUT_SPDIF 
+    // init VDDIO voltage rail ADC
+    adc_poll();
+#endif
+
 #if defined(HAS_DIP_SWITCHES) && defined(PLATFORM_HAS_INITIATOR_MODE)
     if (g_scsi_initiator == true)
     {
@@ -704,6 +716,12 @@ void platform_late_init()
 #elif defined(ZULUSCSI_MCU_RP20XX)
     logmsg("Reclock RP2040 & Pico 1/1W based boards to standardized speed");
     platform_reclock(SPEED_GRADE_BASE_203MHZ);
+#endif
+
+// Print of VDDIO for SPDIF enabled devices late to avoid bootloader linking issue
+#ifdef ENABLE_AUDIO_OUTPUT_SPDIF 
+    // Print VDDIO voltage rail ADC
+    adc_poll(true);
 #endif
 
 #ifdef ENABLE_AUDIO_OUTPUT_I2S
