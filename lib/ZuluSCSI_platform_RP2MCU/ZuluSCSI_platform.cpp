@@ -1408,12 +1408,18 @@ void platform_poll()
     usb_log_poll();
     adc_poll();
     led_pwm_breath_poll();
+
 #if defined(ENABLE_AUDIO_OUTPUT_SPDIF) || defined(ENABLE_AUDIO_OUTPUT_I2S)
     if (!g_scsi_initiator)
     {
         audio_poll();
     }
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
+
+#ifdef PLATFORM_HAS_SNIFFER
+    // This does nothing if the sniffer is not enabled
+    platform_sniffer_poll();
+#endif
 }
 
 void platform_reset_mcu(uint32_t reset_in_ms)

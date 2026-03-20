@@ -447,6 +447,15 @@ void audio_reclock()
     i2s.begin(I2S_PIO_HW, I2S_PIO_SM);
 }
 
+void audio_disable()
+{
+    if (audio_is_active())
+        audio_stop();
+    i2s.end();
+    dma_channel_unclaim(SOUND_DMA_CHA);
+    dma_channel_unclaim(SOUND_DMA_CHB);
+    irq_remove_handler(DMA_IRQ_0, audio_dma_irq);
+}
 
 void audio_poll() {
     if (audio_idle) return;

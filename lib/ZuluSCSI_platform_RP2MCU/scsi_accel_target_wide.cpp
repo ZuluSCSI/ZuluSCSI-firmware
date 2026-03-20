@@ -1225,7 +1225,7 @@ static void scsidma_config_gpio()
 {
     if (g_scsi_dma_state == SCSIDMA_IDLE)
     {
-        scsidma_set_data_gpio_func(GPIO_FUNC_SIO, false, false);
+        scsidma_set_data_gpio_func(GPIO_FUNC_SIO, true, false);
         iobank0_hw->io[SCSI_OUT_REQ].ctrl = GPIO_FUNC_SIO;
     }
     else if (g_scsi_dma_state == SCSIDMA_WRITE)

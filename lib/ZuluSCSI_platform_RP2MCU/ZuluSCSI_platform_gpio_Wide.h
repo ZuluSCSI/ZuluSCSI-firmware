@@ -135,6 +135,16 @@
 // Ejection button
 #define GPIO_EJECT_BTN 44
 
+// Enable sniffer functionality
+// Captures all SCSI signals except OUT_SEL and OUT_BSY
+// Default trigger is all pins
+#define PLATFORM_HAS_SNIFFER
+#define SNIFFER_PINCOUNT            27
+#define SNIFFER_FIRSTPIN            SCSI_OUT_BSY
+#define SNIFFER_MASK_TRIGPINS       SNIFFER_PINS_ALL
+#define SNIFFER_DEFAULT_TRIGPINS    SNIFFER_PINS_ALL
+#define SNIFFER_PINNAMES "BSY RST_IN RST_OUT DB0 DB1 DB2 DB3 DB4 DB5 DB6 DB7 DB8 DB9 DB10 DB11 DB12 DB13 DB14 DB15 DBP DBP1 REQ DATA_DIR CD_SEL ATN MSG_BSY ACK"
+
 // Parity generation lookup table would be too large for 16-bit bus.
 // Instead use CPU-based generation, which is fast enough on RP2350
 // thanks to the extended instruction set of Cortex-M33.
@@ -150,7 +160,7 @@ static inline uint32_t scsi_generate_parity(uint16_t w)
     uint32_t w3 = (w2 << 2) ^ w2;
     uint32_t w4 = (w3 << 1) ^ w3;
 
-    return (w ^ 0xFFFF) | ((w4 & 0x80) << 9) | ((w4 & 0x8000) << 2);
+    return w | ((w4 & 0x80) << 9) | ((w4 & 0x8000) << 2);
 }
 
 // Check parity of a 8-bit received word.
@@ -256,5 +266,5 @@ static inline bool scsi_check_parity_16bit(uint32_t w)
 
 // Read SCSI data bus
 #define SCSI_IN_DATA() \
-    (~sio_hw->gpio_in & SCSI_IO_DATA_MASK) >> SCSI_IO_SHIFT
+    (sio_hw->gpio_in & SCSI_IO_DATA_MASK) >> SCSI_IO_SHIFT
 
