@@ -56,6 +56,10 @@ void audio_reclock();
  */
 void audio_poll();
 
+/**
+ * Stops audio and releases resources
+ */
+void audio_disable();
 
 extern "C" void audio_dma_irq();
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF

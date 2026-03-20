@@ -163,6 +163,11 @@ inline bool platform_reclock_supported(){return true;}
 bool platform_reclock(zuluscsi_speed_grade_t speed_grade);
 #endif
 
+#ifdef PLATFORM_HAS_SNIFFER
+bool platform_init_sniffer();
+void platform_sniffer_poll();
+#endif
+
 // Returns true if reboot was for mass storage
 mass_storage_mode platform_rebooted_into_mass_storage();
 

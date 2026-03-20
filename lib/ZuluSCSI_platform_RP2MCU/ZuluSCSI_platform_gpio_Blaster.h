@@ -129,6 +129,17 @@
 #define GPIO_RM2_CS   2
 #define GPIO_RM2_CLK  4
 
+// Enable sniffer functionality
+// Captures all SCSI signals except OUT_SEL, OUT_BSY, IN_RST, OUT_RST
+// Also captures I2C signals.
+// Default trigger is all SCSI pins, I2C trigger can be enabled from .ini
+#define PLATFORM_HAS_SNIFFER
+#define SNIFFER_PINCOUNT            26
+#define SNIFFER_FIRSTPIN            SCSI_OUT_ATN
+#define SNIFFER_MASK_TRIGPINS       0x03FFFFC3
+#define SNIFFER_DEFAULT_TRIGPINS    0x0033FFC3
+#define SNIFFER_PINNAMES "ATN IO I2S_CK I2S_WS I2S_SD GPIO11 DB0 DB1 DB2 DB3 DB4 DB5 DB6 DB7 DBP REQ DATA_DIR CD_SEL GPIO24 GPIO25 MSG_BSY ACK GPIO28 GPIO29 SDA SCL"
+
 // Below are GPIO access definitions that are used from scsiPhy.cpp.
 
 // Write a single SCSI pin.

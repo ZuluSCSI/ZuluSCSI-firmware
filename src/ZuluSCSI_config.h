@@ -43,6 +43,7 @@
 #define CRASHFILE   "zuluerr.txt"
 #define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
+#define SNIFFERFILE "zuluscsi_sniff.dat"
 
 // Prefix for command file to create new image (case-insensitive)
 #define CREATEFILE "create"

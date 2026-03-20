@@ -822,6 +822,17 @@ static void reinitSCSI()
   }
 #endif
 
+  if (ini_getbool("SCSI", "sniffer", 0, CONFIGFILE))
+  {
+    SD.remove(SNIFFERFILE);
+
+#ifdef PLATFORM_HAS_SNIFFER
+    platform_init_sniffer();
+#else
+    logmsg("-- Platform does not support SCSI bus sniffer, ignoring config file setting");
+#endif
+  }
+
   scsiDiskResetImages();
 #if defined(ZULUSCSI_HARDWARE_CONFIG)
   if (g_hw_config.is_active())
