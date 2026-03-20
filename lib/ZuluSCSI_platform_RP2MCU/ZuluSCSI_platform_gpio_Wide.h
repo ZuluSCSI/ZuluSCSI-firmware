@@ -160,7 +160,7 @@ static inline uint32_t scsi_generate_parity(uint16_t w)
     uint32_t w3 = (w2 << 2) ^ w2;
     uint32_t w4 = (w3 << 1) ^ w3;
 
-    return (w ^ 0xFFFF) | ((w4 & 0x80) << 9) | ((w4 & 0x8000) << 2);
+    return w | ((w4 & 0x80) << 9) | ((w4 & 0x8000) << 2);
 }
 
 // Check parity of a 8-bit received word.
@@ -266,5 +266,5 @@ static inline bool scsi_check_parity_16bit(uint32_t w)
 
 // Read SCSI data bus
 #define SCSI_IN_DATA() \
-    (~sio_hw->gpio_in & SCSI_IO_DATA_MASK) >> SCSI_IO_SHIFT
+    (sio_hw->gpio_in & SCSI_IO_DATA_MASK) >> SCSI_IO_SHIFT
 
