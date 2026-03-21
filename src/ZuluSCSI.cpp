@@ -896,21 +896,21 @@ static void reinitSCSI()
 
   if (scsiDiskCheckAnyNetworkDevicesConfigured() && platform_network_supported())
   {
-    if (scsiDev.boardCfg.wifiSSID[0] != '\0')
+    if (platform_network_init(scsiDev.boardCfg.wifiMACAddress))
     {
-      if ( platform_network_init(scsiDev.boardCfg.wifiMACAddress))
+      if (scsiDev.boardCfg.wifiSSID[0] != '\0')
       {
         platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword, false);
       }
       else
       {
-        logmsg("A network SCSI device has been configured but cannot connect to the RM2 WiFi module");
+        logmsg("Wi-Fi device enabled, but no WiFi SSID specified.");
+        logmsg("Please define \"WiFiSSID\" in the config file: ", CONFIGFILE, " under the heading \"[SCSI]\"");
       }
     }
     else
     {
-      logmsg("Wi-Fi device enabled, but no WiFi SSID specified."); 
-      logmsg("Please define \"WiFiSSID\" in the config file: ", CONFIGFILE, " under the heading \"[SCSI]\"");
+      logmsg("A network SCSI device has been configured but cannot connect to the RM2 WiFi module");
     }
   }
   else
