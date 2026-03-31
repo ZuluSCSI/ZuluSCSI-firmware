@@ -1590,13 +1590,14 @@ extern "C" int scsiTapeCommand()
             // Handle result
             if (result == TAP_END_OF_TAPE) {
                 scsiDev.target->sense.eom = true;
-                scsiDev.status = MEDIUM_ERROR;
+                scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = BLANK_CHECK;
                 scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
                 if (set_sense_info)
                     scsiDev.target->sense.info = count - actual;
                 scsiDev.phase = STATUS;
             } else if (result == TAP_BEGINNING_OF_TAPE) {
+                // SCSI-2 SPACE reverse BOT/BOP reports NO SENSE with EOM set.
                 scsiDev.target->sense.eom = true;
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = NO_SENSE;

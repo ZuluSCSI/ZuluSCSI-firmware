@@ -76,7 +76,7 @@ SECTIONS
 
 /* =============================================================== */
     /* Exclude as much code from flash as possible as the RP2350 series has twice as much SRAM */
-        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *libZuluSCSI_platform_RP2MCU.a: *libZuluSCSI_UI_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *CUEParser.a: *minIni.a: *.cpp.o)  .text*)
+        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *libZuluSCSI_platform_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *.cpp.o)  .text*)
 
     /* ---------------------------------------------------------
     Uncomment the EXCLUDE_FILE line below and comment the EXCLUDE_FILE line above for debug to work properly,
@@ -88,6 +88,140 @@ SECTIONS
     ------------------------------------------------------------*/
         /* *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .text*) */
 /* =============================================================== */
+
+        /* Manually pull in some of the larger functions into flash to leave more RAM free */
+
+        /* Standard library floating point etc. functions */
+        *libm*:(.text .text*)
+        *libc*:(.text .text*)
+        *libgcc*:*df*(.text .text*)
+        *USB*(.text .text*)
+        *SPI*(.text .text*)
+        *Spi*(.text .text*)
+        *spi*(.text .text*)
+        *stdc*:(.text .text*)
+        *supc*:(.text .text*)
+        *nosys*:(.text .text*)
+        *libc*:*printf*(.text .text*)
+        *libc*:*toa*(.text .text*)
+
+        /* C++ constructors and destructors */
+        *(.text*_ZN*C1*)
+        *(.text*_ZN*C2*)
+        *(.text*_ZN*D1*)
+        *(.text*_ZN*D2*)
+
+        /* Initialization functions go to flash */
+        *(.text*platform_init*)
+        *(.text*platform_late_init*)
+        *(.text*platform_enter_msc*)
+        *(.text*zuluscsi_setup*)
+        *(.text*audio_setup*)
+        *(.text*init_logfile*)
+        *(.text*find_chs_capacity*)
+        *(.text*irq_remove_handler*)
+        *(.text*irq_add_shared_handler*)
+        *(.text*image_config_t*clear*)
+        *(.text*reinitSCSI*)
+        *(.text*print_sd_info*)
+        *(.text*kiosk_restore_images*)
+        *(.text*scsi_accel_rp2040_init*)
+        *(.text*rp2040_sdio_init*)
+        *(.text*PIOProgram*prepare*)
+        *(.text*createImage*)
+        *(.text*s2s_configInit*)
+        *(.text*SdioCard*begin*)
+        *(.text*mountSDCard*)
+        *(.text*set_timings_from_file*)
+        *(.text*scsiInit*)
+
+        /* ROM drive setup and FW upgrade that is done only during init */
+        *(.text*romDriveClear*)
+        *(.text*romDriveCheckPresent*)
+        *(.text*zipparser*)
+        *(.text*firmware_update*)
+
+        /* ZuluSCSI_disk functions that are only used during init */
+        *ZuluSCSI_settings.cpp.o(.text .text*)
+        *QuirksCheck.cpp.o(.text .text*)
+        *(.text*scsiDiskFilenameValid*)
+        *(.text*scsiDiskOpenHDDImage*)
+        *(.text*scsiDiskGetNextImageName*)
+        *(.text*scsiDiskProgramRomDrive*)
+        *(.text*scsiDiskLoadConfig*)
+        *(.text*scsiDiskActivateRomDrive*)
+        *(.text*scsiDiskSetImageConfig*)
+        *(.text*ImageBackingStore*open*)
+        *(.text*ImageBackingStore*ImageBackingStore*)
+        *(.text*findHDDImages*)
+        *(.text*scsiDiskCloseSDCardImages*)
+        *(.text*extractFileName*)
+        *(.text*setNameFromImage*)
+        *(.text*getBlockSize*)
+
+        /* SCSI commands that don't require high performance */
+        *(.text*scsiToolboxCommand*)
+        *(.text*scsi*Diagnostic*)
+        *(.text*Inquiry*)
+        *(.text*modeSelect*)
+        *(.text*modeSense*)
+        *(.text*doModeSelect*)
+        *(.text*doModeSense*)
+        *(.text*scsiModeCommand*)
+        *(.text*doPerformEject*)
+
+        /* CDROM/Tape/Vendor commands. Most of these are non-performance-critical, and
+         * the important parts will fit in cache when in use. */
+        *(.text*scsiTapeCommand*)
+        *(.text*scsiCDRomCommand*)
+        *(.text*scsiMOCommand*)
+        *(.text*doReadCD*)
+        *(.text*doReadTOC*)
+        *(.text*doReadHeader*)
+        *(.text*doPlayAudio*)
+        *(.text*audio_play*)
+        *(.text*doReadSubchannel*)
+        *(.text*doGetConfiguration*)
+        *(.text*cdromPerformEject*)
+        *(.text*CueSheet*)
+        *(.text*switchNextImage*)
+        *(.text*findNextImageAfter*)
+        *(.text*DiscInfo*)
+        *(.text*TrackInfo*)
+        *(.text*doCountFiles*)
+        *(.text*doReadFullTOC*)
+        *(.text*scsiVendorCommand*)
+        *(.text*onListFiles*)
+
+        /* SCSI Initiator mode code. These will fit in cache when in use. */
+        *ZuluSCSI_initiator.cpp.o(.text .text*)
+        *ZuluSCSI_msc_initiator.cpp.o(.text .text*)
+        *scsi_accel_host*(.text .text*)
+        *scsiHostPhy*(.text .text*)
+
+        /* Filesystem functions that are not performance-critical.
+         * Mostly used during initialization only. */
+        *(.text*File*open*)
+        *(.text*File*init*)
+        *(.text*File*remove*)
+        *(.text*File*truncate*)
+        *(.text*File*sync*)
+        *(.text*File*mkdir*)
+        *(.text*File*bitmap*)
+        *(.text*File*Name*)
+        *(.text*File*SFN*)
+        *(.text*File*LFN*)
+        *(.text*File*addCluster*)
+        *(.text*Volume*attrib*)
+        *(.text*Volume*begin*)
+
+        /* USB functions that only run in specific modes.
+           These will fit in cache when they are in use (USB connected). */
+        *libpico*:*(.text*msc*)
+        *libpico*:*(.text*hidd*)
+        *(.text*tud_msc*)
+
+
         *(.fini)
         /* Pull all c'tors into .text */
         *crtbegin.o(.ctors)

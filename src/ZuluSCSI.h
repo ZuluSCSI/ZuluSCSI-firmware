@@ -2,7 +2,10 @@
 
 #pragma once
 
+#include <SdFat.h>
+
 extern bool g_sdcard_present;
+extern SdFs SD;
 
 // Create an zero-filled image file of specified size -- update UI with progress
 //	Returns true if image created

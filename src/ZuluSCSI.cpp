@@ -822,6 +822,17 @@ static void reinitSCSI()
   }
 #endif
 
+  if (ini_getbool("SCSI", "sniffer", 0, CONFIGFILE))
+  {
+    SD.remove(SNIFFERFILE);
+
+#ifdef PLATFORM_HAS_SNIFFER
+    platform_init_sniffer();
+#else
+    logmsg("-- Platform does not support SCSI bus sniffer, ignoring config file setting");
+#endif
+  }
+
   scsiDiskResetImages();
 #if defined(ZULUSCSI_HARDWARE_CONFIG)
   if (g_hw_config.is_active())
@@ -885,21 +896,21 @@ static void reinitSCSI()
 
   if (scsiDiskCheckAnyNetworkDevicesConfigured() && platform_network_supported())
   {
-    if (scsiDev.boardCfg.wifiSSID[0] != '\0')
+    if (platform_network_init(scsiDev.boardCfg.wifiMACAddress))
     {
-      if ( platform_network_init(scsiDev.boardCfg.wifiMACAddress))
+      if (scsiDev.boardCfg.wifiSSID[0] != '\0')
       {
         platform_network_wifi_join(scsiDev.boardCfg.wifiSSID, scsiDev.boardCfg.wifiPassword, false);
       }
       else
       {
-        logmsg("A network SCSI device has been configured but cannot connect to the RM2 WiFi module");
+        logmsg("Wi-Fi device enabled, but no WiFi SSID specified.");
+        logmsg("Please define \"WiFiSSID\" in the config file: ", CONFIGFILE, " under the heading \"[SCSI]\"");
       }
     }
     else
     {
-      logmsg("Wi-Fi device enabled, but no WiFi SSID specified."); 
-      logmsg("Please define \"WiFiSSID\" in the config file: ", CONFIGFILE, " under the heading \"[SCSI]\"");
+      logmsg("A network SCSI device has been configured but cannot connect to the RM2 WiFi module");
     }
   }
   else

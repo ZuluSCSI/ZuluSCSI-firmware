@@ -27,7 +27,7 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "2026.03.12"
+#define FW_VER_NUM      "2026.03.22"
 #define FW_VER_SUFFIX   "release"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
@@ -43,6 +43,7 @@
 #define CRASHFILE   "zuluerr.txt"
 #define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
+#define SNIFFERFILE "zuluscsi_sniff.dat"
 
 // Prefix for command file to create new image (case-insensitive)
 #define CREATEFILE "create"
