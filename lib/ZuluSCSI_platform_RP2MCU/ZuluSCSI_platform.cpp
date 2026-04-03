@@ -1427,6 +1427,19 @@ void platform_reset_mcu(uint32_t reset_in_ms)
     watchdog_reboot(0, 0, reset_in_ms);
 }
 
+const uint8_t* platform_get_8byte_mcu_id()
+{
+    static uint8_t mcu_id[8] = {0};
+    static bool filled = false;
+    if (!filled)
+    {
+        pico_unique_board_id_t board_id;
+        pico_get_unique_board_id(&board_id);
+        memcpy(mcu_id, board_id.id, sizeof(mcu_id));
+        filled = true;
+    }
+    return mcu_id;
+}
 
 uint8_t platform_get_buttons()
 {

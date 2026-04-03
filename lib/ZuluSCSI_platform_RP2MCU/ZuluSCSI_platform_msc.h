@@ -24,7 +24,7 @@
 
 // private constants/enums
 #define SD_SECTOR_SIZE 512
-#define MSC_INIT_DELAY 300
+#define MSC_INIT_DELAY 500
 /* return true if USB presence detected / eligble to enter CR mode */
 bool platform_sense_msc();
 

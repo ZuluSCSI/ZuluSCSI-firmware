@@ -203,4 +203,11 @@ void scsiVendorCommandSetLen(uint8_t command, uint8_t* command_length)
 			*command_length =  12;
 		}
 	}
+	if (scsiDev.target->cfg->deviceType == S2S_CFG_FIXED && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400)
+	{
+		if (command == 0xEA || command == 0xE8) // EA=SkipWrite10, E8=SkipRead10
+		{
+			*command_length = 10;
+		}
+	}
 }

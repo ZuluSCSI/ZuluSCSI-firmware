@@ -108,6 +108,9 @@ void platform_reset_watchdog();
 // Reset MCU after a certain amount of time
 void platform_reset_mcu(uint32_t reset_in_ms);
 
+// Returns an 8-byte (64bit) mcu id as an 8-byte array
+const uint8_t* platform_get_8byte_mcu_id();
+
 // Poll function that is called every few milliseconds.
 // The SD card is free to access during this time, and pauses up to
 // few milliseconds shouldn't disturb SCSI communication.
