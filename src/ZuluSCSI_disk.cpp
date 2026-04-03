@@ -2087,7 +2087,8 @@ const uint8_t *scsiDiskPrefetchRead(uint8_t scsiId, uint32_t firstSector, uint32
 void scsiDiskPrefetchInvalidate(uint8_t scsiId)
 {
 #ifdef PREFETCH_BUFFER_SIZE
-    if (scsiId == (uint8_t)-1 || g_scsi_prefetch.scsiId == scsiId)
+    if (scsiId == (uint8_t)-1 ||
+        (g_scsi_prefetch.scsiId & S2S_CFG_TARGET_ID_BITS) == (scsiId & S2S_CFG_TARGET_ID_BITS))
     {
         g_scsi_prefetch.numSectors = 0;
         g_scsi_prefetch.firstSector = 0;
