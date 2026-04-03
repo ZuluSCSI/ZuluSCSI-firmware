@@ -70,7 +70,7 @@
 SdFs SD;
 FsFile g_logfile;
 bool g_rawdrive_active;
-static bool g_romdrive_active;
+bool g_romdrive_active;
 bool g_sdcard_present;
 bool g_rebooting = false;
 bool g_log_to_sd;

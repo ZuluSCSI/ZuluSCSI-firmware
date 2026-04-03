@@ -49,6 +49,7 @@
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 
 extern bool g_sdcard_present;
+extern bool g_romdrive_active;
 
 enum rotary_direction_t {
     ROTARY_DIR_NONE = 0,
@@ -70,6 +71,7 @@ typedef enum
 {
     ZULUSCSI_UI_START_SPLASH_VERSION,
     ZULUSCSI_UI_START_SPLASH_SYS_MODE,
+    ZULUSCSI_UI_START_INSERT_SD_CARD,
     ZULUSCSI_UI_START_DONE
 } ZULUSCSI_UI_START;
 
@@ -256,8 +258,18 @@ static bool splashScreenPoll()
                 switch(g_systemMode)
                 {
                     case SYSTEM_NORMAL:
-                        changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
-                        g_activeScreen->tick();
+                        if (g_romdrive_active)
+                        {
+                            changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
+                            g_activeScreen->tick();
+                        }
+                        else
+                        {
+                            _splashScreen->setBannerText("Insert SD Card");
+                            changeScreen(SCREEN_SPLASH, SCREEN_ID_NO_PREVIOUS);
+                            g_activeScreen->tick();
+                            g_uiStart = ZULUSCSI_UI_START_INSERT_SD_CARD;
+                        }
                         break;
 
                     case SYSTEM_INITIATOR:
@@ -274,6 +286,12 @@ static bool splashScreenPoll()
                 g_activeScreen->tick();
             }
 
+        }
+        else if (g_uiStart == ZULUSCSI_UI_START_INSERT_SD_CARD && g_sdcard_present)
+        {
+            changeScreen(SCREEN_MAIN, SCREEN_ID_NO_PREVIOUS);
+            g_activeScreen->tick();
+            g_uiStart = ZULUSCSI_UI_START_DONE;
         }
         return true;
     }
