@@ -77,18 +77,20 @@ static const char *getCommandName(uint8_t cmd)
         case 0x37: return "ReadDefectData";
         case 0x3B: return "WriteBuffer";
         case 0x3C: return "ReadBuffer";
+        case 0x41: return "WriteSame10";
         case 0x42: return "CDROM Read SubChannel";
         case 0x43: return "CDROM Read TOC";
         case 0x44: return "CDROM Read Header";
-        case 0x46: return "CDROM GetConfiguration";
-        case 0x4A: return "GetEventStatusNotification";
-        case 0x4B: return "CDROM PauseResume";
-        case 0x4E: return "CDROM StopPlayScan";
-        case 0x51: return "CDROM ReadDiscInformation";
         case 0x45: return "CDROM PlayAudio10";
-        case 0xA5: return "CDROM PlayAudio12";
+        case 0x46: return "CDROM GetConfiguration";
         case 0x47: return "CDROM PlayAudioMSF";
         case 0x48: return "CDROM PlayAudioTrackIndex";
+        case 0x4A: return "GetEventStatusNotification";
+        case 0x4B: return "CDROM PauseResume";
+        case 0x4D: return "LogSense";
+        case 0x4E: return "CDROM StopPlayScan";
+        case 0x51: return "CDROM ReadDiscInformation";
+        case 0xA5: return "CDROM PlayAudio12";
         case 0x52: return "CDROM ReadTrackInformation";
         case 0x88: return "Read16";
         case 0x8A: return "Write16";
@@ -120,7 +122,10 @@ static const char *getCommandName(uint8_t cmd)
         case 0xD9: return "Vendor 0xD9 Command (Toolbox list devices/Apple)";
         case 0xDA: return "Vendor 0xDA Command (Toolbox count CDs)";
         case 0xE0: return "Xebec RAM Diagnostic";
-        case 0xE4: return "Xebec Drive Diagnostic";              
+        case 0xE4: return "Xebec Drive Diagnostic";
+        case 0xE8: return "AS400 Skip Read(10)";
+        case 0xEA: return "AS400 Skip Write(10)";
+        
         default:   return "Unknown";
     }
 }

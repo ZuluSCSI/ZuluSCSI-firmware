@@ -741,7 +741,7 @@ static void process_dma_readbuf()
 
         if (!scsi_check_parity_16bit(parity))
         {
-            dbgmsg("Parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
+            dbgmsg("16-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
             g_scsi_dma.parityerror = true;
         }
     }
@@ -768,7 +768,7 @@ static void process_dma_readbuf()
 
         if (!scsi_check_parity(parity))
         {
-            dbgmsg("Parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
+            dbgmsg("8-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
             g_scsi_dma.parityerror = true;
         }
     }
@@ -859,6 +859,9 @@ void scsi_accel_rp2040_startRead(uint8_t *data, uint32_t count, int *parityError
 {
     // Any write requests should be matched with a stopWrite()
     assert(g_scsi_dma_state != SCSIDMA_WRITE && g_scsi_dma_state != SCSIDMA_WRITE_DONE);
+
+    if (g_scsi_dma.wide && (count & 1))
+        count++;
 
     uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
     if (g_scsi_dma_state == SCSIDMA_READ)

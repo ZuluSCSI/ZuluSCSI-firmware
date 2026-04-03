@@ -598,14 +598,9 @@ bool findHDDImages()
           }
         }
         else if(id < S2S_MAX_TARGETS && lun < NUM_SCSILUN) {
-          logmsg("-- Opening ", fullname, " for id:", id, " lun:", lun);
+          logmsg("---- Opening ", fullname, " for id:", id, " lun:", lun);
 
-          if (g_scsi_settings.getDevicePreset(id) != DEV_PRESET_NONE)
-          {
-              logmsg("---- Using device preset: ", g_scsi_settings.getDevicePresetName(id));
-          }
-
-          imageReady = scsiDiskOpenHDDImage(id, fullname, lun, blk, type, use_prefix);
+           imageReady = scsiDiskOpenHDDImage(id, fullname, lun, blk, type, use_prefix);
           if(imageReady)
           {
             foundImage = true;

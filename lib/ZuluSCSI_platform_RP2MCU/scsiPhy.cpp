@@ -100,7 +100,7 @@ extern "C" bool scsiStatusSEL()
     {
         // We don't have direct register access to BSY bit like SCSI2SD scsi.c expects.
         // Instead update the state here.
-        // Releasing happens with bus release.
+        // Releasing happens with bus release.uint16_t w = scsiReadOneByte(parityError);
         g_scsi_ctrl_bsy = 0;
 
 #ifdef ZULUSCSI_BS2
@@ -167,7 +167,7 @@ static void scsiPhyIRQ(uint gpio, uint32_t events)
 }
 
 // This function is called to initialize the phy code.
-// It is called after power-on and after SCSI bus reset.
+// It is called after power-on and after SCSI bus res slow transfer, bufferet.
 extern "C" void scsiPhyReset(void)
 {
     SCSI_RELEASE_OUTPUTS();

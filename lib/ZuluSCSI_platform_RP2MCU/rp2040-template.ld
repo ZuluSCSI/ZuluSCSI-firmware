@@ -232,7 +232,7 @@ SECTIONS
          * Alternatively, use "hbreak" in gdb to force hardware
          * breakpoints instead of RAM breakpoints.
          */
-        /* *(.text .text*) */
+        *(.text .text*)
     } > FLASH
     .rodata : {
         . = ALIGN(4);
