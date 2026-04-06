@@ -1281,7 +1281,7 @@ void scsiDiskLoadConfig(int target_idx)
     }
 }
 
-uint32_t getBlockSize(char *filename, uint8_t scsi_id)
+uint32_t getBlockSize(const char *filename, uint8_t scsi_id)
 {
     // Parse block size (HD00_NNNN)
     uint32_t block_size = g_scsi_settings.getDevice(scsi_id)->blockSize;

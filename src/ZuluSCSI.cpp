@@ -64,6 +64,7 @@
 #include "ZuluSCSI_buffer_control.h"
 #include "ZuluSCSI_audio.h"
 #include "ROMDrive.h"
+#include "vhd_support.h"
 
 #include "ui.h"
 
@@ -249,7 +250,7 @@ static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char im
   return true;
 }
 
-bool createImageFile(const char *imgname, uint64_t size)
+bool createImageFile(char *imgname, uint64_t size)
 {
   int namelen = strlen(imgname);
 
@@ -262,9 +263,17 @@ bool createImageFile(const char *imgname, uint64_t size)
 
   // Create file, try to preallocate contiguous sectors
   LED_ON();
+  bool is_vhd_image = false;
+  uint64_t footer_size = 0;
+  // Check for vhd extention and add footer
+  if (namelen >= 4 && strncasecmp(imgname + namelen - 4, ".vhd", 4) == 0)
+  {
+    is_vhd_image = true;
+    footer_size = VHD_FOOTER_SIZE;
+  }
   FsFile file = SD.open(imgname, O_WRONLY | O_CREAT);
 
-  if (!file.preAllocate(size))
+  if (!file.preAllocate(size + footer_size))
   {
     logmsg("---- Preallocation didn't find contiguous set of clusters, continuing anyway");
   }
@@ -336,11 +345,53 @@ bool createImageFile(const char *imgname, uint64_t size)
 
   UICreateProgress(0, block);
 
-  file.close();
+  bool vhd_success = false;
+  if (is_vhd_image)
+  {
+
+    dbgmsg("---- Adding VHD footer");
+    int8_t id = scsiParseId(imgname[2]);
+    if (id >= 0)
+    {
+      uint32_t block_size = getBlockSize(imgname, id);
+      vhd_build_fixed_footer(scsiDev.data, size,
+                            size / block_size, 0,
+                            id);
+      if (file.write(scsiDev.data, VHD_FOOTER_SIZE) == VHD_FOOTER_SIZE)
+      {
+        vhd_success = true;
+      }
+    }
+  }
+
   uint32_t time = millis() - start;
   int kb_per_s = size / time;
-  logmsg("---- Image creation successful, write speed ", kb_per_s, " kB/s");
-
+  if (!is_vhd_image || vhd_success)
+  {
+    if (is_vhd_image && vhd_success)
+    {
+      logmsg("---- Image saved as VHD format");
+    }
+    logmsg("---- Image creation successful, write speed ", kb_per_s, " kB/s");
+  }
+  else
+  {
+    logmsg("---- Failed to write VHD footer");
+    if (file.truncate(size))
+    {
+      logmsg("---- Successfully recovered raw image without vhd footer, write speed was ", kb_per_s, " kB/s");
+      strncpy(imgname + namelen - 3, "raw", 3);
+      if (file.rename(imgname))
+      {
+        logmsg("---- Renamed image to \"", imgname, "\" to indicated the image is raw and doesn't contain a VHD footer");
+      }
+      else
+      {
+        logmsg("---- Warning: Unable to rename image \"", imgname, "\" to .raw, operation failed.");
+      }
+    }
+  }
+  file.close();
   LED_OFF();
   return true;
 }

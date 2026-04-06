@@ -151,7 +151,7 @@ void scsiDiskResetImages();
 void scsiDiskCloseSDCardImages();
 
 // Get blocksize from filename or use device setting in ini file
-uint32_t getBlockSize(char *filename, uint8_t scsi_id);
+uint32_t getBlockSize(const char *filename, uint8_t scsi_id);
 
 // AS/400 Related
 int16_t skip_next(int max);
