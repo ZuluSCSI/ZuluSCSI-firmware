@@ -1452,10 +1452,8 @@ uint8_t platform_get_buttons()
             if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
         }
     #elif defined(GPIO_EJECT_BTN)
-        // EJECT_BTN = 1, SDA = button 2, SCL = button 4
+        // EJECT_BTN = 1
         if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
-        if (!gpio_get(GPIO_I2C_SDA))   buttons |= 2;
-        if (!gpio_get(GPIO_I2C_SCL))   buttons |= 4;
     #elif defined(GPIO_I2C_SDA)
         // SDA = button 1, SCL = button 2
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
