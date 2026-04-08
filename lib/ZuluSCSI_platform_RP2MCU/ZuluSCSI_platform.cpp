@@ -87,8 +87,6 @@ extern "C" {
 extern bool g_rebooting;
 const char *g_platform_name = PLATFORM_NAME;
 bool g_scsi_initiator = false;
-uint32_t g_platform_sys_clock_hz = 125000000;
-uint32_t g_platform_delay_100ns_cycles = 13;
 static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
@@ -196,13 +194,6 @@ static void reclock() {
         uart_init(uart0, 1000000);
 }
 
-void platform_update_delay_calibration(void)
-{
-    g_platform_sys_clock_hz = platform_sys_clock_in_hz();
-    uint64_t cycles = ((uint64_t)g_platform_sys_clock_hz * 100ULL + 999999999ULL) / 1000000000ULL;
-    g_platform_delay_100ns_cycles = cycles > 0 ? (uint32_t)cycles : 1;
-}
-
 uint32_t platform_sys_clock_in_hz()
 {
     return clock_get_hz(clk_sys);
@@ -220,7 +211,8 @@ bool platform_reclock(zuluscsi_speed_grade_t speed_grade)
             {
 
                 logmsg("Using custom timings found in \"", CUSTOM_TIMINGS_FILE, "\" for reclocking");
-                do_reclock = ct.set_timings_from_file();
+                ct.set_timings_from_file();
+                do_reclock = true;
             }
             else
             {
@@ -245,7 +237,6 @@ bool platform_reclock(zuluscsi_speed_grade_t speed_grade)
 #endif
             usb_log_poll();
             reclock();
-            platform_update_delay_calibration();
             logmsg("After reclocking, system reports clock set to ", (int) platform_sys_clock_in_hz(), "Hz");
         }
     }
@@ -404,12 +395,6 @@ void platform_init()
 {
     // Make sure second core is stopped
     multicore_reset_core1();
-
-    platform_update_delay_calibration();
-
-    // Keep negotiated sync limits aligned with the currently selected timing set
-    // even when no explicit reclocking profile is applied.
-    update_sync_period_limits();
 
 #ifdef ZULUSCSI_MCU_RP23XX
     // Set stack overflow limit, with space reserved for exception entry
