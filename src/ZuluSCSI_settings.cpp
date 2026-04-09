@@ -454,6 +454,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.reinsertOnInquiry =  log_ini_getbool(section, "ReinsertCDOnInquiry", cfg.reinsertOnInquiry, CONFIGFILE, log_settings);
     cfg.reinsertAfterEject =  log_ini_getbool(section, "ReinsertAfterEject", cfg.reinsertAfterEject, CONFIGFILE, log_settings);
     cfg.reinsertImmediately =  log_ini_getbool(section, "ReinsertImmediately", cfg.reinsertImmediately, CONFIGFILE, log_settings);
+    cfg.ignoreEject =  log_ini_getbool(section, "IgnoreEject", cfg.ignoreEject, CONFIGFILE, log_settings);
     cfg.ejectOnStop =  log_ini_getbool(section, "EjectOnStop", cfg.ejectOnStop, CONFIGFILE, log_settings);
     cfg.keepCurrentImageOnBusReset =  log_ini_getbool(section, "KeepCurrentImageOnBusReset", cfg.keepCurrentImageOnBusReset, CONFIGFILE, log_settings);
     cfg.disableMacSanityCheck =  log_ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE, log_settings);
@@ -579,6 +580,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     cfgDev.reinsertOnInquiry = true;
     cfgDev.reinsertAfterEject = true;
     cfgDev.reinsertImmediately = false;
+    cfgDev.ignoreEject = false;
     cfgDev.ejectOnStop = false;
     cfgDev.keepCurrentImageOnBusReset = false;
     cfgDev.disableMacSanityCheck = false;

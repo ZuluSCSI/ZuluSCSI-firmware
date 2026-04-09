@@ -2186,8 +2186,11 @@ extern "C" int scsiCDRomCommand()
         }
         else if (eject || img.eject_on_stop)
         {
-            // Eject and switch image
-            cdromPerformEject(img);
+            if (!g_scsi_settings.getDevice(scsiDev.target->targetId)->ignoreEject)
+            {
+                // Eject and switch image
+                cdromPerformEject(img);
+            }
         }
     }
     else if (command == 0x25)

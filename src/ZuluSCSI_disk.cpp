@@ -3333,8 +3333,11 @@ int scsiDiskCommand()
         }
         else if (eject || img.deviceType == S2S_CFG_ZIP100 || img.eject_on_stop)
         {
-            // Eject and switch image
-            doPerformEject(img);
+            if (!g_scsi_settings.getDevice(scsiDev.target->targetId)->ignoreEject)
+            {
+                // Eject and switch image
+                doPerformEject(img);
+            }
         }
         else
         {

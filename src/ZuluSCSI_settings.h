@@ -151,6 +151,7 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     bool reinsertOnInquiry;
     bool reinsertAfterEject;
     bool reinsertImmediately;
+    bool ignoreEject;
     bool ejectOnStop;
     bool keepCurrentImageOnBusReset;
     bool disableMacSanityCheck;
