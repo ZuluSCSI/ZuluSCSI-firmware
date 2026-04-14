@@ -279,7 +279,7 @@ bool createImageFile(char *imgname, uint64_t size)
   }
 
   // Create file, try to preallocate contiguous sectors
-  LED_ON();
+
   bool is_vhd_image = false;
   uint64_t footer_size = 0;
   // Check for vhd extention and add footer
@@ -288,15 +288,33 @@ bool createImageFile(char *imgname, uint64_t size)
     is_vhd_image = true;
     footer_size = VHD_FOOTER_SIZE;
   }
+
+  uint32_t fat_type = SD.fatType();
+  switch (fat_type)
+  {
+      break;
+    case FAT_TYPE_FAT32:
+      if (size > 0xFFFFFFFF)
+      {
+        logmsg("---- Requested image size ", (int)(size / (1024 * 1024)), " MB is too large for FAT32 volume - maximum is 4GB");
+        return false;
+      }
+      break;
+    case FAT_TYPE_EXFAT:
+      //exFat supports very large files, so no need to check size here
+      break;
+    default:
+      logmsg("---- FAT type not FAT32 or exFAT, not limiting file size, but be aware of limitation of FAT12 and FAT16 are under 4GB");
+  }
+
   uint64_t free_space = (uint64_t)SD.freeClusterCount() * SD.bytesPerCluster();
   if (size + footer_size > free_space)
   {
     logmsg("---- Requested image size ", (int)((size + footer_size) / (1024 * 1024)) ," MB is too large, free space is ", (int)(free_space / (1024 * 1024)), " MB");
-    LED_OFF();
     return false;
   }
+  LED_ON();
   FsFile file = SD.open(imgname, O_WRONLY | O_CREAT);
-
   if (!file.preAllocate(size + footer_size))
   {
     logmsg("---- Preallocation didn't find contiguous set of clusters, continuing anyway");
