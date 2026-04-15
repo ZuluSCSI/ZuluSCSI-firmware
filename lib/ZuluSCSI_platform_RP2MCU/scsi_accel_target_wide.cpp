@@ -256,8 +256,7 @@ static uint32_t *scsi_generate_parity_8bit(uint8_t *src, uint32_t count, uint32_
 
         while (count > 0)
         {
-            // We invert the bits in hardware but normal SCSI_OUT does not.
-            *dest++ = scsi_generate_parity(*src++) ^ 0xFFFF;
+            *dest++ = scsi_generate_parity(*src++);
             count -= 1;
         }
     }
@@ -338,15 +337,14 @@ static uint32_t *scsi_generate_parity_16bit(uint8_t *src, uint32_t count, uint32
 
         while (count >= 2)
         {
-            // We invert the bits in hardware but normal SCSI_OUT does not.
-            *dest++ = scsi_generate_parity(*(uint16_t*)src) ^ 0xFFFF;
+            *dest++ = scsi_generate_parity(*(uint16_t*)src);
             src += 2;
             count -= 2;
         }
 
         if (count > 0)
         {
-            *dest++ = scsi_generate_parity(*src++) ^ 0xFFFF;
+            *dest++ = scsi_generate_parity(*src++);
             count -= 1;
         }
     }
