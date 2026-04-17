@@ -3195,13 +3195,21 @@ static void diskDataIn()
 
 #ifdef PLATFORM_AS400
 // AS/400 Write Same(10) entry point
-void scsiDiskStartWriteSame(uint32_t lba, uint32_t blocks) 
+void scsiDiskWriteSame(uint32_t lba, uint32_t blocks) 
 {
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
     uint32_t capacity = img.file.size() / bytesPerSector;
 
-    dbgmsg("------ Write Same", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+    uint32_t writesame_count = 0;
+    if(blocks == 0)
+        writesame_count = capacity - lba;
+    else
+        writesame_count = blocks;
+
+    dbgmsg("------ Write Same ", (int)writesame_count, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+
 
     if (unlikely(((uint64_t) lba) + blocks > capacity))
     {
@@ -3215,13 +3223,43 @@ void scsiDiskStartWriteSame(uint32_t lba, uint32_t blocks)
         return;
     }
 
-    if(blocks == 0)
-        g_disk_transfer.writesame_count = capacity - lba;
-    else
-        g_disk_transfer.writesame_count = blocks;
-
+    int parityError = 0;
     // Read exactly one block from the host, then replicate it
-    scsiDiskStartWrite(lba,1);
+    scsiEnterPhase(DATA_OUT);
+    scsiRead(scsiDev.data, bytesPerSector, &parityError);
+
+    const uint32_t buffer_sectors = sizeof(scsiDev.data) / bytesPerSector;
+    uint32_t sectors_to_write = std::min(writesame_count, buffer_sectors);
+    uint32_t bytes_to_write = sectors_to_write * bytesPerSector;
+
+    // Fill buffer with as much replicated data as possible to speed up writes
+    for (uint32_t i = 1; i < sectors_to_write; i++)
+    {
+        memcpy(scsiDev.data + i * bytesPerSector, scsiDev.data, bytesPerSector);
+    }
+
+    img.file.seek((uint64_t)lba * bytesPerSector);
+
+    while (writesame_count > 0)
+    {
+        sectors_to_write = std::min(writesame_count, buffer_sectors);
+        bytes_to_write = sectors_to_write * bytesPerSector;
+
+        if (img.file.write(scsiDev.data, bytes_to_write) != (int)bytes_to_write)
+        {
+            logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+            scsiDev.phase = STATUS;
+            return;
+        }
+
+        writesame_count -= sectors_to_write;
+        platform_reset_watchdog();
+    }
+    scsiDev.phase = STATUS;
+
 }
 #endif
 
@@ -3754,6 +3792,7 @@ int scsiDiskCommand()
     else if (likely(command == 0x41))
     {
          // Write Same(10)
+        // PBdata, LBdata, RelAdr not implemented
         uint32_t lba =
             (((uint32_t) scsiDev.cdb[2]) << 24) +
             (((uint32_t) scsiDev.cdb[3]) << 16) +
@@ -3762,7 +3801,7 @@ int scsiDiskCommand()
         uint32_t blocks =
             (((uint32_t) scsiDev.cdb[7]) << 8) +
             scsiDev.cdb[8];
-        scsiDiskStartWriteSame(lba, blocks);
+        scsiDiskWriteSame(lba, blocks);
     }
     else if (likely(command == 0xEA) || likely(command == 0xE8))
     {
