@@ -38,6 +38,7 @@
 #include "vendor.h"
 #include <string.h>
 #include "toolbox.h"
+#include <ZuluSCSI_platform_config.h>
 
 // Global SCSI device state.
 ScsiDevice scsiDev S2S_DMA_ALIGN;
@@ -529,7 +530,7 @@ static void process_Command()
 					scsiDev.data[4] = 0x81; // File Mark detected
 			}
 		}
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 		else if (cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
 		{
 			// As specified by the SASI and SCSI1 standard.
@@ -745,7 +746,7 @@ static void doReserveRelease()
 
 	if (extentReservation)
 	{
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
 		{
 			enter_Status(GOOD);
@@ -818,7 +819,7 @@ static void scsiReset()
 		scsiDev.target->reservedId = -1;
 		scsiDev.target->reserverId = -1;
 		S2S_TargetCfg* config = scsiDev.target->cfg;
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 		if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
 		{
 			scsiDev.target->sense.code = UNIT_ATTENTION;
@@ -1453,7 +1454,7 @@ void scsiInit()
 		}
 
 		scsiDev.targets[i].tapeBOM = (cfg && cfg->deviceType == S2S_CFG_SEQUENTIAL) ? 1 : 0;
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 		if (cfg && cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
 		{
 			scsiDev.target->sense.code = UNIT_ATTENTION;

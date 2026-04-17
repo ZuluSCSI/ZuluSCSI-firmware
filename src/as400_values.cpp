@@ -19,12 +19,16 @@
 * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-
-
+#include <ZuluSCSI_platform_config.h>
+#ifdef PLATFORM_AS400
 #include <ZuluSCSI_platform.h>
+
 #include "as400_values.h"
 
-#ifdef PLATFORM_AS400_FC6817
+#include <SdFat.h>
+extern SdFs SD;
+
+
 
 #define ARRAY_LEN(x) (sizeof(x)/sizeof(x[0]))
 
@@ -153,16 +157,37 @@ uint32_t as400_write_ops = 0;
 
 extern "C" void as400_get_serial_8(uint8_t scsi_id, uint8_t* serial_buf)
 {
-    const uint8_t *board_id = platform_get_8byte_mcu_id();
-    char hex_letters[] = "0123456789ABCDEF";
-    serial_buf[0] = hex_letters[board_id[5] & 0xF];
-    serial_buf[1] = hex_letters[board_id[4] & 0xF];
-    serial_buf[2] = hex_letters[board_id[3] & 0xF];
-    serial_buf[3] = hex_letters[board_id[2] & 0xF];
-    serial_buf[4] = hex_letters[board_id[1] & 0xF];
-    serial_buf[5] = hex_letters[(board_id[0] ^ scsi_id) & 0xF];
-    // Drives seem to all have 75 as last two digits of the serial number
-    serial_buf[6] = hex_letters[7];
-    serial_buf[7] = hex_letters[5];
-};
-#endif // PLATFORM_AS400_FC6817
+    cid_t sd_cid;
+    uint32_t sd_sn = 0;
+    if (SD.card()->readCID(&sd_cid))
+    {
+        sd_sn = sd_cid.psn();
+    }
+	const char hex[] = "0123456789ABCDEF";
+	if (sd_sn == 0)
+	{
+		const uint8_t *board_id = platform_get_8byte_mcu_id();
+		serial_buf[0] = hex[board_id[5] & 0xF];
+		serial_buf[1] = hex[board_id[4] & 0xF];
+		serial_buf[2] = hex[board_id[3] & 0xF];
+		serial_buf[3] = hex[board_id[2] & 0xF];
+		serial_buf[4] = hex[board_id[1] & 0xF];
+		serial_buf[5] = hex[(board_id[0] ^ scsi_id) & 0xF];
+	}
+	else
+	{
+		serial_buf[0] = hex[(sd_sn >> 28) & 0xF];
+		serial_buf[1] = hex[(sd_sn >> 24) & 0xF];
+		serial_buf[2] = hex[(sd_sn >> 20) & 0xF];
+		serial_buf[3] = hex[(sd_sn >> 16) & 0xF];
+		serial_buf[4] = hex[(sd_sn >> 12) & 0xF];
+		serial_buf[5] = hex[((sd_sn >> 8) ^ scsi_id) & 0xF];
+	}
+// Drives seem to all have 75 as last two digits of the serial number
+    serial_buf[6] = '7';
+    serial_buf[7] = '5';
+}
+
+#undef ARRAY_LEN
+
+#endif // PLATFORM_AS400
