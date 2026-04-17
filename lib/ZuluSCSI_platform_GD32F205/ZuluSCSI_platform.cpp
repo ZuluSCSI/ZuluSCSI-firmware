@@ -796,6 +796,35 @@ void platform_reset_mcu(uint32_t reset_in_ms)
 
 }
 
+const uint8_t* platform_get_8byte_mcu_id()
+{
+    static uint8_t mcu_id[8] = {0};
+    static bool filled = false;
+    if (!filled)
+    {
+        // capture the lower 64bit of the 96bit mcu id
+        // the last 32 bits of the mcu id are added to the first 32 bits
+        volatile uint32_t mcu_id_0 = *(uint32_t*) 0x1FFFF7E8U;
+        volatile uint32_t mcu_id_1 = *(uint32_t*) 0x1FFFF7ECU;
+        volatile uint32_t mcu_id_2 = *(uint32_t*) 0x1FFFF7F0U;
+
+        mcu_id_0 += mcu_id_2;
+
+        for (uint8_t i = 0; i < 2; i++)
+        {
+            uint32_t id = i == 0 ? mcu_id_0 : mcu_id_1;
+            for (uint8_t j = 0; j < 4; j++)
+            {
+                mcu_id[j + i*4] = id & 0xFF;
+                id = id >> 4;
+            }
+        }
+        filled = true;
+    }
+    return mcu_id;
+   
+}
+
 // Poll function that is called every few milliseconds.
 // Can be left empty or used for platform-specific processing.
 void platform_poll()

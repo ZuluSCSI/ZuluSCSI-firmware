@@ -69,8 +69,11 @@ typedef enum
 
 typedef enum
 {
-    DEV_PRESET_NONE = 0,
-    DEV_PRESET_ST32430N
+    DEV_PRESET_UNKNOWN = -1,
+    DEV_PRESET_NONE,
+    DEV_PRESET_ST32430N,
+    DEV_PRESET_AS400_BS520,
+    DEV_PRESET_AS400_BS522,
 } scsi_device_preset_t;
 
 
@@ -213,6 +216,12 @@ protected:
 
     // Settings for the specific device
     const char **deviceInitST32430N(uint8_t scsiId);
+#ifdef PLATFORM_AS400_FC6817
+    void deviceInitAS400(uint8_t scsiId);
+#endif
+
+    // Get the device preset enum based off of string, return DEV_PRESET_NONE if no match
+    scsi_device_preset_t getDevicePresetFromString(const char *presetName);
 
     // Informative name of the preset configuration, or NULL for defaults
     scsi_system_preset_t m_sysPreset;

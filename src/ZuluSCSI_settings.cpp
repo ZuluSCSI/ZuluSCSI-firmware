@@ -37,7 +37,7 @@
 ZuluSCSISettings g_scsi_settings;
 
 const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "DOS"};
-const char *devicePresetName[] = {"", "ST32430N"};
+const char *devicePresetName[] = {"", "ST32430N", "AS400_BS520", "AS400_BS522"};
 
 // must be in the same order as zuluscsi_speed_grade_t in ZuluSCSI_settings.h
 const char * const speed_grade_strings[] =
@@ -108,6 +108,26 @@ const char **ZuluSCSISettings::deviceInitST32430N(uint8_t scsiId)
     m_dev[scsiId].sectorSDEnd = 4397055; // 2147MB into bytes and divide 512 - 1
     m_devPreset[scsiId] = DEV_PRESET_ST32430N;
     return st32430n;
+}
+
+#ifdef PLATFORM_AS400_FC6817
+void ZuluSCSISettings::deviceInitAS400(uint8_t scsiId)
+{
+        m_dev[scsiId].deviceType = S2S_CFG_FIXED;
+        m_sys.quirks |= S2S_CFG_QUIRKS_AS400;
+}
+#endif
+
+scsi_device_preset_t ZuluSCSISettings::getDevicePresetFromString(const char *presetName)
+{
+    for (int i = 0; i <  sizeof(devicePresetName[0]); i++)
+    {
+        if (strequals(presetName, devicePresetName[i]))
+        {
+            return (scsi_device_preset_t)i;
+        }
+    }
+    return DEV_PRESET_UNKNOWN;
 }
 
 // Acts just like ini_getbool but logs the setting if enabled is true
@@ -197,6 +217,7 @@ void log_getl_quirks(const char *Key, long value)
             , (value & 0x08) ? " 8-VMS "        : ""
             , (value & 0x10) ? " 16-X68000 "    : ""
             , (value & 0x20) ? " 32-EWSD "      : ""
+            , (value & 0x40) ? " 64-AS400 "     : ""
         );
     }
 }
@@ -282,41 +303,48 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
     static const char * const iomega_driveinfo_removeable[4] = IOMEGA_DRIVEINFO_ZIP100;
     
     const char * const * driveinfo = NULL;
-    bool known_preset = false;
     scsi_system_settings_t& cfgSys = m_sys;
 
+    m_devPreset[scsiId] = getDevicePresetFromString(presetName);
 
 #ifdef ZULUSCSI_HARDWARE_CONFIG
     if (g_hw_config.is_active() && g_hw_config.device_preset() ==  DEV_PRESET_NONE)
     {
         // empty preset, use default
-        known_preset = true;
         m_devPreset[scsiId] = DEV_PRESET_NONE;
     }
     else if (g_hw_config.is_active() && g_hw_config.device_preset() ==  DEV_PRESET_ST32430N)
     {
-        driveinfo = deviceInitST32430N(scsiId);
         m_devPreset[scsiId] = DEV_PRESET_ST32430N;
-        known_preset = true;
     }
-    else
 #endif //ZULUSCSI_HARDWARE_CONFIG
-    if (strequals(devicePresetName[DEV_PRESET_NONE], presetName))
-    {
-        // empty preset, use default
-        known_preset = true;
-        m_devPreset[scsiId] = DEV_PRESET_NONE;
-    }
-    else if (strequals(devicePresetName[DEV_PRESET_ST32430N], presetName))
-    {
-        driveinfo = deviceInitST32430N(scsiId);
-        known_preset = true;
-    }
 
-    if (!known_preset)
+    switch (m_devPreset[scsiId])
     {
-        m_devPreset[scsiId] = DEV_PRESET_NONE;
-        logmsg("Unknown Device preset name ", presetName, ", using default settings");
+        case DEV_PRESET_NONE:
+            // empty preset, use default
+            break;
+        case DEV_PRESET_ST32430N:
+            driveinfo = deviceInitST32430N(scsiId);
+            break;
+#ifdef PLATFORM_AS400_FC6817
+        case DEV_PRESET_AS400_BS520:
+            g_scsi_settings.deviceInitAS400(scsiId);
+            cfgDev.blockSize = 520;
+            static const char *as400_bs520[4] = {"IBM", devicePresetName[DEV_PRESET_AS400_BS520], PLATFORM_REVISION, ""};
+            driveinfo = as400_bs520;
+            break;
+        case DEV_PRESET_AS400_BS522:
+            g_scsi_settings.deviceInitAS400(scsiId);
+            cfgDev.blockSize = 522;
+            static const char *as400_bs522[4] = {"IBM", devicePresetName[DEV_PRESET_AS400_BS522], PLATFORM_REVISION, ""};
+            driveinfo = as400_bs522;
+            break;
+#endif
+        default:
+            m_devPreset[scsiId] = DEV_PRESET_NONE;
+            logmsg("---- Unknown Device preset name ", presetName, ", using default settings");
+            break;
     }
 
     if (m_devPreset[scsiId] == DEV_PRESET_NONE)
@@ -475,7 +503,10 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         if (log_settings)
         {
             logmsg("-- [SCSI] settings in ", CONFIGFILE, ":");
-            logmsg("---- System = ", presetName);
+            if (presetName && presetName[0])
+            {
+                logmsg("---- System = ", presetName);
+            }
         }
     }
 

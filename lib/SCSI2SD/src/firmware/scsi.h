@@ -1,4 +1,6 @@
 //	Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
+//	Copyright (c) 2025 Kevin Moonlight <me@yyzkevin.com>
+//	Copyright (c) 2025 Rabbit Hole Computing™
 //
 //	This file is part of SCSI2SD.
 //
@@ -94,6 +96,29 @@ typedef struct
 	uint8_t tapeBufferedMode; // Buffered mode field from MODE SELECT byte 2
 } LiveCfg;
 
+// for AS400 custom command like Skip Read/Write
+typedef struct {
+    uint8_t *buffer;
+    uint32_t bytes_sd; // Number of bytes that have been scheduled for transfer on SD card side
+    uint32_t bytes_scsi; // Number of bytes that have been scheduled for transfer on SCSI side
+
+#ifdef PLATFORM_AS400_FC6817
+    // For linked command, developed for the AS400
+    uint32_t writesame_count; 
+    uint8_t  skip_mask[256];
+    uint16_t skip_mask_length;
+    uint32_t skip_lba;
+    uint16_t skip_blocks;    
+    uint32_t skip_position;
+    uint8_t  skip_command; // Operation code from CDB. This is needed to verify correct follow up linked command.
+#endif
+
+    uint32_t bytes_scsi_started;
+    uint32_t sd_transfer_start;
+    int parityError;
+} DiskTransfer ;
+
+
 typedef struct
 {
 	uint8_t targetId;
@@ -104,7 +129,8 @@ typedef struct
 
 	ScsiSense sense;
 
-	
+	DiskTransfer transfer;
+
 	uint16_t unitAttention; // Set to the sense qualifier key to be returned.
 	uint8_t unitAttentionStop; // Indicates if unit attention has to be stopped.
 
@@ -116,6 +142,7 @@ typedef struct
 	uint8_t syncOffset;
 	uint8_t syncPeriod;
 
+	bool initial_check; // to keep track of startup
 	uint8_t started; // Controlled by START STOP UNIT
 
 	uint8_t busWidth; // 0: 8-bit, 1: 16-bit, 2: 32-bit

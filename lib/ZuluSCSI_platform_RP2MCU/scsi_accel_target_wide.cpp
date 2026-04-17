@@ -256,8 +256,7 @@ static uint32_t *scsi_generate_parity_8bit(uint8_t *src, uint32_t count, uint32_
 
         while (count > 0)
         {
-            // We invert the bits in hardware but normal SCSI_OUT does not.
-            *dest++ = scsi_generate_parity(*src++) ^ 0xFFFF;
+            *dest++ = scsi_generate_parity(*src++);
             count -= 1;
         }
     }
@@ -338,15 +337,14 @@ static uint32_t *scsi_generate_parity_16bit(uint8_t *src, uint32_t count, uint32
 
         while (count >= 2)
         {
-            // We invert the bits in hardware but normal SCSI_OUT does not.
-            *dest++ = scsi_generate_parity(*(uint16_t*)src) ^ 0xFFFF;
+            *dest++ = scsi_generate_parity(*(uint16_t*)src);
             src += 2;
             count -= 2;
         }
 
         if (count > 0)
         {
-            *dest++ = scsi_generate_parity(*src++) ^ 0xFFFF;
+            *dest++ = scsi_generate_parity(*src++);
             count -= 1;
         }
     }
@@ -741,7 +739,7 @@ static void process_dma_readbuf()
 
         if (!scsi_check_parity_16bit(parity))
         {
-            dbgmsg("Parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
+            dbgmsg("16-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
             g_scsi_dma.parityerror = true;
         }
     }
@@ -768,7 +766,7 @@ static void process_dma_readbuf()
 
         if (!scsi_check_parity(parity))
         {
-            dbgmsg("Parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
+            dbgmsg("8-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
             g_scsi_dma.parityerror = true;
         }
     }
@@ -859,6 +857,9 @@ void scsi_accel_rp2040_startRead(uint8_t *data, uint32_t count, int *parityError
 {
     // Any write requests should be matched with a stopWrite()
     assert(g_scsi_dma_state != SCSIDMA_WRITE && g_scsi_dma_state != SCSIDMA_WRITE_DONE);
+
+    if (g_scsi_dma.wide && (count & 1))
+        count++;
 
     uint32_t saved_irq = spin_lock_blocking(g_scsi_dma.spin_lock);
     if (g_scsi_dma_state == SCSIDMA_READ)

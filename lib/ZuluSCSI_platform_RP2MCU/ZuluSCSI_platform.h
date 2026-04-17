@@ -25,7 +25,6 @@
 
 #include <stdint.h>
 #include <Arduino.h>
-#include <pico/platform.h>
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_platform_network.h"
 #include <ZuluSCSI_settings.h>
@@ -73,29 +72,17 @@ bool platform_emergency_log_save();
 // Arduino platform already provides these
 unsigned long millis(void);
 void delay(unsigned long ms);
-extern uint32_t g_platform_sys_clock_hz;
-extern uint32_t g_platform_delay_100ns_cycles;
-void platform_update_delay_calibration(void);
 
 // Short delays, can be called from interrupt mode
 static inline void delay_ns(unsigned long ns)
 {
-    if (ns >= 1000000UL)
-    {
-        delayMicroseconds((ns + 999) / 1000);
-        return;
-    }
-
-    uint64_t cycles = ((uint64_t)g_platform_sys_clock_hz * ns + 999999999ULL) / 1000000000ULL;
-    if (cycles > 0)
-    {
-        busy_wait_at_least_cycles((uint32_t)cycles);
-    }
+    delayMicroseconds((ns + 999) / 1000);
 }
 
+// Approximate fast delay
 static inline void delay_100ns()
 {
-    busy_wait_at_least_cycles(g_platform_delay_100ns_cycles);
+    asm volatile ("nop \n nop \n nop \n nop \n nop \n nop \n nop \n nop \n nop \n nop \n nop");
 }
 
 // Initialize SD card and GPIO configuration
@@ -140,6 +127,8 @@ void platform_reset_watchdog();
 // Reset MCU
 void platform_reset_mcu(uint32_t reset_in_ms);
 
+// Returns an 8-byte (64bit) mcu id as an 8-byte array
+const uint8_t* platform_get_8byte_mcu_id();
 
 // Poll function that is called every few milliseconds.
 // The SD card is free to access during this time, and pauses up to

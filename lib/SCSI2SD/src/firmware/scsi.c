@@ -2,6 +2,7 @@
 //	Copyright (c) 2023 joshua stein <jcs@jcs.org>
 //	Copyright (c) 2023 Andrea Ottaviani <andrea.ottaviani.69@gmail.com>
 //	Copyright (c) 2024-2025 Rabbit Hole Computing™
+//	Copyright (c) 2025 Kevin Moonlight <me@yyzkevin.com>
 //
 //	This file is part of SCSI2SD.
 //
@@ -528,6 +529,47 @@ static void process_Command()
 					scsiDev.data[4] = 0x81; // File Mark detected
 			}
 		}
+#ifdef PLATFORM_AS400_FC6817
+		else if (cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
+		{
+			// As specified by the SASI and SCSI1 standard.
+			// Newer initiators won't be specifying 0 anyway.
+			if (allocLength == 0) allocLength = 4;
+
+			// If we receive a stand-alone REQUEST SENSE to a bad LUN we still need to respond
+			// with LUN not supported. SCSI-2 Spec 7.5.3.
+			if (scsiDev.lun && scsiDev.lastStatus != CHECK_CONDITION)
+			{
+				scsiDev.target->sense.code = ILLEGAL_REQUEST;
+				scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_SUPPORTED;
+				transfer.lba = 0;
+			}
+			memset(scsiDev.data, 0, 256); // Max possible alloc length
+			scsiDev.data[0] = 0x70;
+			scsiDev.data[2] = scsiDev.target->sense.code & 0x0F;
+
+			// LBA is Valid Information for direct access devices.
+			scsiDev.data[3] = transfer.lba >> 24;
+			scsiDev.data[4] = transfer.lba >> 16;
+			scsiDev.data[5] = transfer.lba >> 8;
+			scsiDev.data[6] = transfer.lba;
+
+
+			// Additional bytes if there are errors to report
+			scsiDev.data[7] = 0x18; // additional length
+			scsiDev.data[12] = scsiDev.target->sense.asc >> 8;
+			scsiDev.data[13] = scsiDev.target->sense.asc;
+
+			if(scsiDev.target->sense.code == NOT_READY && scsiDev.target->sense.asc == LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED) {
+				scsiDev.data[20]=1;
+				scsiDev.data[21]=1;
+			}
+			if(scsiDev.target->sense.code == UNIT_ATTENTION && scsiDev.target->sense.asc == POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED) {
+				scsiDev.data[20]=1;
+				scsiDev.data[21]=0x41;
+			}
+		}
+#endif
 		else
 		{
 			// As specified by the SASI and SCSI1 standard.
@@ -703,10 +745,19 @@ static void doReserveRelease()
 
 	if (extentReservation)
 	{
-		// Not supported.
-		scsiDev.target->sense.code = ILLEGAL_REQUEST;
-		scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-		enter_Status(CHECK_CONDITION);
+#ifdef PLATFORM_AS400_FC6817
+		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
+		{
+			enter_Status(GOOD);
+		}	
+		else
+#endif
+		{
+			// Not supported.
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+			enter_Status(CHECK_CONDITION);
+		}
 	}
 	else if (command == 0x17) // release
 	{
@@ -766,8 +817,19 @@ static void scsiReset()
 		}
 		scsiDev.target->reservedId = -1;
 		scsiDev.target->reserverId = -1;
-		scsiDev.target->sense.code = NO_SENSE;
-		scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+		S2S_TargetCfg* config = scsiDev.target->cfg;
+#ifdef PLATFORM_AS400_FC6817
+		if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
+		{
+			scsiDev.target->sense.code = UNIT_ATTENTION;
+			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+		}
+		else
+#endif
+		{
+			scsiDev.target->sense.code = NO_SENSE;
+			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+		}
 	}
 	scsiDev.target = NULL;
 
@@ -1391,12 +1453,24 @@ void scsiInit()
 		}
 
 		scsiDev.targets[i].tapeBOM = (cfg && cfg->deviceType == S2S_CFG_SEQUENTIAL) ? 1 : 0;
-
-		// Always "start" the device. Many systems (eg. Apple System 7)
-		// won't respond properly to
-		// LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED sense
-		// code
-		scsiDev.targets[i].started = 1;
+#ifdef PLATFORM_AS400_FC6817
+		if (cfg && cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
+		{
+			scsiDev.target->sense.code = UNIT_ATTENTION;
+			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			scsiDev.targets[i].started = 0;
+		}
+		else
+#endif
+		{
+			scsiDev.target->sense.code = NO_SENSE;
+			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+			// Always "start" the device. Many systems (eg. Apple System 7)
+			// won't respond properly to
+			// LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED sense
+			// code
+			scsiDev.targets[i].started = 1;
+		}
 	}
 	firstInit = 0;
 }

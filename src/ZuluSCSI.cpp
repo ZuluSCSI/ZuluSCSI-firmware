@@ -64,13 +64,14 @@
 #include "ZuluSCSI_buffer_control.h"
 #include "ZuluSCSI_audio.h"
 #include "ROMDrive.h"
+#include "vhd_support.h"
 
 #include "ui.h"
 
 SdFs SD;
 FsFile g_logfile;
 bool g_rawdrive_active;
-static bool g_romdrive_active;
+bool g_romdrive_active;
 bool g_sdcard_present;
 bool g_rebooting = false;
 bool g_log_to_sd;
@@ -186,7 +187,7 @@ static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char im
   }
 
   char *unit = nullptr;
-  size = strtoul(p, &unit, 10);
+  size = strtoull(p, &unit, 10);
 
   if (size <= 0 || unit <= p)
   {
@@ -196,7 +197,12 @@ static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char im
 
   // Parse k/M/G unit
   char unitchar = tolower(*unit);
-  if (unitchar == 'k')
+  if (unitchar == 'b')
+  {
+    // value in bytes, leave size unchanged
+    p = unit + 1;
+  }
+  else if (unitchar == 'k')
   {
     size *= 1024;
     p = unit + 1;
@@ -210,6 +216,18 @@ static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char im
   {
     size *= 1024 * 1024 * 1024;
     p = unit + 1;
+  }
+  else if (unitchar == 'x')
+  {
+    p = unit + 1;
+    uint64_t sector_size = strtoull(p, &unit, 10);
+    if (sector_size <= 0 || unit <= p)
+    {
+      logmsg("---- Could not parse sector size in filename '", cmd_filename, "'");
+      return false;
+    }
+    size *= sector_size;
+    p = unit;
   }
   else
   {
@@ -249,7 +267,7 @@ static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char im
   return true;
 }
 
-bool createImageFile(const char *imgname, uint64_t size)
+bool createImageFile(char *imgname, uint64_t size)
 {
   int namelen = strlen(imgname);
 
@@ -261,10 +279,43 @@ bool createImageFile(const char *imgname, uint64_t size)
   }
 
   // Create file, try to preallocate contiguous sectors
+
+  bool is_vhd_image = false;
+  uint64_t footer_size = 0;
+  // Check for vhd extention and add footer
+  if (namelen >= 4 && strncasecmp(imgname + namelen - 4, ".vhd", 4) == 0)
+  {
+    is_vhd_image = true;
+    footer_size = VHD_FOOTER_SIZE;
+  }
+
+  uint32_t fat_type = SD.fatType();
+  switch (fat_type)
+  {
+      break;
+    case FAT_TYPE_FAT32:
+      if (size > 0xFFFFFFFF)
+      {
+        logmsg("---- Requested image size ", (int)(size / (1024 * 1024)), " MB is too large for FAT32 volume - maximum is 4GB");
+        return false;
+      }
+      break;
+    case FAT_TYPE_EXFAT:
+      //exFat supports very large files, so no need to check size here
+      break;
+    default:
+      logmsg("---- FAT type not FAT32 or exFAT, not limiting file size, but be aware of limitation of FAT12 and FAT16 are under 4GB");
+  }
+
+  uint64_t free_space = (uint64_t)SD.freeClusterCount() * SD.bytesPerCluster();
+  if (size + footer_size > free_space)
+  {
+    logmsg("---- Requested image size ", (int)((size + footer_size) / (1024 * 1024)) ," MB is too large, free space is ", (int)(free_space / (1024 * 1024)), " MB");
+    return false;
+  }
   LED_ON();
   FsFile file = SD.open(imgname, O_WRONLY | O_CREAT);
-
-  if (!file.preAllocate(size))
+  if (!file.preAllocate(size + footer_size))
   {
     logmsg("---- Preallocation didn't find contiguous set of clusters, continuing anyway");
   }
@@ -336,11 +387,53 @@ bool createImageFile(const char *imgname, uint64_t size)
 
   UICreateProgress(0, block);
 
-  file.close();
+  bool vhd_success = false;
+  if (is_vhd_image)
+  {
+
+    dbgmsg("---- Adding VHD footer");
+    int8_t id = scsiParseId(imgname[2]);
+    if (id >= 0)
+    {
+      uint32_t block_size = getBlockSize(imgname, id);
+      vhd_build_fixed_footer(scsiDev.data, size,
+                            size / block_size, 0,
+                            id);
+      if (file.write(scsiDev.data, VHD_FOOTER_SIZE) == VHD_FOOTER_SIZE)
+      {
+        vhd_success = true;
+      }
+    }
+  }
+
   uint32_t time = millis() - start;
   int kb_per_s = size / time;
-  logmsg("---- Image creation successful, write speed ", kb_per_s, " kB/s");
-
+  if (!is_vhd_image || vhd_success)
+  {
+    if (is_vhd_image && vhd_success)
+    {
+      logmsg("---- Image saved as VHD format");
+    }
+    logmsg("---- Image creation successful, write speed ", kb_per_s, " kB/s");
+  }
+  else
+  {
+    logmsg("---- Failed to write VHD footer");
+    if (file.truncate(size))
+    {
+      logmsg("---- Successfully recovered raw image without vhd footer, write speed was ", kb_per_s, " kB/s");
+      strncpy(imgname + namelen - 3, "raw", 3);
+      if (file.rename(imgname))
+      {
+        logmsg("---- Renamed image to \"", imgname, "\" to indicated the image is raw and doesn't contain a VHD footer");
+      }
+      else
+      {
+        logmsg("---- Warning: Unable to rename image \"", imgname, "\" to .raw, operation failed.");
+      }
+    }
+  }
+  file.close();
   LED_OFF();
   return true;
 }
@@ -598,14 +691,9 @@ bool findHDDImages()
           }
         }
         else if(id < S2S_MAX_TARGETS && lun < NUM_SCSILUN) {
-          logmsg("-- Opening ", fullname, " for id:", id, " lun:", lun);
+          logmsg("---- Opening ", fullname, " for id:", id, " lun:", lun);
 
-          if (g_scsi_settings.getDevicePreset(id) != DEV_PRESET_NONE)
-          {
-              logmsg("---- Using device preset: ", g_scsi_settings.getDevicePresetName(id));
-          }
-
-          imageReady = scsiDiskOpenHDDImage(id, fullname, lun, blk, type, use_prefix);
+           imageReady = scsiDiskOpenHDDImage(id, fullname, lun, blk, type, use_prefix);
           if(imageReady)
           {
             foundImage = true;

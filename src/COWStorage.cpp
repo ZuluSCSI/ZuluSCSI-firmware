@@ -26,7 +26,7 @@ static void allocateCOWBuffer()
 }
 
 //	Helper function: create a new image file of specified size if needed
-static bool createDirtyFile(const char *dirty_filename, uint64_t size)
+static bool createDirtyFile(char *dirty_filename, uint64_t size)
 {
     //  If file already exists and is same size or larger, do nothing
     FsFile file;

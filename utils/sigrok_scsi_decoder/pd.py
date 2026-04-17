@@ -255,7 +255,7 @@ class Decoder(srd.Decoder):
 
     def push_cmd(self, end_sample):
         if not self.cmd_bytes:
-            self.put(self.ss_cmd, end_sample, self.out_ann, [Annotations.cmd, ["NO COMMAND"]])
+            self.put(self.ss_cmd, end_sample, self.out_ann, [Annotations.cmd_special, ["NO COMMAND"]])
         else:
             cmdclass, cmdname = SCSI_COMMANDS.get(self.cmd_bytes[0], (3,"UNKNOWN COMMAND"))
             texts = [cmdname + ": " + ' '.join('%02x' % x for x in self.cmd_bytes), cmdname]
