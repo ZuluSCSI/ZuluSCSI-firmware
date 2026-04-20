@@ -309,6 +309,10 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
     static const char * const apl_driveinfo_network[4]   = APPLE_DRIVEINFO_NETWORK;
     static const char * const apl_driveinfo_tape[4]      = APPLE_DRIVEINFO_TAPE;
 
+#ifdef PLATFORM_AS400
+    static const char * const as400_driveinfo_optical[4] = AS400_DRIVEINFO_OPTICAL;
+#endif
+
     static const char * const iomega_driveinfo_removeable[4] = IOMEGA_DRIVEINFO_ZIP100;
     
     const char * const * driveinfo = NULL;
@@ -335,9 +339,10 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
         {
             case SYS_PRESET_AS400:
             // For the AS400 preset, we want to set the device preset to the block size 520
-                [[fall_through]];
+                [[fallthrough]];
             case SYS_PRESET_AS400_BS520:
                 m_devPreset[scsiId] = DEV_PRESET_AS400_BS520;
+                logmsg("---- Setting device preset to AS400_BS520 based on system preset ", systemPresetName[m_sysPreset]);
                 break;
             case SYS_PRESET_AS400_BS522:
                 m_devPreset[scsiId] = DEV_PRESET_AS400_BS522;
@@ -414,6 +419,13 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
                 default:                    driveinfo = driveinfo_fixed; break;
             }
         }
+
+        #ifdef PLATFORM_AS400
+        if ((cfgSys.quirks & S2S_CFG_QUIRKS_AS400) && type == S2S_CFG_OPTICAL)
+        {
+            driveinfo = as400_driveinfo_optical;
+        }
+        #endif
     }
 
     // If the scsi string has not been set system wide use default scsi string

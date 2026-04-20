@@ -814,6 +814,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
 
             setRootFolder(target_idx, false, dir_name);
+            g_scsi_settings.initDevice(target_idx, type, true);
         }
     }
 }
@@ -891,8 +892,6 @@ static void scsiDiskSetConfig(int target_idx)
         }
     }
 #endif
-
-    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType, true);
 }
 
 // Compares the prefix of both files and the scsi ID
