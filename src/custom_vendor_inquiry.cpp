@@ -53,6 +53,16 @@ static struct {
     uint8_t data[MAX_SPD_SIZE];
 } g_custom_spd[S2S_MAX_TARGETS];
 
+#ifdef PLATFORM_AS400
+// Per-SCSI-ID override for the 8-byte AS/400 serial, supplied via the
+// `AS400_Disk_Serial` key in [SCSI<n>] sections. When length == 8,
+// injectSerial() uses this value instead of the SD CID / MCU-derived default.
+static struct {
+    uint8_t length;
+    uint8_t data[8];
+} g_as400_serial_override[S2S_MAX_TARGETS];
+#endif
+
 // Parse space/comma-separated hex values from a string into a byte buffer.
 // Returns number of bytes parsed.
 static int parseHexString(const char *str, uint8_t *buf, int maxlen)
@@ -87,7 +97,17 @@ static void injectSerial(uint8_t *data, int offset, uint8_t scsiId)
 {
     uint8_t serial[8];
     char string[9] = {0};
-    as400_get_serial_8(scsiId, serial);
+#ifdef PLATFORM_AS400
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (g_as400_serial_override[id].length == 8)
+    {
+        memcpy(serial, g_as400_serial_override[id].data, 8);
+    }
+    else
+#endif
+    {
+        as400_get_serial_8(scsiId, serial);
+    }
 
     memcpy(data + offset, serial, 8);
     memcpy(string, serial, 8);
@@ -161,6 +181,9 @@ void parseCustomInquiryData(uint8_t scsiId)
 
     g_custom_vpd_count = 0;
     memset(g_custom_spd, 0, sizeof(g_custom_spd));
+#ifdef PLATFORM_AS400
+    memset(g_as400_serial_override, 0, sizeof(g_as400_serial_override));
+#endif
 
     snprintf(section, sizeof(section), "SCSI%d", scsiId);
 
@@ -193,6 +216,22 @@ void parseCustomInquiryData(uint8_t scsiId)
         }
     }
 #ifdef PLATFORM_AS400
+    // Parse AS/400 serial override: AS400_Disk_Serial=<up to 8 chars>
+    // Shorter values are right-padded with ASCII spaces; longer values are truncated.
+    if (ini_gets(section, "AS400_Disk_Serial", "", tmp, sizeof(tmp), CONFIGFILE))
+    {
+        size_t slen = strlen(tmp);
+        if (slen > 0)
+        {
+            uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+            memset(g_as400_serial_override[id].data, ' ', 8);
+            if (slen > 8) slen = 8;
+            memcpy(g_as400_serial_override[id].data, tmp, slen);
+            g_as400_serial_override[id].length = 8;
+            logmsg("Custom AS/400 serial for SCSI ID ", scsiId, ": \"", tmp, "\"");
+        }
+    }
+
     // Load AS/400 defaults for any IDs that don't have INI overrides
     loadAS400Defaults(scsiId);
 #endif
