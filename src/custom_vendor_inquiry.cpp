@@ -24,6 +24,7 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
+#include "ZuluSCSI_disk.h"
 #include <ZuluSCSI_platform_config.h>
 #ifdef PLATFORM_AS400
 # include "as400_values.h"
@@ -92,19 +93,19 @@ static bool hasCustomVPD(uint8_t scsiId, uint8_t pageCode)
     return false;
 }
 
+#ifdef PLATFORM_AS400
 // Inject the generated serial number into a VPD page at the given offset
 static void injectSerial(uint8_t *data, int offset, uint8_t scsiId)
 {
     uint8_t serial[8];
     char string[9] = {0};
-#ifdef PLATFORM_AS400
+
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
     if (g_as400_serial_override[id].length == 8)
     {
         memcpy(serial, g_as400_serial_override[id].data, 8);
     }
     else
-#endif
     {
         as400_get_serial_8(scsiId, serial);
     }
@@ -112,6 +113,7 @@ static void injectSerial(uint8_t *data, int offset, uint8_t scsiId)
     memcpy(data + offset, serial, 8);
     memcpy(string, serial, 8);
 }
+#endif
 
 #ifdef PLATFORM_AS400
 // Populate default AS/400 inquiry and VPD data
@@ -176,7 +178,7 @@ static void loadAS400Defaults(uint8_t scsiId)
 void parseCustomInquiryData(uint8_t scsiId)
 {
     char tmp[512];
-    char section[8];
+    char section[6] = "SCSI0";
     char key[8];
 
     g_custom_vpd_count = 0;
@@ -185,7 +187,8 @@ void parseCustomInquiryData(uint8_t scsiId)
     memset(g_as400_serial_override, 0, sizeof(g_as400_serial_override));
 #endif
 
-    snprintf(section, sizeof(section), "SCSI%d", scsiId);
+
+    section[4] = scsiEncodeID(scsiId);
 
     // Parse VPD pages: vpd00, vpd80, etc.
     for (int page = 0; page < 0xFF && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; page++)
@@ -218,7 +221,7 @@ void parseCustomInquiryData(uint8_t scsiId)
 #ifdef PLATFORM_AS400
     // Parse AS/400 serial override: AS400_Disk_Serial=<up to 8 chars>
     // Shorter values are right-padded with ASCII spaces; longer values are truncated.
-    if (ini_gets(section, "AS400_Disk_Serial", "", tmp, sizeof(tmp), CONFIGFILE))
+    if (ini_gets(section, "AS400_DiskSerial", "", tmp, sizeof(tmp), CONFIGFILE))
     {
         size_t slen = strlen(tmp);
         if (slen > 0)
