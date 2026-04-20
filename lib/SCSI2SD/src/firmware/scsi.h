@@ -96,23 +96,10 @@ typedef struct
 	uint8_t tapeBufferedMode; // Buffered mode field from MODE SELECT byte 2
 } LiveCfg;
 
-// for AS400 custom command like Skip Read/Write
 typedef struct {
     uint8_t *buffer;
     uint32_t bytes_sd; // Number of bytes that have been scheduled for transfer on SD card side
     uint32_t bytes_scsi; // Number of bytes that have been scheduled for transfer on SCSI side
-
-#ifdef PLATFORM_AS400_FC6817
-    // For linked command, developed for the AS400
-    uint32_t writesame_count; 
-    uint8_t  skip_mask[256];
-    uint16_t skip_mask_length;
-    uint32_t skip_lba;
-    uint16_t skip_blocks;    
-    uint32_t skip_position;
-    uint8_t  skip_command; // Operation code from CDB. This is needed to verify correct follow up linked command.
-#endif
-
     uint32_t bytes_scsi_started;
     uint32_t sd_transfer_start;
     int parityError;

@@ -25,7 +25,10 @@
 #include "ZuluSCSI_mode.h"
 #include <ZuluSCSI_platform_config.h>
 #include "toolbox.h"
+
+#ifdef PLATFORM_AS400
 #include <as400_values.h>
+#endif
 
 #include <string.h>
 
@@ -284,11 +287,7 @@ static void pageIn(int pc, int dataIdx, const uint8_t* pageData, int pageLen)
 
 static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int allocLength)
 {
-	// Skip the Mode Data Length, we set that last.
-	int idx = 1;
-	if (!sixByteCmd) ++idx;
-
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 	// copy of a raw capture of an AS400 drive
 	if (sixByteCmd && pageCode == 0x3F && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
 	{
@@ -298,6 +297,10 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		return;
 	}
 #endif
+
+	// Skip the Mode Data Length, we set that last.
+	int idx = 1;
+	if (!sixByteCmd) ++idx;
 
 	uint8_t mediumType = 0;
 	uint8_t deviceSpecificParam = 0;

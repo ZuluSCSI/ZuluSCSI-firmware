@@ -64,6 +64,7 @@
 #include "ZuluSCSI_buffer_control.h"
 #include "ZuluSCSI_audio.h"
 #include "ROMDrive.h"
+#include "custom_vendor_inquiry.h"
 #include "vhd_support.h"
 
 #include "ui.h"
@@ -498,6 +499,7 @@ bool findHDDImages()
   char imgdir[MAX_FILE_PATH];
   ini_gets("SCSI", "Dir", "/", imgdir, sizeof(imgdir), CONFIGFILE);
   int dirindex = 0;
+  
 
   logmsg("Finding images in directory ", imgdir, ":");
 
@@ -678,6 +680,7 @@ bool findHDDImages()
         if (is_zp) type = S2S_CFG_ZIP100;
 
         g_scsi_settings.initDevice(id, type);
+        parseCustomInquiryData(id);
 
         scsiDiskGetImageConfig(id).tapeDensity = g_scsi_settings.getDevice(id)->tapeDensity;
         // Open the image file
@@ -979,6 +982,13 @@ static void reinitSCSI()
   scsiPhyReset();
   scsiDiskInit();
   scsiInit();
+  for (int8_t scsiId = 0; scsiId < S2S_MAX_TARGETS; scsiId++)
+  {
+      if (scsiDev.targets[scsiId].cfg->scsiId & S2S_CFG_TARGET_ENABLED)
+      {
+          parseCustomInquiryData(scsiId);
+      }
+  }
 
 #ifdef ZULUSCSI_NETWORK
 

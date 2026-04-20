@@ -20,6 +20,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 #pragma once
+#include <ZuluSCSI_platform_config.h>
 
 // must be in the same order as speed_grade_strings[]  in ZuluSCSI_settings.cpp
 typedef enum
@@ -63,8 +64,12 @@ typedef enum
     SYS_PRESET_MPC3000,
     SYS_PRESET_MEGASTE,
     SYS_PRESET_X68000,
-    SYS_PRESET_DOS
-
+    SYS_PRESET_DOS,
+#ifdef PLATFORM_AS400
+    SYS_PRESET_AS400,
+    SYS_PRESET_AS400_BS520,
+    SYS_PRESET_AS400_BS522,
+#endif
 } scsi_system_preset_t;
 
 typedef enum
@@ -72,8 +77,10 @@ typedef enum
     DEV_PRESET_UNKNOWN = -1,
     DEV_PRESET_NONE,
     DEV_PRESET_ST32430N,
+#ifdef PLATFORM_AS400
     DEV_PRESET_AS400_BS520,
     DEV_PRESET_AS400_BS522,
+#endif
 } scsi_device_preset_t;
 
 
@@ -216,7 +223,7 @@ protected:
 
     // Settings for the specific device
     const char **deviceInitST32430N(uint8_t scsiId);
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
     void deviceInitAS400(uint8_t scsiId);
 #endif
 

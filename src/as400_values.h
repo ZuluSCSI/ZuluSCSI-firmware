@@ -21,22 +21,22 @@
 #pragma once
 
 #include <ZuluSCSI_platform_config.h>
+#ifdef PLATFORM_AS400
 #include <stdint.h>
 #include <stddef.h>
 
-#ifdef PLATFORM_AS400_FC6817
+
 extern const uint8_t AS400VendorInquiry[];
-extern const size_t AS400VendorInquiryLen;
+extern const size_t  AS400VendorInquiryLen;
 
 extern const uint8_t AS400VitalPages[][255];
 extern const size_t  AS400VitalPagesLen;
 
 extern const uint8_t as400_mode_sense_all_pages[];
-extern const size_t as400_mode_sense_all_pages_len;
+extern const size_t  as400_mode_sense_all_pages_len;
 
-extern const uint8_t as400_log_sense_page_00[];
-extern const size_t as400_log_sense_page_00_len;
-
+extern const uint8_t  as400_log_sense_page_00[];
+extern const size_t   as400_log_sense_page_00_len;
 extern const uint16_t as400_log_sense_page_30_page_length;
 extern const uint8_t  as400_log_sense_page_30_page_list_length;
 extern const uint16_t as400_log_sense_page_31_page_length;
