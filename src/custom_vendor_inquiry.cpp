@@ -55,8 +55,8 @@ static struct {
 
 #ifdef PLATFORM_AS400
 // Per-SCSI-ID override for the 8-byte AS/400 serial, supplied via the
-// `AS400_Serial` key in [SCSI<n>] sections. When length == 8, injectSerial()
-// uses this value instead of the SD CID / MCU-derived default.
+// `AS400_Disk_Serial` key in [SCSI<n>] sections. When length == 8,
+// injectSerial() uses this value instead of the SD CID / MCU-derived default.
 static struct {
     uint8_t length;
     uint8_t data[8];
@@ -216,9 +216,9 @@ void parseCustomInquiryData(uint8_t scsiId)
         }
     }
 #ifdef PLATFORM_AS400
-    // Parse AS/400 serial override: AS400_Serial=<up to 8 chars>
+    // Parse AS/400 serial override: AS400_Disk_Serial=<up to 8 chars>
     // Shorter values are right-padded with ASCII spaces; longer values are truncated.
-    if (ini_gets(section, "AS400_Serial", "", tmp, sizeof(tmp), CONFIGFILE))
+    if (ini_gets(section, "AS400_Disk_Serial", "", tmp, sizeof(tmp), CONFIGFILE))
     {
         size_t slen = strlen(tmp);
         if (slen > 0)
