@@ -272,7 +272,7 @@ void parseCustomInquiryData(uint8_t scsiId)
             if (slen > 8) slen = 8;
             memcpy(g_as400_serial_override[id].data, tmp, slen);
             g_as400_serial_override[id].length = 8;
-            logmsg("Custom AS/400 serial for SCSI ID ", scsiId, ": \"", tmp, "\"");
+            logmsg("---- Custom AS/400 serial for SCSI ID ", (int) scsiId, ": \"", tmp, "\"");
         }
     }
 
@@ -298,7 +298,7 @@ void parseCustomInquiryData(uint8_t scsiId)
                 g_as400_part_override[id].ebcdic[i] = eb;
             }
             g_as400_part_override[id].length = 7;
-            logmsg("Custom AS/400 disk part number for SCSI ID ", scsiId, ": \"", tmp, "\"");
+            logmsg("---- Custom AS/400 disk part number for SCSI ID ", (int) scsiId, ": \"", tmp, "\"");
         }
     }
 

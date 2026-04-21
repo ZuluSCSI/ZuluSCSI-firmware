@@ -194,6 +194,7 @@ void image_config_t::clear()
     }
     this->~image_config_t();
     new (this) image_config_t();
+    memset((S2S_TargetCfg*)this, 0, sizeof(image_config_t));
 }
 
 uint32_t image_config_t::get_capacity_lba()

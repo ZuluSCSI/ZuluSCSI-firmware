@@ -651,13 +651,6 @@ bool findHDDImages()
           continue;
         }
 
-        // set the default block size now that we know the device type
-        if (g_scsi_settings.getDevice(id)->blockSize == 0)
-        {
-          g_scsi_settings.getDevice(id)->blockSize = is_cd ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
-        }
-        int blk = getBlockSize(name, id);
-
 #ifdef ZULUSCSI_NETWORK
         if ((is_ne || is_am) && !platform_network_supported())
         {
@@ -678,7 +671,15 @@ bool findHDDImages()
         if (is_re) type = S2S_CFG_REMOVABLE;
         if (is_tp) type = S2S_CFG_SEQUENTIAL;
         if (is_zp) type = S2S_CFG_ZIP100;
+
         g_scsi_settings.initDevice(id, type);
+        // set the default block size now that we know the device type
+        if (g_scsi_settings.getDevice(id)->blockSize == 0)
+        {
+          g_scsi_settings.getDevice(id)->blockSize = is_cd ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
+        }
+        int blk = getBlockSize(name, id);
+
         parseCustomInquiryData(id);
 
         scsiDiskGetImageConfig(id).tapeDensity = g_scsi_settings.getDevice(id)->tapeDensity;
@@ -981,13 +982,6 @@ static void reinitSCSI()
   scsiPhyReset();
   scsiDiskInit();
   scsiInit();
-  for (int8_t scsiId = 0; scsiId < S2S_MAX_TARGETS; scsiId++)
-  {
-      if (scsiDev.targets[scsiId].cfg->scsiId & S2S_CFG_TARGET_ENABLED)
-      {
-          parseCustomInquiryData(scsiId);
-      }
-  }
 
 #ifdef ZULUSCSI_NETWORK
 
