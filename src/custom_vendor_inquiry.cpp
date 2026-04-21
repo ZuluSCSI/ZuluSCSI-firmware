@@ -62,6 +62,29 @@ static struct {
     uint8_t length;
     uint8_t data[8];
 } g_as400_serial_override[S2S_MAX_TARGETS];
+
+// Per-SCSI-ID override for the 7-character IBM disk part number (FRU)
+// embedded in VPD page 0x01 at ASCII offset 5 and EBCDIC offset 29.
+// Supplied via the `AS400_DiskPartNumber` key in [SCSI<n>] sections.
+// When length == 7, injectPartNumber() patches both ASCII and EBCDIC slots.
+static struct {
+    uint8_t length;
+    uint8_t ascii[7];
+    uint8_t ebcdic[7];
+} g_as400_part_override[S2S_MAX_TARGETS];
+
+// Convert a single ASCII character to IBM EBCDIC (CP037 subset).
+// Supports digits, uppercase A-Z, and space. Lowercase is uppercased first.
+// Anything else returns EBCDIC space (0x40).
+static uint8_t asciiToEbcdic(char c)
+{
+    if (c >= 'a' && c <= 'z') c -= ('a' - 'A');
+    if (c >= '0' && c <= '9') return (uint8_t)(0xF0 + (c - '0'));
+    if (c >= 'A' && c <= 'I') return (uint8_t)(0xC1 + (c - 'A'));
+    if (c >= 'J' && c <= 'R') return (uint8_t)(0xD1 + (c - 'J'));
+    if (c >= 'S' && c <= 'Z') return (uint8_t)(0xE2 + (c - 'S'));
+    return 0x40;
+}
 #endif
 
 // Parse space/comma-separated hex values from a string into a byte buffer.
@@ -112,6 +135,18 @@ static void injectSerial(uint8_t *data, int offset, uint8_t scsiId)
 
     memcpy(data + offset, serial, 8);
     memcpy(string, serial, 8);
+}
+
+// Inject the configured 7-char IBM disk part number (FRU) into both the
+// ASCII and EBCDIC slots of the given VPD page buffer. No-op when no
+// override is configured for this SCSI ID.
+static void injectPartNumber(uint8_t *data, int asciiOffset, int ebcdicOffset, uint8_t scsiId)
+{
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (g_as400_part_override[id].length != 7) return;
+
+    memcpy(data + asciiOffset, g_as400_part_override[id].ascii, 7);
+    memcpy(data + ebcdicOffset, g_as400_part_override[id].ebcdic, 7);
 }
 #endif
 
@@ -166,6 +201,11 @@ static void loadAS400Defaults(uint8_t scsiId)
         else if (pageCode == 0xD1 && g_custom_vpd[idx].length >= 78)
             injectSerial(g_custom_vpd[idx].data, 70, scsiId);
 
+        // Inject configured IBM disk part number (FRU) into VPD page 0x01.
+        // ASCII slot at offset 5 and EBCDIC slot at offset 29, 7 bytes each.
+        if (pageCode == 0x01 && g_custom_vpd[idx].length >= 36)
+            injectPartNumber(g_custom_vpd[idx].data, 5, 29, scsiId);
+
         g_custom_vpd_count++;
     }
     if (loaded_default_data)
@@ -185,6 +225,7 @@ void parseCustomInquiryData(uint8_t scsiId)
     memset(g_custom_spd, 0, sizeof(g_custom_spd));
 #ifdef PLATFORM_AS400
     memset(g_as400_serial_override, 0, sizeof(g_as400_serial_override));
+    memset(g_as400_part_override, 0, sizeof(g_as400_part_override));
 #endif
 
 
@@ -232,6 +273,32 @@ void parseCustomInquiryData(uint8_t scsiId)
             memcpy(g_as400_serial_override[id].data, tmp, slen);
             g_as400_serial_override[id].length = 8;
             logmsg("Custom AS/400 serial for SCSI ID ", scsiId, ": \"", tmp, "\"");
+        }
+    }
+
+    // Parse AS/400 disk part number override: AS400_DiskPartNumber=<up to 7 chars>
+    // Accepts [0-9 A-Z] (lowercase is uppercased). Shorter values are right-padded
+    // with spaces; longer values are truncated to 7 characters. The same 7 chars
+    // are injected into both the ASCII and EBCDIC slots of VPD page 0x01.
+    if (ini_gets(section, "AS400_DiskPartNumber", "", tmp, sizeof(tmp), CONFIGFILE))
+    {
+        size_t slen = strlen(tmp);
+        if (slen > 0)
+        {
+            uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+            memset(g_as400_part_override[id].ascii, ' ', 7);
+            memset(g_as400_part_override[id].ebcdic, 0x40, 7);
+            if (slen > 7) slen = 7;
+            for (size_t i = 0; i < slen; i++)
+            {
+                char c = tmp[i];
+                if (c >= 'a' && c <= 'z') c -= ('a' - 'A');
+                uint8_t eb = asciiToEbcdic(c);
+                g_as400_part_override[id].ascii[i] = (eb == 0x40 && c != ' ') ? ' ' : (uint8_t)c;
+                g_as400_part_override[id].ebcdic[i] = eb;
+            }
+            g_as400_part_override[id].length = 7;
+            logmsg("Custom AS/400 disk part number for SCSI ID ", scsiId, ": \"", tmp, "\"");
         }
     }
 
