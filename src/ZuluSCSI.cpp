@@ -678,7 +678,6 @@ bool findHDDImages()
         if (is_re) type = S2S_CFG_REMOVABLE;
         if (is_tp) type = S2S_CFG_SEQUENTIAL;
         if (is_zp) type = S2S_CFG_ZIP100;
-
         g_scsi_settings.initDevice(id, type);
         parseCustomInquiryData(id);
 

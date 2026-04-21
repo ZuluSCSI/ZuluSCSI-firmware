@@ -120,6 +120,8 @@
 #define APPLE_DRIVEINFO_NETWORK   {"Dayna",    "SCSI/Link",         "2.0f",            ""}
 #define APPLE_DRIVEINFO_TAPE      {"ZULUSCSI", "APPLE_TAPE",        PLATFORM_REVISION, ""}
 
+#define AS400_DRIVEINFO_OPTICAL   {"IBM",      "CDRM00203",         PLATFORM_REVISION, ""}
+
 // Default Iomega ZIP drive information
 #define IOMEGA_DRIVEINFO_ZIP100     {"IOMEGA", "ZIP 100", "D.13", ""}
 #define IOMEGA_DRIVEINFO_ZIP250     {"IOMEGA", "ZIP 250", "42.S", ""}
