@@ -342,7 +342,6 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
                 [[fallthrough]];
             case SYS_PRESET_AS400_BS520:
                 m_devPreset[scsiId] = DEV_PRESET_AS400_BS520;
-                logmsg("---- Setting device preset to AS400_BS520 based on system preset ", systemPresetName[m_sysPreset]);
                 break;
             case SYS_PRESET_AS400_BS522:
                 m_devPreset[scsiId] = DEV_PRESET_AS400_BS522;
