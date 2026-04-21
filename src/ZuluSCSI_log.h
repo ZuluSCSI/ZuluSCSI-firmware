@@ -30,13 +30,8 @@
 #include <stddef.h>
 #include <scsiPhy.h>
 
-#if   S2S_MAX_TARGETS == 8
- # define ZULUSCSI_DEFAULT_LOG_MASK 0xFF
-#elif S2S_MAX_TARGETS == 16
-# define ZULUSCSI_DEFAULT_LOG_MASK 0xFFFF
-#elif S2S_MAX_TARGETS == 32
-# define ZULUSCSI_DEFAULT_LOG_MASK 0xFFFFFFFF
-#endif
+ # define ZULUSCSI_DEFAULT_LOG_MASK S2S_CFG_TARGET_ID_BITS
+
 
 // Get total number of bytes that have been written to log
 uint32_t log_get_buffer_len();

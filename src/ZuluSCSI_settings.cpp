@@ -516,12 +516,12 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
 
 
 
-    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", 0xFF, CONFIGFILE) & 0xFF;
+    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE) & ZULUSCSI_DEFAULT_LOG_MASK;
     if (g_scsi_log_mask == 0)
     {
       dbgmsg("DebugLogMask set to 0x00, this will silence all debug messages when a SCSI ID has been selected");
     }
-    else if (g_scsi_log_mask != 0xFF)
+    else if (g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK)
     {
       dbgmsg("DebugLogMask set to ", (uint8_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
     }
