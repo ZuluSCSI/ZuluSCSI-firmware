@@ -623,6 +623,11 @@ static void process_Command()
 		// This is a good time to clear out old sense information.
 		memset(&scsiDev.target->sense, 0, sizeof(ScsiSense));
 	}
+	else if (command == 0xA0)
+	{
+		// Report LUNs
+		scsiDiskReportLUNs();
+	}
 	// Some old SCSI drivers do NOT properly support
 	// unitAttention. eg. the Mac Plus would trigger a SCSI reset
 	// on receiving the unit attention response on boot, thus
