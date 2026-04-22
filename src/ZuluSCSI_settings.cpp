@@ -310,6 +310,7 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
     static const char * const apl_driveinfo_tape[4]      = APPLE_DRIVEINFO_TAPE;
 
 #ifdef PLATFORM_AS400
+    static const char * const as400_driveinfo_dgvs09u_fixed[4] = AS400_DRIVEINFO_DGVS09U_FIXED;
     static const char * const as400_driveinfo_optical[4] = AS400_DRIVEINFO_OPTICAL;
 #endif
 
@@ -363,14 +364,12 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
         case DEV_PRESET_AS400_BS520:
             deviceInitAS400(scsiId);
             cfgDev.blockSize = 520;
-            static const char *as400_bs520[4] = {"IBM", devicePresetName[DEV_PRESET_AS400_BS520], PLATFORM_REVISION, ""};
-            driveinfo = as400_bs520;
+            driveinfo = as400_driveinfo_dgvs09u_fixed;
             break;
         case DEV_PRESET_AS400_BS522:
             deviceInitAS400(scsiId);
             cfgDev.blockSize = 522;
-            static const char *as400_bs522[4] = {"IBM", devicePresetName[DEV_PRESET_AS400_BS522], PLATFORM_REVISION, ""};
-            driveinfo = as400_bs522;
+            driveinfo = as400_driveinfo_dgvs09u_fixed;
             break;
 #endif
         default:
