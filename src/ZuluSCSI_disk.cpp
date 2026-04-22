@@ -2155,7 +2155,9 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
     {
         logmsg("WARNING: Host attempted write to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        // SCSI-2 §9.1.12: WRITE PROTECTED (ASC 0x2700) pairs with sense key
+        // DATA PROTECT (0x07), not ILLEGAL REQUEST.
+        scsiDev.target->sense.code = DATA_PROTECT;
         scsiDev.target->sense.asc = WRITE_PROTECTED;
         scsiDev.phase = STATUS;
     }
@@ -2287,7 +2289,8 @@ static void scsiDiskStartWriteAndVerify(uint32_t lba, uint32_t blocks)
     {
         logmsg("WARNING: Host attempted WRITE AND VERIFY to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        // SCSI-2 §9.1.12: WRITE PROTECTED pairs with sense key DATA PROTECT.
+        scsiDev.target->sense.code = DATA_PROTECT;
         scsiDev.target->sense.asc = WRITE_PROTECTED;
         scsiDev.phase = STATUS;
     }
@@ -3349,6 +3352,31 @@ void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t ski
     }
 }
 #endif
+
+
+extern "C"
+void scsiDiskReportLUNs()
+{
+    uint8_t select_report = scsiDev.cdb[2];
+    uint32_t allocationLength =
+        (((uint32_t) scsiDev.cdb[6]) << 24) +
+        (((uint32_t) scsiDev.cdb[7]) << 16) +
+        (((uint32_t) scsiDev.cdb[8]) << 8) +
+        scsiDev.cdb[9];
+    if (select_report != 0x00 || allocationLength < 16)
+    {
+        if (select_report != 0x00)
+            dbgmsg("---- Report LUNs report ", select_report, " not supported yet");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+        scsiDev.phase = STATUS;
+    }
+    memset(scsiDev.data, 0, 16);
+    scsiDev.data[3] = 0x08;// (uint32_t)(msb_data[0] - lsb_data[3]) = 8
+    scsiDev.dataLen = 16;
+    scsiDev.phase = DATA_IN;
+}
 
 /********************/
 /* Command dispatch */

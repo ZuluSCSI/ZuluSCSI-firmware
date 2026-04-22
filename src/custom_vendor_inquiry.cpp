@@ -56,7 +56,7 @@ static struct {
 
 #ifdef PLATFORM_AS400
 // Per-SCSI-ID override for the 8-byte AS/400 serial, supplied via the
-// `AS400_Disk_Serial` key in [SCSI<n>] sections. When length == 8,
+// `AS400_DiskSerialNumber` key in [SCSI<n>] sections. When length == 8,
 // injectSerial() uses this value instead of the SD CID / MCU-derived default.
 static struct {
     uint8_t length;
@@ -137,31 +137,36 @@ static void injectSerial(uint8_t *data, int offset, uint8_t scsiId)
     memcpy(string, serial, 8);
 }
 
-// Inject the configured 7-char IBM disk part number (FRU) into both the
-// ASCII and EBCDIC slots of the given VPD page buffer. No-op when no
-// override is configured for this SCSI ID.
+// Inject the configured 7-char IBM disk part number (FRU) into the ASCII slot
+// at `asciiOffset`, and optionally into an EBCDIC slot at `ebcdicOffset`. Pass
+// a negative `ebcdicOffset` when the target buffer carries only an ASCII copy
+// (e.g. the standard INQUIRY response). No-op when no override is configured
+// for this SCSI ID.
 static void injectPartNumber(uint8_t *data, int asciiOffset, int ebcdicOffset, uint8_t scsiId)
 {
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
     if (g_as400_part_override[id].length != 7) return;
 
     memcpy(data + asciiOffset, g_as400_part_override[id].ascii, 7);
-    memcpy(data + ebcdicOffset, g_as400_part_override[id].ebcdic, 7);
+    if (ebcdicOffset >= 0)
+        memcpy(data + ebcdicOffset, g_as400_part_override[id].ebcdic, 7);
 }
 #endif
 
 #ifdef PLATFORM_AS400
 // Populate default AS/400 inquiry and VPD data
 // Only fills in data that wasn't already provided via INI.
-static void loadAS400Defaults(uint8_t scsiId)
+static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
 {
     bool loaded_default_data = false;
 
     const S2S_TargetCfg *config = scsiDev.targets[scsiId].cfg;
-    if (!((config->quirks & S2S_CFG_QUIRKS_AS400) && config->deviceType == S2S_CFG_FIXED))
+    if (!((g_scsi_settings.getSystem()->quirks & S2S_CFG_QUIRKS_AS400) && type== S2S_CFG_FIXED))
         return;
 
-    // Default standard inquiry (SPD) with serial injected
+        // Default standard inquiry (SPD) with serial and part number injected.
+    // The SPD carries only an ASCII copy of the 7-char IBM disk part number
+    // at offsets 114-120 — there is no EBCDIC slot here, unlike VPD page 0x01.
     if (g_custom_spd[scsiId].length == 0)
     {
         size_t len = AS400VendorInquiryLen;
@@ -169,6 +174,8 @@ static void loadAS400Defaults(uint8_t scsiId)
         memcpy(g_custom_spd[scsiId].data, AS400VendorInquiry, len);
         if (len >= 46)
             injectSerial(g_custom_spd[scsiId].data, 38, scsiId);
+        if (len >= 121)
+            injectPartNumber(g_custom_spd[scsiId].data, 114, -1, scsiId);
         g_custom_spd[scsiId].length = len;
         loaded_default_data = true;
     }
@@ -210,12 +217,12 @@ static void loadAS400Defaults(uint8_t scsiId)
     }
     if (loaded_default_data)
     {
-        logmsg("-- Loaded default AS/400 inquiry data for SCSI ID ", (int) scsiId);
+        logmsg("---- Loaded default AS/400 inquiry data for SCSI ID ", (int) scsiId);
     }
 }
 #endif
 
-void parseCustomInquiryData(uint8_t scsiId)
+void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
 {
     char tmp[512];
     char section[6] = "SCSI0";
@@ -243,7 +250,7 @@ void parseCustomInquiryData(uint8_t scsiId)
             g_custom_vpd[idx].length = parseHexString(tmp, g_custom_vpd[idx].data, MAX_VPD_DATA_SIZE);
             if (g_custom_vpd[idx].length > 0)
             {
-                logmsg("Custom VPD page 0x", key + 3, " for SCSI ID ", scsiId,
+                logmsg("---- Custom VPD page 0x", key + 3, " for SCSI ID ", scsiId,
                         ": ", (int)g_custom_vpd[idx].length, " bytes");
                 g_custom_vpd_count++;
             }
@@ -256,13 +263,13 @@ void parseCustomInquiryData(uint8_t scsiId)
         g_custom_spd[scsiId].length = parseHexString(tmp, g_custom_spd[scsiId].data, MAX_SPD_SIZE);
         if (g_custom_spd[scsiId].length > 0)
         {
-            logmsg("Custom SPD for SCSI ID ", scsiId, ": ", (int)g_custom_spd[scsiId].length, " bytes");
+            logmsg("---- Custom SPD for SCSI ID ", scsiId, ": ", (int)g_custom_spd[scsiId].length, " bytes");
         }
     }
 #ifdef PLATFORM_AS400
-    // Parse AS/400 serial override: AS400_Disk_Serial=<up to 8 chars>
+    // Parse AS/400 serial override: AS400_DiskSerialNumber=<up to 8 chars>
     // Shorter values are right-padded with ASCII spaces; longer values are truncated.
-    if (ini_gets(section, "AS400_DiskSerial", "", tmp, sizeof(tmp), CONFIGFILE))
+    if (ini_gets(section, "AS400_DiskSerialNumber", "", tmp, sizeof(tmp), CONFIGFILE))
     {
         size_t slen = strlen(tmp);
         if (slen > 0)
@@ -303,7 +310,7 @@ void parseCustomInquiryData(uint8_t scsiId)
     }
 
     // Load AS/400 defaults for any IDs that don't have INI overrides
-    loadAS400Defaults(scsiId);
+    loadAS400Defaults(scsiId, type);
 #endif
 }
 

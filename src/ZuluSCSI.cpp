@@ -679,8 +679,7 @@ bool findHDDImages()
           g_scsi_settings.getDevice(id)->blockSize = is_cd ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
         }
         int blk = getBlockSize(name, id);
-
-        parseCustomInquiryData(id);
+        parseCustomInquiryData(id, type);
 
         scsiDiskGetImageConfig(id).tapeDensity = g_scsi_settings.getDevice(id)->tapeDensity;
         // Open the image file
@@ -696,7 +695,7 @@ bool findHDDImages()
         else if(id < S2S_MAX_TARGETS && lun < NUM_SCSILUN) {
           logmsg("---- Opening ", fullname, " for id:", id, " lun:", lun);
 
-           imageReady = scsiDiskOpenHDDImage(id, fullname, lun, blk, type, use_prefix);
+          imageReady = scsiDiskOpenHDDImage(id, fullname, lun, blk, type, use_prefix);
           if(imageReady)
           {
             foundImage = true;

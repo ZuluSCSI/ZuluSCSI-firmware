@@ -27,7 +27,7 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "2026.04.21"
+#define FW_VER_NUM      "2026.04.22"
 #define FW_VER_SUFFIX   "devel"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
@@ -120,7 +120,8 @@
 #define APPLE_DRIVEINFO_NETWORK   {"Dayna",    "SCSI/Link",         "2.0f",            ""}
 #define APPLE_DRIVEINFO_TAPE      {"ZULUSCSI", "APPLE_TAPE",        PLATFORM_REVISION, ""}
 
-#define AS400_DRIVEINFO_OPTICAL   {"IBM",      "CDRM00203",         PLATFORM_REVISION, ""}
+#define AS400_DRIVEINFO_DGVS09U_FIXED  {"IBMAS400", "DGVS09U",      "02A1",             ""}
+#define AS400_DRIVEINFO_OPTICAL        {"IBM",      "CDRM00203",     PLATFORM_REVISION, ""}
 
 // Default Iomega ZIP drive information
 #define IOMEGA_DRIVEINFO_ZIP100     {"IOMEGA", "ZIP 100", "D.13", ""}
