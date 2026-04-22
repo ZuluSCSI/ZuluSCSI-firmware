@@ -320,6 +320,7 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 	{
 		scsiDev.dataLen = as400_mode_sense_all_pages_len > allocLength ? allocLength : as400_mode_sense_all_pages_len;
 		memcpy(scsiDev.data, as400_mode_sense_all_pages, scsiDev.dataLen); 
+		modeLogData(scsiDev.target->cfg->scsiId & S2S_CFG_TARGET_ID_BITS, "Mode Sense AS400 data: ", scsiDev.data, scsiDev.dataLen);
 		scsiDev.phase = DATA_IN;
 		return;
 	}
@@ -678,6 +679,8 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		}
 
 		scsiDev.dataLen = idx > allocLength ? allocLength : idx;
+		modeLogData(scsiDev.target->cfg->scsiId & S2S_CFG_TARGET_ID_BITS, "Mode Sense Generic data: ",  scsiDev.data, scsiDev.dataLen);
+
 		scsiDev.phase = DATA_IN;
 	}
 }
@@ -690,6 +693,7 @@ static void doModeSelect(void)
 	{
 		// scsiDev.dataLen bytes are in scsiDev.data
 
+		modeLogData(scsiDev.target->cfg->scsiId & S2S_CFG_TARGET_ID_BITS,  "Raw Mode Select data: ", scsiDev.data, scsiDev.dataLen);
 		int idx;
 		int blockDescLen;
 		if (scsiDev.cdb[0] == 0x55)
