@@ -3353,6 +3353,31 @@ void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t ski
 }
 #endif
 
+
+extern "C"
+void scsiDiskReportLUNs()
+{
+    uint8_t select_report = scsiDev.cdb[2];
+    uint32_t allocationLength =
+        (((uint32_t) scsiDev.cdb[6]) << 24) +
+        (((uint32_t) scsiDev.cdb[7]) << 16) +
+        (((uint32_t) scsiDev.cdb[8]) << 8) +
+        scsiDev.cdb[9];
+    if (select_report != 0x00 || allocationLength < 16)
+    {
+        if (select_report != 0x00)
+            dbgmsg("---- Report LUNs report ", select_report, " not supported yet");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+        scsiDev.phase = STATUS;
+    }
+    memset(scsiDev.data, 0, 16);
+    scsiDev.data[3] = 0x08;// (uint32_t)(msb_data[0] - lsb_data[3]) = 8
+    scsiDev.dataLen = 16;
+    scsiDev.phase = DATA_IN;
+}
+
 /********************/
 /* Command dispatch */
 /********************/
@@ -3875,29 +3900,6 @@ int scsiDiskCommand()
         }
     }
 #endif
-    else if (command == 0xA0)
-    {
-        // Rerport LUNs
-        uint8_t select_report = scsiDev.cdb[2];
-        uint32_t allocationLength =
-            (((uint32_t) scsiDev.cdb[6]) << 24) +
-            (((uint32_t) scsiDev.cdb[7]) << 16) +
-            (((uint32_t) scsiDev.cdb[8]) << 8) +
-            scsiDev.cdb[9];
-        if (select_report != 0x00 || allocationLength < 16)
-        {
-            if (select_report != 0x00)
-                dbgmsg("---- Report LUNs report ", select_report, " not supported yet");
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-            scsiDev.phase = STATUS;
-        }
-        memset(scsiDev.data, 0, 16);
-        scsiDev.data[3] = 0x08;// (uint32_t)(msb_data[0] - lsb_data[3]) = 8
-        scsiDev.dataLen = 16;
-        scsiDev.phase = DATA_IN;
-	}
     else
     {
         commandHandled = 0;

@@ -156,15 +156,15 @@ static void injectPartNumber(uint8_t *data, int asciiOffset, int ebcdicOffset, u
 #ifdef PLATFORM_AS400
 // Populate default AS/400 inquiry and VPD data
 // Only fills in data that wasn't already provided via INI.
-static void loadAS400Defaults(uint8_t scsiId)
+static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
 {
     bool loaded_default_data = false;
 
     const S2S_TargetCfg *config = scsiDev.targets[scsiId].cfg;
-    if (!((config->quirks & S2S_CFG_QUIRKS_AS400) && config->deviceType == S2S_CFG_FIXED))
+    if (!((g_scsi_settings.getSystem()->quirks & S2S_CFG_QUIRKS_AS400) && type== S2S_CFG_FIXED))
         return;
 
-    // Default standard inquiry (SPD) with serial and part number injected.
+        // Default standard inquiry (SPD) with serial and part number injected.
     // The SPD carries only an ASCII copy of the 7-char IBM disk part number
     // at offsets 114-120 — there is no EBCDIC slot here, unlike VPD page 0x01.
     if (g_custom_spd[scsiId].length == 0)
@@ -217,12 +217,12 @@ static void loadAS400Defaults(uint8_t scsiId)
     }
     if (loaded_default_data)
     {
-        logmsg("-- Loaded default AS/400 inquiry data for SCSI ID ", (int) scsiId);
+        logmsg("---- Loaded default AS/400 inquiry data for SCSI ID ", (int) scsiId);
     }
 }
 #endif
 
-void parseCustomInquiryData(uint8_t scsiId)
+void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
 {
     char tmp[512];
     char section[6] = "SCSI0";
@@ -250,7 +250,7 @@ void parseCustomInquiryData(uint8_t scsiId)
             g_custom_vpd[idx].length = parseHexString(tmp, g_custom_vpd[idx].data, MAX_VPD_DATA_SIZE);
             if (g_custom_vpd[idx].length > 0)
             {
-                logmsg("Custom VPD page 0x", key + 3, " for SCSI ID ", scsiId,
+                logmsg("---- Custom VPD page 0x", key + 3, " for SCSI ID ", scsiId,
                         ": ", (int)g_custom_vpd[idx].length, " bytes");
                 g_custom_vpd_count++;
             }
@@ -263,7 +263,7 @@ void parseCustomInquiryData(uint8_t scsiId)
         g_custom_spd[scsiId].length = parseHexString(tmp, g_custom_spd[scsiId].data, MAX_SPD_SIZE);
         if (g_custom_spd[scsiId].length > 0)
         {
-            logmsg("Custom SPD for SCSI ID ", scsiId, ": ", (int)g_custom_spd[scsiId].length, " bytes");
+            logmsg("---- Custom SPD for SCSI ID ", scsiId, ": ", (int)g_custom_spd[scsiId].length, " bytes");
         }
     }
 #ifdef PLATFORM_AS400
@@ -310,7 +310,7 @@ void parseCustomInquiryData(uint8_t scsiId)
     }
 
     // Load AS/400 defaults for any IDs that don't have INI overrides
-    loadAS400Defaults(scsiId);
+    loadAS400Defaults(scsiId, type);
 #endif
 }
 
