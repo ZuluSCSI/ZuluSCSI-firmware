@@ -64,6 +64,7 @@
 #include "ZuluSCSI_buffer_control.h"
 #include "ZuluSCSI_audio.h"
 #include "ROMDrive.h"
+#include "custom_vendor_inquiry.h"
 #include "vhd_support.h"
 
 #include "ui.h"
@@ -498,6 +499,7 @@ bool findHDDImages()
   char imgdir[MAX_FILE_PATH];
   ini_gets("SCSI", "Dir", "/", imgdir, sizeof(imgdir), CONFIGFILE);
   int dirindex = 0;
+  
 
   logmsg("Finding images in directory ", imgdir, ":");
 
@@ -649,13 +651,6 @@ bool findHDDImages()
           continue;
         }
 
-        // set the default block size now that we know the device type
-        if (g_scsi_settings.getDevice(id)->blockSize == 0)
-        {
-          g_scsi_settings.getDevice(id)->blockSize = is_cd ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
-        }
-        int blk = getBlockSize(name, id);
-
 #ifdef ZULUSCSI_NETWORK
         if ((is_ne || is_am) && !platform_network_supported())
         {
@@ -678,6 +673,14 @@ bool findHDDImages()
         if (is_zp) type = S2S_CFG_ZIP100;
 
         g_scsi_settings.initDevice(id, type);
+        // set the default block size now that we know the device type
+        if (g_scsi_settings.getDevice(id)->blockSize == 0)
+        {
+          g_scsi_settings.getDevice(id)->blockSize = is_cd ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
+        }
+        int blk = getBlockSize(name, id);
+
+        parseCustomInquiryData(id);
 
         scsiDiskGetImageConfig(id).tapeDensity = g_scsi_settings.getDevice(id)->tapeDensity;
         // Open the image file

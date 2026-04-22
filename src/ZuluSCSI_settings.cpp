@@ -26,6 +26,7 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
+#include <ZuluSCSI_platform_config.h>
 #include "ZuluSCSI_platform.h"
 #include <strings.h>
 #include <minIni.h>
@@ -36,8 +37,16 @@
 // SCSI system and device settings
 ZuluSCSISettings g_scsi_settings;
 
-const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "DOS"};
-const char *devicePresetName[] = {"", "ST32430N", "AS400_BS520", "AS400_BS522"};
+const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "DOS",
+#ifdef PLATFORM_AS400
+    "AS400", "AS400_BS520", "AS400_BS522",
+#endif
+};
+const char *devicePresetName[] = {"", "ST32430N", 
+#ifdef PLATFORM_AS400
+    "AS400_BS520", "AS400_BS522",
+#endif
+};
 
 // must be in the same order as zuluscsi_speed_grade_t in ZuluSCSI_settings.h
 const char * const speed_grade_strings[] =
@@ -110,11 +119,11 @@ const char **ZuluSCSISettings::deviceInitST32430N(uint8_t scsiId)
     return st32430n;
 }
 
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 void ZuluSCSISettings::deviceInitAS400(uint8_t scsiId)
 {
-        m_dev[scsiId].deviceType = S2S_CFG_FIXED;
         m_sys.quirks |= S2S_CFG_QUIRKS_AS400;
+        m_sys.enableUnitAttention = true;
 }
 #endif
 
@@ -300,6 +309,10 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
     static const char * const apl_driveinfo_network[4]   = APPLE_DRIVEINFO_NETWORK;
     static const char * const apl_driveinfo_tape[4]      = APPLE_DRIVEINFO_TAPE;
 
+#ifdef PLATFORM_AS400
+    static const char * const as400_driveinfo_optical[4] = AS400_DRIVEINFO_OPTICAL;
+#endif
+
     static const char * const iomega_driveinfo_removeable[4] = IOMEGA_DRIVEINFO_ZIP100;
     
     const char * const * driveinfo = NULL;
@@ -319,6 +332,25 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
     }
 #endif //ZULUSCSI_HARDWARE_CONFIG
 
+#ifdef PLATFORM_AS400
+    if (type == S2S_CFG_FIXED && m_devPreset[scsiId] == DEV_PRESET_NONE)
+    {
+        switch (m_sysPreset)
+        {
+            case SYS_PRESET_AS400:
+            // For the AS400 preset, we want to set the device preset to the block size 520
+                [[fallthrough]];
+            case SYS_PRESET_AS400_BS520:
+                m_devPreset[scsiId] = DEV_PRESET_AS400_BS520;
+                break;
+            case SYS_PRESET_AS400_BS522:
+                m_devPreset[scsiId] = DEV_PRESET_AS400_BS522;
+                break;
+            default:
+                break;  
+        }
+    }
+#endif  
     switch (m_devPreset[scsiId])
     {
         case DEV_PRESET_NONE:
@@ -327,15 +359,15 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
         case DEV_PRESET_ST32430N:
             driveinfo = deviceInitST32430N(scsiId);
             break;
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
         case DEV_PRESET_AS400_BS520:
-            g_scsi_settings.deviceInitAS400(scsiId);
+            deviceInitAS400(scsiId);
             cfgDev.blockSize = 520;
             static const char *as400_bs520[4] = {"IBM", devicePresetName[DEV_PRESET_AS400_BS520], PLATFORM_REVISION, ""};
             driveinfo = as400_bs520;
             break;
         case DEV_PRESET_AS400_BS522:
-            g_scsi_settings.deviceInitAS400(scsiId);
+            deviceInitAS400(scsiId);
             cfgDev.blockSize = 522;
             static const char *as400_bs522[4] = {"IBM", devicePresetName[DEV_PRESET_AS400_BS522], PLATFORM_REVISION, ""};
             driveinfo = as400_bs522;
@@ -386,6 +418,13 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
                 default:                    driveinfo = driveinfo_fixed; break;
             }
         }
+
+        #ifdef PLATFORM_AS400
+        if ((cfgSys.quirks & S2S_CFG_QUIRKS_AS400) && type == S2S_CFG_OPTICAL)
+        {
+            driveinfo = as400_driveinfo_optical;
+        }
+        #endif
     }
 
     // If the scsi string has not been set system wide use default scsi string
@@ -476,12 +515,12 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
 
 
 
-    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", 0xFF, CONFIGFILE) & 0xFF;
+    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE) & ZULUSCSI_DEFAULT_LOG_MASK;
     if (g_scsi_log_mask == 0)
     {
       dbgmsg("DebugLogMask set to 0x00, this will silence all debug messages when a SCSI ID has been selected");
     }
-    else if (g_scsi_log_mask != 0xFF)
+    else if (g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK)
     {
       dbgmsg("DebugLogMask set to ", (uint8_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
     }
@@ -647,6 +686,25 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         cfgDev.reinsertImmediately = true;
         cfgDev.keepCurrentImageOnBusReset = true;
     }
+
+#ifdef PLATFORM_AS400
+    else if (strequals(systemPresetName[SYS_PRESET_AS400], presetName))
+    {
+        deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
+        m_sysPreset = SYS_PRESET_AS400;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS520], presetName))
+    {
+        deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
+        m_sysPreset = SYS_PRESET_AS400_BS520;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS522], presetName))
+    {
+
+        deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
+        m_sysPreset = SYS_PRESET_AS400_BS522;
+    }
+#endif 
     else
     {
         m_sysPreset = SYS_PRESET_NONE;

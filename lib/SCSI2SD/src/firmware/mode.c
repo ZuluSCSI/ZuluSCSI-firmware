@@ -1,8 +1,9 @@
 //	Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
 //  Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
 //  Copyright (C) 2019 Landon Rodgers <g.landon.rodgers@gmail.com>
-//	Copyright (c) 2024-2025 Rabbit Hole Computing™
+//	Copyright (c) 2024-2026 Rabbit Hole Computing™
 //	Copyright (C) 2024 jokker <jokker@gmail.com>
+//	Copyright (c) 2026 Eric Helgeson <erichelgeson@gmail.com>
 //	This file is part of SCSI2SD.
 //
 //	SCSI2SD is free software: you can redistribute it and/or modify
@@ -25,7 +26,10 @@
 #include "ZuluSCSI_mode.h"
 #include <ZuluSCSI_platform_config.h>
 #include "toolbox.h"
+
+#ifdef PLATFORM_AS400
 #include <as400_values.h>
+#endif
 
 #include <string.h>
 
@@ -225,6 +229,32 @@ static const uint8_t ControlModePage[] =
 0x00, 0x00 // AEN holdoff period.
 };
 
+// SCSI-2 section 9.3.3.8, Table 173
+static const uint8_t VerifyErrorRecoveryPage[] =
+{
+0x07, // Page code
+0x0A, // Page length
+0x00, // EER=0, PER=0, DTE=0, DCR=0
+0x01, // Verify retry count
+0x00, // Verify correction span
+0x00, 0x00, 0x00, 0x00, 0x00, // Reserved (bytes 5-9)
+0x00, 0x00  // Verify recovery time limit (MSB, LSB)
+};
+
+// SCSI-2 section 9.3.3.5, Table 167
+static const uint8_t NotchPage[] =
+{
+0x0C, // Page code
+0x16, // Page length
+0x00, 0x00, // ND=0 (not notched), LP=0
+0x00, 0x00, // Maximum number of notches
+0x00, 0x00, // Active notch
+0x00, 0x00, 0x00, 0x00, // Starting boundary
+0x00, 0x00, 0x00, 0x00, // Ending boundary
+0x00, 0x00, 0x00, 0x00, // Pages notched (MSB)
+0x00, 0x00, 0x00, 0x00  // Pages notched (LSB)
+};
+
 static const uint8_t SequentialDeviceConfigPage[] =
 {
 0x10, // page code
@@ -284,11 +314,7 @@ static void pageIn(int pc, int dataIdx, const uint8_t* pageData, int pageLen)
 
 static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int allocLength)
 {
-	// Skip the Mode Data Length, we set that last.
-	int idx = 1;
-	if (!sixByteCmd) ++idx;
-
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 	// copy of a raw capture of an AS400 drive
 	if (sixByteCmd && pageCode == 0x3F && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
 	{
@@ -298,6 +324,10 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		return;
 	}
 #endif
+
+	// Skip the Mode Data Length, we set that last.
+	int idx = 1;
+	if (!sixByteCmd) ++idx;
 
 	uint8_t mediumType = 0;
 	uint8_t deviceSpecificParam = 0;
@@ -528,6 +558,14 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 
 
 	if ((scsiDev.compatMode >= COMPAT_SCSI2) &&
+		(pageCode == 0x07 || pageCode == 0x3F))
+	{
+		pageFound = 1;
+		pageIn(pc, idx, VerifyErrorRecoveryPage, sizeof(VerifyErrorRecoveryPage));
+		idx += sizeof(VerifyErrorRecoveryPage);
+	}
+
+	if ((scsiDev.compatMode >= COMPAT_SCSI2) &&
 		(pageCode == 0x08 || pageCode == 0x3F))
 	{
 		pageFound = 1;
@@ -541,6 +579,16 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		pageFound = 1;
 		pageIn(pc, idx, ControlModePage, sizeof(ControlModePage));
 		idx += sizeof(ControlModePage);
+	}
+
+	if ((scsiDev.compatMode >= COMPAT_SCSI2) &&
+		(pageCode == 0x0C || pageCode == 0x3F) &&
+		(scsiDev.target->cfg->deviceType != S2S_CFG_OPTICAL) &&
+		(scsiDev.target->cfg->deviceType != S2S_CFG_SEQUENTIAL))
+	{
+		pageFound = 1;
+		pageIn(pc, idx, NotchPage, sizeof(NotchPage));
+		idx += sizeof(NotchPage);
 	}
 
 	idx += modeSenseCDDevicePage(pc, idx, pageCode, &pageFound);
@@ -783,7 +831,20 @@ int scsiModeCommand()
 		// SCSI1 standard: (CCS X3T9.2/86-52)
 		// "An Allocation Length of zero indicates that no MODE SENSE data shall
 		// be transferred. This condition shall not be considered as an error."
-		doModeSense(1, dbd, pc, pageCode, allocLength);
+		
+		// SCSI-2 sections 8.2.10/8.2.11: CDB byte 3 is Reserved.
+		// SPC-3+ redefines it as SUBPAGE CODE. Reject non-zero.
+		if (scsiDev.cdb[3] != 0)
+		{
+			scsiDev.status = CHECK_CONDITION;
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+			scsiDev.phase = STATUS;
+		}
+		else
+		{
+			doModeSense(1, dbd, pc, pageCode, allocLength);
+		}
 	}
 	else if (command == 0x5A)
 	{
@@ -795,6 +856,17 @@ int scsiModeCommand()
 			(((uint16_t) scsiDev.cdb[7]) << 8) +
 			scsiDev.cdb[8];
 		doModeSense(0, dbd, pc, pageCode, allocLength);
+		if (scsiDev.cdb[3] != 0)
+		{
+			scsiDev.status = CHECK_CONDITION;
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+			scsiDev.phase = STATUS;
+		}
+		else
+		{
+			doModeSense(0, dbd, pc, pageCode, allocLength);
+		}
 	}
 	else if (command == 0x15)
 	{

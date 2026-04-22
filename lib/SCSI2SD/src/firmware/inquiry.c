@@ -27,10 +27,13 @@
 #include "config.h"
 #include "inquiry.h"
 #include <ZuluSCSI_config.h>
+#include <custom_vendor_inquiry.h>
 #include <string.h>
+#include <ZuluSCSI_platform_config.h>
 #include <ZuluSCSI_platform.h>
+#ifdef PLATFORM_AS400
 #include <as400_values.h>
-
+#endif
 
 static uint8_t StandardResponse[] =
 {
@@ -99,15 +102,13 @@ static const uint8_t IomegaVendorInquiry[] =
 'M', 'E', 'G', 'A', ' ', '1', '9', '9', '5', ' '
 };
 
+
 void s2s_scsiInquiry()
 {
 	uint8_t evpd = scsiDev.cdb[1] & 1; // enable vital product data.
 	uint8_t pageCode = scsiDev.cdb[2];
 	uint32_t allocationLength = scsiDev.cdb[4];
-#ifdef PLATFORM_AS400_FC6817
-	uint8_t as400_serial[8];
-	as400_get_serial_8(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, as400_serial);
-#endif
+
 	// SASI standard, X3T9.3_185_RevE  states that 0 == 256 bytes
 	// BUT SCSI 2 standard says 0 == 0.
 	if (scsiDev.compatMode <= COMPAT_SCSI1) // excludes COMPAT_SCSI2_DISABLED
@@ -115,7 +116,6 @@ void s2s_scsiInquiry()
 		if (allocationLength == 0) allocationLength = 256;
 	}
 
-	const S2S_TargetCfg* config = scsiDev.target->cfg;
 	if (!evpd)
 	{
 		if (pageCode)
@@ -126,115 +126,77 @@ void s2s_scsiInquiry()
 			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
 			scsiDev.phase = STATUS;
 		}
-#ifdef PLATFORM_AS400_FC6817
-		else if(config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
-		{
-			char serial_string[sizeof(as400_serial)+1] = {0};
-			memcpy(serial_string, as400_serial, sizeof(as400_serial));
-			memcpy(scsiDev.data, AS400VendorInquiry, AS400VendorInquiryLen);
-			// Rewrite serial
-			memcpy(&scsiDev.data[38], as400_serial, sizeof(as400_serial));
-			scsiDev.dataLen = AS400VendorInquiryLen;
-			scsiDev.phase = DATA_IN;
-		}
-#endif
+
 		else
 		{
-			scsiDev.dataLen =
-				s2s_getStandardInquiry(
-					config,
-					scsiDev.data,
-					sizeof(scsiDev.data));
-			scsiDev.phase = DATA_IN;				
+			const S2S_TargetCfg* config = scsiDev.target->cfg;
+			uint16_t customInquiryLen = 0;
+			if (getCustomSPD(config->scsiId, scsiDev.data, &customInquiryLen))
+			{
+				scsiDev.dataLen = customInquiryLen;
+			}
+			else
+			{
+				scsiDev.dataLen =
+					s2s_getStandardInquiry(
+						config,
+						scsiDev.data,
+						sizeof(scsiDev.data));
+			}
+			scsiDev.phase = DATA_IN;
 		}
 
-	}
-#ifdef PLATFORM_AS400_FC6817
-	else if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
-	{
-		bool found_page_code = false;
-		for (uint8_t i = 0; i < AS400VitalPagesLen; i++)
-		{
-			if (AS400VitalPages[i][2] == pageCode)
-			{
-				uint8_t length = AS400VitalPages[i][0];
-				memcpy(scsiDev.data, AS400VitalPages[i]+1, length);
-				scsiDev.dataLen = length;
-				found_page_code = true;
-				switch(pageCode)
-				{
-					case 0x80: // serial number
-						memcpy(&scsiDev.data[12], as400_serial, sizeof(as400_serial));
-						break;
-					case 0x82: // has partial 5 letter serial number in it
-						memcpy(&scsiDev.data[16], as400_serial, 6);
-						break;
-					case 0x83:
-						memcpy(&scsiDev.data[34], as400_serial, sizeof(as400_serial));
-						break;
-					case 0xD1:
-						memcpy(&scsiDev.data[70], as400_serial, sizeof(as400_serial));
-						break;
-					default: // do nothing
-						break;
-				}
-				break;
-			}
-		}
-		if (found_page_code)
-		{
-			scsiDev.phase = DATA_IN;
-		}
-		else
-		{
-			scsiDev.status = CHECK_CONDITION;
-			scsiDev.target->sense.code = ILLEGAL_REQUEST;
-			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-			scsiDev.phase = STATUS;		
-		}
-	}
-#endif
-	else if (pageCode == 0x00)
-	{
-		memcpy(scsiDev.data, SupportedVitalPages, sizeof(SupportedVitalPages));
-		scsiDev.dataLen = sizeof(SupportedVitalPages);
-		scsiDev.phase = DATA_IN;
-	}
-	else if (pageCode == 0x80)
-	{
-		memcpy(scsiDev.data, UnitSerialNumber, sizeof(UnitSerialNumber));
-		scsiDev.dataLen = sizeof(UnitSerialNumber);
-		const S2S_TargetCfg* config = scsiDev.target->cfg;
-		memcpy(&scsiDev.data[4], config->serial, sizeof(config->serial));
-		scsiDev.phase = DATA_IN;
-	}
-	else if (pageCode == 0x81)
-	{
-		memcpy(
-			scsiDev.data,
-			ImpOperatingDefinition,
-			sizeof(ImpOperatingDefinition));
-		scsiDev.dataLen = sizeof(ImpOperatingDefinition);
-		scsiDev.phase = DATA_IN;
-	}
-	else if (pageCode == 0x82)
-	{
-		memcpy(
-			scsiDev.data,
-			AscImpOperatingDefinition,
-			sizeof(AscImpOperatingDefinition));
-		scsiDev.dataLen = sizeof(AscImpOperatingDefinition);
-		scsiDev.phase = DATA_IN;
 	}
 	else
 	{
-		// error.
-		scsiDev.status = CHECK_CONDITION;
-		scsiDev.target->sense.code = ILLEGAL_REQUEST;
-		scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-		scsiDev.phase = STATUS;
+		// Check for custom VPD page data from INI configuration
+		uint8_t customVpdLen = 0;
+		if (getCustomVPD(scsiDev.target->cfg->scsiId, pageCode, scsiDev.data, &customVpdLen))
+		{
+			scsiDev.dataLen = customVpdLen;
+			scsiDev.phase = DATA_IN;
+		}
+		else	 if (pageCode == 0x00)
+		{
+			memcpy(scsiDev.data, SupportedVitalPages, sizeof(SupportedVitalPages));
+			scsiDev.dataLen = sizeof(SupportedVitalPages);
+			scsiDev.phase = DATA_IN;
+		}
+		else if (pageCode == 0x80)
+		{
+			memcpy(scsiDev.data, UnitSerialNumber, sizeof(UnitSerialNumber));
+			scsiDev.dataLen = sizeof(UnitSerialNumber);
+			const S2S_TargetCfg* config = scsiDev.target->cfg;
+			memcpy(&scsiDev.data[4], config->serial, sizeof(config->serial));
+			scsiDev.phase = DATA_IN;
+		}
+		else if (pageCode == 0x81)
+		{
+			memcpy(
+				scsiDev.data,
+				ImpOperatingDefinition,
+				sizeof(ImpOperatingDefinition));
+			scsiDev.dataLen = sizeof(ImpOperatingDefinition);
+			scsiDev.phase = DATA_IN;
+		}
+		else if (pageCode == 0x82)
+		{
+			memcpy(
+				scsiDev.data,
+				AscImpOperatingDefinition,
+				sizeof(AscImpOperatingDefinition));
+			scsiDev.dataLen = sizeof(AscImpOperatingDefinition);
+			scsiDev.phase = DATA_IN;
+		}
+		else
+		{
+			// error.
+			scsiDev.status = CHECK_CONDITION;
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+			scsiDev.phase = STATUS;
+		}
 	}
-
 
 	if (scsiDev.phase == DATA_IN)
 	{
@@ -244,8 +206,8 @@ void s2s_scsiInquiry()
 		{
 			allocationLength = 254;
 		}
-#ifdef PLATFORM_AS400_FC6817
-		if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
+#ifdef PLATFORM_AS400
+		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
 		{
 			// AS400 send the exact number of byte in data length if it fits in 
 			// the allocationLength and does not send padded zeros
@@ -276,7 +238,7 @@ void s2s_scsiInquiry()
 
 		switch (scsiDev.target->cfg->deviceType)
 		{
-			case S2S_CFG_OPTICAL:
+		case S2S_CFG_OPTICAL:
 			scsiDev.data[1] |= 0x80; // Removable bit.
 			break;
 
@@ -356,13 +318,13 @@ uint32_t s2s_getStandardInquiry(
 		out[7] = 0x00; // Disable sync and linked commands
 		out[4] = 0x75; // 117 length
 	}
-
 	// Iomega already has a vendor inquiry
 	if(cfg->deviceType != S2S_CFG_NETWORK && cfg->deviceType != S2S_CFG_ZIP100) {
-		memcpy(&out[size], INQUIRY_NAME, sizeof(INQUIRY_NAME));
-		size += sizeof(INQUIRY_NAME);
-		out[size] = TOOLBOX_API;
-		size += 1;
+		memcpy(&out[size], INQUIRY_NAME, sizeof(INQUIRY_NAME) - 1);
+		size += sizeof(INQUIRY_NAME) - 1;
+		out[size++] = TOOLBOX_API;
+		out[4] = 0x1f + (sizeof(INQUIRY_NAME) - 1)
+		              + 1; // PLATFORM_TOOLBOX_API
 	}
 	return size;
 }
@@ -401,4 +363,3 @@ uint8_t getDeviceTypeQualifier()
 		return 0;
 	}
 }
-

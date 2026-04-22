@@ -56,14 +56,14 @@ extern "C" {
 }
 
 #include "SDNavigator.h"
+#include <ZuluSCSI_platform_config.h>
+#ifdef PLATFORM_AS400
 #include "as400_values.h"
+#endif
 
 #ifndef PLATFORM_MAX_SCSI_SPEED
 #define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_ASYNC_50
 #endif
-
-// \todo figure out a way to fit this in RP2040 SRAM
-uint8_t working_buffer[5220];
 
 // This can be overridden in platform file to set the size of the transfers
 // used when reading from SCSI bus and writing to SD card.
@@ -194,6 +194,7 @@ void image_config_t::clear()
     }
     this->~image_config_t();
     new (this) image_config_t();
+    memset((S2S_TargetCfg*)this, 0, sizeof(image_config_t));
 }
 
 uint32_t image_config_t::get_capacity_lba()
@@ -814,6 +815,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
 
             setRootFolder(target_idx, false, dir_name);
+            g_scsi_settings.initDevice(target_idx, type, true);
         }
     }
 }
@@ -891,8 +893,6 @@ static void scsiDiskSetConfig(int target_idx)
         }
     }
 #endif
-
-    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType, true);
 }
 
 // Compares the prefix of both files and the scsi ID
@@ -1894,22 +1894,20 @@ int doTestUnitReady()
 {
     int ready = 1;
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-/*     if (unlikely(scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400) && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
-    {
-        scsiDev.status = CHECK_CONDITION;
-        scsiDev.phase = STATUS;
-        // Revisit this as it is hacky
-        //most likely this is scsi bus reset sense code, we dont want to override it.
-    }
-    else  */if (unlikely(!scsiDev.target->started || !img.file.isOpen()))
+    if (unlikely(!scsiDev.target->started || !img.file.isOpen()))
     {
         ready = 0;
         scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = NOT_READY;
-        scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED;
+         // AS/400: preserve pending sense (e.g. UNIT ATTENTION / POWER ON RESET)
+        // so the host sees it before we overwrite with NOT_READY
+        if (scsiDev.target->sense.code == NO_SENSE)
+        {
+            scsiDev.target->sense.code = NOT_READY;
+            scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED;
+        }
         scsiDev.phase = STATUS;
     }
-    else if (img.ejected && img.deviceType != S2S_CFG_FIXED)
+    else if (img.ejected)
     {
         ready = 0;
         scsiDev.status = CHECK_CONDITION;
@@ -1995,6 +1993,17 @@ static struct {
     uint8_t *buffer;
     uint32_t bytes_sd; // Number of bytes that have been scheduled for transfer on SD card side
     uint32_t bytes_scsi; // Number of bytes that have been scheduled for transfer on SCSI side
+
+#ifdef PLATFORM_AS400
+    // For linked command, developed for the AS400
+    uint32_t writesame_count; 
+    uint8_t  skip_mask[256];
+    uint16_t skip_mask_length;
+    uint32_t skip_lba;
+    uint16_t skip_blocks;    
+    uint32_t skip_position;
+    uint8_t  skip_command; // Operation code from CDB. This is needed to verify correct follow up linked command.
+#endif
     uint32_t bytes_scsi_started;
     uint32_t sd_transfer_start;
     int parityError;
@@ -2116,15 +2125,20 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
         // without an access time
         s2s_delay_ms(10);
     }
-#ifdef PLATFORM_AS400_FC6817
-    if(scsiDev.target->transfer.skip_command) {        
-        if((scsiDev.target->transfer.skip_command != 0xEA) || (lba != scsiDev.target->transfer.skip_lba) || (blocks != scsiDev.target->transfer.skip_blocks)) {
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-            scsiDev.phase = STATUS;
-            scsiDev.target->transfer.skip_command = 0;
-            return;
+#ifdef PLATFORM_AS400
+    if(g_disk_transfer.skip_command) {
+        if (g_disk_transfer.skip_command == 0xEA)
+        {
+            if ((lba != g_disk_transfer.skip_lba) || (blocks != g_disk_transfer.skip_blocks)) 
+            {
+                dbgmsg("Skip Write LBA/block mismatch");
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+                scsiDev.phase = STATUS;
+                g_disk_transfer.skip_command = 0;
+                return;
+            }
         }        
     }
 #endif
@@ -2141,7 +2155,9 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
     {
         logmsg("WARNING: Host attempted write to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        // SCSI-2 §9.1.12: WRITE PROTECTED (ASC 0x2700) pairs with sense key
+        // DATA PROTECT (0x07), not ILLEGAL REQUEST.
+        scsiDev.target->sense.code = DATA_PROTECT;
         scsiDev.target->sense.asc = WRITE_PROTECTED;
         scsiDev.phase = STATUS;
     }
@@ -2184,36 +2200,6 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
         }
     }
 }
-#ifdef PLATFORM_AS400_FC6817
-void scsiDiskStartWriteSame(uint32_t lba, uint32_t blocks) 
-{    
-    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-    uint32_t capacity = img.file.size() / bytesPerSector;
-
-
-    dbgmsg("------ Write Same", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
-
-    if (unlikely(((uint64_t) lba) + blocks > capacity))
-    {
-        logmsg("WARNING: Host attempted write at sector ", (int)lba, "+", (int)blocks,
-              ", exceeding image size ", (int)capacity, " sectors (",
-              (int)bytesPerSector, "B/sector)");
-        scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
-        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
-        scsiDev.phase = STATUS;
-    }
-    else if(blocks == 0) {
-        scsiDev.target->transfer.writesame_count=capacity - lba;
-        scsiDiskStartWrite(lba,1);
-    }
-    else {
-        scsiDev.target->transfer.writesame_count=blocks;
-        scsiDiskStartWrite(lba,1);
-    }   
-}
-#endif
 
 static void diskSpecialDataOutStop()
 {
@@ -2303,7 +2289,8 @@ static void scsiDiskStartWriteAndVerify(uint32_t lba, uint32_t blocks)
     {
         logmsg("WARNING: Host attempted WRITE AND VERIFY to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        // SCSI-2 §9.1.12: WRITE PROTECTED pairs with sense key DATA PROTECT.
+        scsiDev.target->sense.code = DATA_PROTECT;
         scsiDev.target->sense.asc = WRITE_PROTECTED;
         scsiDev.phase = STATUS;
     }
@@ -2670,12 +2657,12 @@ void diskDataOut()
 
 
     uint32_t i;
-    uint32_t blocks_written;
-    uint32_t blocks_to_write;
-    uint32_t blocks_per_buffer;
-    uint32_t bw;
 
-    scsiDev.target->transfer.buffer = scsiDev.data;
+
+    uint32_t blocks_per_buffer;
+
+
+    g_disk_transfer.buffer = scsiDev.data;
     scsiDev.target->transfer.bytes_scsi = blockcount * bytesPerSector;
     scsiDev.target->transfer.bytes_sd = 0;
     scsiDev.target->transfer.bytes_scsi_started = 0;
@@ -2740,12 +2727,7 @@ void diskDataOut()
                 len = 0;
             }
         }
-#ifdef PLATFORM_AS400_FC6817
-        if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
-        {
-            len = len - (len % bytesPerSector);
-        }
-#endif
+
         if (len == 0)
         {
             // Nothing ready to transfer, check if we can read more from SCSI bus
@@ -2774,58 +2756,73 @@ void diskDataOut()
             platform_set_sd_callback(&diskDataOut_callback, buf);
             //KM//debuglog("DiskDataOut LEN:",len);
 
-#ifdef PLATFORM_AS400_FC6817
-            if (scsiDev.target->transfer.writesame_count)
+#ifdef PLATFORM_AS400
+            if (g_disk_transfer.writesame_count)
             {
-                blocks_per_buffer = sizeof(working_buffer) / bytesPerSector;
+                blocks_per_buffer = sizeof(scsiDev.data) / bytesPerSector;
+                if (blocks_per_buffer > g_disk_transfer.writesame_count)
+                    blocks_per_buffer = g_disk_transfer.writesame_count;
                 for (i=0; i < blocks_per_buffer; i++)
+
                 {
-                    memcpy(working_buffer + (i*bytesPerSector), buf, bytesPerSector);
+                    memcpy(scsiDev.data + (i * bytesPerSector), buf, bytesPerSector);
                 }
-                blocks_written = 0;
-                bw = 0;
-                while (blocks_written < scsiDev.target->transfer.writesame_count) 
+                uint32_t blocks_written = 0;
+                
+                while (blocks_written < g_disk_transfer.writesame_count) 
                 {
-                    blocks_to_write = blocks_per_buffer;
-                    if ((blocks_written + blocks_to_write) > scsiDev.target->transfer.writesame_count) blocks_to_write = scsiDev.target->transfer.writesame_count - blocks_written;
-                    bw += blocks_to_write * bytesPerSector;
-                    if (img.file.write(working_buffer,blocks_to_write * bytesPerSector) !=(blocks_to_write * bytesPerSector))
+                    uint32_t blocks_to_write = blocks_per_buffer;
+                    if ((blocks_written + blocks_to_write) > g_disk_transfer.writesame_count)
                     {
-                        logmsg("SD card write failed: ", SD.sdErrorCode());
+                        blocks_to_write = g_disk_transfer.writesame_count - blocks_written;
+                    }
+
+                    uint32_t bytes_to_write = blocks_to_write * bytesPerSector;
+                    if (img.file.write(scsiDev.data, bytes_to_write) != bytes_to_write)
+                    {
+                        logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
                         scsiDev.status = CHECK_CONDITION;
                         scsiDev.target->sense.code = MEDIUM_ERROR;
                         scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
                         scsiDev.phase = STATUS;
                         break;
-                    }                    
+                    }
                     blocks_written += blocks_to_write;
                     platform_reset_watchdog();
-                }                
-                scsiDev.target->transfer.writesame_count=0;                
-            }
-            else if(scsiDev.target->transfer.skip_command == 0xEA)
-            {
-                int x,y;
-                uint8_t *z = buf;
-                if (len %  bytesPerSector  != 0)
-                {
-                    logmsg("SKIP: transfer length ",(int) len ," not multiple of ", (int) bytesPerSector, " bytes per sector!");
                 }
-                x = len / bytesPerSector;
+                g_disk_transfer.writesame_count = 0;
+            }
+            else if(g_disk_transfer.skip_command == 0xEA)
+            {
+                // Skip Write: selectively write sectors based on skip mask
+                uint32_t aligned_len = len - (len % bytesPerSector);
+                int sectors_remaining = aligned_len / bytesPerSector;
+                uint8_t *ptr = buf;
 
-                while (x)
+                while (sectors_remaining > 0)
                 {
-                    y = skip_next(x);                    
-                    if (y < 0) {//skips                        
-                        img.file.seek(img.file.position() + (abs(y) * bytesPerSector));                                                
-                        continue;
+                    int16_t run = skip_next(sectors_remaining);
+                    if (run < 0)
+                    {
+                        img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
                     }
-                    else if (y > 0) {                        
-                        img.file.write(z, y * bytesPerSector);
-                        x -= y; //reduce remaing
-                        z += (y * bytesPerSector); //advance location in buffer
+                    else if (run > 0)
+                    {
+                        uint32_t write_bytes = run * bytesPerSector;
+                        if (img.file.write(ptr, write_bytes) != write_bytes)
+                        {
+                            logmsg("SD card write failed during Skip Write: ", SD.sdErrorCode());
+                            scsiDev.status = CHECK_CONDITION;
+                            scsiDev.target->sense.code = MEDIUM_ERROR;
+                            scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+                            scsiDev.phase = STATUS;
+                            break;
+                        }
+                        sectors_remaining -= run;
+                        ptr += write_bytes;
                     }
-                    else {//we must be done.
+                    else
+                    {
                         break;
                     }                    
                 }
@@ -2853,9 +2850,9 @@ void diskDataOut()
 
     // Release SCSI bus
     scsiFinishRead(NULL, 0, &scsiDev.target->transfer.parityError);
-#ifdef PLATFORM_AS400_FC6817
-    if(scsiDev.target->transfer.skip_command) {
-        scsiDev.target->transfer.skip_command = 0;
+#ifdef PLATFORM_AS400
+    if(g_disk_transfer.skip_command) {
+        g_disk_transfer.skip_command = 0;
     }
 #endif
     transfer.currentBlock += blockcount;
@@ -2932,10 +2929,10 @@ void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
             }
 
             scsiFinishWrite();
-# ifdef PLATFORM_AS400_FC6817
-            if(scsiDev.target->transfer.skip_command)
+# ifdef PLATFORM_AS400
+            if(g_disk_transfer.skip_command)
             {
-                scsiDev.target->transfer.skip_command = 0;
+                g_disk_transfer.skip_command = 0;
             }
 # endif
         }
@@ -2982,7 +2979,7 @@ void diskDataIn_callback(uint32_t bytes_complete)
         // DMA is reading from SD card, bytes_complete bytes have already been read.
         // Send them to SCSI bus now.
         uint32_t len = bytes_complete - scsiDev.target->transfer.bytes_scsi;
-        scsiStartWrite(scsiDev.target->transfer.buffer + scsiDev.target->transfer.bytes_scsi, len);
+        scsiStartWrite(g_disk_transfer.buffer + scsiDev.target->transfer.bytes_scsi, len);
         scsiDev.target->transfer.bytes_scsi += len;
     }
 
@@ -2994,7 +2991,7 @@ void diskDataIn_callback(uint32_t bytes_complete)
 // diskDataIn() below divides the scsiDev.data buffer to two halves for double buffering.
 static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
 {
-    scsiDev.target->transfer.buffer = buffer;
+    g_disk_transfer.buffer = buffer;
     scsiDev.target->transfer.bytes_scsi = 0;
     scsiDev.target->transfer.bytes_sd = count;
 
@@ -3017,40 +3014,49 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     platform_set_sd_callback(&diskDataIn_callback, buffer);
 
-#ifdef PLATFORM_AS400_FC6817
-    if (scsiDev.target->transfer.skip_command == 0xE8)
+#ifdef PLATFORM_AS400
+    if (g_disk_transfer.skip_command == 0xE8)
     {
-        int x, y;
-        uint8_t *z = buffer;
-
+        // Skip Read: selectively read sectors based on skip mask
         uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-        if(count % bytesPerSector != 0)
-        {
-            logmsg("SKIP: transfer count ",(int) count ," not multiple of ", (int) bytesPerSector, " bytes per sector!");
-        }
-        x = count / bytesPerSector;
+        int sectors_remaining = count / bytesPerSector;
+        uint8_t *ptr = buffer;
+        bool read_ok = true;
 
-        while(x)
+        while (sectors_remaining > 0)
         {
-            y = skip_next(x);
-            if (y < 0) {//skips
-                img.file.seek(img.file.position() + (abs(y) * bytesPerSector));
-                continue;
-            }
-            else if (y > 0)
+            int16_t run = skip_next(sectors_remaining);
+            if (run < 0)
             {
-                img.file.read(z, y * bytesPerSector);
-                x -= y; //reduce remaing
-                z += (y * bytesPerSector); //advance location in buffer
+                img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
             }
-            else 
+            else if (run > 0)
             {
-                //we must be done.
+                uint32_t read_bytes = run * bytesPerSector;
+                if (img.file.read(ptr, read_bytes) != (int)read_bytes)
+                {
+                    read_ok = false;
+                    break;
+                }
+                sectors_remaining -= run;
+                ptr += read_bytes;
+            }
+            else
+            {
                 break;
             }
         }
+
+        if (!read_ok)
+        {
+            logmsg("SD card read failed during Skip Read: ", SD.sdErrorCode());
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
+            scsiDev.phase = STATUS;
+        }
     }
-    else 
+    else
 #endif
     if (img.file.read(buffer, count) != count)
     {
@@ -3180,15 +3186,87 @@ static void diskDataIn()
 
         scsiFinishWrite();
 
-#ifdef PLATFORM_AS400_FC6817
-        if(scsiDev.target->transfer.skip_command)
+#ifdef PLATFORM_AS400
+        if(g_disk_transfer.skip_command)
         {
-            scsiDev.target->transfer.skip_command = 0;
+            g_disk_transfer.skip_command = 0;
         }
 #endif
     }
 }
 
+
+#ifdef PLATFORM_AS400
+// AS/400 Write Same(10) entry point
+void scsiDiskWriteSame(uint32_t lba, uint32_t blocks) 
+{
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t capacity = img.file.size() / bytesPerSector;
+
+    uint32_t writesame_count = 0;
+    if(blocks == 0)
+        writesame_count = capacity - lba;
+    else
+        writesame_count = blocks;
+
+    dbgmsg("------ Write Same ", (int)writesame_count, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+
+
+    if (unlikely(((uint64_t) lba) + blocks > capacity))
+    {
+        logmsg("WARNING: Host attempted write at sector ", (int)lba, "+", (int)blocks,
+              ", exceeding image size ", (int)capacity, " sectors (",
+              (int)bytesPerSector, "B/sector)");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+        return;
+    }
+
+    int parityError = 0;
+    // Read exactly one block from the host, then replicate it
+    scsiEnterPhase(DATA_OUT);
+    scsiRead(scsiDev.data, bytesPerSector, &parityError);
+
+    const uint32_t buffer_sectors = sizeof(scsiDev.data) / bytesPerSector;
+    uint32_t sectors_to_write = std::min(writesame_count, buffer_sectors);
+    uint32_t bytes_to_write = sectors_to_write * bytesPerSector;
+
+    // Fill buffer with as much replicated data as possible to speed up writes
+    for (uint32_t i = 1; i < sectors_to_write; i++)
+    {
+        memcpy(scsiDev.data + i * bytesPerSector, scsiDev.data, bytesPerSector);
+    }
+
+    img.file.seek((uint64_t)lba * bytesPerSector);
+
+    while (writesame_count > 0)
+    {
+        sectors_to_write = std::min(writesame_count, buffer_sectors);
+        bytes_to_write = sectors_to_write * bytesPerSector;
+
+        if (img.file.write(scsiDev.data, bytes_to_write) != (int)bytes_to_write)
+        {
+            logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+            scsiDev.phase = STATUS;
+            return;
+        }
+
+        writesame_count -= sectors_to_write;
+        platform_reset_watchdog();
+    }
+    scsiDev.phase = STATUS;
+
+}
+#endif
+
+#ifdef PLATFORM_AS400
 int skip_total_true_bits(uint8_t *mask, size_t masklen) {
     int total = 0;
     for (size_t i = 0; i < masklen; i++) {        
@@ -3225,48 +3303,53 @@ int skip_contiguous_bits(const uint8_t *data, size_t byte_len, size_t bit_start)
     return target_bit ? (int)count : -(int)count;
 }
 
-#ifdef PLATFORM_AS400_FC6817
 int16_t skip_next(int max) {
     int16_t x;
-    if(scsiDev.target->transfer.skip_position == (scsiDev.target->transfer.skip_mask_length*8)) {
+    if(g_disk_transfer.skip_position == (g_disk_transfer.skip_mask_length * 8)) {
         return 0;//We are finished
     }
     else {
-        x=skip_contiguous_bits(scsiDev.target->transfer.skip_mask,scsiDev.target->transfer.skip_mask_length,scsiDev.target->transfer.skip_position);        
-        if(x > max) x=max; //Maximum is to cap positive response.
-        scsiDev.target->transfer.skip_position += abs(x);
+        x = skip_contiguous_bits(g_disk_transfer.skip_mask,
+            g_disk_transfer.skip_mask_length,
+            g_disk_transfer.skip_position);
+        if (x > max) x = max; //Maximum is to cap positive response.
+        g_disk_transfer.skip_position += abs(x);
         return x;
-
-    }    
+    }
 }
 
 void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t skip_command) {
 
-    DiskTransfer* transfer = &scsiDev.target->transfer;
-    transfer->skip_lba = lba;
-    transfer->skip_blocks = blocks;
-    transfer->skip_mask_length = mask_length > 0 ? mask_length : 256;
+    g_disk_transfer.skip_lba = lba;
+    g_disk_transfer.skip_blocks = blocks;
+    g_disk_transfer.skip_mask_length = mask_length > 0 ? mask_length : 256;
 
     int parityError; 
     scsiEnterPhase(DATA_OUT);
 
-    scsiRead(transfer->skip_mask, transfer->skip_mask_length, &parityError);
+    scsiRead(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length, &parityError);
 
-    dbgmsg("Blocks: ", (int) blocks," Skip Mask: ", bytearray(transfer->skip_mask, transfer->skip_mask_length));
-    //TODO-KM: Verify request does not go past the end of the disk    
-
-    if(skip_total_true_bits(transfer->skip_mask, transfer->skip_mask_length) != blocks) {
+    if (skip_total_true_bits(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length) != (int) blocks) {
+        logmsg("Skip mask bit count mismatch: expected ", (int)blocks,
+               " set bits in ", (int)mask_length, " byte mask");
         scsiDev.status = CHECK_CONDITION;
         scsiDev.target->sense.code = ILLEGAL_REQUEST;
         scsiDev.target->sense.asc = INVALID_FIELD_IN_PARAMETER_LIST;
         scsiDev.phase = STATUS;
-        transfer->skip_command = 0;
+        g_disk_transfer.skip_command = 0;
     }
-    else {
-        transfer->skip_command = skip_command;        
-        transfer->skip_position=0;
-    }
+    else
+    {
+        g_disk_transfer.skip_command = skip_command;        
+        g_disk_transfer.skip_position = 0;
 
+        // Support optional linked command (CDB byte 9 bit 0)
+        if (scsiDev.cdb[9] & 1)
+        {
+            scsiDev.msgIn = MSG_LINKED_COMMAND_COMPLETE;
+            scsiDev.phase = MESSAGE_IN;
+        }
+    }
 }
 #endif
 
@@ -3285,35 +3368,25 @@ int scsiDiskCommand()
     g_disk_data_out.write_and_verify = false;
 
     uint8_t command = scsiDev.cdb[0];
-#ifdef PLATFORM_AS400_FC6817
-    if (unlikely(scsiDev.target->transfer.skip_command)) {    
-        /*
-        TODO-KM:
-        If the second command is not a Write command or if the LBA of the Write
-        command does not match the LBA of the Skip Write command, then Check
-        Condition status is returned. The sense data is set to Illegal Request-Invalid
-        Field in CDB.
-        */
-        switch (command)
+#ifdef PLATFORM_AS400
+    // AS/400 skip command validation: if a skip is pending, only allow
+    // the expected follow-up read/write command
+    if (g_disk_transfer.skip_command)
+    {
+        bool allowed = false;
+        if (g_disk_transfer.skip_command == 0xE8 && (command == 0x08 || command == 0x28))
+            allowed = true;
+        if (g_disk_transfer.skip_command == 0xEA && (command == 0x0A || command == 0x2A))
+            allowed = true;
+
+        if (!allowed)
         {
-            case 0x08://Read6 - not sure if this should be allowed with skip
-            case 0x28://Read10
-                if(scsiDev.target->transfer.skip_command == 0xE8) break;
-            case 0x0A://Write6 - not sure if this should be allowed with skip
-            case 0x2A://Write10
-                if(scsiDev.target->transfer.skip_command == 0xEA) break;
-            case 0xE8: // reset skip command
-            case 0xEA:
-                scsiDev.target->transfer.skip_command = 0;
-                break;
-            default://cancel out pending skip if not a read or write
-                scsiDev.target->transfer.skip_command = 0;                
-                scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = ILLEGAL_REQUEST;
-                scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-                scsiDev.phase = STATUS;                
-                return 0;
-                break;
+            g_disk_transfer.skip_command = 0;
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+            return 0;
         }
     }
 #endif
@@ -3325,6 +3398,11 @@ int scsiDiskCommand()
         //int immed = scsiDev.cdb[1] & 1;
         bool start = scsiDev.cdb[4] & 1;
         bool eject = scsiDev.cdb[4] & 2;
+
+#ifdef PLATFORM_AS400
+        // \todo - figure out is AS400 expects a spin up time or not
+        // Possibly make it a zuluscsi.ini setting
+#endif
         if (start)
         {
             // Start device and close tray if open
@@ -3442,109 +3520,6 @@ int scsiDiskCommand()
 
         scsiDiskStartWrite(lba, blocks);
     }
-#ifdef PLATFORM_AS400_FC6817
-    else if (likely(command == 0x41)) // Write Same(10)
-    {
-        uint32_t lba =
-            (((uint32_t) scsiDev.cdb[2]) << 24) +
-            (((uint32_t) scsiDev.cdb[3]) << 16) +
-            (((uint32_t) scsiDev.cdb[4]) << 8) +
-            scsiDev.cdb[5];
-        uint32_t blocks =
-            (((uint32_t) scsiDev.cdb[7]) << 8) +
-            scsiDev.cdb[8];
-        scsiDiskStartWriteSame(lba, blocks);
-    }
-    else if (likely(command == 0xEA) || likely(command == 0xE8)) // EA=SkipWrite10, E8=SkipRead10
-    {   
-        /*  
-        Example:   
-        0xEA - Op Code
-        0x00 - Reserved
-        0x00 - LBA
-        0x3A - LBA
-        0x9F - LBA
-        0xC0 - LBA
-        0x08 - Mask Size
-        0x00 - Blocks
-        0x02 - Blocks
-        0x01 - Linked
-        */
-
-
-        uint32_t lba =
-            (((uint32_t) scsiDev.cdb[2]) << 24) +
-            (((uint32_t) scsiDev.cdb[3]) << 16) +
-            (((uint32_t) scsiDev.cdb[4]) << 8) +
-            scsiDev.cdb[5];
-        uint32_t blocks =
-            (((uint32_t) scsiDev.cdb[7]) << 8) +
-            scsiDev.cdb[8];
-        uint8_t mask_length = scsiDev.cdb[6];
-        if (1 == 0)
-        {//!scsiDev.cdb[0] & 1) { //This should be a linked command.
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_PARAMETER_LIST;
-            scsiDev.phase = STATUS;
-        }
-        else
-        {
-            scsiDiskSkip(lba, blocks, mask_length, command);
-        }
-    }
-    else if (unlikely(command == 0x4D)) // Log Sense
-    {
-        uint8_t page_control = scsiDev.cdb[2] >> 6;
-        uint8_t page_code = scsiDev.cdb[2] & 0x3F;
-        uint16_t allocation_length = ((uint16_t) scsiDev.cdb[7] << 8) | scsiDev.cdb[8];
-
-        if (page_code == 0)
-        {
-            memcpy(scsiDev.data, as400_log_sense_page_00, as400_log_sense_page_00_len);
-            scsiDev.phase = DATA_IN;
-        }
-        else if(page_code == 0x30)
-        {
-            scsiDev.dataLen = as400_log_sense_page_30_page_length + 4;
-            memset(scsiDev.data, 0, scsiDev.dataLen);
-            scsiDev.data[0] = page_code;
-            scsiDev.data[2] = as400_log_sense_page_30_page_length >> 8;
-            scsiDev.data[3] = as400_log_sense_page_30_page_length & 0xFF;
-            scsiDev.data[7] = as400_log_sense_page_30_page_list_length;
-            scsiDev.data[52] = as400_read_ops >> 24;
-            scsiDev.data[53] = (as400_read_ops >> 16) & 0xFF;
-            scsiDev.data[54] = (as400_read_ops >> 8) & 0xFF;
-            scsiDev.data[55] = as400_read_ops & 0xFF;
-
-            scsiDev.data[56] = as400_write_ops >> 24;
-            scsiDev.data[57] = (as400_write_ops >> 16) & 0xFF;
-            scsiDev.data[58] = (as400_write_ops >> 8) & 0xFF;
-            scsiDev.data[59] = as400_write_ops & 0xFF;
-            scsiDev.phase = DATA_IN;
-        }
-        else if(page_code == 0x31)
-        {
-            uint8_t as400_serial[8];
-            as400_get_serial_8(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, as400_serial);
-
-            scsiDev.dataLen = as400_log_sense_page_31_page_length + 4;
-            memset(scsiDev.data, 0, scsiDev.dataLen);
-            scsiDev.data[0] = page_code;
-            scsiDev.data[2] = as400_log_sense_page_31_page_length >> 8;
-            scsiDev.data[3] = as400_log_sense_page_31_page_length & 0xFF;
-            memcpy(&scsiDev.data[124], as400_serial, sizeof(as400_serial));
-            scsiDev.phase = DATA_IN;
-        }
-        else
-        {
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-            scsiDev.phase = STATUS;
-        }
-    }
-#endif
     else if (unlikely(command == 0xAA))
     {
         // WRITE(12)
@@ -3742,7 +3717,7 @@ int scsiDiskCommand()
     }
     else if (unlikely(command == 0x2F))
     {
-        // VERIFY
+        // VERIFY(10)
         uint64_t lba =
             (((uint32_t) scsiDev.cdb[2]) << 24) +
             (((uint32_t) scsiDev.cdb[3]) << 16) +
@@ -3816,6 +3791,90 @@ int scsiDiskCommand()
         commandHandled = scsiModeCommand();
         blockDev.state &= ~DISK_WP;
     }
+#ifdef PLATFORM_AS400
+    else if (likely(command == 0x41))
+    {
+         // Write Same(10)
+        // PBdata, LBdata, RelAdr not implemented
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[7]) << 8) +
+            scsiDev.cdb[8];
+        scsiDiskWriteSame(lba, blocks);
+    }
+    else if (likely(command == 0xEA) || likely(command == 0xE8))
+    {
+        // 0xEA = Skip Write(10), 0xE8 = Skip Read(10) (AS/400 vendor commands)
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[7]) << 8) +
+            scsiDev.cdb[8];
+        uint8_t mask_length = scsiDev.cdb[6];
+        scsiDiskSkip(lba, blocks, mask_length, command);
+    }
+    else if (unlikely(command == 0x4D) 
+        && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 
+        && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
+    {
+        // LOG SENSE - required for AS/400 diagnostics
+        uint8_t page_code = scsiDev.cdb[2] & 0x3F;
+
+        if (page_code == 0x00)
+        {
+            memcpy(scsiDev.data, as400_log_sense_page_00, as400_log_sense_page_00_len);
+            scsiDev.dataLen = as400_log_sense_page_00_len;
+            scsiDev.phase = DATA_IN;
+        }
+        else if (page_code == 0x30)
+        {
+            // Device I/O statistics
+            scsiDev.dataLen = as400_log_sense_page_30_page_length + 4;
+            memset(scsiDev.data, 0, scsiDev.dataLen);
+            scsiDev.data[0] = page_code;
+            scsiDev.data[2] = as400_log_sense_page_30_page_length >> 8;
+            scsiDev.data[3] = as400_log_sense_page_30_page_length & 0xFF;
+            scsiDev.data[7] = as400_log_sense_page_30_page_list_length;
+            scsiDev.data[52] = as400_read_ops >> 24;
+            scsiDev.data[53] = (as400_read_ops >> 16) & 0xFF;
+            scsiDev.data[54] = (as400_read_ops >> 8) & 0xFF;
+            scsiDev.data[55] = as400_read_ops & 0xFF;
+            scsiDev.data[56] = as400_write_ops >> 24;
+            scsiDev.data[57] = (as400_write_ops >> 16) & 0xFF;
+            scsiDev.data[58] = (as400_write_ops >> 8) & 0xFF;
+            scsiDev.data[59] = as400_write_ops & 0xFF;
+            scsiDev.phase = DATA_IN;
+        }
+        else if (page_code == 0x31)
+        {
+            // Device information with serial number
+            uint8_t as400_serial[8];
+            as400_get_serial_8(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, as400_serial);
+
+            scsiDev.dataLen = as400_log_sense_page_31_page_length + 4;
+            memset(scsiDev.data, 0, scsiDev.dataLen);
+            scsiDev.data[0] = page_code;
+            scsiDev.data[2] = as400_log_sense_page_31_page_length >> 8;
+            scsiDev.data[3] = as400_log_sense_page_31_page_length & 0xFF;
+            memcpy(&scsiDev.data[124], as400_serial, sizeof(as400_serial));
+            scsiDev.phase = DATA_IN;
+        }
+        else
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+    }
+#endif
     else
     {
         commandHandled = 0;

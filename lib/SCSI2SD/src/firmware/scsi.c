@@ -38,6 +38,7 @@
 #include "vendor.h"
 #include <string.h>
 #include "toolbox.h"
+#include <ZuluSCSI_platform_config.h>
 
 // Global SCSI device state.
 ScsiDevice scsiDev S2S_DMA_ALIGN;
@@ -529,7 +530,7 @@ static void process_Command()
 					scsiDev.data[4] = 0x81; // File Mark detected
 			}
 		}
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 		else if (cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
 		{
 			// As specified by the SASI and SCSI1 standard.
@@ -577,10 +578,11 @@ static void process_Command()
 			if (allocLength == 0) allocLength = 4;
 
 			memset(scsiDev.data, 0, 256); // Max possible alloc length
-			scsiDev.data[0] = 0xF0;
+			scsiDev.data[0] = 0x70; // error code, Valid=0 by default
 			scsiDev.data[2] = scsiDev.target->sense.code & 0x0F;
 			if (cfg->deviceType == S2S_CFG_SEQUENTIAL)
 			{
+				scsiDev.data[0] = 0xF0; // Valid=1, tape always has meaningful info
 				scsiDev.data[2] |= scsiDev.target->sense.filemark ? 1 << 7 : 0;
 				scsiDev.data[2] |= scsiDev.target->sense.eom ? 1 << 6 : 0;
 				scsiDev.data[2] |= scsiDev.target->sense.ili ? 1 << 5 : 0;
@@ -592,8 +594,12 @@ static void process_Command()
 				// Byte 9 bit 3: BOM (Beginning of Medium)
 				scsiDev.data[9] = scsiDev.target->tapeBOM ? (1 << 3) : 0;
 			}
-			else
+			else if (scsiDev.target->sense.code == MEDIUM_ERROR
+				|| scsiDev.target->sense.code == HARDWARE_ERROR
+				|| scsiDev.target->sense.code == ABORTED_COMMAND)
 			{
+			// Valid=1 + LBA only for block-related errors
+				scsiDev.data[0] = 0xF0;
 				scsiDev.data[3] = transfer.lba >> 24;
 				scsiDev.data[4] = transfer.lba >> 16;
 				scsiDev.data[5] = transfer.lba >> 8;
@@ -745,7 +751,7 @@ static void doReserveRelease()
 
 	if (extentReservation)
 	{
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
 		{
 			enter_Status(GOOD);
@@ -818,7 +824,7 @@ static void scsiReset()
 		scsiDev.target->reservedId = -1;
 		scsiDev.target->reserverId = -1;
 		S2S_TargetCfg* config = scsiDev.target->cfg;
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 		if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
 		{
 			scsiDev.target->sense.code = UNIT_ATTENTION;
@@ -1453,7 +1459,7 @@ void scsiInit()
 		}
 
 		scsiDev.targets[i].tapeBOM = (cfg && cfg->deviceType == S2S_CFG_SEQUENTIAL) ? 1 : 0;
-#ifdef PLATFORM_AS400_FC6817
+#ifdef PLATFORM_AS400
 		if (cfg && cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
 		{
 			scsiDev.target->sense.code = UNIT_ATTENTION;
