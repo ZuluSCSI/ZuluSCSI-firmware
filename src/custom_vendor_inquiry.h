@@ -24,15 +24,17 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <scsi2sd.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+
 // Parse custom inquiry data from zuluscsi.ini for all SCSI IDs.
 // Called once during initialization.
 // INI format: [SCSI<id>] vpd00=XX XX XX, spd=XX XX XX (hex values)
-void parseCustomInquiryData(uint8_t scsiId);
+void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type);
 
 // Check if custom VPD (Vital Product Data) exists for a given SCSI ID and page code.
 // If found, copies data into buf and sets *length. Returns true if custom data exists.
