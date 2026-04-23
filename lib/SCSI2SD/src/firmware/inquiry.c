@@ -107,9 +107,7 @@ void s2s_scsiInquiry()
 {
 	uint8_t evpd = scsiDev.cdb[1] & 1; // enable vital product data.
 	uint8_t pageCode = scsiDev.cdb[2];
-	uint16_t allocationLength = 
-		(((uint16_t) scsiDev.cdb[4]) << 8) +
-		scsiDev.cdb[5];
+	uint32_t allocationLength = scsiDev.cdb[4];
 
 	// SASI standard, X3T9.3_185_RevE  states that 0 == 256 bytes
 	// BUT SCSI 2 standard says 0 == 0.
