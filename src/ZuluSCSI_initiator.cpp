@@ -35,6 +35,7 @@
 #include "SdFat.h"
 #include "vhd_support.h"
 #include "ui.h"
+#include "ZuluSCSI_disk.h"
 
 #include <scsi2sd.h>
 extern "C" {
@@ -213,30 +214,6 @@ void delay_with_poll(uint32_t ms)
     }
 }
 
-static int scsiTypeToIniType(int scsi_type, bool removable)
-{
-    int ini_type = -1;
-    switch (scsi_type)
-    {
-        case SCSI_DEVICE_TYPE_DIRECT_ACCESS:
-            ini_type = removable ? S2S_CFG_REMOVABLE : S2S_CFG_FIXED;
-            break;
-        case 1:
-            ini_type = -1; // S2S_CFG_SEQUENTIAL
-            break;
-        case SCSI_DEVICE_TYPE_CD:
-            ini_type = S2S_CFG_OPTICAL;
-            break;
-        case SCSI_DEVICE_TYPE_MO:
-            ini_type = S2S_CFG_MO;
-            break;
-        default:
-            ini_type = -1;
-            break;
-    }
-    return ini_type;
-}
-
 // Check if VHD output should be used for the current target
 static bool initiatorShouldWriteVhd()
 {
@@ -310,7 +287,7 @@ void scsiInitiatorMainLoop()
     if (!g_initiator_state.imaging)
     {
         // Scan for SCSI drives one at a time
-        g_initiator_state.target_id = (g_initiator_state.target_id + 1) % 8;
+        g_initiator_state.target_id = (g_initiator_state.target_id + 1) % S2S_MAX_TARGETS;
         g_initiator_state.sectorsize = 0;
         g_initiator_state.sectorcount = 0;
         g_initiator_state.sectors_done = 0;
@@ -433,17 +410,42 @@ void scsiInitiatorMainLoop()
                     g_initiator_state.max_sector_per_transfer = 256;
                 }
 
-                int ini_type = scsiTypeToIniType(g_initiator_state.device_type, g_initiator_state.removable);
                 logmsg("SCSI Version ", (int) g_initiator_state.ansi_version);
                 logmsg("[SCSI", g_initiator_state.target_id,"]");
                 logmsg("  Vendor = \"", vendor,"\"");
                 logmsg("  Product = \"", product,"\"");
                 logmsg("  Version = \"", revision,"\"");
-                if (ini_type == -1)
-                    logmsg("Type = Not Supported, trying direct access");
-                else
-                    logmsg("  Type = ", ini_type);
 
+                // Device type pass list
+                switch (g_initiator_state.device_type)
+                {
+                    case SCSI_DEVICE_TYPE_DIRECT_ACCESS:
+                        logmsg("  SCSI Device Type = ", g_initiator_state.removable ? "Removable ": "Disk");
+                        break;
+                    case SCSI_DEVICE_TYPE_SEQUENTIAL:
+                        logmsg("  SCSI Device Type = ", "Sequential (Tape)");
+                        break;
+                    case SCSI_DEVICE_TYPE_WRITE_ONCE:
+                        logmsg("  SCSI Device Type = ", "Write Once");
+                        break;
+                    case SCSI_DEVICE_TYPE_CD:
+                        logmsg("  SCSI Device Type = ", "Optical (CD/DVD)");
+                        break;;
+                    case SCSI_DEVICE_TYPE_MO:
+                        logmsg("  SCSI Device Type = ", "Optical Memory (Magneto-optical)");
+                        break;
+                    case SCSI_DEVICE_TYPE_MEDIA_CHANGER:
+                        logmsg("  SCSI Device Type = ", "Write Once");
+                        break;
+                    case SCSI_DEVICE_TYPE_DISK_ARRAY:
+                        logmsg("  SCSI Device Type = ", "Disk Array");
+                        break;
+                    default:
+                        logmsg("  SCSI Peripheral device type id ", g_initiator_state.device_type, " unsupported. Skipping this device");
+                        g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
+                        return;
+                }
+                
                 // GT TODO - info about the drive
 
                 if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_CD)
@@ -458,7 +460,7 @@ void scsiInitiatorMainLoop()
                 }
                 else if (g_initiator_state.device_type != SCSI_DEVICE_TYPE_DIRECT_ACCESS)
                 {
-                    logmsg("Unhandled scsi device type: ", g_initiator_state.device_type, ". Handling it as Direct Access Device.");
+                    logmsg("  No specific handler for the device type, treating as Direct Access Device.");
                     g_initiator_state.device_type = SCSI_DEVICE_TYPE_DIRECT_ACCESS;
                 }
 
@@ -483,7 +485,7 @@ void scsiInitiatorMainLoop()
             if (g_initiator_state.sectorcount > 0)
             {
                 char filename[32] = {0};
-                filename_base[2] += g_initiator_state.target_id;
+                filename_base[2] = scsiEncodeID(g_initiator_state.target_id);
                 if (g_initiator_state.eject_when_done)
                 {
                     auto removable_count = g_initiator_state.removable_count[g_initiator_state.target_id];

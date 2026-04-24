@@ -705,7 +705,9 @@ static void checkDiskGeometryDivisible(image_config_t &img)
     if (!img.geometrywarningprinted)
     {
         uint32_t sectorsPerHeadTrack = img.sectorsPerTrack * img.headsPerCylinder;
-        if (img.scsiSectors <= 16514064 && img.scsiSectors % sectorsPerHeadTrack != 0)
+        // max CHS in sectors is 1024 cyls * 256 heads * 63 sectors/track
+        // normally devices will limit to 255 heads for DOS but 256 is used as a corner case
+        if (img.scsiSectors <= 1024 * 256 * 63 && img.scsiSectors % sectorsPerHeadTrack != 0)
         {
             logmsg("WARNING: Host used command ", scsiDev.cdb[0],
                 " which is affected by drive geometry. Current settings are ",
