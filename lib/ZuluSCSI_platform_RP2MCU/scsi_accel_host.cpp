@@ -46,19 +46,50 @@ enum scsidma_state_t { SCSIHOST_IDLE = 0,
                        SCSIHOST_READ };
 static volatile scsidma_state_t g_scsi_host_state;
 
-static void scsi_accel_host_config_gpio()
+static void scsidma_set_data_gpio_func(uint32_t func, bool invert_data, bool wide)
 {
+    uint32_t invert = 0;
+
+    // Invert input and output data in hardware to speed things up.
+    if (invert_data) invert |= (1 << 16) | (1 << 12);
+
+    for (int i = SCSI_IO_DB0; i <= SCSI_IO_DB7; i++)
+    {
+        iobank0_hw->io[i].ctrl  = func | invert;
+    }
+    iobank0_hw->io[SCSI_IO_DBP].ctrl  = func;
+
+#ifdef ZULUSCSI_WIDE
+    // In 8-bit mode we don't drive the upper bits
+    if (wide)
+    {
+        for (int i = SCSI_IO_DB8; i <= SCSI_IO_DB15; i++)
+        {
+            iobank0_hw->io[i].ctrl  = func | invert;
+        }
+        iobank0_hw->io[SCSI_IO_DBP1].ctrl = func;
+    }
+    else
+    {
+        for (int i = SCSI_IO_DB8; i <= SCSI_IO_DB15; i++)
+        {
+            iobank0_hw->io[i].ctrl  = GPIO_FUNC_SIO | invert;
+        }
+        iobank0_hw->io[SCSI_IO_DBP1].ctrl = GPIO_FUNC_SIO;
+    }
+    #endif
+}
+
+static void scsi_accel_host_config_gpio(bool wide = false)
+{
+#ifdef ZULUSCSI_WIDE
+    bool invert_data = true;
+#else
+    bool invert_data = false;
+#endif
     if (g_scsi_host_state == SCSIHOST_IDLE)
     {
-        iobank0_hw->io[SCSI_IO_DB0].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB1].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB2].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB3].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB4].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB5].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB6].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB7].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DBP].ctrl  = GPIO_FUNC_SIO;
+        scsidma_set_data_gpio_func(GPIO_FUNC_SIO, invert_data, wide);
         iobank0_hw->io[SCSI_IN_REQ].ctrl  = GPIO_FUNC_SIO;
         iobank0_hw->io[SCSI_OUT_ACK].ctrl = GPIO_FUNC_SIO;
     }
@@ -66,19 +97,19 @@ static void scsi_accel_host_config_gpio()
     {
         // Data bus and REQ as input, ACK pin as output
         pio_sm_set_pins(SCSI_PIO, SCSI_SM, SCSI_IO_DATA_MASK | 1 << SCSI_IN_REQ | 1 << SCSI_OUT_ACK);
-        pio_sm_set_consecutive_pindirs(SCSI_PIO, SCSI_SM, SCSI_IO_DB0, 9, false);
+        if (wide)
+        {
+            pio_sm_set_consecutive_pindirs(SCSI_PIO, SCSI_SM, SCSI_IO_DB0, 18, false);
+        }
+        else
+        {
+            pio_sm_set_consecutive_pindirs(SCSI_PIO, SCSI_SM, SCSI_IO_DB0, 9, false);
+        }
+
         pio_sm_set_consecutive_pindirs(SCSI_PIO, SCSI_SM, SCSI_IN_REQ, 1, false);
         pio_sm_set_consecutive_pindirs(SCSI_PIO, SCSI_SM, SCSI_OUT_ACK, 1, true);
 
-        iobank0_hw->io[SCSI_IO_DB0].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB1].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB2].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB3].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB4].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB5].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB6].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DB7].ctrl  = GPIO_FUNC_SIO;
-        iobank0_hw->io[SCSI_IO_DBP].ctrl  = GPIO_FUNC_SIO;
+        scsidma_set_data_gpio_func(GPIO_FUNC_SIO, invert_data, wide);
         iobank0_hw->io[SCSI_IN_REQ].ctrl  = GPIO_FUNC_SIO;
         iobank0_hw->io[SCSI_OUT_ACK].ctrl = GPIO_FUNC_PIO0;
     }
@@ -94,7 +125,7 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, in
     int msg_start = SCSI_IN(MSG);
 
     pio_sm_init(SCSI_PIO, SCSI_SM, g_scsi_host.pio_offset_async_read, &g_scsi_host.pio_cfg_async_read);
-    scsi_accel_host_config_gpio();
+    scsi_accel_host_config_gpio(busWidth);
     pio_sm_set_enabled(SCSI_PIO, SCSI_SM, true);
 
     // Set the number of bytes to read, must be divisible by 2.
@@ -174,11 +205,10 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, in
                 available--;
                 uint32_t word = pio_sm_get(SCSI_PIO, SCSI_SM);
                 paritycheck ^= word;
-                word = ~word;
-
 #ifdef ZULUSCSI_WIDE
                 *dst++ = word & 0xFF;
 #else
+                word = ~word;
                 *dst++ = word & 0xFF;
                 *dst++ = word >> 16;
 #endif
@@ -192,7 +222,6 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, in
                 available--;
                 uint32_t word = pio_sm_get(SCSI_PIO, SCSI_SM);
                 paritycheck ^= word;
-                word = ~word;
 
                 *dst++ = word & 0xFF;
                 *dst++ = (word >> 8) & 0xFF;
@@ -220,7 +249,7 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, in
 
     g_scsi_host_state = SCSIHOST_IDLE;
     SCSI_RELEASE_DATA_REQ();
-    scsi_accel_host_config_gpio();
+    scsi_accel_host_config_gpio(busWidth);
     pio_sm_set_enabled(SCSI_PIO, SCSI_SM, false);
 
     return count;
