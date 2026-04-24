@@ -78,9 +78,13 @@ bool scsiHostPhySelect(int target_id, uint8_t initiator_id)
     for (int wait = 0; wait < 10; wait++)
     {
         delayMicroseconds(1);
-
+#ifdef ZULUSCSI_WIDE
+        if (SCSI_IN_DATA() == 0)
+        {
+#else
         if (SCSI_IN_DATA() != 0)
         {
+#endif
             dbgmsg("scsiHostPhySelect: bus is busy");
             scsiLogInitiatorPhaseChange(BUS_FREE);
             SCSI_RELEASE_OUTPUTS();
@@ -228,8 +232,13 @@ static inline uint8_t scsiHostReadOneByte(int* parityError)
     SCSIHOST_WAIT_INACTIVE(REQ);
     SCSI_OUT(ACK, 0);
 
+#ifdef ZULUSCSI_WIDE // wide keeps data signals inverted
+    if (parityError && !scsi_check_parity(~r))
+#else
     if (parityError && !scsi_check_parity(r))
+#endif
     {
+
         logmsg("Parity error in scsiReadOneByte(): ", (uint32_t)r);
         *parityError = 1;
     }
@@ -258,7 +267,7 @@ static inline uint16_t scsiHostReadOneWord(int* parityError)
     SCSIHOST_WAIT_INACTIVE(REQ);
     SCSI_OUT(ACK, 0);
 
-    if (parityError && !scsi_check_parity_16bit(r))
+    if (parityError && !scsi_check_parity_16bit(~r))
     {
         logmsg("Parity error in scsiHostReadOneWord(): ", (uint32_t)r);
         *parityError = 1;
