@@ -2761,13 +2761,18 @@ void diskDataOut()
 #ifdef PLATFORM_AS400
             if (g_disk_transfer.writesame_count)
             {
-                blocks_per_buffer = sizeof(scsiDev.data) / bytesPerSector;
+                // Prefill the SCSI buffer with copies of the sector so that we
+                // can issue larger SD card transfers. Make sure SD card sector
+                // boundaries are aligned to a word boundary.
+                int offset = img.file.position() % SD_SECTOR_SIZE;
+                uint8_t *writesame_buf = scsiDev.data + offset;
+                blocks_per_buffer = (sizeof(scsiDev.data) - offset) / bytesPerSector;
+                blocks_per_buffer -= blocks_per_buffer % 4;
                 if (blocks_per_buffer > g_disk_transfer.writesame_count)
                     blocks_per_buffer = g_disk_transfer.writesame_count;
                 for (i=0; i < blocks_per_buffer; i++)
-
                 {
-                    memcpy(scsiDev.data + (i * bytesPerSector), buf, bytesPerSector);
+                    memmove(writesame_buf + (i * bytesPerSector), buf, bytesPerSector);
                 }
                 uint32_t blocks_written = 0;
                 
@@ -2780,7 +2785,7 @@ void diskDataOut()
                     }
 
                     uint32_t bytes_to_write = blocks_to_write * bytesPerSector;
-                    if (img.file.write(scsiDev.data, bytes_to_write) != bytes_to_write)
+                    if (img.file.write(writesame_buf, bytes_to_write) != bytes_to_write)
                     {
                         logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
                         scsiDev.status = CHECK_CONDITION;
