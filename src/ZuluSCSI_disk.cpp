@@ -3049,6 +3049,17 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
             }
         }
 
+        // The skip mask must cover every sector the host expects. If the
+        // loop exits with sectors unfilled, those bytes in `buffer` are
+        // stale from the previous transfer — shipping them to the host
+        // would silently corrupt the read. Fail the command instead.
+        if (read_ok && sectors_remaining > 0)
+        {
+            logmsg("Skip Read mask exhausted with ", (int)sectors_remaining,
+                   " sectors unfilled");
+            read_ok = false;
+        }
+
         if (!read_ok)
         {
             logmsg("SD card read failed during Skip Read: ", SD.sdErrorCode());
@@ -3320,7 +3331,27 @@ int16_t skip_next(int max) {
     }
 }
 
-void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t skip_command) {
+// AS/400 Skip Read/Write entry point
+//
+// Per IBM ESS SCSI Command Reference SC26-7297-01 §"Skip Read"/"Skip Write"
+// (opcodes X'E8' / X'EA', pages 66-67):
+//   - Mask Length=0 specifies a mask length of 256.
+//   - Transfer Length=0 specifies that no data is to be transferred. This
+//     is not an error.
+//   - Maximum transfer length is 256 blocks; larger values return Check
+//     Condition / Illegal Request - Invalid Field in CDB.
+void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length, uint8_t skip_command) {
+
+    if (blocks > 256)
+    {
+        logmsg("Skip command rejected: transfer length ", (int)blocks, " > 256");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+        scsiDev.phase = STATUS;
+        g_disk_transfer.skip_command = 0;
+        return;
+    }
 
     g_disk_transfer.skip_lba = lba;
     g_disk_transfer.skip_blocks = blocks;
