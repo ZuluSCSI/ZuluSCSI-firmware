@@ -716,8 +716,9 @@ static void process_dma_readbuf()
 
     if (g_scsi_dma.wide)
     {
-        // Read 16 bits per IO word
-        uint32_t parity = 0xFFFFFFFF;
+        // Read 16 bits per IO word. Per-byte parity is checked on each word
+        // and failures are OR-accumulated so that errors never cancel.
+        uint32_t parity_errors = 0;
         while (src + 4 < end)
         {
             for (int unroll = 0; unroll < 4; unroll++)
@@ -725,7 +726,11 @@ static void process_dma_readbuf()
                 uint32_t word = *src++;
                 *(uint16_t*)dst = (uint16_t)word;
                 dst += 2;
-                parity ^= word;
+                uint32_t w2 = (word >> 4) ^ word;
+                uint32_t w3 = (w2 >> 2) ^ w2;
+                uint32_t w4 = (w3 >> 1) ^ w3;
+                uint32_t p2 = ((uint64_t)(word & 0x30000) * 0x810000) >> 32;
+                parity_errors |= (~(w4 ^ p2)) & 0x0101;
             }
         }
 
@@ -734,26 +739,35 @@ static void process_dma_readbuf()
             uint32_t word = *src++;
             *(uint16_t*)dst = (uint16_t)word;
             dst += 2;
-            parity ^= word;
+            uint32_t w2 = (word >> 4) ^ word;
+            uint32_t w3 = (w2 >> 2) ^ w2;
+            uint32_t w4 = (w3 >> 1) ^ w3;
+            uint32_t p2 = ((uint64_t)(word & 0x30000) * 0x810000) >> 32;
+            parity_errors |= (~(w4 ^ p2)) & 0x0101;
         }
 
-        if (!scsi_check_parity_16bit(parity))
+        if (parity_errors)
         {
-            dbgmsg("16-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
+            dbgmsg("16-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " lanes ", (int)parity_errors);
             g_scsi_dma.parityerror = true;
         }
     }
     else
     {
-        // Read 8 bits per IO word
-        uint32_t parity = 0xFFFFFFFF;
+        // Read 8 bits per IO word. Per-byte parity is checked on each word
+        // and failures are OR-accumulated so that errors never cancel.
+        uint32_t parity_errors = 0;
         while (src + 4 < end)
         {
             for (int unroll = 0; unroll < 4; unroll++)
             {
                 uint32_t word = *src++;
                 *dst++ = (uint8_t)word;
-                parity ^= word;
+                uint32_t w2 = (word >> 4) ^ word;
+                uint32_t w3 = (w2 >> 2) ^ w2;
+                uint32_t w4 = (w3 >> 1) ^ w3;
+                uint32_t p2 = (word >> 16);
+                parity_errors |= (~(w4 ^ p2)) & 0x0001;
             }
         }
 
@@ -761,12 +775,16 @@ static void process_dma_readbuf()
         {
             uint32_t word = *src++;
             *dst++ = (uint8_t)word;
-            parity ^= word;
+            uint32_t w2 = (word >> 4) ^ word;
+            uint32_t w3 = (w2 >> 2) ^ w2;
+            uint32_t w4 = (w3 >> 1) ^ w3;
+            uint32_t p2 = (word >> 16);
+            parity_errors |= (~(w4 ^ p2)) & 0x0001;
         }
 
-        if (!scsi_check_parity(parity))
+        if (parity_errors)
         {
-            dbgmsg("8-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
+            dbgmsg("8-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes);
             g_scsi_dma.parityerror = true;
         }
     }
