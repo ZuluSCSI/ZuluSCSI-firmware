@@ -716,9 +716,8 @@ static void process_dma_readbuf()
 
     if (g_scsi_dma.wide)
     {
-        // Read 16 bits per IO word. Parity is verified on each word so that
-        // errors cannot cancel across words.
-        bool parity_error = false;
+        // Read 16 bits per IO word
+        uint32_t parity = 0xFFFFFFFF;
         while (src + 4 < end)
         {
             for (int unroll = 0; unroll < 4; unroll++)
@@ -726,7 +725,7 @@ static void process_dma_readbuf()
                 uint32_t word = *src++;
                 *(uint16_t*)dst = (uint16_t)word;
                 dst += 2;
-                if (!scsi_check_parity_16bit(word)) parity_error = true;
+                parity ^= word;
             }
         }
 
@@ -735,27 +734,26 @@ static void process_dma_readbuf()
             uint32_t word = *src++;
             *(uint16_t*)dst = (uint16_t)word;
             dst += 2;
-            if (!scsi_check_parity_16bit(word)) parity_error = true;
+            parity ^= word;
         }
 
-        if (parity_error)
+        if (!scsi_check_parity_16bit(parity))
         {
-            dbgmsg("16-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes);
+            dbgmsg("16-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
             g_scsi_dma.parityerror = true;
         }
     }
     else
     {
-        // Read 8 bits per IO word. Parity is verified on each word so that
-        // errors cannot cancel across words.
-        bool parity_error = false;
+        // Read 8 bits per IO word
+        uint32_t parity = 0xFFFFFFFF;
         while (src + 4 < end)
         {
             for (int unroll = 0; unroll < 4; unroll++)
             {
                 uint32_t word = *src++;
                 *dst++ = (uint8_t)word;
-                if (!scsi_check_parity(word)) parity_error = true;
+                parity ^= word;
             }
         }
 
@@ -763,12 +761,12 @@ static void process_dma_readbuf()
         {
             uint32_t word = *src++;
             *dst++ = (uint8_t)word;
-            if (!scsi_check_parity(word)) parity_error = true;
+            parity ^= word;
         }
 
-        if (parity_error)
+        if (!scsi_check_parity(parity))
         {
-            dbgmsg("8-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes);
+            dbgmsg("8-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
             g_scsi_dma.parityerror = true;
         }
     }
