@@ -726,7 +726,7 @@ static void process_dma_readbuf()
                 uint32_t word = *src++;
                 *(uint16_t*)dst = (uint16_t)word;
                 dst += 2;
-                if (!scsi_check_parity_16bit(word)) parity_error = true;
+                if (!scsi_check_parity_16bit(~word)) parity_error = true;
             }
         }
 
@@ -735,7 +735,7 @@ static void process_dma_readbuf()
             uint32_t word = *src++;
             *(uint16_t*)dst = (uint16_t)word;
             dst += 2;
-            if (!scsi_check_parity_16bit(word)) parity_error = true;
+            if (!scsi_check_parity_16bit(~word)) parity_error = true;
         }
 
         if (parity_error)
@@ -755,7 +755,7 @@ static void process_dma_readbuf()
             {
                 uint32_t word = *src++;
                 *dst++ = (uint8_t)word;
-                if (!scsi_check_parity(word)) parity_error = true;
+                if (!scsi_check_parity(~word)) parity_error = true;
             }
         }
 
@@ -763,7 +763,7 @@ static void process_dma_readbuf()
         {
             uint32_t word = *src++;
             *dst++ = (uint8_t)word;
-            if (!scsi_check_parity(word)) parity_error = true;
+            if (!scsi_check_parity(~word)) parity_error = true;
         }
 
         if (parity_error)
