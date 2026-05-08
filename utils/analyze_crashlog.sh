@@ -31,7 +31,7 @@ if [ "x$fwfile" = "x" ]; then
     echo "Searching on Github"
     enddate=$(date "+%Y-%m-%dT%H:%M" -d "$fwtime 600 seconds")
     runid=$(gh api repos/$repo/actions/artifacts \
-        --jq ".artifacts[] | select(.created_at <= \"$enddate\") | .workflow_run.id" | head -n 1)
+        --jq ".artifacts[] | select(.name == \"ZuluSCSI ELFs\") | select(.created_at <= \"$enddate\") | .workflow_run.id" | head -n 1)
     if [ "x$runid" != "x" ]; then
         tmpdir=$(mktemp -d /tmp/crashlog-XXXXXXX)
         echo "Workflow run: https://github.com/$repo/actions/runs/$runid"
