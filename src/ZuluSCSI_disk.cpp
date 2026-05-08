@@ -491,6 +491,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             {
                 logmsg("---- Image is inside a ", img.file.containerTypeName(), " container");
             }
+            autoConfigGeometry(img);
 #endif
         }
         else if (type == S2S_CFG_OPTICAL)
@@ -550,11 +551,6 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             {
                 logmsg("---- Zip 100 disk (", (int)img.file.size(), " bytes) is not exactly ", ZIP100_DISK_SIZE, " bytes, may not work correctly");
             }
-        }
-
-        if (type != S2S_CFG_OPTICAL && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI)
-        {
-            autoConfigGeometry(img);
         }
 
         quirksCheck(&img);
