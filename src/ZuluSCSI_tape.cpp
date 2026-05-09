@@ -652,6 +652,10 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed, bool sup
                     dbgmsg("------ TAP variable read hit filemark after ", (int) bytes_read,
                             " bytes(s), residual=", (int)(info),
                             " file_pos=", (int)tape_info->file_pos);
+		    // Tape Emulation - can't read variable block tapes that were just written #846
+		    // because of variable readt, file_pos may be > bytes_read,
+		    // but should be the "rewound" to bytes_read for the next read
+		    tape_info->file_pos = (int) bytes_read;
                 }
                 scsiDev.target->sense.filemark = true;
                 scsiDev.status = CHECK_CONDITION;
