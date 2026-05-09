@@ -691,21 +691,26 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed, bool sup
             }
 
             bytes_read += record.length;
-        } while (bytes_read < block_size);
+        } while (fixed && bytes_read < block_size);
 
         // Check if the buffer contains a full block
-        if (bytes_read != block_size) {
-            if (block > 0)
-                scsiFinishWrite();
-            logmsg("------ TAP block length mismatch: block size=", (int)block_size, " bytes read=", (int)bytes_read);
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-            scsiDev.phase = STATUS;
-            return;
+        if (fixed) {
+            if (bytes_read != block_size) {
+                if (block > 0)
+                    scsiFinishWrite();
+                logmsg("------ TAP block length mismatch: block size=", (int)block_size, " bytes read=", (int)bytes_read);
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+                scsiDev.phase = STATUS;
+                return;
+            }
+            scsiStartWrite(buf, block_size);
+        }
+        else {
+            scsiStartWrite(buf, bytes_read);
         }
 
-        scsiStartWrite(buf, block_size);
 
         // Reset the watchdog while the transfer is progressing.
         // If the host stops transferring, the watchdog will eventually expire.
