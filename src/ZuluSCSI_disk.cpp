@@ -813,7 +813,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
 
             setRootFolder(target_idx, false, dir_name);
-            g_scsi_settings.initDevice(target_idx, type, true);
+            g_scsi_settings.initDevice(target_idx, type);
         }
     }
 }
