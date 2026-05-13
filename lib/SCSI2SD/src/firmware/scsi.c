@@ -1441,7 +1441,7 @@ void scsiInit()
 			scsiDev.targets[i].targetId = cfg->scsiId & S2S_CFG_TARGET_ID_BITS;
 			scsiDev.targets[i].cfg = cfg;
 
-		scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;
+			scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;
 			scsiDev.targets[i].liveCfg.tapeDensity = cfg->tapeDensity;
 			scsiDev.targets[i].liveCfg.tapeBufferedMode = 0;
 		}
