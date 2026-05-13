@@ -693,7 +693,7 @@ bool findHDDImages()
           }
         }
         else if(id < S2S_MAX_TARGETS && lun < NUM_SCSILUN) {
-          logmsg("---- Opening ", fullname, " for id:", id, " lun:", lun);
+          logmsg("-- Opening ", fullname, " for id:", id, " lun:", lun);
 
           imageReady = scsiDiskOpenHDDImage(id, fullname, lun, blk, type, use_prefix);
           if(imageReady)
