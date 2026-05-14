@@ -378,7 +378,8 @@ static void autoConfigGeometry(image_config_t &img)
         {
             method = "device type floppy";
             sect = 18;
-            head = 80;
+            head = 2;
+            found_chs = true;
         }
         else if (img.scsiSectors <= 1032192)
         {
