@@ -487,12 +487,12 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as disk drive drive");
             img.setDeviceType(S2S_CFG_FIXED);
+            autoConfigGeometry(img);
 #ifdef CONTAINER_IMAGE_SUPPORT
             if (img.file.isContainer())
             {
                 logmsg("---- Image is inside a ", img.file.containerTypeName(), " container");
             }
-            autoConfigGeometry(img);
 #endif
         }
         else if (type == S2S_CFG_OPTICAL)
@@ -508,6 +508,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as floppy drive");
             img.setDeviceType(S2S_CFG_FLOPPY_14MB);
+            autoConfigGeometry(img);
         }
         else if (type == S2S_CFG_MO)
         {
