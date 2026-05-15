@@ -236,12 +236,7 @@ int scsiNetworkCommand()
 		// if we have nothing to send, just return early
 		if (scsiNetworkInboundQueue.readIndex == scsiNetworkInboundQueue.writeIndex)
 		{
-			scsiDev.data[0] = 0;
-			scsiDev.data[1] = 0;
-			scsiDev.data[2] = 0;
-			scsiDev.data[3] = 0;
-			scsiDev.data[4] = 0;
-			scsiDev.data[5] = 0;
+			memset(scsiDev.data, 0, 6);
 			scsiEnterPhase(DATA_IN);
 			scsiWrite(scsiDev.data, 6);
 			while (!scsiIsWriteFinished(NULL))
@@ -258,11 +253,7 @@ int scsiNetworkCommand()
 #ifdef DAYNAPORT_OLD_READS
 		// DaynaPort SCSI/Link-3 reads one packet at a time
 		uint32_t packetSize = scsiNetworkInboundQueue.sizes[scsiNetworkInboundQueue.readIndex];
-		if (packetSize < 64)
-		{
-			packetSize = 64;
-		}
-		else if (packetSize + 6 >size)
+		if (packetSize + 6 > size)
 		{
 			LOGMSG_F("%s: packet size too big (%d)", __func__, packetSize);
 			packetSize = size - 6;
@@ -294,14 +285,16 @@ int scsiNetworkCommand()
 		scsiFinishWrite();
 		if (scsiDev.dataLen > 6)
 		{
-			s2s_delay_us(80); // DaynaPort Mac driver needs a short delay after reading size and flags.
+			s2s_delay_us(75); // DaynaPort Mac driver needs a short delay after reading size and flags.
+
+			scsiWrite(scsiDev.data + 6, scsiDev.dataLen - 6);
+			while (!scsiIsWriteFinished(NULL))
+			{
+				platform_poll();
+			}
+			scsiFinishWrite();
 		}
-		scsiWrite(scsiDev.data + 6, scsiDev.dataLen - 6);
-		while (!scsiIsWriteFinished(NULL))
-		{
-			platform_poll();
-		}
-		scsiFinishWrite();
+
 
 #else // DANAPORT_OLD_READS - Multiple Packet reads at a time
 		for (done = 0, total = 0; !done; )
