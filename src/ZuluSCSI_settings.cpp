@@ -503,7 +503,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
 
     cfg.blockSize = log_ini_getl(section, "BlockSize", cfg.blockSize, CONFIGFILE, log_settings);
     cfg.tapeLengthMB = log_ini_getl(section, "TapeLengthMB", cfg.tapeLengthMB, CONFIGFILE, log_settings);
-    cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings);
+    cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings, &log_getl_8bit_hex);
 
 
 #if ENABLE_COW
