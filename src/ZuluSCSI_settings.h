@@ -175,6 +175,7 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
 #endif
     uint32_t tapeLengthMB;
     uint8_t tapeDensity;
+    uint8_t tapeBufferedMode;
 } scsi_device_settings_t;
 
 

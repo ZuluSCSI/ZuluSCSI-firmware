@@ -126,8 +126,9 @@ typedef struct __attribute__((packed))
 	uint32_t vendorExtensions;
 
 	uint8_t tapeDensity;
+	uint8_t tapeBufferedMode;
 
-	uint8_t reserved[59]; // Pad out to 128 bytes for main section.
+	uint8_t reserved[58]; // Pad out to 128 bytes for main section.
 } S2S_TargetCfg;
 
 typedef struct __attribute__((packed))

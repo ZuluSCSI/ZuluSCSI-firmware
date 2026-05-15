@@ -682,6 +682,8 @@ bool findHDDImages()
         parseCustomInquiryData(id, type);
 
         scsiDiskGetImageConfig(id).tapeDensity = g_scsi_settings.getDevice(id)->tapeDensity;
+        scsiDiskGetImageConfig(id).tapeBufferedMode = g_scsi_settings.getDevice(id)->tapeBufferedMode;
+
         // Open the image file
         if (id < S2S_MAX_TARGETS && is_romdrive)
         {

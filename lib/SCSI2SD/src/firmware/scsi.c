@@ -1443,7 +1443,7 @@ void scsiInit()
 
 			scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;
 			scsiDev.targets[i].liveCfg.tapeDensity = cfg->tapeDensity;
-			scsiDev.targets[i].liveCfg.tapeBufferedMode = 0;
+			scsiDev.targets[i].liveCfg.tapeBufferedMode = cfg->tapeBufferedMode;
 		}
 		else
 		{

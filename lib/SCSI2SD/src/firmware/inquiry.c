@@ -142,6 +142,38 @@ void s2s_scsiInquiry()
 						config,
 						scsiDev.data,
 						sizeof(scsiDev.data));
+
+				// Set removable bit
+				switch (scsiDev.target->cfg->deviceType)
+				{
+				case S2S_CFG_OPTICAL:
+					scsiDev.data[1] |= 0x80; // Removable bit.
+					break;
+
+				case S2S_CFG_SEQUENTIAL:
+					scsiDev.data[1] |= 0x80; // Removable bit.
+					break;
+
+				case S2S_CFG_MO:
+					scsiDev.data[1] |= 0x80; // Removable bit.
+					break;
+
+				case S2S_CFG_FLOPPY_14MB:
+				case S2S_CFG_REMOVABLE:
+				case S2S_CFG_ZIP100:
+					scsiDev.data[1] |= 0x80; // Removable bit.
+					break;
+
+				case S2S_CFG_NETWORK:
+				case S2S_CFG_AMIGAWIFI:
+					scsiDev.data[2] = 0x01;  // ANSI SCSI version is SCSI 1.
+					break;
+
+				default:
+					// Accept defaults for a fixed disk.
+					break;
+				}
+
 			}
 			scsiDev.phase = DATA_IN;
 		}
@@ -156,7 +188,7 @@ void s2s_scsiInquiry()
 			scsiDev.dataLen = customVpdLen;
 			scsiDev.phase = DATA_IN;
 		}
-		else	 if (pageCode == 0x00)
+		else if (pageCode == 0x00)
 		{
 			memcpy(scsiDev.data, SupportedVitalPages, sizeof(SupportedVitalPages));
 			scsiDev.dataLen = sizeof(SupportedVitalPages);
@@ -236,35 +268,6 @@ void s2s_scsiInquiry()
 		// Set the device type as needed.
 		scsiDev.data[0] = getDeviceTypeQualifier();
 
-		switch (scsiDev.target->cfg->deviceType)
-		{
-		case S2S_CFG_OPTICAL:
-			scsiDev.data[1] |= 0x80; // Removable bit.
-			break;
-
-		case S2S_CFG_SEQUENTIAL:
-			scsiDev.data[1] |= 0x80; // Removable bit.
-			break;
-
-		case S2S_CFG_MO:
-			scsiDev.data[1] |= 0x80; // Removable bit.
-			break;
-
-		case S2S_CFG_FLOPPY_14MB:
-		case S2S_CFG_REMOVABLE:
-		case S2S_CFG_ZIP100:
-			scsiDev.data[1] |= 0x80; // Removable bit.
-			break;
-
-		case S2S_CFG_NETWORK:
-		case S2S_CFG_AMIGAWIFI:
-			scsiDev.data[2] = 0x01;  // Page code.
-			break;
-		
-		default:
-			// Accept defaults for a fixed disk.
-			break;
-		}
 	}
 
 	// Set the first byte to indicate LUN presence.

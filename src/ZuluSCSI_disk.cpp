@@ -1264,6 +1264,7 @@ void scsiDiskLoadConfig(int target_idx)
         {
             // set custom tape density
             img.tapeDensity = g_scsi_settings.getDevice(target_idx)->tapeDensity;
+            img.tapeBufferedMode = g_scsi_settings.getDevice(target_idx)->tapeBufferedMode;
 
             if (scsiDev.targets[target_idx].liveCfg.bytesPerSector != 0)
             {
