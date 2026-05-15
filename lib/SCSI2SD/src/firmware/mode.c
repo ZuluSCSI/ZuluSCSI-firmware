@@ -152,9 +152,9 @@ static const uint8_t FlexibleDiskDriveGeometry[] =
 0x05, // Page code
 0x1E, // Page length
 0x01, 0xF4, // Transfer Rate (500kbits)
-0x01, // heads
+0x02, // heads
 18, // sectors per track
-0x20,0x00, // bytes per sector
+0x02,0x00, // bytes per sector
 0x00, 80, // Cylinders
 0x00, 0x80, // Write-precomp
 0x00, 0x80, // reduced current,
@@ -549,6 +549,33 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 	{
 		pageFound = 1;
 		pageIn(pc, idx, FlexibleDiskDriveGeometry, sizeof(FlexibleDiskDriveGeometry));
+		if (pc != 0x01)
+		{
+			uint16_t heads = scsiDev.target->cfg->headsPerCylinder;
+			uint16_t sectorsPerTrack = scsiDev.target->cfg->sectorsPerTrack;
+			uint16_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+
+			if (heads == 0) heads = 2;
+			if (heads > 0xFF) heads = 0xFF;
+			if (sectorsPerTrack == 0) sectorsPerTrack = 18;
+			if (sectorsPerTrack > 0xFF) sectorsPerTrack = 0xFF;
+
+			uint32_t sectorsPerCylinder = (uint32_t)heads * sectorsPerTrack;
+			uint32_t capacity = getScsiCapacity(
+				scsiDev.target->cfg->sdSectorStart,
+				bytesPerSector,
+				scsiDev.target->cfg->scsiSectors);
+			uint32_t cylinders = sectorsPerCylinder ?
+				(capacity + sectorsPerCylinder - 1) / sectorsPerCylinder : 0;
+			if (cylinders > 0xFFFF) cylinders = 0xFFFF;
+
+			scsiDev.data[idx+4] = heads;
+			scsiDev.data[idx+5] = sectorsPerTrack;
+			scsiDev.data[idx+6] = bytesPerSector >> 8;
+			scsiDev.data[idx+7] = bytesPerSector & 0xFF;
+			scsiDev.data[idx+8] = cylinders >> 8;
+			scsiDev.data[idx+9] = cylinders & 0xFF;
+		}
 		idx += sizeof(FlexibleDiskDriveGeometry);
 	}
 
@@ -920,4 +947,3 @@ int scsiModeCommand()
 
 	return commandHandled;
 }
-

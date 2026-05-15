@@ -45,9 +45,7 @@ static uint8_t StandardResponse[] =
 0, 0, // Reserved
 0x18 // Enable sync and linked commands
 };
-// Vendor set by config 'c','o','d','e','s','r','c',' ',
-// prodId set by config'S','C','S','I','2','S','D',' ',' ',' ',' ',' ',' ',' ',' ',' ',
-// Revision set by config'2','.','0','a'
+// Vendor, Product ID and Revision set by config
 
 
 static const uint8_t SupportedVitalPages[] =
@@ -168,7 +166,7 @@ void s2s_scsiInquiry()
 				case S2S_CFG_AMIGAWIFI:
 					scsiDev.data[2] = 0x01;  // ANSI SCSI version is SCSI 1.
 					break;
-
+				
 				default:
 					// Accept defaults for a fixed disk.
 					break;
