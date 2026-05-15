@@ -378,7 +378,8 @@ static void autoConfigGeometry(image_config_t &img)
         {
             method = "device type floppy";
             sect = 18;
-            head = 80;
+            head = 2;
+            found_chs = true;
         }
         else if (img.scsiSectors <= 1032192)
         {
@@ -486,6 +487,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as disk drive drive");
             img.setDeviceType(S2S_CFG_FIXED);
+            autoConfigGeometry(img);
 #ifdef CONTAINER_IMAGE_SUPPORT
             if (img.file.isContainer())
             {
@@ -506,6 +508,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as floppy drive");
             img.setDeviceType(S2S_CFG_FLOPPY_14MB);
+            autoConfigGeometry(img);
         }
         else if (type == S2S_CFG_MO)
         {
@@ -550,11 +553,6 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             {
                 logmsg("---- Zip 100 disk (", (int)img.file.size(), " bytes) is not exactly ", ZIP100_DISK_SIZE, " bytes, may not work correctly");
             }
-        }
-
-        if (type != S2S_CFG_OPTICAL && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI)
-        {
-            autoConfigGeometry(img);
         }
 
         quirksCheck(&img);
@@ -817,7 +815,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
 
             setRootFolder(target_idx, false, dir_name);
-            g_scsi_settings.initDevice(target_idx, type, true);
+            g_scsi_settings.initDevice(target_idx, type);
         }
     }
 }
@@ -895,6 +893,7 @@ static void scsiDiskSetConfig(int target_idx)
         }
     }
 #endif
+    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType, true);
 }
 
 // Compares the prefix of both files and the scsi ID
