@@ -1262,11 +1262,18 @@ void scsiDiskLoadConfig(int target_idx)
     int blocksize = 0;
     if (scsiDiskGetNextImageName(img, filename, sizeof(filename)))
     {
-        if (img.deviceType == S2S_CFG_SEQUENTIAL && (scsiDev.targets[target_idx].liveCfg.bytesPerSector != 0))
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
-            // For tape drives, keep byte per sector between SD card reinserts as it can be set by the OS
-            blocksize = scsiDev.targets[target_idx].liveCfg.bytesPerSector;
-            g_scsi_settings.getDevice(target_idx)->blockSize = blocksize;
+            // set custom tape density
+            img.tapeDensity = g_scsi_settings.getDevice(target_idx)->tapeDensity;
+            img.tapeBufferedMode = g_scsi_settings.getDevice(target_idx)->tapeBufferedMode;
+
+            if (scsiDev.targets[target_idx].liveCfg.bytesPerSector != 0)
+            {
+                // For tape drives, keep byte per sector between SD card reinserts as it can be set by the OS
+                blocksize = scsiDev.targets[target_idx].liveCfg.bytesPerSector;
+                g_scsi_settings.getDevice(target_idx)->blockSize = blocksize;
+            }
         }
         else
         {

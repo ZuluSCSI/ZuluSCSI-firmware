@@ -14,8 +14,9 @@ struct image_config_t;
 #define TAP_MARKER_ERASE_GAP   0xFFFFFFFE  // Erase gap marker
 #define TAP_MARKER_END_MEDIUM  0xFFFFFFFF  // End of medium marker
 
-#define TAPE_TAP_BLOCK_SIZE_MAX (SCSI2SD_BUFFER_SIZE / 2) // max value 0xFFFFFF
-#define TAPE_TAP_BLOCK_SIZE_MIN 64 // max value 0xFFFF
+// \todo fix me - 2097152 is for the Hercules tapecopy program. we only support (SCSI2SD_BUFFER_SIZE / 2) max currently
+#define TAPE_TAP_BLOCK_SIZE_MAX 2097152// (SCSI2SD_BUFFER_SIZE / 2) // max value 0xFFFFFF
+#define TAPE_TAP_BLOCK_SIZE_MIN  1 // max value 0xFFFF
 
 #define TAPE_BLOCK_SIZE_MAX (MAX_SECTOR_SIZE) // max value 0xFFFFFF
 #define TAPE_BLOCK_SIZE_MIN 64 // max value 0xFFFF
@@ -53,6 +54,8 @@ enum tap_result_t {
     TAP_END_OF_DATA,
     TAP_BEGINNING_OF_TAPE,
     TAP_FILEMARK,
+    TAP_OVERLENGTH,
+    TAP_UNDERLENGTH,
     TAP_ERROR
 };
 
@@ -73,7 +76,7 @@ bool tapeIsTap();
 
 
 // Helper functions for .TAP format
-tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size);
+tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size, bool fixed = true);
 tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size);
 tap_result_t tapWriteRecord(image_config_t &img, const uint8_t *data, uint32_t length);
 tap_result_t tapWriteFilemark(image_config_t &img);

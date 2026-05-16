@@ -156,7 +156,7 @@ bool tapeIsTap()
 }
 
 // Read a .TAP record moving forward
-tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size) {
+tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size, bool fixed) {
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     record.is_error = false;
     record.is_filemark = false;
@@ -165,7 +165,7 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
     uint8_t header[4];
 
     // Check if we're at end of data
-     dbgmsg("------ TAP read forward: file_pos=", (int)tape_info->file_pos, " file_size=", (int)img.file.size());
+    //  dbgmsg("------ TAP read forward: file_pos=", (int)tape_info->file_pos, " file_size=", (int)img.file.size());
     if (tape_info->file_pos >= img.file.size()) {
         return TAP_END_OF_DATA;
     }
@@ -195,14 +195,46 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
         scsiDev.target->tapeBOM = 0;
         return TAP_END_OF_TAPE;
     }
-
-    // For data records, read the data if buffer provided
+    tap_result_t tap_result_status = TAP_OK;
+    // Data records
+    // If the data record is variable length, check the buffer size is the same as the
+    if (!fixed)
+    {
+        if (record.length > buffer_size) {
+            // dbgmsg("------ TAP record overlength condition for variable blocksize read attempted : record length=", (int)record.length, " block size=", (int)buffer_size);
+            record.is_error = true;
+            tap_result_status = TAP_OVERLENGTH;
+        }
+        else if (record.length < buffer_size) {
+            // dbgmsg("------ TAP record underlength condition for variable blocksize read attempted : record length=", (int)record.length, " block size=", (int)buffer_size);
+            record.is_error = true;
+            tap_result_status = TAP_UNDERLENGTH;
+        }
+    }
+    // dbgmsg("------ TAP record class=", (int)record.record_class, " length=", (int)record.length);
+    // Read the data if buffer provided
     if (record.length > 0) {
         uint32_t data_length = record.length;
         uint32_t padded_length = (data_length + 1) & ~1;  // Round up to even
 
+        if (TAP_OVERLENGTH == tap_result_status) {
+            if (!img.file.seek(tape_info->file_pos + 4) || img.file.read(buffer, buffer_size) != (ssize_t)buffer_size) {
+                logmsg("------ TAP overlength record data read or seek error");
+                record.is_error = true;
+                return TAP_ERROR;
+            }
+        }
+        else if (TAP_UNDERLENGTH == tap_result_status) {
+            // For underlength, read the available data and zero-fill the rest of the buffer
+            if (!img.file.seek(tape_info->file_pos + 4) || img.file.read(buffer, data_length) != (ssize_t)data_length) {
+                logmsg("------ TAP underlength record data read or seek error");
+                record.is_error = true;
+                return TAP_ERROR;
+            }
+        }
+        else if (buffer && buffer_size >= data_length) {
         // buffer is nullptr when data does not need to read
-        if (buffer && buffer_size >= data_length) {
+
             if (!img.file.seek(tape_info->file_pos + 4) || img.file.read(buffer, data_length) != (ssize_t)data_length) {
                 logmsg("------ TAP failed to seek and/or read data");
                 record.is_error = true;
@@ -235,7 +267,7 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
         scsiDev.target->tapeBOM = 0;
     }
 
-    return TAP_OK;
+    return tap_result_status;
 }
 
 // Read a .TAP record moving backward
@@ -567,25 +599,12 @@ struct tap_transfer_t {
 
 static tap_transfer_t g_tap_transfer;
 
-// .TAP-aware read function
-static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed, bool suppress_invalid_length) {
-    tap_record_t record;
-    uint32_t block_size;
-    if (fixed)
-        block_size =  scsiDev.target->liveCfg.bytesPerSector;
-    else
-    {
-        // with variable sector sizes, the blocks is the number of bytes of the sector and and only one sector is transferred 
-        block_size = blocks;
-        blocks = 1;
-    }
-    // Fixed block mode - read - if record length
-    scsiDev.phase = DATA_IN;
-    scsiDev.dataLen = 0;
-    scsiDev.dataPtr = 0;
-    scsiEnterPhase(DATA_IN);
 
-    // Use two buffers alternately for formatting sector data
+static void tapReadFixed(image_config_t &img, uint32_t blocks)
+{
+    uint16_t block_size =  scsiDev.target->liveCfg.bytesPerSector;
+    tap_record_t record;
+      // Use two buffers alternately for formatting sector data
     if (block_size > scsiTapeMaxSectorSize() || (block_size * 2) > sizeof(scsiDev.data))
     {
         if (block_size > scsiTapeMaxSectorSize())
@@ -602,18 +621,18 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed, bool sup
         scsiDev.phase = STATUS;
         return;
     }
-
     uint8_t *buf0 = scsiDev.data;
     uint8_t *buf1 = scsiDev.data + block_size;
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
+    uint32_t info = blocks;
     // Format the sectors for transfer
-    for (uint32_t block = 0; block < blocks; block++)
+    for (uint32_t cur_block = 0; cur_block < blocks; cur_block++)
     {
         platform_poll();
         diskEjectButtonUpdate(false);
 
         // Verify that previous write using this buffer has finished
-        uint8_t *buf = ((block & 1) ? buf1 : buf0);
+        uint8_t *buf = ((cur_block & 1) ? buf1 : buf0);
         uint32_t start = millis();
         while (!scsiIsWriteFinished(buf + block_size - 1) && !scsiDev.resetFlag)
         {
@@ -627,82 +646,78 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed, bool sup
         }
 
         if (scsiDev.resetFlag)
-            break;
+            return;
 
         uint32_t bytes_read = 0;
 
         // Read record lengths that are either the full size of the block size or record lengths that
         // divide evenly to fill the blocksize
+
+        uint32_t last_info = info;
+        info = blocks - cur_block;
         do
         {
             tap_result_t result = tapReadRecordForward(img, record, buf + bytes_read, block_size - bytes_read);
-            if (result != TAP_OK && block > 0)
+            if (result != TAP_OK && cur_block > 0)
                 scsiFinishWrite();
 
-            if (result == TAP_FILEMARK) {
-                uint32_t info = fixed ? (blocks - block) : block_size;
-                if (fixed)
-                {
-                    dbgmsg("------ TAP fixed read hit filemark after ", (int) block,
-                            " block(s), residual=", (int)(info),
-                            " file_pos=", (int)tape_info->file_pos);
+            bytes_read += record.length;
+
+            if (result == TAP_FILEMARK || result == TAP_END_OF_DATA || result == TAP_END_OF_TAPE || result == TAP_ERROR) {
+
+                if (bytes_read > 0) {
+                    // Send data buffer read so far
+                    if (cur_block == 0)
+                    {
+                        scsiEnterPhase(DATA_IN);
+                    }
+                    scsiStartWrite(buf, bytes_read);
+                    scsiFinishWrite();
+                    // Partial block has been transferred, set ILI
+                    scsiDev.target->sense.ili = true;
                 }
-                else
-                {
-                    dbgmsg("------ TAP variable read hit filemark after ", (int) bytes_read,
-                            " bytes(s), residual=", (int)(info),
-                            " file_pos=", (int)tape_info->file_pos);
+
+                if (result == TAP_FILEMARK) {
+                    dbgmsg("------ TAP fixed read hit filemark at file_pos=", (int)tape_info->file_pos);
+                    scsiDev.target->sense.filemark = true;
+                    scsiDev.target->sense.code = NO_SENSE;
+                } else if (result == TAP_END_OF_DATA) {
+                    dbgmsg("------ TAP fixed read hit end-of-data at file_pos=", (int)tape_info->file_pos);
+                    scsiDev.target->sense.code = BLANK_CHECK;
+                } else if (result == TAP_END_OF_TAPE) {
+                    dbgmsg("------ TAP fixed read hit end-of-tape at file_pos=", (int)tape_info->file_pos);
+                    scsiDev.target->sense.code = MEDIUM_ERROR;
+                    scsiDev.target->sense.eom = true;
+                } else if (result == TAP_ERROR) {
+                    dbgmsg("------ TAP fixed read hit error parser/media at file_pos=", (int)tape_info->file_pos);
+                    scsiDev.target->sense.code = MEDIUM_ERROR;
                 }
-                scsiDev.target->sense.filemark = true;
+
                 scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = NO_SENSE;
                 scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
                 scsiDev.target->sense.info = info;
                 scsiDev.phase = STATUS;
                 return;
-            } else if (result == TAP_END_OF_DATA) {
-                dbgmsg("------ TAP ", fixed ? "fixed" : "variable",
-                    " read hit end-of-data at file_pos=", (int)tape_info->file_pos);
-                scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = BLANK_CHECK;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
-                scsiDev.target->sense.info = fixed ? (blocks - block) : block_size;
-                scsiDev.phase = STATUS;
-                return;
-            } else if (result == TAP_END_OF_TAPE) {
-                dbgmsg("------ TAP ", fixed ? "fixed" : "variable",
-                    " read hit end-of-tape at file_pos=", (int)tape_info->file_pos);
-                scsiDev.target->sense.eom = true;
-                scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = MEDIUM_ERROR;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
-                scsiDev.target->sense.info = fixed ? (blocks - block) : block_size;
-                scsiDev.phase = STATUS;
-                return;
-            } else if (result == TAP_ERROR) {
-                dbgmsg("------ TAP ", fixed ? "fixed" : "variable",
-                    " read hit parser/media error at file_pos=", (int)tape_info->file_pos);
-                scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = MEDIUM_ERROR;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
-                scsiDev.target->sense.info = fixed ? (blocks - block) : block_size;
-                scsiDev.phase = STATUS;
-                return;
             }
 
-            bytes_read += record.length;
         } while (bytes_read < block_size);
 
-        // Check if the buffer contains a full block
-        if (bytes_read != block_size) {
-            if (block > 0)
+        // Check if the block is overlength
+        if (bytes_read > block_size) {
+            if (cur_block > 0)
                 scsiFinishWrite();
-            logmsg("------ TAP block length mismatch: block size=", (int)block_size, " bytes read=", (int)bytes_read);
+            logmsg("------ TAP fixed overlength: block size=", (int)block_size, " bytes read=", (int)bytes_read);
+            scsiDev.target->sense.ili = true;
             scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+            scsiDev.target->sense.info = last_info;
             scsiDev.phase = STATUS;
             return;
+        }
+
+        if (cur_block == 0)
+        {
+            scsiEnterPhase(DATA_IN);
         }
 
         scsiStartWrite(buf, block_size);
@@ -715,6 +730,91 @@ static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed, bool sup
     }
 
     scsiFinishWrite();
+    scsiDev.status = GOOD;
+    scsiDev.phase = STATUS;
+}
+
+static void tapReadVariable(image_config_t &img, uint32_t block_size, bool sili) {
+    tap_record_t record;
+    tap_result_t result = tapReadRecordForward(img, record, scsiDev.data, block_size, false);
+    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
+    if (result == TAP_OK) {
+        scsiEnterPhase(DATA_IN);
+        scsiStartWrite(scsiDev.data, record.length);
+        scsiFinishWrite();
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    } else if (result == TAP_FILEMARK || result == TAP_END_OF_DATA || result == TAP_END_OF_TAPE || result == TAP_ERROR) {
+        uint32_t info = block_size;
+        if (result == TAP_FILEMARK) {
+            // dbgmsg("------ TAP variable read hit filemark at file_pos=", (int)tape_info->file_pos);
+            scsiDev.target->sense.filemark = true;
+            scsiDev.target->sense.code = NO_SENSE;
+        } else if (result == TAP_END_OF_DATA) {
+            // dbgmsg("------ TAP variable read hit end-of-data at file_pos=", (int)tape_info->file_pos);
+            scsiDev.target->sense.code = BLANK_CHECK;
+        } else if (result == TAP_END_OF_TAPE) {
+            // dbgmsg("------ TAP variable read hit end-of-tape at file_pos=", (int)tape_info->file_pos);
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.eom = true;
+        } else if (result == TAP_ERROR) {
+            // dbgmsg("------ TAP variable read hit error parser/media at file_pos=", (int)tape_info->file_pos);
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+        }
+
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+        scsiDev.target->sense.info = info;
+        scsiDev.phase = STATUS;
+    } else {
+        if (result == TAP_OVERLENGTH || result == TAP_UNDERLENGTH) {
+            // SILI - suppress invalid length indicator
+            bool sili_overlength_error = (result == TAP_OVERLENGTH  ) && (block_size =! 0);
+            if (!sili || sili_overlength_error) {
+                // dbgmsg("------ TAP variable",
+                //     " read hit invalid ", (result == TAP_OVERLENGTH) ? "overlength" : "underlength",
+                //     " condition at file_pos=", (int)tape_info->file_pos,
+                //     " record length=", (int)record.length,
+                //     " attempted blocksize=", (int)block_size);
+
+                if (record.length > 0) {
+                    scsiEnterPhase(DATA_IN);
+                    scsiStartWrite(scsiDev.data, result == TAP_OVERLENGTH ? block_size : record.length);
+                    scsiFinishWrite();
+                }
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = NO_SENSE;
+                scsiDev.target->sense.asc =  NO_ADDITIONAL_SENSE_INFORMATION;
+                scsiDev.target->sense.info =  result == TAP_OVERLENGTH ? 0 : block_size - record.length;
+                scsiDev.target->sense.ili = true;
+                scsiDev.phase = STATUS;
+            } else {
+                // SILI enabled and underlength condition or overlength condition with blocksize 0 (variable block mode), treat as normal transfer
+                if (block_size != 0)
+                {
+                    scsiEnterPhase(DATA_IN);
+                    scsiStartWrite(scsiDev.data, record.length);
+                    scsiFinishWrite();
+                }
+                scsiDev.status = GOOD;
+                scsiDev.phase = STATUS;
+            }
+        } else {
+            logmsg("tapVariableRead() unexpected result: ", (int)result);
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+    }
+    platform_reset_watchdog();
+}
+// .TAP-aware read function
+static void doTapRead(image_config_t &img, uint32_t blocks, bool fixed, bool suppress_invalid_length) {
+    if (fixed)
+        tapReadFixed(img, blocks);
+    else
+        tapReadVariable(img, blocks, suppress_invalid_length);
 }
 
 // Start a .TAP format write operation
@@ -1344,6 +1444,12 @@ extern "C" int scsiTapeCommand()
                     scsiDev.target->tapeBOM = 0;
             }
         }
+        else
+        {
+            // No data to transfer, length == 0, just return status
+            scsiDev.status = GOOD;
+            scsiDev.phase = STATUS;
+        }
     }
     else if (command == 0x0A)
     {
@@ -1363,10 +1469,10 @@ extern "C" int scsiTapeCommand()
         uint32_t blocksize = fixed ? scsiDev.target->liveCfg.bytesPerSector : length;
         uint32_t blocks_to_write = fixed ? length : 1;
 
-        if (fixed)
-            dbgmsg("Tape write blocks: ", (int)length, " blocksize ", (int) blocksize, ", fixed length blocks");
-        else
-            dbgmsg("Tape write length: ", (int)length, " bytes, variable length blocks");
+        // if (fixed)
+        //     dbgmsg("---- Tape write blocks: ", (int)length, " blocksize ", (int) blocksize, ", fixed length blocks");
+        // else
+        //     dbgmsg("---- Tape write length: ", (int)length, " bytes, variable length blocks");
 
         if (blocks_to_write > 0)
         {
