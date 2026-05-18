@@ -36,6 +36,15 @@ extern "C" {
 #define PICO_W_LED_OFF() cyw43_arch_gpio_put(PICO_W_GPIO_LED_PIN, 0)
 #define PICO_W_LONG_BLINK_DELAY 200
 #define PICO_W_SHORT_BLINK_DELAY 75
+#define PICO_W_BLINK_CONNECTED_TIMES 3
+enum blink_connected_t
+{
+	BLINK_CONNECTED_OFF = 0,
+	BLINK_CONNECTED_ON,
+	BLINK_CONNECTED_ACTIVE,
+};
+static blink_connected_t g_blink_connected = BLINK_CONNECTED_OFF;
+
 
 // A default DaynaPort-compatible MAC
 static const char defaultMAC[] = { 0x00, 0x80, 0x19, 0xc0, 0xff, 0xee };
@@ -205,6 +214,39 @@ bool platform_network_wifi_join(char *ssid, char *password, bool reconnect)
 
 void platform_network_poll()
 {
+	if (scsiDev.phase == BUS_FREE)
+	{
+		static uint32_t blink_start = 0;
+		static uint8_t blinks = 0;
+		if (g_blink_connected == BLINK_CONNECTED_ON)
+		{
+			blink_start =  millis();
+			blinks = 2 * PICO_W_BLINK_CONNECTED_TIMES;
+			g_blink_connected = BLINK_CONNECTED_ACTIVE;
+		}
+
+		if (g_blink_connected == BLINK_CONNECTED_ACTIVE && (uint32_t)(millis() - blink_start) > PICO_W_SHORT_BLINK_DELAY )
+		{
+			if (blinks & 1)
+			{
+				PICO_W_LED_ON();
+			}
+			else
+			{
+				PICO_W_LED_OFF();
+			}
+
+			if (blinks == 0)
+			{
+				g_blink_connected = BLINK_CONNECTED_OFF;
+			}
+			else
+			{
+				blink_start = millis();
+				--blinks;
+			}
+		}
+	}
 	if (g_wifi_scan_restore_connection && !cyw43_wifi_scan_active(&cyw43_state))
 	{
 		logmsg("Wi-Fi scan complete, reconnecting to \"", g_wifi_reconnect_ssid, "\"");
@@ -244,7 +286,6 @@ void platform_network_poll()
 		&& scsiDev.phase == BUS_FREE
 		&& (uint32_t)(millis() - wifi_reconnect_time) > wifi_reconnect_interval)
 	{
-		
 		wifi_reconnect_time = millis();
 		wifi_reconnect_attempts++;
 		wifi_reconnect_interval += WIFI_RECONNECT_INCREMENT_INTERVAL;
@@ -483,6 +524,7 @@ void cyw43_cb_tcpip_set_link_up(cyw43_t *self, int itf)
 		logmsg("Successfully connected to Wi-Fi SSID \"",ssid,"\"");
 		wifi_reconnect_attempts = 0;
 		wifi_reconnect_interval = WIFI_RECONNECT_START_INTERVAL;
+		g_blink_connected = BLINK_CONNECTED_ON;
 		g_wifi_reconnect = false;
 	}
 }
