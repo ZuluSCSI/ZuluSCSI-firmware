@@ -36,6 +36,7 @@
 #include "vhd_support.h"
 #include "ui.h"
 #include "ZuluSCSI_disk.h"
+#include <numeric>
 
 #include <scsi2sd.h>
 extern "C" {
@@ -88,6 +89,7 @@ static struct {
     // Information about currently selected drive
     int target_id;
     uint32_t sectorsize;
+    uint32_t lcm_scsi_vs_sd_sectorsize;
     uint32_t sectorcount;
     uint32_t sectorcount_all;
     uint32_t sectors_done;
@@ -368,6 +370,18 @@ void scsiInitiatorMainLoop()
                     " capacity ", (int)g_initiator_state.sectorcount,
                     " sectors x ", (int)g_initiator_state.sectorsize, " bytes");
 
+                // Calculate the LCM of the SCSI medium's sector size vs SD sector size for transfer optimization
+                uint32_t sectorsize = g_initiator_state.sectorsize;
+                g_initiator_state.lcm_scsi_vs_sd_sectorsize = 0;
+                if (sectorsize != SD_SECTOR_SIZE) 
+                {
+                    uint32_t gcd = std::gcd(sectorsize, SD_SECTOR_SIZE);
+                    uint32_t factor = sectorsize / gcd;
+                    uint32_t lcm_alignment = factor * SD_SECTOR_SIZE;
+                    if (factor <= UINT32_MAX / SD_SECTOR_SIZE)
+                        g_initiator_state.lcm_scsi_vs_sd_sectorsize = lcm_alignment;
+                }
+
                 UIInitiatorReadCapOk(g_initiator_state.target_id, (S2S_CFG_TYPE)g_initiator_state.device_type, g_initiator_state.sectorcount, g_initiator_state.sectorsize);
                 
                 g_initiator_state.sectorcount_all = g_initiator_state.sectorcount;
@@ -427,6 +441,14 @@ void scsiInitiatorMainLoop()
                     // READ6 command can transfer up to 256 sectors
                     g_initiator_state.max_sector_per_transfer = 256;
                 }
+
+                // Limit sectors per transfer based on buffer size
+                uint32_t max_by_buffer = sizeof(scsiDev.data) / g_initiator_state.sectorsize;
+                if (max_by_buffer < g_initiator_state.max_sector_per_transfer)
+                {
+                    g_initiator_state.max_sector_per_transfer = max_by_buffer;
+                }
+
 
                 logmsg("SCSI Version ", (int) g_initiator_state.ansi_version);
                 logmsg("[SCSI", g_initiator_state.target_id,"]");
@@ -1288,9 +1310,27 @@ static void scsiInitiatorWriteDataToSd(FsFile &file, bool use_callback)
     uint32_t len = g_initiator_transfer.bytes_scsi_done - g_initiator_transfer.bytes_sd;
     if (start + len > bufsize) len = bufsize - start;
 
-    // Try to do writes in multiple of 512 bytes
-    // This allows better performance for SD card access.
-    if (len >= 512) len &= ~511;
+
+    // Try to do writes in multiples that align to both SCSI sectors and SD card sectors.
+    // SD cards use 512-byte sectors, so writes should be 512-byte aligned for performance.
+    // LCM(512, 520) = 33280 bytes = 64 SCSI sectors = 65 SD sectors.
+    uint32_t lcm_alignment = g_initiator_state.lcm_scsi_vs_sd_sectorsize;
+    uint32_t sectorsize = g_initiator_state.sectorsize;
+    if (sectorsize == SD_SECTOR_SIZE)
+    {
+        if (len >= SD_SECTOR_SIZE) {
+            len &= ~(SD_SECTOR_SIZE - 1);
+        }
+    }
+    else if (lcm_alignment > 0 && len >= lcm_alignment)
+    {
+        len -= len % lcm_alignment;
+    }
+    else if (len >= sectorsize)
+    {
+        // not enough for LCM alignment, but write complete sectors
+        len -= len % sectorsize;
+    }
 
     // Start writing to SD card and simultaneously reading more from SCSI bus
     uint8_t *buf = &scsiDev.data[start];
