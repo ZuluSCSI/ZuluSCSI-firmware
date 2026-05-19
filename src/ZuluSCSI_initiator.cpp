@@ -89,6 +89,7 @@ static struct {
     // Information about currently selected drive
     int target_id;
     uint32_t sectorsize;
+    uint32_t lcm_scsi_vs_sd_sectorsize;
     uint32_t sectorcount;
     uint32_t sectorcount_all;
     uint32_t sectors_done;
@@ -368,6 +369,18 @@ void scsiInitiatorMainLoop()
                 logmsg("SCSI ID ", g_initiator_state.target_id,
                     " capacity ", (int)g_initiator_state.sectorcount,
                     " sectors x ", (int)g_initiator_state.sectorsize, " bytes");
+
+                // Calculate the LCM of the SCSI medium's sector size vs SD sector size for transfer optimization
+                uint32_t sectorsize = g_initiator_state.sectorsize;
+                g_initiator_state.lcm_scsi_vs_sd_sectorsize = 0;
+                if (sectorsize != SD_SECTOR_SIZE) 
+                {
+                    uint32_t gcd = std::gcd(sectorsize, SD_SECTOR_SIZE);
+                    uint32_t factor = sectorsize / gcd;
+                    uint32_t lcm_alignment = factor * SD_SECTOR_SIZE;
+                    if (factor <= UINT32_MAX / SD_SECTOR_SIZE)
+                        g_initiator_state.lcm_scsi_vs_sd_sectorsize = lcm_alignment;
+                }
 
                 UIInitiatorReadCapOk(g_initiator_state.target_id, (S2S_CFG_TYPE)g_initiator_state.device_type, g_initiator_state.sectorcount, g_initiator_state.sectorsize);
                 
@@ -1297,23 +1310,26 @@ static void scsiInitiatorWriteDataToSd(FsFile &file, bool use_callback)
     uint32_t len = g_initiator_transfer.bytes_scsi_done - g_initiator_transfer.bytes_sd;
     if (start + len > bufsize) len = bufsize - start;
 
+
     // Try to do writes in multiples that align to both SCSI sectors and SD card sectors.
     // SD cards use 512-byte sectors, so writes should be 512-byte aligned for performance.
     // LCM(512, 520) = 33280 bytes = 64 SCSI sectors = 65 SD sectors.
-    uint32_t bytesPerSector = g_initiator_transfer.bytes_per_sector;
-    // Calculate GCD of bytesPerSector and 512
-    uint32_t gcd = std::gcd(bytesPerSector, 512);
-    uint32_t factor = bytesPerSector / gcd;
-    uint32_t lcm_alignment = factor * 512;
-    if (factor <= UINT32_MAX / 512 && len >= lcm_alignment)
+    uint32_t lcm_alignment = g_initiator_state.lcm_scsi_vs_sd_sectorsize;
+    uint32_t sectorsize = g_initiator_state.sectorsize;
+    if (sectorsize == SD_SECTOR_SIZE)
     {
-        // lcm alignment without lcm overflow
+        if (len >= SD_SECTOR_SIZE) {
+            len &= ~(SD_SECTOR_SIZE - 1);
+        }
+    }
+    else if (lcm_alignment > 0 && len >= lcm_alignment)
+    {
         len -= len % lcm_alignment;
     }
-    else if (len >= bytesPerSector)
+    else if (len >= sectorsize)
     {
-        // overflow or not enough for LCM alignment, but write complete sectors
-        len -= len % bytesPerSector;
+        // not enough for LCM alignment, but write complete sectors
+        len -= len % sectorsize;
     }
 
     // Start writing to SD card and simultaneously reading more from SCSI bus
