@@ -111,7 +111,8 @@ typedef enum
     USB_INPUT_TOGGLE_DEBUG,
     USB_INPUT_LOG_TO_SD,
     USB_INPUT_BUTTON_1,
-    USB_INPUT_BUTTON_2
+    USB_INPUT_BUTTON_2,
+    USB_INPUT_MEDIA_SUBMENU
 }
 usb_input_type_t;
 
@@ -879,6 +880,13 @@ bool platform_emergency_log_save()
 static void usb_log_poll();
 static void usb_input_poll();
 static usb_input_type_t serial_menu(menu_context_t context);
+
+// Media management submenu (defined in ZuluSCSI_usb_console_media.cpp)
+#ifdef PLATFORM_MASS_STORAGE
+extern bool serialMediaMenuActive();
+extern void serialMediaMenuProcess(char c);
+extern void serialMediaMenuEnter();
+#endif
 
 #ifdef ZULUSCSI_MCU_RP23XX
 static const char *cfsr_desc(uint32_t cfsr)
@@ -1761,6 +1769,14 @@ static usb_input_type_t serial_menu(menu_context_t context)
     if(available > 0)
     {
         int32_t read = Serial.read();
+
+        // Route to the media submenu while it is active
+        if (serialMediaMenuActive())
+        {
+            serialMediaMenuProcess((char)read);
+            return USB_INPUT_NONE;
+        }
+
         switch((char) read)
         {
             case 'X':
@@ -1796,6 +1812,10 @@ static usb_input_type_t serial_menu(menu_context_t context)
             case '2':
                 input_type = USB_INPUT_BUTTON_2;
                 break;
+            case 'M':
+            case 'm':
+                input_type = USB_INPUT_MEDIA_SUBMENU;
+                break;
             case 'Y':
             case 'y':
                 yes_keyed = true;
@@ -1828,6 +1848,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
                 "    '1' - push function button 1 (eject, switch image)\r\n"
                 "    '2' - push function button 2 (eject, switch image)\r\n"
+                "    'm' - media management (image select, eject, insert)\r\n"
                 "  press 'y' after a command to confirm and execute"
             );
         }
@@ -1872,6 +1893,10 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     logmsg("Pushed function button 2");
                     g_console_buttons |= 2;
                     break;
+                case USB_INPUT_MEDIA_SUBMENU:
+                    *scratch0 = 0;
+                    serialMediaMenuEnter();
+                    break;
                 default:
                     *scratch0 = 0;
                     input_type = USB_INPUT_NONE;
@@ -1907,6 +1932,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     break;
                 case USB_INPUT_BUTTON_2:
                     logmsg("Push function button 2, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_MEDIA_SUBMENU:
+                    logmsg("Enter media management submenu, press 'y' to engage or any key to clear");
                     break;
                 default:
                     input_type = USB_INPUT_NONE;

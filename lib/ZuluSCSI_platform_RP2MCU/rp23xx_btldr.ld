@@ -49,7 +49,7 @@ SECTIONS
     * reduce the flash usage.
     */
     /DISCARD/ : {
-        *fprintf*(*)
+       /* *fprintf*(*) */
         *scanf*(*)
         *strtod*(*)
         *libipv4.a:*(*)
@@ -61,7 +61,7 @@ SECTIONS
         *libZuluSCSI_UI_RP2MCU.a:*(*)
         *libZuluSCSI_platform_RP2MCU.a:ZuluSCSI_platform_network.cpp.o*(*)
         *libFrameworkArduino.a:cyw43_wrappers.cpp.o*(*)
-
+        *libZuluControl.a:*(*)
         /* gt */
         *ZuluSCSI_tape.cpp.o*(*)
         *ZuluSCSI_mode.cpp.o*(*)
