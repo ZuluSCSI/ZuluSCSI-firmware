@@ -89,6 +89,8 @@ public:
     // Is this internal ROM drive in microcontroller flash?
     bool isRom();
 
+    bool isDefault();
+
     // Is the image a folder, which contains multiple files (used for .bin/.cue)
     bool isFolder();
 
@@ -140,6 +142,7 @@ protected:
     bool m_iscontiguous;
     bool m_israw;
     bool m_isrom;
+    bool m_isdefault;
     bool m_isreadonly_attr;
     romdrive_hdr_t m_romhdr;
 #ifdef CONTAINER_IMAGE_SUPPORT

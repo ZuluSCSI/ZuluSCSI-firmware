@@ -169,6 +169,35 @@ SdDevice sdDev = {2, 256 * 1024 * 1024 * 2}; /* For SCSI2SD */
 
 image_config_t g_DiskImages[S2S_MAX_TARGETS];
 
+/************************************************************/
+/* Active default drive support when no SD card is inserted */
+/************************************************************/
+bool scsiDiskActivateDefaultDrive(int scsi_id, S2S_CFG_TYPE type)
+{
+    if (scsi_id < 0)
+        return false;
+
+    logmsg("---- Activating Default drive, SCSI id ", (int)scsi_id);
+    g_scsi_settings.initDevice(scsi_id, type);
+    scsiDiskOpenHDDImage(scsi_id, "DEFAULT:", 0, 512, type);
+    if (scsiDiskIsTypeRemovable(type))
+    {
+        scsiDiskEjectDisableAutoInsert(scsi_id);
+    }
+    return true;
+}
+
+void scsiDiskEjectDisableAutoInsert(uint8_t scsi_id)
+{
+    image_config_t &img = g_DiskImages[scsi_id];
+    img.eject_on_stop = false;
+    img.reinsert_on_inquiry = false;
+    img.reinsert_after_eject = false;
+    g_scsi_settings.getDevice(scsi_id)->reinsertAfterEject = false;
+    g_scsi_settings.getDevice(scsi_id)->reinsertImmediately = false;
+    g_scsi_settings.getDevice(scsi_id)->reinsertOnInquiry = false;
+    img.ejected = true;
+}
 void scsiDiskResetImages()
 {
     for (int i = 0; i < S2S_MAX_TARGETS; i++)
@@ -453,7 +482,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             tape_is_tap_format = true;
         }
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && !img.file.isFolder() && !tape_is_tap_format)
+        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && !img.file.isFolder() && !tape_is_tap_format && !img.file.isDefault())
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
@@ -461,7 +490,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         }
 
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || img.file.isFolder() || tape_is_tap_format)
+        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || img.file.isFolder() || tape_is_tap_format || img.file.isDefault())
         {
             // Contiguous file doesn't matter for these types
         }
@@ -1902,20 +1931,7 @@ int doTestUnitReady()
 {
     int ready = 1;
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    if (unlikely(!scsiDev.target->started || !img.file.isOpen()))
-    {
-        ready = 0;
-        scsiDev.status = CHECK_CONDITION;
-         // AS/400: preserve pending sense (e.g. UNIT ATTENTION / POWER ON RESET)
-        // so the host sees it before we overwrite with NOT_READY
-        if (scsiDev.target->sense.code == NO_SENSE)
-        {
-            scsiDev.target->sense.code = NOT_READY;
-            scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED;
-        }
-        scsiDev.phase = STATUS;
-    }
-    else if (img.ejected)
+    if (img.ejected)
     {
         ready = 0;
         scsiDev.status = CHECK_CONDITION;
@@ -1931,6 +1947,19 @@ int doTestUnitReady()
             else doCloseTray(img);
 
         }
+    }
+    else if (unlikely(!scsiDev.target->started || !img.file.isOpen()))
+    {
+        ready = 0;
+        scsiDev.status = CHECK_CONDITION;
+         // AS/400: preserve pending sense (e.g. UNIT ATTENTION / POWER ON RESET)
+        // so the host sees it before we overwrite with NOT_READY
+        if (scsiDev.target->sense.code == NO_SENSE)
+        {
+            scsiDev.target->sense.code = NOT_READY;
+            scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED;
+        }
+        scsiDev.phase = STATUS;
     }
     else if (unlikely(!(blockDev.state & DISK_PRESENT)))
     {
@@ -4094,11 +4123,7 @@ static void loadImageToggleEject(uint8_t id, const char* next_filename)
         logmsg("Eject SCSI ID ", (int)id, " pressed, passing to CD drive SCSI", (int)id);
         cdromLoadImage(img, next_filename);
     }
-    else if (img.deviceType == S2S_CFG_ZIP100 
-            || img.deviceType == S2S_CFG_REMOVABLE 
-            || img.deviceType == S2S_CFG_FLOPPY_14MB 
-            || img.deviceType == S2S_CFG_MO
-            || img.deviceType == S2S_CFG_SEQUENTIAL)
+    else if (scsiDiskIsTypeRemovable((S2S_CFG_TYPE)img.deviceType))
     {
         // found = true;
         logmsg("Eject SCSI ID ", (int)id, " pressed, passing to SCSI device", (int)id);
@@ -4106,6 +4131,21 @@ static void loadImageToggleEject(uint8_t id, const char* next_filename)
     }
 }
 
+bool scsiDiskIsTypeRemovable(S2S_CFG_TYPE type)
+{
+  switch (type)
+  {
+  case S2S_CFG_OPTICAL:
+  case S2S_CFG_MO:
+  case S2S_CFG_FLOPPY_14MB:
+  case S2S_CFG_ZIP100:
+  case S2S_CFG_REMOVABLE:
+  case S2S_CFG_SEQUENTIAL:
+    return true;
+  default:
+    return false;
+  }
+}
 
 // TODO This forces a swap, the logic should use the deffered pattern
 extern "C" void setPendingImageLoad(uint8_t id, const char* next_filename)

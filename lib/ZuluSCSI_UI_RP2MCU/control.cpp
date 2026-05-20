@@ -387,23 +387,6 @@ bool loadImageDeferred(uint8_t id, const char* next_filename, SCREEN_TYPE return
     }
 }
 
-
-static bool isTypeRemovable(S2S_CFG_TYPE type)
-{
-  switch (type)
-  {
-  case S2S_CFG_OPTICAL:
-  case S2S_CFG_MO:
-  case S2S_CFG_FLOPPY_14MB:
-  case S2S_CFG_ZIP100:
-  case S2S_CFG_REMOVABLE:
-  case S2S_CFG_SEQUENTIAL:
-    return true;
-  default:
-    return false;
-  }
-}
-
 bool initControlBoardI2C()
 {
   g_wire.beginTransmission(g_pcaAddr);
@@ -1014,7 +997,7 @@ void patchDevice(uint8_t target_idx)
         }
         
         map.DeviceType = (S2S_CFG_TYPE)cfg->deviceType;
-        map.IsRemovable = isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType);
+        map.IsRemovable = scsiDiskIsTypeRemovable((S2S_CFG_TYPE)cfg->deviceType);
 
         map.LBA = img.get_capacity_lba();
         map.BytesPerSector = cfg->bytesPerSector;
@@ -1116,7 +1099,7 @@ void patchDevice(uint8_t target_idx)
                 ", Type: ", typeToShortString((S2S_CFG_TYPE)cfg->deviceType),
                 ", Quirks: ", (int)cfg->quirks,
                 ", Size: ", capacity_kB, "kB",
-                isTypeRemovable((S2S_CFG_TYPE)cfg->deviceType) ? ", Removable" : ""
+                scsiDiskIsTypeRemovable((S2S_CFG_TYPE)cfg->deviceType) ? ", Removable" : ""
                 );
         }
     }

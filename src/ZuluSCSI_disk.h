@@ -53,6 +53,20 @@ extern "C" {
 #endif
 #endif
 
+// Default Drive Settings - Setup a drive to be active when no SD card is present
+// at boot
+
+// Set to -1 to disable
+#ifndef DEFAULT_DRIVE_SCSI_ID
+#define  DEFAULT_DRIVE_SCSI_ID 0
+#endif
+
+#ifndef DEFAULT_DRIVE_DEVICE_TYPE
+#define  DEFAULT_DRIVE_DEVICE_TYPE S2S_CFG_FLOPPY_14MB
+#endif
+
+
+
 // Extended configuration stored alongside the normal SCSI2SD target information
 struct image_config_t: public S2S_TargetCfg
 {
@@ -179,6 +193,10 @@ bool scsiDiskClearRomDrive();
 // Program ROM drive and rename image file
 bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S2S_CFG_TYPE type);
 
+// Activate a default drive without the need of an SD card
+bool scsiDiskActivateDefaultDrive(int scsi_id, S2S_CFG_TYPE type);
+void scsiDiskEjectDisableAutoInsert(uint8_t scsi_id);
+
 // Check if there is ROM drive configured in microcontroller flash
 bool scsiDiskCheckRomDrive();
 bool scsiDiskActivateRomDrive();
@@ -239,3 +257,6 @@ const uint8_t *scsiDiskPrefetchRead(uint8_t scsiId, uint32_t firstSector, uint32
 // If scsiId is given, only invalidate if that device has data in buffer.
 // If scsiId is not given (value -1), invalidate for all devices.
 void scsiDiskPrefetchInvalidate(uint8_t scsiId = (uint8_t)-1);
+
+// Return true if the device type has removable media
+bool scsiDiskIsTypeRemovable(S2S_CFG_TYPE type);
