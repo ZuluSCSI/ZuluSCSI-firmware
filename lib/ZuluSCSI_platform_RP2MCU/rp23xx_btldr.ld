@@ -49,7 +49,7 @@ SECTIONS
     * reduce the flash usage.
     */
     /DISCARD/ : {
-       /* *fprintf*(*) */
+        *fprintf*(*)
         *scanf*(*)
         *strtod*(*)
         *libipv4.a:*(*)

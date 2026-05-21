@@ -1,5 +1,5 @@
-/**
- * ZuluSCSI™ - Copyright (c) 2025 Rabbit Hole Computing™
+/*
+ * ZuluSCSI™ - Copyright (c) 2026 Rabbit Hole Computing™
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
  *
@@ -123,8 +123,8 @@ bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen)
     if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
 
     // Explicit ImgDir in zuluscsi.ini takes first priority
-    char section[8];
-    snprintf(section, sizeof(section), "SCSI%c", '0' + scsi_id);
+    char section[] = "SCSI0";
+    section[4] =  scsiEncodeID(scsi_id);
     char dirname[MAX_FILE_PATH];
     int dirlen = ini_gets(section, "ImgDir", "", dirname, sizeof(dirname), CONFIGFILE);
     if (dirlen > 0)
@@ -150,18 +150,19 @@ bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen)
     // Fall back to the conventional directory name for this device type
     if (!img.image_directory) return false;
 
-    char prefix[3];
+    char prefix[4];
     switch ((S2S_CFG_TYPE)img.deviceType)
     {
-        case S2S_CFG_OPTICAL:     strncpy(prefix, "CD", 3); break;
-        case S2S_CFG_REMOVABLE:   strncpy(prefix, "RE", 3); break;
-        case S2S_CFG_SEQUENTIAL:  strncpy(prefix, "TP", 3); break;
-        case S2S_CFG_FLOPPY_14MB: strncpy(prefix, "FD", 3); break;
-        case S2S_CFG_MO:          strncpy(prefix, "MO", 3); break;
-        case S2S_CFG_ZIP100:      strncpy(prefix, "ZP", 3); break;
+        case S2S_CFG_OPTICAL:     strncpy(prefix, "CD0", 4); break;
+        case S2S_CFG_REMOVABLE:   strncpy(prefix, "RE0", 4); break;
+        case S2S_CFG_SEQUENTIAL:  strncpy(prefix, "TP0", 4); break;
+        case S2S_CFG_FLOPPY_14MB: strncpy(prefix, "FD0", 4); break;
+        case S2S_CFG_MO:          strncpy(prefix, "MO0", 4); break;
+        case S2S_CFG_ZIP100:      strncpy(prefix, "ZP0", 4); break;
         default: return false;
     }
-    snprintf(buf, buflen, "%s%c", prefix, '0' + scsi_id);
+    prefix[2] = scsiEncodeID(scsi_id);
+    memcpy(buf, prefix, sizeof(prefix));
     return true;
 }
 
@@ -202,11 +203,7 @@ static bool isDirACueBinSet(const char *dirpath, uint64_t &total_size)
 }
 
 // controlListImages — flat FsFile loop, deliberately avoids SDNavigator
-// and its WalkDirectory recursion.  The crash analysis showed that
-// WalkDirectory's per-frame stack (~1 KB: two FsFile objects + three
-// MAX_FILE_PATH char arrays) combined with the USB hardware timer IRQ
-// firing mid-SDIO caused a StackOverflow on RP2350.  A direct FsFile
-// scan keeps the extra stack under ~750 bytes total for the function.
+// and its WalkDirectory recursion.
 int controlListImages(uint8_t scsi_id,
     void (*callback)(int idx, const char *filename,
                      const char *full_path, uint64_t size, bool is_dir, void *userdata),
@@ -295,12 +292,11 @@ bool controlEjectMedia(uint8_t scsi_id)
     logmsg("Control: ejecting SCSI ID ", (int)scsi_id);
     if ((S2S_CFG_TYPE)img.deviceType == S2S_CFG_OPTICAL)
     {
-        img.ejected = true;
-        img.cdrom_events = 3; // Media removal
+        cdromPerformEject(img);
     }
     else
     {
-        img.ejected = true;
+        doPerformEject(img);
     }
     return true;
 }

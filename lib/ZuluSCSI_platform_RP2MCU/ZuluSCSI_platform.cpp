@@ -42,6 +42,7 @@
 #include "scsi_accel_target.h"
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
+#include "ZuluSCSI_usb_console_media.h"
 
 #ifdef ZULUSCSI_MCU_RP23XX
 # include <hardware/structs/scb.h>
@@ -880,13 +881,6 @@ bool platform_emergency_log_save()
 static void usb_log_poll();
 static void usb_input_poll();
 static usb_input_type_t serial_menu(menu_context_t context);
-
-// Media management submenu (defined in ZuluSCSI_usb_console_media.cpp)
-#ifdef PLATFORM_MASS_STORAGE
-extern bool serialMediaMenuActive();
-extern void serialMediaMenuProcess(char c);
-extern void serialMediaMenuEnter();
-#endif
 
 #ifdef ZULUSCSI_MCU_RP23XX
 static const char *cfsr_desc(uint32_t cfsr)

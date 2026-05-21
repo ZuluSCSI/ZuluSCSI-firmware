@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2025 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2026 Rabbit Hole Computing™
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
  *
@@ -26,20 +26,16 @@
 
 #pragma once
 
-#ifdef PLATFORM_MASS_STORAGE
-
 // Returns true while the media submenu is active.
 // The platform serial_menu() checks this to route incoming characters here
 // instead of processing them as top-level console commands.
-extern "C" bool serialMediaMenuActive();
+bool serialMediaMenuActive();
 
 // Feed one character received from the USB serial port into the submenu.
 // Only called when serialMediaMenuActive() returns true.
-extern "C" void serialMediaMenuProcess(char c);
+void serialMediaMenuProcess(char c);
 
 // Enter the media submenu.  Called by serial_menu() after the user confirms
 // the 'm' command with 'y'.  Displays the removable-device list and
 // transitions the state machine into DEVICE_LIST state.
-extern "C" void serialMediaMenuEnter();
-
-#endif // PLATFORM_MASS_STORAGE
+void serialMediaMenuEnter();

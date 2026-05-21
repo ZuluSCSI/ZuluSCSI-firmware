@@ -1,5 +1,5 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2025 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2026 Rabbit Hole Computing™
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version.
  *
@@ -18,9 +18,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  **/
-
-#ifdef PLATFORM_MASS_STORAGE
-#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
 
 #include "ZuluSCSI_usb_console_media.h"
 #include "ZuluSCSI_platform.h"
@@ -231,12 +228,12 @@ static void find_nth_cb(int idx, const char *filename,
 // Public interface
 // -----------------------------------------------------------------------
 
-extern "C" bool serialMediaMenuActive()
+bool serialMediaMenuActive()
 {
     return s_state != MEDIA_MENU_INACTIVE;
 }
 
-extern "C" void serialMediaMenuEnter()
+void serialMediaMenuEnter()
 {
     s_removable_count = controlListRemovableDevices(s_removable_ids,
                                                     S2S_MAX_TARGETS);
@@ -247,7 +244,7 @@ extern "C" void serialMediaMenuEnter()
     show_device_list();
 }
 
-extern "C" void serialMediaMenuProcess(char c)
+void serialMediaMenuProcess(char c)
 {
     // Ignore bare CR/LF when no digits are pending
     if ((c == '\r' || c == '\n') && s_num_len == 0)
@@ -480,5 +477,3 @@ extern "C" void serialMediaMenuProcess(char c)
     }
 }
 
-#endif // PIO_FRAMEWORK_ARDUINO_NO_USB
-#endif // PLATFORM_MASS_STORAGE
