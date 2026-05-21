@@ -147,6 +147,13 @@ bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen)
         }
     }
 
+    // Prefix-mode: images sit in the root directory filtered by a 3-char prefix
+    if (img.use_prefix)
+    {
+        if (buflen >= 2) { buf[0] = '/'; buf[1] = '\0'; }
+        return true;
+    }
+
     // Fall back to the conventional directory name for this device type
     if (!img.image_directory) return false;
 
@@ -163,6 +170,33 @@ bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen)
     }
     prefix[2] = scsiEncodeID(scsi_id);
     memcpy(buf, prefix, sizeof(prefix));
+    return true;
+}
+
+bool controlGetImagePrefix(uint8_t scsi_id, char *buf, size_t buflen)
+{
+    if (!buf || buflen < 4) return false;
+    buf[0] = '\0';
+    if (scsi_id >= S2S_MAX_TARGETS) return false;
+    image_config_t &img = scsiDiskGetImageConfig(scsi_id);
+    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
+    if (!img.use_prefix) return false;
+
+    const char *tp;
+    switch ((S2S_CFG_TYPE)img.deviceType)
+    {
+        case S2S_CFG_OPTICAL:     tp = "cd"; break;
+        case S2S_CFG_REMOVABLE:   tp = "re"; break;
+        case S2S_CFG_SEQUENTIAL:  tp = "tp"; break;
+        case S2S_CFG_FLOPPY_14MB: tp = "fd"; break;
+        case S2S_CFG_MO:          tp = "mo"; break;
+        case S2S_CFG_ZIP100:      tp = "zp"; break;
+        default: return false;
+    }
+    buf[0] = tp[0];
+    buf[1] = tp[1];
+    buf[2] = scsiEncodeID(scsi_id);
+    buf[3] = '\0';
     return true;
 }
 
@@ -202,8 +236,10 @@ static bool isDirACueBinSet(const char *dirpath, uint64_t &total_size)
     return true;
 }
 
-// controlListImages — flat FsFile loop, deliberately avoids SDNavigator
-// and its WalkDirectory recursion.
+// controlListImages — single-pass flat FsFile scan, deliberately avoids
+// SDNavigator/WalkDirectory (stack-overflow risk on RP2350).
+// For root-directory prefix-mode devices the list is filtered to entries
+// whose names begin with the 3-char type+ID prefix (e.g. "cd4").
 int controlListImages(uint8_t scsi_id,
     void (*callback)(int idx, const char *filename,
                      const char *full_path, uint64_t size, bool is_dir, void *userdata),
@@ -212,6 +248,12 @@ int controlListImages(uint8_t scsi_id,
     char imgdir[MAX_FILE_PATH];
     if (!controlGetImageDirectory(scsi_id, imgdir, sizeof(imgdir)))
         return 0;
+
+    // For root "/" avoid producing "//name"
+    bool root_dir = (imgdir[0] == '/' && imgdir[1] == '\0');
+
+    char imgprefix[4];
+    bool filter_prefix = controlGetImagePrefix(scsi_id, imgprefix, sizeof(imgprefix));
 
     FsFile dir;
     if (!dir.open(imgdir))
@@ -234,7 +276,13 @@ int controlListImages(uint8_t scsi_id,
         uint64_t size = is_dir ? 0 : (uint64_t)entry.size();
         entry.close();
 
-        snprintf(full_path, sizeof(full_path), "%s/%s", imgdir, name);
+        if (filter_prefix && strncasecmp(name, imgprefix, 3) != 0)
+            continue;
+
+        if (root_dir)
+            snprintf(full_path, sizeof(full_path), "/%s", name);
+        else
+            snprintf(full_path, sizeof(full_path), "%s/%s", imgdir, name);
 
         if (is_dir)
         {

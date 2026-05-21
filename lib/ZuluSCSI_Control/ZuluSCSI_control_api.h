@@ -46,8 +46,15 @@ bool controlGetCurrentImage(uint8_t scsi_id, char *buf, size_t buflen);
 
 // Get the directory that is searched for available images for a device.
 // Returns true and writes the directory path into buf on success.
+// For prefix-mode devices (root-directory layout) buf receives "/".
 // Returns false when no image directory is configured.
 bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen);
+
+// Get the 3-character filename prefix for root-directory prefix-mode devices
+// (e.g. "cd4" for CD-ROM on SCSI ID 4, "re1" for Removable on SCSI ID 1).
+// Returns true and fills buf when in prefix mode; false for directory-mode or
+// inactive devices.  buf must be at least 4 bytes.
+bool controlGetImagePrefix(uint8_t scsi_id, char *buf, size_t buflen);
 
 // Enumerate available images in the device's image directory.
 // For each image found, calls:
