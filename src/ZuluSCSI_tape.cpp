@@ -681,12 +681,15 @@ static void tapReadFixed(image_config_t &img, uint32_t blocks)
                     dbgmsg("------ TAP fixed read hit filemark at file_pos=", (int)tape_info->file_pos);
                     scsiDev.target->sense.filemark = true;
                     scsiDev.target->sense.code = NO_SENSE;
+                    scsiDev.target->sense.asc = FILEMARK_DETECTED;
                 } else if (result == TAP_END_OF_DATA) {
                     dbgmsg("------ TAP fixed read hit end-of-data at file_pos=", (int)tape_info->file_pos);
                     scsiDev.target->sense.code = BLANK_CHECK;
+                    scsiDev.target->sense.asc = END_OF_DATA_DETECTED;
                 } else if (result == TAP_END_OF_TAPE) {
                     dbgmsg("------ TAP fixed read hit end-of-tape at file_pos=", (int)tape_info->file_pos);
                     scsiDev.target->sense.code = MEDIUM_ERROR;
+                    scsiDev.target->sense.asc = END_OF_PARTITION_MEDIUM_DETECTED;
                     scsiDev.target->sense.eom = true;
                 } else if (result == TAP_ERROR) {
                     dbgmsg("------ TAP fixed read hit error parser/media at file_pos=", (int)tape_info->file_pos);
@@ -750,13 +753,16 @@ static void tapReadVariable(image_config_t &img, uint32_t block_size, bool sili)
             // dbgmsg("------ TAP variable read hit filemark at file_pos=", (int)tape_info->file_pos);
             scsiDev.target->sense.filemark = true;
             scsiDev.target->sense.code = NO_SENSE;
+            scsiDev.target->sense.asc = FILEMARK_DETECTED;
         } else if (result == TAP_END_OF_DATA) {
             // dbgmsg("------ TAP variable read hit end-of-data at file_pos=", (int)tape_info->file_pos);
             scsiDev.target->sense.code = BLANK_CHECK;
+            scsiDev.target->sense.asc = END_OF_DATA_DETECTED;
         } else if (result == TAP_END_OF_TAPE) {
             // dbgmsg("------ TAP variable read hit end-of-tape at file_pos=", (int)tape_info->file_pos);
             scsiDev.target->sense.code = MEDIUM_ERROR;
             scsiDev.target->sense.eom = true;
+            scsiDev.target->sense.asc = END_OF_PARTITION_MEDIUM_DETECTED;
         } else if (result == TAP_ERROR) {
             // dbgmsg("------ TAP variable read hit error parser/media at file_pos=", (int)tape_info->file_pos);
             scsiDev.target->sense.code = MEDIUM_ERROR;
