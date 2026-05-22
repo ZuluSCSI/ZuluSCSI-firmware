@@ -31,6 +31,12 @@ extern "C" {
 #include <scsi2sd.h>
 }
 
+// How long to wait while serial interface is busy
+// before giving up printing more characters
+#ifndef USB_CONSOLE_MEDIA_SERIAL_PRINT_TIMEOUT_MS
+#define  USB_CONSOLE_MEDIA_SERIAL_PRINT_TIMEOUT_MS 30
+#endif
+
 // -----------------------------------------------------------------------
 // Direct serial output helpers — bypass the log buffer entirely so that
 // interactive menu text does not pollute zululog.txt.
@@ -41,12 +47,18 @@ static void serial_out(const char *str)
     if (!str || !*str) return;
     uint32_t remaining = (uint32_t)strlen(str);
     const uint8_t *p = (const uint8_t *)str;
-    while (remaining > 0)
+    uint32_t timeout_start = millis();
+    const uint32_t timeout_ms = USB_CONSOLE_MEDIA_SERIAL_PRINT_TIMEOUT_MS;
+
+    while ((uint32_t)(millis() - timeout_start) < timeout_ms && remaining > 0)
     {
         uint32_t sent = platform_write_to_serial((uint8_t *)p, remaining);
-        if (sent == 0) break;
+        // sent == 0 when serial is busy, reset timeout whenever serial isn't busy
+        if (sent > 0)
+            timeout_start = millis();
         p += sent;
         remaining -= sent;
+        platform_reset_watchdog();
     }
 }
 
