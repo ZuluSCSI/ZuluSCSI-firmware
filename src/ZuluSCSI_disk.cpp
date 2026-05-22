@@ -306,6 +306,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     memset(img.serial, 0, sizeof(img.serial));
 
     img.setDeviceType((S2S_CFG_TYPE)devCfg->deviceType);
+    img.mediumType = devCfg->mediumType;
     img.deviceTypeModifier = devCfg->deviceTypeModifier;
     img.sectorsPerTrack = devCfg->sectorsPerTrack;
     img.headsPerCylinder = devCfg->headsPerCylinder;

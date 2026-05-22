@@ -160,7 +160,6 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     record.is_error = false;
     record.is_filemark = false;
-    record.is_eom = false;
 
     uint8_t header[4];
 
@@ -187,18 +186,20 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
         record.is_filemark = true;
         tape_info->file_pos += 4;
         scsiDev.target->tapeBOM = 0;
+        tape_info->tape_mark_count++;
+        tape_info->logical_object_number++;
         return TAP_FILEMARK;
     }
 
     if (length_with_class == TAP_MARKER_END_MEDIUM) {
-        record.is_eom = true;
+        tape_info->is_eom = true;
         scsiDev.target->tapeBOM = 0;
         return TAP_END_OF_TAPE;
     }
     tap_result_t tap_result_status = TAP_OK;
     // Data records
-    // If the data record is variable length, check the buffer size is the same as the
-    if (!fixed)
+    // If the data record is variable length, check the buffer size is the same as the length
+    if (!fixed && buffer_size > 0)
     {
         if (record.length > buffer_size) {
             // dbgmsg("------ TAP record overlength condition for variable blocksize read attempted : record length=", (int)record.length, " block size=", (int)buffer_size);
@@ -271,11 +272,10 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
 }
 
 // Read a .TAP record moving backward
-tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size) {
+tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size, bool fixed) {
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     record.is_error = false;
     record.is_filemark = false;
-    record.is_eom = false;
 
     // Check if we're at beginning of tape
     if (tape_info->file_pos == 0) {
@@ -298,11 +298,15 @@ tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, ui
         record.is_filemark = true;
         tape_info->file_pos -= 4;
         scsiDev.target->tapeBOM = 0;
+        if (tape_info->tape_mark_count > 0)
+            tape_info->tape_mark_count--;
+        if (tape_info->logical_object_number > 0)
+            tape_info->logical_object_number--;
         return TAP_FILEMARK;
     }
 
     if (length_with_class == TAP_MARKER_END_MEDIUM) {
-        record.is_eom = true;
+        tape_info->is_eom = true;
         tape_info->file_pos -= 4;
         scsiDev.target->tapeBOM = 0;
         return TAP_END_OF_TAPE;
@@ -414,6 +418,8 @@ tap_result_t tapWriteFilemark(image_config_t &img) {
     }
     img.file.flush();
     tape_info->file_pos += 4;
+    tape_info->tape_mark_count++;
+    tape_info->logical_object_number++;
     scsiDev.target->tapeBOM = 0;
     return TAP_OK;
 }
@@ -448,19 +454,17 @@ tap_result_t tapWriteEraseGap(image_config_t &img) {
 }
 
 // Space forward by records or filemarks
-tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t count, bool filemarks) 
-{
+tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t count, bool filemarks, bool locate, bool blk_type_vendor) {
+    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     uint32_t blocksize = scsiDev.target->liveCfg.bytesPerSector;
-    
-    // variable blocks (blocksize == 0) and block counting (!filemarks) not allowed
-    if (!filemarks && blocksize == 0)
-        return TAP_ERROR;
+    bool fixed = (blocksize != 0);
 
     uint32_t records_read = 0;
     tap_record_t record;
+    bool started_read = false;
     actual = 0;
     while (actual < count) {
-        tap_result_t result = tapReadRecordForward(img, record, nullptr, 0);
+        tap_result_t result = tapReadRecordForward(img, record, nullptr, 0, fixed);
 
         if (result == TAP_END_OF_TAPE) {
             return TAP_END_OF_TAPE;
@@ -470,13 +474,31 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
             return TAP_ERROR;
         }
 
-        if (filemarks) {
-            // Spacing filemarks - continue count when we hit one
-             if (result == TAP_FILEMARK)
-                ++actual;
-        } else {
-            if (result == TAP_OK)
+        if (result == TAP_FILEMARK) {
+            if (fixed && started_read && records_read < blocksize) {
+                // The fixed block started but never finished being filled
+                return TAP_ERROR;
+            }
+
+            if (locate) {
+                // vendor block type doesn't count filemark, scsi-2 format does
+                if (!blk_type_vendor) {
+                    ++actual;
+                }
+            } else if (filemarks) {
+                // Spacing filemarks - continue count when we hit one
+               ++actual;
+
+            } else {
+                // Spacing blocks - stop when filemark hit
+                return TAP_FILEMARK;
+            }
+        }
+
+        if (result == TAP_OK) {
+            if (fixed)
             {
+                started_read = true;
                 // allow for smaller record.length than blocksize to be read until
                 // if fills the blocksize, error on overflows 
                 records_read += record.length;
@@ -486,12 +508,16 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
                 if (records_read == blocksize)
                 {
                     records_read = 0;
-                    ++actual;
+                    tape_info->logical_object_number++;
+                    if (!filemarks || locate)
+                        ++actual;
                 }
             }
-            else if (result == TAP_FILEMARK)
+            else
             {
-                return TAP_FILEMARK;
+                tape_info->logical_object_number++;
+                if (!filemarks || locate)
+                        ++actual;
             }
         }
     }
@@ -500,17 +526,16 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
 }
 
 // Space backward by records or filemarks
-tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t count, bool filemarks) {
+tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t count, bool filemarks, bool locate, bool blk_type_vendor) {
+    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     uint32_t blocksize = scsiDev.target->liveCfg.bytesPerSector;
-    // variable blocks (blocksize == 0) and block counting (!filemarks) not allowed
-    if (!filemarks && blocksize == 0)
-        return TAP_ERROR;
+    bool fixed = (blocksize != 0);
     uint32_t records_read = 0;
     tap_record_t record;
-    
+    bool started_read;
     actual = 0;
     while (actual < count) {
-        tap_result_t result = tapReadRecordBackward(img, record, nullptr, 0);
+        tap_result_t result = tapReadRecordBackward(img, record, nullptr, 0, fixed);
 
         if (result == TAP_BEGINNING_OF_TAPE) {
             return TAP_BEGINNING_OF_TAPE;
@@ -521,14 +546,32 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
         }
         
         
-        if (filemarks) {
-            if (result == TAP_FILEMARK)
-                ++actual;
+
+        if (result == TAP_FILEMARK) {
+            if (fixed && started_read && records_read < blocksize) {
+                // The fixed block started but never finished being filled
+                return TAP_ERROR;
+            }
+
+            if (filemarks) {
+                // Spacing filemarks - continue count when we hit one
+               ++actual;
+            } else if (locate) {
+                // vendor block type doesn't count filemark, scsi-2 format does
+                if (!blk_type_vendor)
+                    ++actual;
+            } else {
+                // Spacing blocks - stop when filemark hit
+                return TAP_FILEMARK;
+            }
+
         }
-        else
+
+        if (result == TAP_OK)
         {
-            if (result == TAP_OK)
+            if (fixed)
             {
+                started_read = true;
                 records_read += record.length;
 
                 if (records_read > blocksize) 
@@ -539,12 +582,18 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
                 if (records_read == blocksize)
                 {
                     records_read = 0;
-                    ++actual;
+                    if (tape_info->logical_object_number > 0)
+                        tape_info->logical_object_number--;
+                    if (!filemarks || locate)
+                        ++actual;
                 }
             }
-            else if (result == TAP_FILEMARK)
+            else
             {
-                return TAP_FILEMARK;
+                if (!filemarks || locate)
+                    ++actual;
+                if (tape_info->logical_object_number > 0)
+                    tape_info->logical_object_number--;
             }
         }
     }
@@ -568,14 +617,6 @@ static tap_result_t tapSpaceEndOfData(image_config_t &img)
             return TAP_OK;
     }
     return  TAP_END_OF_TAPE;
-}
-
-// Rewind to beginning of tape
-tap_result_t tapRewind(image_config_t &img) {
-    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
-    tape_info->file_pos = 0;
-    tape_info->data_pos = 0;
-    return TAP_OK;
 }
 
 // State tracking for .TAP format writes
@@ -705,6 +746,7 @@ static void tapReadFixed(image_config_t &img, uint32_t blocks)
 
         } while (bytes_read < block_size);
 
+        tape_info->logical_object_number++;
         // Check if the block is overlength
         if (bytes_read > block_size) {
             if (cur_block > 0)
@@ -742,6 +784,7 @@ static void tapReadVariable(image_config_t &img, uint32_t block_size, bool sili)
     tap_result_t result = tapReadRecordForward(img, record, scsiDev.data, block_size, false);
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     if (result == TAP_OK) {
+        tape_info->logical_object_number++;
         scsiEnterPhase(DATA_IN);
         scsiStartWrite(scsiDev.data, record.length);
         scsiFinishWrite();
@@ -774,6 +817,7 @@ static void tapReadVariable(image_config_t &img, uint32_t block_size, bool sili)
         scsiDev.phase = STATUS;
     } else {
         if (result == TAP_OVERLENGTH || result == TAP_UNDERLENGTH) {
+            tape_info->logical_object_number++;
             // SILI - suppress invalid length indicator
             bool sili_overlength_error = (result == TAP_OVERLENGTH  ) && (block_size =! 0);
             if (!sili || sili_overlength_error) {
@@ -1103,68 +1147,58 @@ write_error:
     img.file.flush();
 }
 
-static void doLocate(uint32_t lba)
+// Execute SCSI command Locate
+// \param lba - logical block address
+// \param bt - block address type - true device specific - false scsi standard
+static void doLocate(uint32_t lba, bool bt)
 {
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
-    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-    if (bytesPerSector == 0)
+
+    uint32_t block =  tape_info->logical_object_number;
+    if (bt && block >= tape_info->tape_mark_count)
+        block -= tape_info->tape_mark_count;
+
+    const bool reverse = lba < block;
+    uint32_t count = 0;
+    uint32_t actual = 0;
+    // The tape should seek to the block directly before the request lba
+    tap_result_t result;
+    if (reverse)
     {
-        logmsg("Locate unsupported when tape is set to variable block length");
-        scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
-        scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+        count = block - lba;
+        result = tapSpaceBackward(img, actual, count, false, true, bt);
+    }
+    else
+    {
+        count = lba - block;
+        result = tapSpaceForward(img, actual, count, false, true, bt);
+    }
+
+    if (result == TAP_OK || result == TAP_FILEMARK)
+    {
+        if (result == TAP_FILEMARK)
+            scsiDev.target->sense.filemark = true;
+        scsiDev.status = GOOD;
         scsiDev.phase = STATUS;
-        return;
+    }
+    else if (result == TAP_END_OF_TAPE) {
+        scsiDev.target->sense.eom = true;
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = BLANK_CHECK;
+        scsiDev.target->sense.asc = END_OF_PARTITION_MEDIUM_DETECTED;
+        scsiDev.phase = STATUS;
+    } else if (result == TAP_END_OF_DATA) {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = BLANK_CHECK;
+        scsiDev.target->sense.asc = END_OF_DATA_DETECTED;
+        scsiDev.phase = STATUS;
+    } else {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = MEDIUM_ERROR;
+        scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
     }
 
-    uint32_t block = 0;
-    tape_info->file_pos = 0;
-    tape_info->data_pos = 0;
-    while (block < lba)
-    {
-        tap_record_t record;
-        uint32_t bytes_read = 0;
-        platform_poll();
-        diskEjectButtonUpdate(false);
-        do
-        {
-            tap_result_t result = tapReadRecordForward(img, record, nullptr, 0);
-            if (result == TAP_FILEMARK) {
-                continue;
-            } else if (result == TAP_END_OF_TAPE) {
-                scsiDev.target->sense.eom = true;
-                scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = BLANK_CHECK;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
-                scsiDev.phase = STATUS;
-                return;
-            } else if (result == TAP_ERROR) {
-                scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.code = MEDIUM_ERROR;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
-                scsiDev.phase = STATUS;
-                return;
-            }
-
-            bytes_read += record.length;
-        } while (bytes_read < bytesPerSector);
-
-        // check if sum of simh tap records read match block size
-        if (bytes_read != bytesPerSector) {
-            logmsg("------ TAP block length mismatch: block size=", (int)bytesPerSector, " bytes read=", (int)bytes_read);
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-            scsiDev.phase = STATUS;
-            return;
-        }
-        ++block;
-        platform_reset_watchdog();
-    }
-
-    scsiDev.status = GOOD;
-    scsiDev.phase = STATUS;
 }
 
 static void doTapeRead(uint32_t blocks)
@@ -1311,6 +1345,9 @@ static void doRewind()
     tape_info->file_pos = 0;
     tape_info->data_pos = 0;
     tape_info->tape_load_next_file = true;
+    tape_info->tape_mark_count = 0;
+    tape_info->is_eom = false;
+    tape_info->logical_object_number = 0;
     scsiDev.target->tapeBOM = 1;
 }
 
@@ -1663,7 +1700,6 @@ extern "C" int scsiTapeCommand()
             (((int32_t) scsiDev.cdb[3]) << 16) +
             (((int32_t) scsiDev.cdb[4]) << 8);
         count = count >> 8 ;// arithmetic shift right, preserves the sign
-        dbgmsg("------ SPACE count is ", (int) count, " type is ", code);
         if (tape_info->tape_is_tap_format) {
             // Handle .TAP format spacing
             tap_result_t result = TAP_OK;
@@ -1671,17 +1707,6 @@ extern "C" int scsiTapeCommand()
             bool set_sense_info = true;
             if (code == 0) {
                 // Space blocks
-
-                if (scsiDev.target->liveCfg.bytesPerSector == 0)
-                {
-                    // Block Space unsupported with variable length blocks
-                    scsiDev.status = CHECK_CONDITION;
-                    scsiDev.target->sense.code = ILLEGAL_REQUEST;
-                    scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
-                    scsiDev.phase = STATUS;
-                    return 1;
-                }
-
                 result = count >= 0 ? tapSpaceForward(img, actual, count, false) : tapSpaceBackward(img, actual, -count, false) ;
             } else if (code == 1) {
                 // Space filemarks
@@ -1704,7 +1729,7 @@ extern "C" int scsiTapeCommand()
                 scsiDev.target->sense.eom = true;
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = BLANK_CHECK;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+                scsiDev.target->sense.asc = END_OF_PARTITION_MEDIUM_DETECTED;
                 if (set_sense_info)
                     scsiDev.target->sense.info = count - actual;
                 scsiDev.phase = STATUS;
@@ -1713,14 +1738,14 @@ extern "C" int scsiTapeCommand()
                 scsiDev.target->sense.eom = true;
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = NO_SENSE;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+                scsiDev.target->sense.asc = BEGINNING_OF_PARTITION_MEDIUM_DETECTED;
                 if (set_sense_info)
                     scsiDev.target->sense.info = count - actual;
                 scsiDev.phase = STATUS;
             } else if (result == TAP_END_OF_DATA) {
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = BLANK_CHECK;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+                scsiDev.target->sense.asc = END_OF_DATA_DETECTED;
                 if (set_sense_info)
                     scsiDev.target->sense.info = count - actual;
                 scsiDev.phase = STATUS;
@@ -1728,7 +1753,7 @@ extern "C" int scsiTapeCommand()
                 scsiDev.target->sense.filemark = true;
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = NO_SENSE;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+                scsiDev.target->sense.asc = FILEMARK_DETECTED;
                 if (set_sense_info)
                     scsiDev.target->sense.info = count - actual;
                 scsiDev.phase = STATUS;
@@ -1811,9 +1836,9 @@ extern "C" int scsiTapeCommand()
             return 0;
         }
 
+        bool block_address_type = scsiDev.cdb[1] & 4;
         // specific tape drives may calculate address differently, currently treating is as SCSI LBA
         // bool block_type_device = !!(scsiDev.cdb[1] & 4); // true - device specific value (assume SCSI LBA), false - SCSI LBA.
-
         if (scsiDev.cdb[1] & 2)
         {
             // BT CP (bit 2) is 1 and not supported
@@ -1831,13 +1856,90 @@ extern "C" int scsiTapeCommand()
                 (((uint32_t) scsiDev.cdb[5]) << 8) +
                 scsiDev.cdb[6];
 
-            doLocate(lba);
+            doLocate(lba, block_address_type);
         }
     }
     else if (command == 0x34)
     {
-        // Read Position
+        // Read Position -- implements SCSI-3 but is backwards compatible with SCSI-2
+
+        uint16_t allocation_len = 0;
+        allocation_len =  scsiDev.cdb[7] << 8;
+        allocation_len |= scsiDev.cdb[8];
+
         uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+        uint8_t service_action = scsiDev.cdb[1] & 0x1F;
+
+        uint8_t status_byte = 0;
+        status_byte |= (scsiDev.target->tapeBOM ? 1 : 0)<< 7; // BOP
+        status_byte |= (tape_info->is_eom ? 1 : 0) << 6; // EOP
+  
+        uint64_t lon = tape_info->logical_object_number;
+  
+        if (service_action != 0x00 && service_action != 0x01 && service_action != 0x06)
+        {
+            dbgmsg("------ Service action ", service_action, " not supported");
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+        else if (allocation_len != 0)
+        {
+            dbgmsg("------ Allocation length is not zero for service action", service_action);
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+        else if (service_action == 0x00 || service_action == 0x01)
+        {
+            // Short form -- Block ID (0x00) or Short form - Vendor Specific -- Block ID (0x01)
+
+            // Vendor Specific seems to be only the block count with out file makers added
+            if (service_action == 0x01)
+                lon -= tape_info->tape_mark_count;
+
+            memset(scsiDev.data, 0, 20);
+            if (lon > UINT32_MAX)
+                status_byte |= 1 << 1; // PERR - overflow error
+            scsiDev.data[0] =  status_byte;
+            // First logical object location
+            scsiDev.data[4] = (lon >> 24) & 0xFF;
+            scsiDev.data[5] = (lon >> 16) & 0xFF;
+            scsiDev.data[6] = (lon >> 8) & 0xFF;
+            scsiDev.data[7] = lon & 0xFF;
+            // Last logical object location is same as first logic object location
+            memcpy(&scsiDev.data[8], &scsiDev.data[4], 4);
+            scsiDev.dataLen = 20;
+            scsiDev.phase = DATA_IN;
+        }
+        else if (service_action == 0x06)
+        {
+            // Long form
+            memset(scsiDev.data, 0, 32);
+            scsiDev.data[0] = status_byte;
+            // Logical Object Number
+            scsiDev.data[8] =  (lon >> 56) & 0xFF;
+            scsiDev.data[9] =  (lon >> 48) & 0xFF;
+            scsiDev.data[10] = (lon >> 40) & 0xFF;
+            scsiDev.data[11] = (lon >> 32) & 0xFF;
+            scsiDev.data[12] = (lon >> 24) & 0xFF;
+            scsiDev.data[13] = (lon >> 16) & 0xFF;
+            scsiDev.data[14] = (lon >>  8) & 0xFF;
+            scsiDev.data[15] =  lon & 0xFF;
+            uint64_t lfi = tape_info->tape_mark_count;
+            // Logical File Identifier
+            scsiDev.data[16] = (lfi >> 56) & 0xFF;
+            scsiDev.data[17] = (lfi >> 48) & 0xFF;
+            scsiDev.data[18] = (lfi >> 40) & 0xFF;
+            scsiDev.data[19] = (lfi >> 32) & 0xFF;
+            scsiDev.data[20] = (lfi >> 24) & 0xFF;
+            scsiDev.data[21] = (lfi >> 16) & 0xFF;
+            scsiDev.data[22] = (lfi >>  8) & 0xFF;
+            scsiDev.data[23] =  lfi & 0xFF;
+
+        }
         if (bytesPerSector > 0)
         {
             uint32_t lba = tape_info->data_pos / bytesPerSector;
@@ -1866,14 +1968,6 @@ extern "C" int scsiTapeCommand()
 
             scsiDev.phase = DATA_IN;
             scsiDev.dataLen = 20;
-        }
-        else
-        {
-            // Variable sector size set, Read Position not supported
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
-            scsiDev.phase = STATUS;
         }
     }
     else

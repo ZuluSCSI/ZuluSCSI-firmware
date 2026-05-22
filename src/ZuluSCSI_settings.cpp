@@ -211,6 +211,18 @@ void log_getl_8bit_hex(const char *Key, long value)
     logmsg("---- ", Key, " = ", (uint8_t) value);
 }
 
+void log_getl_8bit_hex_with_negative(const char *Key, long value)
+{
+    if (value < 0)
+    {
+        logmsg("---- ", Key, " = ", (int) value);
+    }
+    else
+    {
+        logmsg("---- ", Key, " = ", (uint8_t) value);
+    }
+}
+
 void log_getl_quirks(const char *Key, long value)
 {
     if (value == 0)
@@ -502,6 +514,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.vendorExtensions =  log_ini_getl(section, "VendorExtensions", cfg.vendorExtensions, CONFIGFILE, log_settings);
 
     cfg.blockSize = log_ini_getl(section, "BlockSize", cfg.blockSize, CONFIGFILE, log_settings);
+    cfg.mediumType = log_ini_getl(section, "MediumType", cfg.mediumType, CONFIGFILE, log_settings, &log_getl_8bit_hex_with_negative);
     cfg.tapeLengthMB = log_ini_getl(section, "TapeLengthMB", cfg.tapeLengthMB, CONFIGFILE, log_settings);
     cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings, &log_getl_8bit_hex);
     cfg.tapeBufferedMode = log_ini_getl(section, "TapeBufferedMode", cfg.tapeBufferedMode, CONFIGFILE, log_settings, &log_getl_8bit_hex);
@@ -635,6 +648,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     cfgDev.cowButtonInvert = false;
 #endif
 
+    cfgDev.mediumType = -1;
     cfgDev.tapeLengthMB = 0; // Default tape length in MB is unlimited
     cfgDev.tapeDensity = 0x10; // Default density: QIC-150
     cfgDev.tapeBufferedMode = 0x00; // Write Good status only after all data has been written to tape
