@@ -463,6 +463,7 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
     tap_record_t record;
     bool started_read = false;
     actual = 0;
+    uint32_t loop_time = millis();
     while (actual < count) {
         tap_result_t result = tapReadRecordForward(img, record, nullptr, 0, fixed);
 
@@ -520,6 +521,12 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
                         ++actual;
             }
         }
+        platform_reset_watchdog();
+        if ((uint32_t)(millis() - loop_time) > 500)
+        {
+            platform_poll();
+            loop_time = millis();
+        }
     }
 
     return TAP_OK;
@@ -534,6 +541,7 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
     tap_record_t record;
     bool started_read;
     actual = 0;
+    uint32_t loop_time = millis();
     while (actual < count) {
         tap_result_t result = tapReadRecordBackward(img, record, nullptr, 0, fixed);
 
@@ -595,6 +603,12 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
                 if (tape_info->logical_object_number > 0)
                     tape_info->logical_object_number--;
             }
+        }
+        platform_reset_watchdog();
+        if ((uint32_t)(millis() - loop_time) > 500)
+        {
+            platform_poll();
+            loop_time = millis();
         }
     }
     return TAP_OK;
