@@ -475,7 +475,7 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
         }
 
         if (result == TAP_FILEMARK) {
-            if (fixed && started_read && records_read < blocksize) {
+            if (fixed && started_read && records_read != 0 && records_read < blocksize) {
                 // The fixed block started but never finished being filled
                 return TAP_ERROR;
             }
@@ -553,18 +553,18 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
                 return TAP_ERROR;
             }
 
-            if (filemarks) {
+            if (locate) {
+                // vendor block type doesn't count filemark, scsi-2 format does
+                if (!blk_type_vendor) {
+                    ++actual;
+                }
+            } else if (filemarks) {
                 // Spacing filemarks - continue count when we hit one
                ++actual;
-            } else if (locate) {
-                // vendor block type doesn't count filemark, scsi-2 format does
-                if (!blk_type_vendor)
-                    ++actual;
             } else {
                 // Spacing blocks - stop when filemark hit
                 return TAP_FILEMARK;
             }
-
         }
 
         if (result == TAP_OK)
@@ -1875,7 +1875,7 @@ extern "C" int scsiTapeCommand()
         status_byte |= (tape_info->is_eom ? 1 : 0) << 6; // EOP
   
         uint64_t lon = tape_info->logical_object_number;
-  
+
         if (service_action != 0x00 && service_action != 0x01 && service_action != 0x06)
         {
             dbgmsg("------ Service action ", service_action, " not supported");
@@ -1895,8 +1895,7 @@ extern "C" int scsiTapeCommand()
         else if (service_action == 0x00 || service_action == 0x01)
         {
             // Short form -- Block ID (0x00) or Short form - Vendor Specific -- Block ID (0x01)
-
-            // Vendor Specific seems to be only the block count with out file makers added
+            // Vendor Specific seems to be the block count with out file makers added
             if (service_action == 0x01)
                 lon -= tape_info->tape_mark_count;
 
@@ -1938,36 +1937,6 @@ extern "C" int scsiTapeCommand()
             scsiDev.data[21] = (lfi >> 16) & 0xFF;
             scsiDev.data[22] = (lfi >>  8) & 0xFF;
             scsiDev.data[23] =  lfi & 0xFF;
-
-        }
-        if (bytesPerSector > 0)
-        {
-            uint32_t lba = tape_info->data_pos / bytesPerSector;
-            scsiDev.data[0] = 0x00;
-            if (lba == 0) scsiDev.data[0] |= 0x80;
-            if (lba >= img.scsiSectors) scsiDev.data[0] |= 0x40;
-            scsiDev.data[1] = 0x00;
-            scsiDev.data[2] = 0x00;
-            scsiDev.data[3] = 0x00;
-            scsiDev.data[4] = (lba >> 24) & 0xFF; // Next block on tape
-            scsiDev.data[5] = (lba >> 16) & 0xFF;
-            scsiDev.data[6] = (lba >>  8) & 0xFF;
-            scsiDev.data[7] = (lba >>  0) & 0xFF;
-            scsiDev.data[8] = (lba >> 24) & 0xFF; // Last block in buffer
-            scsiDev.data[9] = (lba >> 16) & 0xFF;
-            scsiDev.data[10] = (lba >>  8) & 0xFF;
-            scsiDev.data[11] = (lba >>  0) & 0xFF;
-            scsiDev.data[12] = 0x00;
-            scsiDev.data[13] = 0x00;
-            scsiDev.data[14] = 0x00;
-            scsiDev.data[15] = 0x00;
-            scsiDev.data[16] = 0x00;
-            scsiDev.data[17] = 0x00;
-            scsiDev.data[18] = 0x00;
-            scsiDev.data[19] = 0x00;
-
-            scsiDev.phase = DATA_IN;
-            scsiDev.dataLen = 20;
         }
     }
     else
