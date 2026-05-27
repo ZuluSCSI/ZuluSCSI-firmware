@@ -368,7 +368,7 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		break;
 
 	case S2S_CFG_SEQUENTIAL:
-		mediumType = 0; // reserved
+		mediumType = 0x25; // reserved
 		deviceSpecificParam =
 			((blockDev.state & DISK_WP) ? 0x80 : 0) |
 			((scsiDev.target->liveCfg.tapeBufferedMode & 0x7) << 4);
@@ -671,15 +671,22 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 	if (pageCode == 0x00 || pageCode == 0x3F)
 	{
 		pageFound = 1;
-		pageIn(pc, idx, OperatingPage, sizeof(OperatingPage));
+		if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+		{
+			// Don't use a operating page
+		}
+		else
+		{
+			pageIn(pc, idx, OperatingPage, sizeof(OperatingPage));
 
-		// Note inverted logic for the flag.
-		scsiDev.data[idx+2] =
-			(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) ? 0x80 : 0x90;
+			// Note inverted logic for the flag.
+			scsiDev.data[idx+2] =
+				(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) ? 0x80 : 0x90;
 
-		scsiDev.data[idx+3] = getDeviceTypeQualifier();
+			scsiDev.data[idx+3] = getDeviceTypeQualifier();
+			idx += sizeof(OperatingPage);
+		}
 
-		idx += sizeof(OperatingPage);
 	}
 
 	if (!pageFound)

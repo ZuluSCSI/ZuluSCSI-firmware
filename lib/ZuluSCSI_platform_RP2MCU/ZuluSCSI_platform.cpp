@@ -42,6 +42,7 @@
 #include "scsi_accel_target.h"
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
+#include "ZuluSCSI_usb_console_media.h"
 
 #ifdef ZULUSCSI_MCU_RP23XX
 # include <hardware/structs/scb.h>
@@ -85,6 +86,7 @@ extern bool g_log_to_sd;
 extern "C" {
 #include "timings_RP2MCU.h"
 extern bool g_rebooting;
+static bool g_uf2_mode = false;
 const char *g_platform_name = PLATFORM_NAME;
 bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
@@ -107,11 +109,13 @@ typedef enum
     USB_INPUT_EXIT_MSC,
     USB_INPUT_REBOOT_MSC,
     USB_INPUT_REBOOT_IMAGES_MSC,
+    USB_INPUT_REBOOT_UF2,
     USB_INPUT_REBOOT,
     USB_INPUT_TOGGLE_DEBUG,
     USB_INPUT_LOG_TO_SD,
     USB_INPUT_BUTTON_1,
-    USB_INPUT_BUTTON_2
+    USB_INPUT_BUTTON_2,
+    USB_INPUT_MEDIA_SUBMENU
 }
 usb_input_type_t;
 
@@ -1409,7 +1413,10 @@ void platform_poll()
 
 void platform_reset_mcu(uint32_t reset_in_ms)
 {
-    watchdog_reboot(0, 0, reset_in_ms);
+    if (g_uf2_mode)
+        reset_usb_boot(0, 0);
+    else
+        watchdog_reboot(0, 0, reset_in_ms);
 }
 
 const uint8_t* platform_get_8byte_mcu_id()
@@ -1761,6 +1768,14 @@ static usb_input_type_t serial_menu(menu_context_t context)
     if(available > 0)
     {
         int32_t read = Serial.read();
+
+        // Route to the media submenu while it is active
+        if (serialMediaMenuActive())
+        {
+            serialMediaMenuProcess((char)read);
+            return USB_INPUT_NONE;
+        }
+
         switch((char) read)
         {
             case 'X':
@@ -1782,6 +1797,10 @@ static usb_input_type_t serial_menu(menu_context_t context)
             case 'i':
                 input_type = USB_INPUT_REBOOT_IMAGES_MSC;
                 break;
+            case 'U':
+            case 'u':
+                input_type = USB_INPUT_REBOOT_UF2;
+                break;
             case 'D':
             case 'd':
                 input_type = USB_INPUT_TOGGLE_DEBUG;
@@ -1795,6 +1814,10 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 break;
             case '2':
                 input_type = USB_INPUT_BUTTON_2;
+                break;
+            case 'M':
+            case 'm':
+                input_type = USB_INPUT_MEDIA_SUBMENU;
                 break;
             case 'Y':
             case 'y':
@@ -1824,10 +1847,12 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'r' - reboot device normally\r\n"
                 "    's' - reboot with SD card as USB drive\r\n"
                 "    'i' - reboot with images presented as USB drives\r\n"
+                "    'u' - reboot into the UF2 bootloader\r\n"
                 "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
                 "    '1' - push function button 1 (eject, switch image)\r\n"
                 "    '2' - push function button 2 (eject, switch image)\r\n"
+                "    'm' - media management (image select, eject, insert)\r\n"
                 "  press 'y' after a command to confirm and execute"
             );
         }
@@ -1846,8 +1871,14 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     g_rebooting = true;
                     break;
                 case USB_INPUT_REBOOT_IMAGES_MSC:
-                    logmsg("Reboot and exposing image files as USB drives");
+                    logmsg("Rebooting and exposing image files as USB drives");
                     *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_REBOOT_UF2:
+                    logmsg("Rebooting into UF2 mode");
+                    *scratch0 =0;
+                    g_uf2_mode = true;
                     g_rebooting = true;
                     break;
                 case USB_INPUT_TOGGLE_DEBUG:
@@ -1872,6 +1903,10 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     logmsg("Pushed function button 2");
                     g_console_buttons |= 2;
                     break;
+                case USB_INPUT_MEDIA_SUBMENU:
+                    *scratch0 = 0;
+                    serialMediaMenuEnter();
+                    break;
                 default:
                     *scratch0 = 0;
                     input_type = USB_INPUT_NONE;
@@ -1893,6 +1928,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 case USB_INPUT_REBOOT_IMAGES_MSC:
                     logmsg("Boot into all images as USB drives requested, press 'y' to engage or any key to clear");
                     break;
+                case USB_INPUT_REBOOT_UF2:
+                    logmsg("Boot into the UF2 bootloader, press 'y' to engage or any key to clear");
+                    break;
                 case USB_INPUT_TOGGLE_DEBUG:
                     logmsg("Turn debug ", g_log_debug ? "off" : "on", ", press 'y' to engage or any key to clear");
                     break;
@@ -1907,6 +1945,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     break;
                 case USB_INPUT_BUTTON_2:
                     logmsg("Push function button 2, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_MEDIA_SUBMENU:
+                    logmsg("Enter media management submenu, press 'y' to engage or any key to clear");
                     break;
                 default:
                     input_type = USB_INPUT_NONE;

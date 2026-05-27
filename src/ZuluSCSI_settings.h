@@ -64,7 +64,10 @@ typedef enum
     SYS_PRESET_MPC3000,
     SYS_PRESET_MEGASTE,
     SYS_PRESET_X68000,
+    SYS_PRESET_X68000_SCSI,
+    SYS_PRESET_X68000_SASI,
     SYS_PRESET_DOS,
+    SYS_PRESET_NeXT,
 #ifdef PLATFORM_AS400
     SYS_PRESET_AS400,
     SYS_PRESET_AS400_BS520,
@@ -175,6 +178,7 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
 #endif
     uint32_t tapeLengthMB;
     uint8_t tapeDensity;
+    uint8_t tapeBufferedMode;
 } scsi_device_settings_t;
 
 
