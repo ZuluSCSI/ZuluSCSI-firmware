@@ -142,12 +142,12 @@ typedef struct __attribute__((packed))
 	uint8_t scsiSpeed;
 
 	char wifiMACAddress[6];
-	char wifiSSID[32];
-	char wifiPassword[63];
+	char wifiSSID[32 + 1];
+	char wifiPassword[63 + 1];
 
 	uint8_t busWidth; // Wide bus support, 0: 8-bit, 1: 16-bit, 2: 32-bit
 
-	uint8_t reserved[17]; // Pad out to 128 bytes
+	uint8_t reserved[15]; // Pad out to 128 bytes
 } S2S_BoardCfg;
 
 typedef enum

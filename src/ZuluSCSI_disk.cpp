@@ -2,7 +2,7 @@
  * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
  * Portions Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
  * Portions Copyright (C) 2023 Eric Helgeson
- * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2026 Rabbit Hole Computing™
  *
  * This file is licensed under the GPL version 3 or any later version. 
  * It is derived from disk.c in SCSI2SD V6
@@ -932,7 +932,7 @@ static void doCloseTray(image_config_t &img)
 
  
 // Eject and switch image
-static void doPerformEject(image_config_t &img)
+void doPerformEject(image_config_t &img)
 {
     uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     if (img.deviceType == S2S_CFG_FIXED)

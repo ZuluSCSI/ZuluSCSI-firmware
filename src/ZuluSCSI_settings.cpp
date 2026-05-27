@@ -37,7 +37,7 @@
 // SCSI system and device settings
 ZuluSCSISettings g_scsi_settings;
 
-const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "DOS",
+const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "X68000-SCSI","X68000-SASI", "DOS", "NeXT",
 #ifdef PLATFORM_AS400
     "AS400", "AS400_BS520", "AS400_BS522",
 #endif
@@ -352,6 +352,10 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
         }
     }
 #endif  
+
+    cfgDev.deviceType = type;
+    cfgDev.deviceType = log_ini_getl(section, "Type", cfgDev.deviceType, CONFIGFILE, log_settings, &log_getl_device_type);
+
     switch (m_devPreset[scsiId])
     {
         case DEV_PRESET_NONE:
@@ -380,9 +384,6 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
 
     if (m_devPreset[scsiId] == DEV_PRESET_NONE)
     {
-        cfgDev.deviceType = type;
-        cfgDev.deviceType = log_ini_getl(section, "Type", cfgDev.deviceType, CONFIGFILE, log_settings, &log_getl_device_type);
-        
         if (cfgSys.quirks == S2S_CFG_QUIRKS_APPLE)
         {
             // Use default drive IDs that are recognized by Apple machines
@@ -672,12 +673,23 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         cfgSys.mapLunsToIDs = true;
         cfgSys.enableParity = false;
     }
-    else if (strequals(systemPresetName[SYS_PRESET_X68000], presetName))
+    else if (strequals(systemPresetName[SYS_PRESET_X68000], presetName)
+            || strequals(systemPresetName[SYS_PRESET_X68000_SCSI], presetName))
     {
-        m_sysPreset = SYS_PRESET_X68000;
+        m_sysPreset = SYS_PRESET_X68000_SCSI;
         cfgSys.selectionDelay = 0;
         cfgSys.quirks = S2S_CFG_QUIRKS_X68000;
         cfgSys.enableSCSI2 = false;
+        cfgSys.maxSyncSpeed = 5;
+    }
+
+    else if (strequals(systemPresetName[SYS_PRESET_X68000_SASI], presetName))
+    {
+        m_sysPreset = SYS_PRESET_X68000_SASI;
+        cfgSys.selectionDelay = 0;
+        cfgSys.quirks = S2S_CFG_QUIRKS_X68000;
+        cfgSys.enableSCSI2 = false;
+        cfgSys.enableParity = false;
         cfgSys.maxSyncSpeed = 5;
     }
     else if (strequals(systemPresetName[SYS_PRESET_DOS], presetName))
@@ -687,7 +699,12 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         cfgDev.reinsertImmediately = true;
         cfgDev.keepCurrentImageOnBusReset = true;
     }
-
+    else if (strequals(systemPresetName[SYS_PRESET_NeXT], presetName))
+    {
+        m_sysPreset = SYS_PRESET_NeXT;
+        cfgDev.sectorsPerTrack = 139;
+        cfgDev.headsPerCylinder= 4;
+    }
 #ifdef PLATFORM_AS400
     else if (strequals(systemPresetName[SYS_PRESET_AS400], presetName))
     {
