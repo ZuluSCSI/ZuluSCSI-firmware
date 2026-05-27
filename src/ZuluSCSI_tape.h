@@ -65,6 +65,9 @@ void tapeInit(uint8_t scsi_id);
 // Deinitialize a Tape device
 void tapeDeinit(uint8_t scsi_id = 0xFF);
 
+// Rewind tape
+void tapeRewind(image_config_t &img, uint8_t scsi_id);
+
 // Set the tape mark count for device with SCSI Id scsi_id 
 void setTapeMarkCount(uint8_t scsi_id, uint32_t mark_count);
 
@@ -79,13 +82,11 @@ bool tapeIsTap();
 // Helper functions for .TAP format
 tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size, bool fixed = true);
 tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size, bool fixed = true);
-tap_result_t tapWriteRecord(image_config_t &img, const uint8_t *data, uint32_t length);
 tap_result_t tapWriteFilemark(image_config_t &img);
 tap_result_t tapWriteEOM(image_config_t &img);
 tap_result_t tapWriteEraseGap(image_config_t &img);
 tap_result_t tapSpaceForward(image_config_t &img, uint32_t& actual, uint32_t count, bool filemarks, bool locate = false, bool blk_type_vendor = false);
 tap_result_t tapSpaceBackward(image_config_t &img, uint32_t& actual, uint32_t count, bool filemarks, bool locate = false, bool blk_type_vendor = false);
-tap_result_t tapRewind(image_config_t &img);
 
 // .TAP format SCSI write operations
 void tapMediumStartWrite(uint32_t length, bool fixed);

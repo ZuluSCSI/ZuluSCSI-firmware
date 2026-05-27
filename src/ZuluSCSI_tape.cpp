@@ -165,7 +165,7 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
 
     // Check if we're at end of data
     //  dbgmsg("------ TAP read forward: file_pos=", (int)tape_info->file_pos, " file_size=", (int)img.file.size());
-    if (tape_info->file_pos >= img.file.size()) {
+    if (tape_info->file_pos + 1 >= img.file.size()) {
         return TAP_END_OF_DATA;
     }
 
@@ -367,46 +367,6 @@ tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, ui
     return TAP_OK;
 }
 
-// Write a .TAP data record
-tap_result_t tapWriteRecord(image_config_t &img, const uint8_t *data, uint32_t length) {
-    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
-    uint32_t padded_length = (length + 1) & ~1;  // Round up to even
-    uint8_t header[4], trailer[4];
-
-    // Write header (length with class 0 for good data)
-    writeLE32(header, length);
-    if (!img.file.seek(tape_info->file_pos) || img.file.write(header, 4) != 4) {
-        return TAP_ERROR;
-    }
-
-    // Write data
-    if (length > 0) {
-        if (!img.file.seek(tape_info->file_pos + 4) || img.file.write(data, length) != (ssize_t)length) {
-            return TAP_ERROR;
-        }
-
-        // Write padding byte if needed
-        if (padded_length > length) {
-            uint8_t pad = 0;
-            if (!img.file.seek(tape_info->file_pos + 4 + length) || img.file.write(&pad, 1) != 1) {
-                return TAP_ERROR;
-            }
-        }
-    }
-
-    // Write trailer (same length)
-    writeLE32(trailer, length);
-    if (!img.file.seek(tape_info->file_pos + 4 + padded_length) || img.file.write(trailer, 4) != 4) {
-        return TAP_ERROR;
-    }
-
-    // Move past this record
-    tape_info->file_pos += 8 + padded_length;
-    tape_info->data_pos += length;
-
-    return TAP_OK;
-}
-
 // Write a filemark
 tap_result_t tapWriteFilemark(image_config_t &img) {
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
@@ -467,34 +427,6 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
     while (actual < count) {
         tap_result_t result = tapReadRecordForward(img, record, nullptr, 0, fixed);
 
-        if (result == TAP_END_OF_TAPE) {
-            return TAP_END_OF_TAPE;
-        }
-
-        if (result == TAP_ERROR) {
-            return TAP_ERROR;
-        }
-
-        if (result == TAP_FILEMARK) {
-            if (fixed && started_read && records_read != 0 && records_read < blocksize) {
-                // The fixed block started but never finished being filled
-                return TAP_ERROR;
-            }
-
-            if (locate) {
-                // vendor block type doesn't count filemark, scsi-2 format does
-                if (!blk_type_vendor) {
-                    ++actual;
-                }
-            } else if (filemarks) {
-                // Spacing filemarks - continue count when we hit one
-               ++actual;
-
-            } else {
-                // Spacing blocks - stop when filemark hit
-                return TAP_FILEMARK;
-            }
-        }
 
         if (result == TAP_OK) {
             if (fixed)
@@ -520,7 +452,31 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
                 if (!filemarks || locate)
                         ++actual;
             }
+        } else if (result == TAP_FILEMARK) {
+            if (fixed && started_read && records_read != 0 && records_read < blocksize) {
+                // The fixed block started but never finished being filled
+                return TAP_ERROR;
+            }
+
+            if (locate) {
+                // vendor block type doesn't count filemark, scsi-2 format does
+                if (!blk_type_vendor) {
+                    ++actual;
+                }
+            } else if (filemarks) {
+                // Spacing filemarks - continue count when we hit one
+               ++actual;
+
+            } else {
+                // Spacing blocks - stop when filemark hit
+                return TAP_FILEMARK;
+            }
+        } else if (result == TAP_END_OF_DATA
+                || result == TAP_END_OF_TAPE
+                || result == TAP_ERROR) {
+            return result;
         }
+        
         platform_reset_watchdog();
         if ((uint32_t)(millis() - loop_time) > 500)
         {
@@ -545,37 +501,8 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
     while (actual < count) {
         tap_result_t result = tapReadRecordBackward(img, record, nullptr, 0, fixed);
 
-        if (result == TAP_BEGINNING_OF_TAPE) {
-            return TAP_BEGINNING_OF_TAPE;
-        }
 
-        if (result == TAP_ERROR) {
-            return TAP_ERROR;
-        }
-        
-        
-
-        if (result == TAP_FILEMARK) {
-            if (fixed && started_read && records_read < blocksize) {
-                // The fixed block started but never finished being filled
-                return TAP_ERROR;
-            }
-
-            if (locate) {
-                // vendor block type doesn't count filemark, scsi-2 format does
-                if (!blk_type_vendor) {
-                    ++actual;
-                }
-            } else if (filemarks) {
-                // Spacing filemarks - continue count when we hit one
-               ++actual;
-            } else {
-                // Spacing blocks - stop when filemark hit
-                return TAP_FILEMARK;
-            }
-        }
-
-        if (result == TAP_OK)
+         if (result == TAP_OK)
         {
             if (fixed)
             {
@@ -603,7 +530,32 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
                 if (tape_info->logical_object_number > 0)
                     tape_info->logical_object_number--;
             }
+        } else if (result == TAP_FILEMARK) {
+            if (fixed && started_read && records_read < blocksize) {
+                // The fixed block started but never finished being filled
+                return TAP_ERROR;
+            }
+
+            if (locate) {
+                // vendor block type doesn't count filemark, scsi-2 format does
+                if (!blk_type_vendor) {
+                    ++actual;
+                }
+            } else if (filemarks) {
+                // Spacing filemarks - continue count when we hit one
+               ++actual;
+            } else {
+                // Spacing blocks - stop when filemark hit
+                return TAP_FILEMARK;
+            }
+        } else if (result == TAP_BEGINNING_OF_TAPE) {
+            return TAP_BEGINNING_OF_TAPE;
+        } else if (result == TAP_ERROR) {
+            return TAP_ERROR;
+        } else {
+            return TAP_ERROR;
         }
+
         platform_reset_watchdog();
         if ((uint32_t)(millis() - loop_time) > 500)
         {
@@ -616,21 +568,16 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
 
 static tap_result_t tapSpaceEndOfData(image_config_t &img)
 {
-    // cannot simply set tape_info->file_pos to end of file because
-    // tape_info->data_pos will not increment correctly
-    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
-    uint64_t end_of_tape = tape_info->tape_length_mb * 1024 * 1024;
     tap_result_t result;
-    tap_record_t record;
-    while (end_of_tape == 0 || tape_info->data_pos < end_of_tape)
+    uint32_t actual = 0;
+    while (true)
     {
-        result = tapReadRecordForward(img, record, nullptr, 0);
-        if (result == TAP_END_OF_TAPE || result == TAP_ERROR)
+        result = tapSpaceForward(img, actual, UINT32_MAX, true);
+        if (       result == TAP_END_OF_DATA 
+                || result == TAP_END_OF_TAPE 
+                || result == TAP_ERROR)
             return result;
-        if (result == TAP_END_OF_DATA)
-            return TAP_OK;
     }
-    return  TAP_END_OF_TAPE;
 }
 
 // State tracking for .TAP format writes
@@ -1135,6 +1082,7 @@ void tapeTapDataOut()
                     }
                     tape_info->file_pos += sizeof(record_length_metadata);
                     transfer.currentBlock += 1;
+                    tape_info->logical_object_number++;
                     // After a record has been written, invalidate tape at beginning of media
                     scsiDev.target->tapeBOM = 0;
                 }
@@ -1350,10 +1298,15 @@ static void doTapeRead(uint32_t blocks)
     }
 }
 
-static void doRewind()
+static void doTapeRewind()
 {
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
+    tapeRewind(img, img.scsiId & S2S_CFG_TARGET_ID_BITS);
+}
+
+void tapeRewind(image_config_t& img, uint8_t scsi_id)
+{
+    tape_drive_t *tape_info = g_tape_drive[scsi_id];
     tape_info->tape_mark_block_offset = 0;
     tape_info->tape_mark_index = 0;
     tape_info->file_pos = 0;
@@ -1362,7 +1315,7 @@ static void doRewind()
     tape_info->tape_mark_count = 0;
     tape_info->is_eom = false;
     tape_info->logical_object_number = 0;
-    scsiDev.target->tapeBOM = 1;
+    scsiDev.targets[scsi_id].tapeBOM = 1;
 }
 
 static void doTapVerify(uint32_t length, bool fixed)
@@ -1656,7 +1609,7 @@ extern "C" int scsiTapeCommand()
     {
         // REWIND
         // Set tape position back to 0.
-        doRewind();
+        doTapeRewind();
     }
     else if (command == 0x05)
     {
@@ -1726,7 +1679,7 @@ extern "C" int scsiTapeCommand()
                 // Space filemarks
                 result = count >= 0 ? tapSpaceForward(img, actual, count, true) : tapSpaceBackward(img, actual, -count, true);
             } else if (code == 3) {
-                // Space to end of data - move to end of file
+                // Space to end of data
                 result = tapSpaceEndOfData(img);
                 set_sense_info = false;
             } else {
@@ -1834,7 +1787,7 @@ extern "C" int scsiTapeCommand()
         // Compatibility: emulate load/retension by rewinding to BOT.
         if (loej && start)
         {
-            doRewind();
+            doTapeRewind();
             dbgmsg("------ Tape load/retension emulated as rewind to BOT");
         }
         // Unload is a no-op in emulation.
@@ -1881,7 +1834,6 @@ extern "C" int scsiTapeCommand()
         allocation_len =  scsiDev.cdb[7] << 8;
         allocation_len |= scsiDev.cdb[8];
 
-        uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
         uint8_t service_action = scsiDev.cdb[1] & 0x1F;
 
         uint8_t status_byte = 0;
