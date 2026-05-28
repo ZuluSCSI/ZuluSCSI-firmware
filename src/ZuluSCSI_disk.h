@@ -163,6 +163,8 @@ void    setEjectButton(uint8_t idx, int8_t eject_button);
 // Perform eject for devices
 void doPerformEject(image_config_t &img);
 
+void scsiDiskCloseTray(image_config_t &img);
+
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type = S2S_CFG_FIXED, bool use_prefix = false);
 void scsiDiskLoadConfig(int target_idx);
 

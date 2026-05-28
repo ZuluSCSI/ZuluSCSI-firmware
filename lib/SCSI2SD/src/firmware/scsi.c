@@ -1480,7 +1480,6 @@ void scsiInit()
 			scsiDev.targets[i].syncPeriod = 0;
 		}
 
-		scsiDev.targets[i].tapeBOM = (cfg && cfg->deviceType == S2S_CFG_SEQUENTIAL) ? 1 : 0;
 #ifdef PLATFORM_AS400
 		if (cfg && cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
 		{

@@ -125,10 +125,11 @@ typedef struct __attribute__((packed))
 	// bit flags vendor extention for specific device types
 	uint32_t vendorExtensions;
 
+	int16_t mediumType;
 	uint8_t tapeDensity;
 	uint8_t tapeBufferedMode;
 
-	uint8_t reserved[58]; // Pad out to 128 bytes for main section.
+	uint8_t reserved[56]; // Pad out to 128 bytes for main section.
 } S2S_TargetCfg;
 
 typedef struct __attribute__((packed))
