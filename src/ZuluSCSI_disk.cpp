@@ -306,6 +306,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     memset(img.serial, 0, sizeof(img.serial));
 
     img.setDeviceType((S2S_CFG_TYPE)devCfg->deviceType);
+    img.mediumType = devCfg->mediumType;
     img.deviceTypeModifier = devCfg->deviceTypeModifier;
     img.sectorsPerTrack = devCfg->sectorsPerTrack;
     img.headsPerCylinder = devCfg->headsPerCylinder;
@@ -406,14 +407,16 @@ static void autoConfigGeometry(image_config_t &img)
         img.sectorsPerTrack = sect;
         img.headsPerCylinder = head;
     }
-
-    bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
-    logmsg("---- Drive geometry from ", method,
-        ": SectorsPerTrack=", (int)img.sectorsPerTrack,
-        " HeadsPerCylinder=", (int)img.headsPerCylinder,
-        " total sectors ", (int)img.scsiSectors,
-        divisible ? " (divisible)" : " (not divisible)"
-        );
+    if (img.bytesPerSector == DEFAULT_BLOCKSIZE)
+    {
+        bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
+        logmsg("---- Drive geometry from ", method,
+            ": SectorsPerTrack=", (int)img.sectorsPerTrack,
+            " HeadsPerCylinder=", (int)img.headsPerCylinder,
+            " total sectors ", (int)img.scsiSectors,
+            divisible ? " (divisible)" : " (not divisible)"
+            );
+        }
 }
 
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)
@@ -914,13 +917,17 @@ static bool compare_prefix(const char* name, const char* compare)
 /***********************/
 /* Start/stop commands */
 /***********************/
-static void doCloseTray(image_config_t &img)
+void scsiDiskCloseTray(image_config_t &img)
 {
     if (img.ejected)
     {
         uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         dbgmsg("------ Device close tray on ID ", (int)target);
         img.ejected = false;
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
+        {
+            tapeRewind(img, target);
+        }
 
         if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
         {
@@ -954,7 +961,7 @@ void doPerformEject(image_config_t &img)
         else if (switchNextImage(img))
         {
             // Image switch successful
-            img.ejected = false;
+            scsiDiskCloseTray(img);
             img.reinsert_after_eject = false;
             blink_cancel();
             blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);
@@ -977,12 +984,12 @@ void doPerformEject(image_config_t &img)
             switchNextImage(img); // Switch media for next time
             if (g_scsi_settings.getDevice(target)->reinsertImmediately)
             {
-                doCloseTray(img);
+                scsiDiskCloseTray(img);
             }
         }
         else
         {
-            doCloseTray(img);
+            scsiDiskCloseTray(img);
         }
     }
 }
@@ -1928,7 +1935,7 @@ int doTestUnitReady()
             // We are now reporting to host that the drive is open.
             // Simulate a "close" for next time the host polls.
             if (img.deviceType == S2S_CFG_OPTICAL) cdromCloseTray(img);
-            else doCloseTray(img);
+            else scsiDiskCloseTray(img);
 
         }
     }
@@ -3476,7 +3483,7 @@ int scsiDiskCommand()
         {
             // Start device and close tray if open
             scsiDev.target->started = 1;
-            doCloseTray(img);
+            scsiDiskCloseTray(img);
         }
         else if (eject || img.deviceType == S2S_CFG_ZIP100 || img.eject_on_stop)
         {
@@ -3999,7 +4006,7 @@ void scsiDiskPoll()
             if (img.reinsert_on_inquiry)
             {
                 if (img.deviceType == S2S_CFG_OPTICAL) cdromCloseTray(img);
-                else doCloseTray(img);
+                else scsiDiskCloseTray(img);
             }
         }
     }
@@ -4023,12 +4030,18 @@ void scsiDiskReset()
 #ifdef ENABLE_AUDIO_OUTPUT
     audio_stop(0xFF, true);
 #endif
-    // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
     for (int i = 0; i < S2S_MAX_TARGETS; ++i)
     {
+
         image_config_t &img = g_DiskImages[i];
-        if (img.deviceType == S2S_CFG_OPTICAL && !g_scsi_settings.getDevice(i)->keepCurrentImageOnBusReset)
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
+            // rewind drive
+            tapeRewind(img, i);
+        }
+        else  if (img.deviceType == S2S_CFG_OPTICAL && !g_scsi_settings.getDevice(i)->keepCurrentImageOnBusReset)
+        {
+            // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
             cdromReinsertFirstImage(img);
         }
     }
@@ -4081,7 +4094,7 @@ static void genericLoadImage(image_config_t &img, const char* next_filename)
     }
     else
     {
-        doCloseTray(img);
+        scsiDiskCloseTray(img);
     }
 }
 

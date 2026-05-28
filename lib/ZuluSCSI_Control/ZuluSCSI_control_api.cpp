@@ -362,7 +362,6 @@ bool controlInsertMedia(uint8_t scsi_id)
     if ((S2S_CFG_TYPE)img.deviceType == S2S_CFG_OPTICAL)
         cdromCloseTray(img);
     else
-        img.ejected = false;
-
+        scsiDiskCloseTray(img);
     return true;
 }
