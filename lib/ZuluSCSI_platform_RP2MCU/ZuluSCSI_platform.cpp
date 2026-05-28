@@ -86,6 +86,7 @@ extern bool g_log_to_sd;
 extern "C" {
 #include "timings_RP2MCU.h"
 extern bool g_rebooting;
+static bool g_uf2_mode = false;
 const char *g_platform_name = PLATFORM_NAME;
 bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
@@ -108,6 +109,7 @@ typedef enum
     USB_INPUT_EXIT_MSC,
     USB_INPUT_REBOOT_MSC,
     USB_INPUT_REBOOT_IMAGES_MSC,
+    USB_INPUT_REBOOT_UF2,
     USB_INPUT_REBOOT,
     USB_INPUT_TOGGLE_DEBUG,
     USB_INPUT_LOG_TO_SD,
@@ -1411,7 +1413,10 @@ void platform_poll()
 
 void platform_reset_mcu(uint32_t reset_in_ms)
 {
-    watchdog_reboot(0, 0, reset_in_ms);
+    if (g_uf2_mode)
+        reset_usb_boot(0, 0);
+    else
+        watchdog_reboot(0, 0, reset_in_ms);
 }
 
 const uint8_t* platform_get_8byte_mcu_id()
@@ -1792,6 +1797,10 @@ static usb_input_type_t serial_menu(menu_context_t context)
             case 'i':
                 input_type = USB_INPUT_REBOOT_IMAGES_MSC;
                 break;
+            case 'U':
+            case 'u':
+                input_type = USB_INPUT_REBOOT_UF2;
+                break;
             case 'D':
             case 'd':
                 input_type = USB_INPUT_TOGGLE_DEBUG;
@@ -1838,6 +1847,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'r' - reboot device normally\r\n"
                 "    's' - reboot with SD card as USB drive\r\n"
                 "    'i' - reboot with images presented as USB drives\r\n"
+                "    'u' - reboot into the UF2 bootloader\r\n"
                 "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
                 "    '1' - push function button 1 (eject, switch image)\r\n"
@@ -1861,8 +1871,14 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     g_rebooting = true;
                     break;
                 case USB_INPUT_REBOOT_IMAGES_MSC:
-                    logmsg("Reboot and exposing image files as USB drives");
+                    logmsg("Rebooting and exposing image files as USB drives");
                     *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_REBOOT_UF2:
+                    logmsg("Rebooting into UF2 mode");
+                    *scratch0 =0;
+                    g_uf2_mode = true;
                     g_rebooting = true;
                     break;
                 case USB_INPUT_TOGGLE_DEBUG:
@@ -1911,6 +1927,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     break;
                 case USB_INPUT_REBOOT_IMAGES_MSC:
                     logmsg("Boot into all images as USB drives requested, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_REBOOT_UF2:
+                    logmsg("Boot into the UF2 bootloader, press 'y' to engage or any key to clear");
                     break;
                 case USB_INPUT_TOGGLE_DEBUG:
                     logmsg("Turn debug ", g_log_debug ? "off" : "on", ", press 'y' to engage or any key to clear");
