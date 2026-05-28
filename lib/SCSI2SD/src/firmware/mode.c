@@ -368,7 +368,7 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		break;
 
 	case S2S_CFG_SEQUENTIAL:
-		mediumType = 0x25; // reserved
+		mediumType = 0x00; // reserved
 		deviceSpecificParam =
 			((blockDev.state & DISK_WP) ? 0x80 : 0) |
 			((scsiDev.target->liveCfg.tapeBufferedMode & 0x7) << 4);
@@ -383,6 +383,8 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		break;
 
 	};
+	if (scsiDev.target->cfg->mediumType >= 0)
+		mediumType = scsiDev.target->cfg->mediumType;
 
 	scsiDev.data[idx++] = mediumType;
 	scsiDev.data[idx++] = deviceSpecificParam;

@@ -128,6 +128,7 @@ typedef struct
 	// A 3rd party may be sending the RESERVE/RELEASE commands
 	int reservedId; // 0 -> 7 if reserved. -1 if not reserved.
 	int reserverId; // 0 -> 7 if reserved. -1 if not reserved.
+	// -1 for default medium type, 0x00 - 0xFF for custom type
 
 	uint8_t syncOffset;
 	uint8_t syncPeriod;
