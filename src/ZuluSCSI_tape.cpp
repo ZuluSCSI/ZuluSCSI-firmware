@@ -573,11 +573,12 @@ static tap_result_t tapSpaceEndOfData(image_config_t &img)
     while (true)
     {
         result = tapSpaceForward(img, actual, UINT32_MAX, true);
-        if (       result == TAP_END_OF_DATA 
-                || result == TAP_END_OF_TAPE 
-                || result == TAP_ERROR)
+        if (result == TAP_END_OF_DATA)
+            return TAP_OK;
+        else if (result == TAP_END_OF_TAPE || result == TAP_ERROR)
             return result;
     }
+    return TAP_ERROR;
 }
 
 // State tracking for .TAP format writes
@@ -1783,14 +1784,27 @@ extern "C" int scsiTapeCommand()
         dbgmsg("------ StartStopUnit tape LoEj=", loej ? 1 : 0,
                " Start=", start ? 1 : 0,
                " file_pos=", (int)tape_info->file_pos);
-        // For tape: Start=1,LoEj=1 means load/retension, Start=0,LoEj=1 means unload.
+        // For tape: Start=1,LoEj=1 means load/retension, Start=0,LoEj=1 means unload. 
+        // Start=0, LoEj=0 means to turn the device offline, which also ejects the tape - as observed with a real tape drive
         // Compatibility: emulate load/retension by rewinding to BOT.
         if (loej && start)
         {
             doTapeRewind();
             dbgmsg("------ Tape load/retension emulated as rewind to BOT");
         }
-        // Unload is a no-op in emulation.
+        else if (!start && loej)
+        {
+            doPerformEject(img);
+        }
+        else if (!start && !loej)
+        {
+            doPerformEject(img);
+        }
+        else if (start && !loej)
+        {
+            scsiDiskCloseTray(img);
+        }
+
         scsiDev.status = GOOD;
         scsiDev.phase = STATUS;
     }
@@ -1837,7 +1851,7 @@ extern "C" int scsiTapeCommand()
         uint8_t service_action = scsiDev.cdb[1] & 0x1F;
 
         uint8_t status_byte = 0;
-        status_byte |= (scsiDev.target->tapeBOM ? 1 : 0)<< 7; // BOP
+        status_byte |= (scsiDev.target->tapeBOM ? 1 : 0) << 7; // BOP
         status_byte |= (tape_info->is_eom ? 1 : 0) << 6; // EOP
   
         uint64_t lon = tape_info->logical_object_number;
