@@ -407,14 +407,16 @@ static void autoConfigGeometry(image_config_t &img)
         img.sectorsPerTrack = sect;
         img.headsPerCylinder = head;
     }
-
-    bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
-    logmsg("---- Drive geometry from ", method,
-        ": SectorsPerTrack=", (int)img.sectorsPerTrack,
-        " HeadsPerCylinder=", (int)img.headsPerCylinder,
-        " total sectors ", (int)img.scsiSectors,
-        divisible ? " (divisible)" : " (not divisible)"
-        );
+    if (img.bytesPerSector == DEFAULT_BLOCKSIZE)
+    {
+        bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
+        logmsg("---- Drive geometry from ", method,
+            ": SectorsPerTrack=", (int)img.sectorsPerTrack,
+            " HeadsPerCylinder=", (int)img.headsPerCylinder,
+            " total sectors ", (int)img.scsiSectors,
+            divisible ? " (divisible)" : " (not divisible)"
+            );
+        }
 }
 
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)

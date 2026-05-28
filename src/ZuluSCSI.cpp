@@ -746,9 +746,10 @@ bool findHDDImages()
       else
       {
         logmsg("SCSI ID: ", (int)(cfg->scsiId & S2S_CFG_TARGET_ID_BITS),
-              ", BlockSize: ", (int)cfg->bytesPerSector,
               ", Type: ", (int)cfg->deviceType,
               ", Quirks: ", (int)cfg->quirks,
+              ", BlockSize: ", (int)cfg->bytesPerSector,
+              ", Sectors: ", (int) cfg->scsiSectors,
               ", Size: ", capacity_kB, "kB",
               typeIsRemovable((S2S_CFG_TYPE)cfg->deviceType) ? ", Removable" : ""
               );
