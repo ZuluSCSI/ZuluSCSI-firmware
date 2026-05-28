@@ -125,9 +125,11 @@ typedef struct __attribute__((packed))
 	// bit flags vendor extention for specific device types
 	uint32_t vendorExtensions;
 
+	int16_t mediumType;
 	uint8_t tapeDensity;
+	uint8_t tapeBufferedMode;
 
-	uint8_t reserved[59]; // Pad out to 128 bytes for main section.
+	uint8_t reserved[56]; // Pad out to 128 bytes for main section.
 } S2S_TargetCfg;
 
 typedef struct __attribute__((packed))
@@ -141,12 +143,12 @@ typedef struct __attribute__((packed))
 	uint8_t scsiSpeed;
 
 	char wifiMACAddress[6];
-	char wifiSSID[32];
-	char wifiPassword[63];
+	char wifiSSID[32 + 1];
+	char wifiPassword[63 + 1];
 
 	uint8_t busWidth; // Wide bus support, 0: 8-bit, 1: 16-bit, 2: 32-bit
 
-	uint8_t reserved[17]; // Pad out to 128 bytes
+	uint8_t reserved[15]; // Pad out to 128 bytes
 } S2S_BoardCfg;
 
 typedef enum

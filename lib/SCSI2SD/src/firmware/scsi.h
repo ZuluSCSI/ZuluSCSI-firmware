@@ -59,7 +59,10 @@ typedef enum
 	MSG_COMMAND_COMPLETE = 0,
 	MSG_REJECT = 0x7,
 	MSG_LINKED_COMMAND_COMPLETE = 0x0A,
-	MSG_LINKED_COMMAND_COMPLETE_WITH_FLAG = 0x0B
+	MSG_LINKED_COMMAND_COMPLETE_WITH_FLAG = 0x0B,
+	MSG_SIMPLE_QUEUE_TAG = 0x20,
+	MSG_HEAD_OF_QUEUE_TAG = 0x21,
+	MSG_ORDERED_QUEUE_TAG = 0x22
 } SCSI_MESSAGE;
 
 typedef enum
@@ -125,6 +128,7 @@ typedef struct
 	// A 3rd party may be sending the RESERVE/RELEASE commands
 	int reservedId; // 0 -> 7 if reserved. -1 if not reserved.
 	int reserverId; // 0 -> 7 if reserved. -1 if not reserved.
+	// -1 for default medium type, 0x00 - 0xFF for custom type
 
 	uint8_t syncOffset;
 	uint8_t syncPeriod;

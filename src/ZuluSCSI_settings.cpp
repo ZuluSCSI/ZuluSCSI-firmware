@@ -37,7 +37,7 @@
 // SCSI system and device settings
 ZuluSCSISettings g_scsi_settings;
 
-const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "DOS",
+const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "X68000-SCSI","X68000-SASI", "DOS", "NeXT",
 #ifdef PLATFORM_AS400
     "AS400", "AS400_BS520", "AS400_BS522",
 #endif
@@ -211,6 +211,18 @@ void log_getl_8bit_hex(const char *Key, long value)
     logmsg("---- ", Key, " = ", (uint8_t) value);
 }
 
+void log_getl_8bit_hex_with_negative(const char *Key, long value)
+{
+    if (value < 0)
+    {
+        logmsg("---- ", Key, " = ", (int) value);
+    }
+    else
+    {
+        logmsg("---- ", Key, " = ", (uint8_t) value);
+    }
+}
+
 void log_getl_quirks(const char *Key, long value)
 {
     if (value == 0)
@@ -352,6 +364,10 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
         }
     }
 #endif  
+
+    cfgDev.deviceType = type;
+    cfgDev.deviceType = log_ini_getl(section, "Type", cfgDev.deviceType, CONFIGFILE, log_settings, &log_getl_device_type);
+
     switch (m_devPreset[scsiId])
     {
         case DEV_PRESET_NONE:
@@ -380,9 +396,6 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
 
     if (m_devPreset[scsiId] == DEV_PRESET_NONE)
     {
-        cfgDev.deviceType = type;
-        cfgDev.deviceType = log_ini_getl(section, "Type", cfgDev.deviceType, CONFIGFILE, log_settings, &log_getl_device_type);
-        
         if (cfgSys.quirks == S2S_CFG_QUIRKS_APPLE)
         {
             // Use default drive IDs that are recognized by Apple machines
@@ -502,8 +515,10 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.vendorExtensions =  log_ini_getl(section, "VendorExtensions", cfg.vendorExtensions, CONFIGFILE, log_settings);
 
     cfg.blockSize = log_ini_getl(section, "BlockSize", cfg.blockSize, CONFIGFILE, log_settings);
+    cfg.mediumType = log_ini_getl(section, "MediumType", cfg.mediumType, CONFIGFILE, log_settings, &log_getl_8bit_hex_with_negative);
     cfg.tapeLengthMB = log_ini_getl(section, "TapeLengthMB", cfg.tapeLengthMB, CONFIGFILE, log_settings);
-    cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings);
+    cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings, &log_getl_8bit_hex);
+    cfg.tapeBufferedMode = log_ini_getl(section, "TapeBufferedMode", cfg.tapeBufferedMode, CONFIGFILE, log_settings, &log_getl_8bit_hex);
 
 
 #if ENABLE_COW
@@ -634,8 +649,10 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     cfgDev.cowButtonInvert = false;
 #endif
 
+    cfgDev.mediumType = -1;
     cfgDev.tapeLengthMB = 0; // Default tape length in MB is unlimited
     cfgDev.tapeDensity = 0x10; // Default density: QIC-150
+    cfgDev.tapeBufferedMode = 0x00; // Write Good status only after all data has been written to tape
 
 
     // System-specific defaults
@@ -670,12 +687,23 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         cfgSys.mapLunsToIDs = true;
         cfgSys.enableParity = false;
     }
-    else if (strequals(systemPresetName[SYS_PRESET_X68000], presetName))
+    else if (strequals(systemPresetName[SYS_PRESET_X68000], presetName)
+            || strequals(systemPresetName[SYS_PRESET_X68000_SCSI], presetName))
     {
-        m_sysPreset = SYS_PRESET_X68000;
+        m_sysPreset = SYS_PRESET_X68000_SCSI;
         cfgSys.selectionDelay = 0;
         cfgSys.quirks = S2S_CFG_QUIRKS_X68000;
         cfgSys.enableSCSI2 = false;
+        cfgSys.maxSyncSpeed = 5;
+    }
+
+    else if (strequals(systemPresetName[SYS_PRESET_X68000_SASI], presetName))
+    {
+        m_sysPreset = SYS_PRESET_X68000_SASI;
+        cfgSys.selectionDelay = 0;
+        cfgSys.quirks = S2S_CFG_QUIRKS_X68000;
+        cfgSys.enableSCSI2 = false;
+        cfgSys.enableParity = false;
         cfgSys.maxSyncSpeed = 5;
     }
     else if (strequals(systemPresetName[SYS_PRESET_DOS], presetName))
@@ -685,7 +713,12 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         cfgDev.reinsertImmediately = true;
         cfgDev.keepCurrentImageOnBusReset = true;
     }
-
+    else if (strequals(systemPresetName[SYS_PRESET_NeXT], presetName))
+    {
+        m_sysPreset = SYS_PRESET_NeXT;
+        cfgDev.sectorsPerTrack = 139;
+        cfgDev.headsPerCylinder= 4;
+    }
 #ifdef PLATFORM_AS400
     else if (strequals(systemPresetName[SYS_PRESET_AS400], presetName))
     {

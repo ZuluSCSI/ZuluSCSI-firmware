@@ -1,7 +1,7 @@
 /** 
  * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
  * Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com
- * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2026 Rabbit Hole Computing™
  * Copyright (c) 2023 joshua stein <jcs@jcs.org>
  * 
  * It is derived from disk.h in SCSI2SD V6.
@@ -159,6 +159,11 @@ int16_t skip_next(int max);
 // Get and set the eject button bit flags
 uint8_t getEjectButton(uint8_t idx);
 void    setEjectButton(uint8_t idx, int8_t eject_button);
+
+// Perform eject for devices
+void doPerformEject(image_config_t &img);
+
+void scsiDiskCloseTray(image_config_t &img);
 
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type = S2S_CFG_FIXED, bool use_prefix = false);
 void scsiDiskLoadConfig(int target_idx);
