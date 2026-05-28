@@ -2,7 +2,7 @@
  * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
  * Portions Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
  * Portions Copyright (C) 2023 Eric Helgeson
- * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2026 Rabbit Hole Computing™
  *
  * This file is licensed under the GPL version 3 or any later version. 
  * It is derived from disk.c in SCSI2SD V6
@@ -306,6 +306,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     memset(img.serial, 0, sizeof(img.serial));
 
     img.setDeviceType((S2S_CFG_TYPE)devCfg->deviceType);
+    img.mediumType = devCfg->mediumType;
     img.deviceTypeModifier = devCfg->deviceTypeModifier;
     img.sectorsPerTrack = devCfg->sectorsPerTrack;
     img.headsPerCylinder = devCfg->headsPerCylinder;
@@ -378,7 +379,8 @@ static void autoConfigGeometry(image_config_t &img)
         {
             method = "device type floppy";
             sect = 18;
-            head = 80;
+            head = 2;
+            found_chs = true;
         }
         else if (img.scsiSectors <= 1032192)
         {
@@ -405,14 +407,16 @@ static void autoConfigGeometry(image_config_t &img)
         img.sectorsPerTrack = sect;
         img.headsPerCylinder = head;
     }
-
-    bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
-    logmsg("---- Drive geometry from ", method,
-        ": SectorsPerTrack=", (int)img.sectorsPerTrack,
-        " HeadsPerCylinder=", (int)img.headsPerCylinder,
-        " total sectors ", (int)img.scsiSectors,
-        divisible ? " (divisible)" : " (not divisible)"
-        );
+    if (img.bytesPerSector == DEFAULT_BLOCKSIZE)
+    {
+        bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
+        logmsg("---- Drive geometry from ", method,
+            ": SectorsPerTrack=", (int)img.sectorsPerTrack,
+            " HeadsPerCylinder=", (int)img.headsPerCylinder,
+            " total sectors ", (int)img.scsiSectors,
+            divisible ? " (divisible)" : " (not divisible)"
+            );
+        }
 }
 
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)
@@ -486,6 +490,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as disk drive drive");
             img.setDeviceType(S2S_CFG_FIXED);
+            autoConfigGeometry(img);
 #ifdef CONTAINER_IMAGE_SUPPORT
             if (img.file.isContainer())
             {
@@ -506,6 +511,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         {
             logmsg("---- Configuring as floppy drive");
             img.setDeviceType(S2S_CFG_FLOPPY_14MB);
+            autoConfigGeometry(img);
         }
         else if (type == S2S_CFG_MO)
         {
@@ -550,11 +556,6 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             {
                 logmsg("---- Zip 100 disk (", (int)img.file.size(), " bytes) is not exactly ", ZIP100_DISK_SIZE, " bytes, may not work correctly");
             }
-        }
-
-        if (type != S2S_CFG_OPTICAL && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI)
-        {
-            autoConfigGeometry(img);
         }
 
         quirksCheck(&img);
@@ -817,7 +818,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
 
             setRootFolder(target_idx, false, dir_name);
-            g_scsi_settings.initDevice(target_idx, type, true);
+            g_scsi_settings.initDevice(target_idx, type);
         }
     }
 }
@@ -895,6 +896,7 @@ static void scsiDiskSetConfig(int target_idx)
         }
     }
 #endif
+    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType, true);
 }
 
 // Compares the prefix of both files and the scsi ID
@@ -915,13 +917,17 @@ static bool compare_prefix(const char* name, const char* compare)
 /***********************/
 /* Start/stop commands */
 /***********************/
-static void doCloseTray(image_config_t &img)
+void scsiDiskCloseTray(image_config_t &img)
 {
     if (img.ejected)
     {
         uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         dbgmsg("------ Device close tray on ID ", (int)target);
         img.ejected = false;
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
+        {
+            tapeRewind(img, target);
+        }
 
         if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
         {
@@ -933,7 +939,7 @@ static void doCloseTray(image_config_t &img)
 
  
 // Eject and switch image
-static void doPerformEject(image_config_t &img)
+void doPerformEject(image_config_t &img)
 {
     uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     if (img.deviceType == S2S_CFG_FIXED)
@@ -955,7 +961,7 @@ static void doPerformEject(image_config_t &img)
         else if (switchNextImage(img))
         {
             // Image switch successful
-            img.ejected = false;
+            scsiDiskCloseTray(img);
             img.reinsert_after_eject = false;
             blink_cancel();
             blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);
@@ -978,12 +984,12 @@ static void doPerformEject(image_config_t &img)
             switchNextImage(img); // Switch media for next time
             if (g_scsi_settings.getDevice(target)->reinsertImmediately)
             {
-                doCloseTray(img);
+                scsiDiskCloseTray(img);
             }
         }
         else
         {
-            doCloseTray(img);
+            scsiDiskCloseTray(img);
         }
     }
 }
@@ -1263,11 +1269,18 @@ void scsiDiskLoadConfig(int target_idx)
     int blocksize = 0;
     if (scsiDiskGetNextImageName(img, filename, sizeof(filename)))
     {
-        if (img.deviceType == S2S_CFG_SEQUENTIAL && (scsiDev.targets[target_idx].liveCfg.bytesPerSector != 0))
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
-            // For tape drives, keep byte per sector between SD card reinserts as it can be set by the OS
-            blocksize = scsiDev.targets[target_idx].liveCfg.bytesPerSector;
-            g_scsi_settings.getDevice(target_idx)->blockSize = blocksize;
+            // set custom tape density
+            img.tapeDensity = g_scsi_settings.getDevice(target_idx)->tapeDensity;
+            img.tapeBufferedMode = g_scsi_settings.getDevice(target_idx)->tapeBufferedMode;
+
+            if (scsiDev.targets[target_idx].liveCfg.bytesPerSector != 0)
+            {
+                // For tape drives, keep byte per sector between SD card reinserts as it can be set by the OS
+                blocksize = scsiDev.targets[target_idx].liveCfg.bytesPerSector;
+                g_scsi_settings.getDevice(target_idx)->blockSize = blocksize;
+            }
         }
         else
         {
@@ -1922,7 +1935,7 @@ int doTestUnitReady()
             // We are now reporting to host that the drive is open.
             // Simulate a "close" for next time the host polls.
             if (img.deviceType == S2S_CFG_OPTICAL) cdromCloseTray(img);
-            else doCloseTray(img);
+            else scsiDiskCloseTray(img);
 
         }
     }
@@ -2761,13 +2774,18 @@ void diskDataOut()
 #ifdef PLATFORM_AS400
             if (g_disk_transfer.writesame_count)
             {
-                blocks_per_buffer = sizeof(scsiDev.data) / bytesPerSector;
+                // Prefill the SCSI buffer with copies of the sector so that we
+                // can issue larger SD card transfers. Make sure SD card sector
+                // boundaries are aligned to a word boundary.
+                int offset = img.file.position() % SD_SECTOR_SIZE;
+                uint8_t *writesame_buf = scsiDev.data + offset;
+                blocks_per_buffer = (sizeof(scsiDev.data) - offset) / bytesPerSector;
+                blocks_per_buffer -= blocks_per_buffer % 4;
                 if (blocks_per_buffer > g_disk_transfer.writesame_count)
                     blocks_per_buffer = g_disk_transfer.writesame_count;
                 for (i=0; i < blocks_per_buffer; i++)
-
                 {
-                    memcpy(scsiDev.data + (i * bytesPerSector), buf, bytesPerSector);
+                    memmove(writesame_buf + (i * bytesPerSector), buf, bytesPerSector);
                 }
                 uint32_t blocks_written = 0;
                 
@@ -2780,7 +2798,7 @@ void diskDataOut()
                     }
 
                     uint32_t bytes_to_write = blocks_to_write * bytesPerSector;
-                    if (img.file.write(scsiDev.data, bytes_to_write) != bytes_to_write)
+                    if (img.file.write(writesame_buf, bytes_to_write) != bytes_to_write)
                     {
                         logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
                         scsiDev.status = CHECK_CONDITION;
@@ -3047,6 +3065,17 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
             {
                 break;
             }
+        }
+
+        // The skip mask must cover every sector the host expects. If the
+        // loop exits with sectors unfilled, those bytes in `buffer` are
+        // stale from the previous transfer — shipping them to the host
+        // would silently corrupt the read. Fail the command instead.
+        if (read_ok && sectors_remaining > 0)
+        {
+            logmsg("Skip Read mask exhausted with ", (int)sectors_remaining,
+                   " sectors unfilled");
+            read_ok = false;
         }
 
         if (!read_ok)
@@ -3320,7 +3349,27 @@ int16_t skip_next(int max) {
     }
 }
 
+// AS/400 Skip Read/Write entry point
+//
+// Per IBM ESS SCSI Command Reference SC26-7297-01 §"Skip Read"/"Skip Write"
+// (opcodes X'E8' / X'EA', pages 66-67):
+//   - Mask Length=0 specifies a mask length of 256.
+//   - Transfer Length=0 specifies that no data is to be transferred. This
+//     is not an error.
+//   - Maximum transfer length is 256 blocks; larger values return Check
+//     Condition / Illegal Request - Invalid Field in CDB.
 void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t skip_command) {
+
+    if (blocks > 256)
+    {
+        logmsg("Skip command rejected: transfer length ", (int)blocks, " > 256");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+        scsiDev.phase = STATUS;
+        g_disk_transfer.skip_command = 0;
+        return;
+    }
 
     g_disk_transfer.skip_lba = lba;
     g_disk_transfer.skip_blocks = blocks;
@@ -3434,7 +3483,7 @@ int scsiDiskCommand()
         {
             // Start device and close tray if open
             scsiDev.target->started = 1;
-            doCloseTray(img);
+            scsiDiskCloseTray(img);
         }
         else if (eject || img.deviceType == S2S_CFG_ZIP100 || img.eject_on_stop)
         {
@@ -3957,7 +4006,7 @@ void scsiDiskPoll()
             if (img.reinsert_on_inquiry)
             {
                 if (img.deviceType == S2S_CFG_OPTICAL) cdromCloseTray(img);
-                else doCloseTray(img);
+                else scsiDiskCloseTray(img);
             }
         }
     }
@@ -3981,12 +4030,18 @@ void scsiDiskReset()
 #ifdef ENABLE_AUDIO_OUTPUT
     audio_stop(0xFF, true);
 #endif
-    // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
     for (int i = 0; i < S2S_MAX_TARGETS; ++i)
     {
+
         image_config_t &img = g_DiskImages[i];
-        if (img.deviceType == S2S_CFG_OPTICAL && !g_scsi_settings.getDevice(i)->keepCurrentImageOnBusReset)
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
+            // rewind drive
+            tapeRewind(img, i);
+        }
+        else  if (img.deviceType == S2S_CFG_OPTICAL && !g_scsi_settings.getDevice(i)->keepCurrentImageOnBusReset)
+        {
+            // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
             cdromReinsertFirstImage(img);
         }
     }
@@ -4039,7 +4094,7 @@ static void genericLoadImage(image_config_t &img, const char* next_filename)
     }
     else
     {
-        doCloseTray(img);
+        scsiDiskCloseTray(img);
     }
 }
 

@@ -9,13 +9,13 @@ on:
 jobs:
   analyze_crashlog:
     name: Analyze crash log
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     if: |
       (github.event_name == 'issue_comment' && (
         contains(github.event.comment.body, 'CRASH!') ||
         contains(github.event.comment.body, 'WATCHDOG TIMEOUT'))) ||
       (github.event_name == 'issues' && (
-          contains(github.event.issue.body, 'CRASH!') ||
+          contains(github.event.issue.body, 'CRASH!')  ||
           contains(github.event.issue.body, 'WATCHDOG TIMEOUT')))
     permissions:
       issues: write

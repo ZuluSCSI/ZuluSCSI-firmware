@@ -654,14 +654,19 @@ static void scsi_accel_rp2040_stopWrite(volatile int *resetFlag)
 void scsi_accel_rp2040_finishWrite(volatile int *resetFlag)
 {
     uint32_t start = millis();
-    while (g_scsi_dma_state != SCSIDMA_IDLE && !*resetFlag)
+    while (g_scsi_dma_state != SCSIDMA_IDLE)
     {
+        if (*resetFlag)
+        {
+            scsi_accel_rp2040_stopWrite(resetFlag);
+            break;
+        }
+
         if ((uint32_t)(millis() - start) > 5000)
         {
             logmsg("scsi_accel_rp2040_finishWrite() timeout");
             scsi_accel_log_state();
             *resetFlag = 1;
-            break;
         }
 
         if (g_scsi_dma_state == SCSIDMA_WRITE_DONE || *resetFlag)
@@ -716,8 +721,9 @@ static void process_dma_readbuf()
 
     if (g_scsi_dma.wide)
     {
-        // Read 16 bits per IO word
-        uint32_t parity = 0xFFFFFFFF;
+        // Read 16 bits per IO word. Parity is verified on each word so that
+        // errors cannot cancel across words.
+        bool parity_error = false;
         while (src + 4 < end)
         {
             for (int unroll = 0; unroll < 4; unroll++)
@@ -725,7 +731,7 @@ static void process_dma_readbuf()
                 uint32_t word = *src++;
                 *(uint16_t*)dst = (uint16_t)word;
                 dst += 2;
-                parity ^= word;
+                if (!scsi_check_parity_16bit(~word)) parity_error = true;
             }
         }
 
@@ -734,26 +740,27 @@ static void process_dma_readbuf()
             uint32_t word = *src++;
             *(uint16_t*)dst = (uint16_t)word;
             dst += 2;
-            parity ^= word;
+            if (!scsi_check_parity_16bit(~word)) parity_error = true;
         }
 
-        if (!scsi_check_parity_16bit(parity))
+        if (parity_error)
         {
-            dbgmsg("16-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
+            dbgmsg("16-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes);
             g_scsi_dma.parityerror = true;
         }
     }
     else
     {
-        // Read 8 bits per IO word
-        uint32_t parity = 0xFFFFFFFF;
+        // Read 8 bits per IO word. Parity is verified on each word so that
+        // errors cannot cancel across words.
+        bool parity_error = false;
         while (src + 4 < end)
         {
             for (int unroll = 0; unroll < 4; unroll++)
             {
                 uint32_t word = *src++;
                 *dst++ = (uint8_t)word;
-                parity ^= word;
+                if (!scsi_check_parity(~word)) parity_error = true;
             }
         }
 
@@ -761,12 +768,12 @@ static void process_dma_readbuf()
         {
             uint32_t word = *src++;
             *dst++ = (uint8_t)word;
-            parity ^= word;
+            if (!scsi_check_parity(~word)) parity_error = true;
         }
 
-        if (!scsi_check_parity(parity))
+        if (parity_error)
         {
-            dbgmsg("8-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes, " xor ", parity);
+            dbgmsg("8-bit parity error at ", (int)(dst - g_scsi_dma.app_buf), "/", (int)g_scsi_dma.app_bytes);
             g_scsi_dma.parityerror = true;
         }
     }
@@ -1279,6 +1286,19 @@ static void setup_scsi_dma_irq()
 
 void scsi_accel_rp2040_init()
 {
+    if (g_channels_claimed)
+    {
+        volatile int abort_reset = 1;
+        if (g_scsi_dma_state == SCSIDMA_WRITE || g_scsi_dma_state == SCSIDMA_WRITE_DONE)
+        {
+            scsi_accel_rp2040_stopWrite(&abort_reset);
+        }
+        else if (g_scsi_dma_state == SCSIDMA_READ || g_scsi_dma_state == SCSIDMA_READ_DONE)
+        {
+            scsi_accel_rp2040_stopRead();
+        }
+    }
+
     g_scsi_dma_state = SCSIDMA_IDLE;
     scsidma_config_gpio();
 

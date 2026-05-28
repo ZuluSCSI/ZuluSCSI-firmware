@@ -36,6 +36,7 @@
 #include "vhd_support.h"
 #include "ui.h"
 #include "ZuluSCSI_disk.h"
+#include <numeric>
 
 #include <scsi2sd.h>
 extern "C" {
@@ -88,6 +89,7 @@ static struct {
     // Information about currently selected drive
     int target_id;
     uint32_t sectorsize;
+    uint32_t lcm_scsi_vs_sd_sectorsize;
     uint32_t sectorcount;
     uint32_t sectorcount_all;
     uint32_t sectors_done;
@@ -211,6 +213,24 @@ void delay_with_poll(uint32_t ms)
         pollPauseOnEjectButton();
         platform_poll();
         delay(1);
+    }
+}
+
+// Map a SCSI peripheral device type to a human-readable name.
+// Returns nullptr for unsupported (non-block) types — the initiator skips
+// those rather than attempting to clone them.
+static const char *initiatorPeripheralTypeName(uint8_t device_type, bool removable)
+{
+    switch (device_type)
+    {
+        case SCSI_DEVICE_TYPE_DIRECT_ACCESS:  return removable ? "Removable " : "Disk";
+        case SCSI_DEVICE_TYPE_SEQUENTIAL:     return "Sequential (Tape)";
+        case SCSI_DEVICE_TYPE_WRITE_ONCE:     return "Write Once";
+        case SCSI_DEVICE_TYPE_CD:             return "Optical (CD/DVD)";
+        case SCSI_DEVICE_TYPE_MO:             return "Optical Memory (Magneto-optical)";
+        case SCSI_DEVICE_TYPE_MEDIA_CHANGER:  return "Media Changer";
+        case SCSI_DEVICE_TYPE_DISK_ARRAY:     return "Disk Array";
+        default:                              return nullptr;
     }
 }
 
@@ -350,6 +370,18 @@ void scsiInitiatorMainLoop()
                     " capacity ", (int)g_initiator_state.sectorcount,
                     " sectors x ", (int)g_initiator_state.sectorsize, " bytes");
 
+                // Calculate the LCM of the SCSI medium's sector size vs SD sector size for transfer optimization
+                uint32_t sectorsize = g_initiator_state.sectorsize;
+                g_initiator_state.lcm_scsi_vs_sd_sectorsize = 0;
+                if (sectorsize != SD_SECTOR_SIZE) 
+                {
+                    uint32_t gcd = std::gcd(sectorsize, SD_SECTOR_SIZE);
+                    uint32_t factor = sectorsize / gcd;
+                    uint32_t lcm_alignment = factor * SD_SECTOR_SIZE;
+                    if (factor <= UINT32_MAX / SD_SECTOR_SIZE)
+                        g_initiator_state.lcm_scsi_vs_sd_sectorsize = lcm_alignment;
+                }
+
                 UIInitiatorReadCapOk(g_initiator_state.target_id, (S2S_CFG_TYPE)g_initiator_state.device_type, g_initiator_state.sectorcount, g_initiator_state.sectorsize);
                 
                 g_initiator_state.sectorcount_all = g_initiator_state.sectorcount;
@@ -410,43 +442,32 @@ void scsiInitiatorMainLoop()
                     g_initiator_state.max_sector_per_transfer = 256;
                 }
 
+                // Limit sectors per transfer based on buffer size
+                uint32_t max_by_buffer = sizeof(scsiDev.data) / g_initiator_state.sectorsize;
+                if (max_by_buffer < g_initiator_state.max_sector_per_transfer)
+                {
+                    g_initiator_state.max_sector_per_transfer = max_by_buffer;
+                }
+
+
                 logmsg("SCSI Version ", (int) g_initiator_state.ansi_version);
                 logmsg("[SCSI", g_initiator_state.target_id,"]");
                 logmsg("  Vendor = \"", vendor,"\"");
                 logmsg("  Product = \"", product,"\"");
                 logmsg("  Version = \"", revision,"\"");
 
-                // Device type pass list
-                switch (g_initiator_state.device_type)
+
+                const char *typeName = initiatorPeripheralTypeName(
+                    g_initiator_state.device_type, g_initiator_state.removable);
+
+                if (typeName == nullptr)
                 {
-                    case SCSI_DEVICE_TYPE_DIRECT_ACCESS:
-                        logmsg("  SCSI Device Type = ", g_initiator_state.removable ? "Removable ": "Disk");
-                        break;
-                    case SCSI_DEVICE_TYPE_SEQUENTIAL:
-                        logmsg("  SCSI Device Type = ", "Sequential (Tape)");
-                        break;
-                    case SCSI_DEVICE_TYPE_WRITE_ONCE:
-                        logmsg("  SCSI Device Type = ", "Write Once");
-                        break;
-                    case SCSI_DEVICE_TYPE_CD:
-                        logmsg("  SCSI Device Type = ", "Optical (CD/DVD)");
-                        break;;
-                    case SCSI_DEVICE_TYPE_MO:
-                        logmsg("  SCSI Device Type = ", "Optical Memory (Magneto-optical)");
-                        break;
-                    case SCSI_DEVICE_TYPE_MEDIA_CHANGER:
-                        logmsg("  SCSI Device Type = ", "Write Once");
-                        break;
-                    case SCSI_DEVICE_TYPE_DISK_ARRAY:
-                        logmsg("  SCSI Device Type = ", "Disk Array");
-                        break;
-                    default:
-                        logmsg("  SCSI Peripheral device type id ", g_initiator_state.device_type, " unsupported. Skipping this device");
-                        g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
-                        return;
+                    logmsg("  SCSI Peripheral device type id ", g_initiator_state.device_type, " unsupported. Skipping this device");
+                    g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
+                    return;
                 }
-                
-                // GT TODO - info about the drive
+
+                logmsg("  SCSI Device Type = ", typeName);
 
                 if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_CD)
                 {
@@ -1289,9 +1310,27 @@ static void scsiInitiatorWriteDataToSd(FsFile &file, bool use_callback)
     uint32_t len = g_initiator_transfer.bytes_scsi_done - g_initiator_transfer.bytes_sd;
     if (start + len > bufsize) len = bufsize - start;
 
-    // Try to do writes in multiple of 512 bytes
-    // This allows better performance for SD card access.
-    if (len >= 512) len &= ~511;
+
+    // Try to do writes in multiples that align to both SCSI sectors and SD card sectors.
+    // SD cards use 512-byte sectors, so writes should be 512-byte aligned for performance.
+    // LCM(512, 520) = 33280 bytes = 64 SCSI sectors = 65 SD sectors.
+    uint32_t lcm_alignment = g_initiator_state.lcm_scsi_vs_sd_sectorsize;
+    uint32_t sectorsize = g_initiator_state.sectorsize;
+    if (sectorsize == SD_SECTOR_SIZE)
+    {
+        if (len >= SD_SECTOR_SIZE) {
+            len &= ~(SD_SECTOR_SIZE - 1);
+        }
+    }
+    else if (lcm_alignment > 0 && len >= lcm_alignment)
+    {
+        len -= len % lcm_alignment;
+    }
+    else if (len >= sectorsize)
+    {
+        // not enough for LCM alignment, but write complete sectors
+        len -= len % sectorsize;
+    }
 
     // Start writing to SD card and simultaneously reading more from SCSI bus
     uint8_t *buf = &scsiDev.data[start];
