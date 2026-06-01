@@ -142,11 +142,6 @@
 #define ENABLE_COW 1
 #endif
 
-// Masks for buttons
-#define EJECT_BTN_MASK (1|2)
-#define USER_BTN_MASK  (4)
-
-
 // Zip disk  media sizes
 #define ZIP100_DISK_SIZE    100663296 // bytes
 #define ZIP250_DISK_SIZE    250640384 // bytes

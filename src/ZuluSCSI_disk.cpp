@@ -317,7 +317,14 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     img.reinsert_on_inquiry = devCfg->reinsertOnInquiry;
     img.reinsert_after_eject = devCfg->reinsertAfterEject;
     img.eject_on_stop = devCfg->ejectOnStop;
-    img.ejectButton = devCfg->ejectButton;
+    if (devCfg->ejectButton > 0 && (devCfg->ejectButton & EJECT_BTN_MASK) == 0)
+    {
+        logmsg("---- For SCSI target ", (int)target_idx, ": EjectButton=", (int)devCfg->ejectButton," is outside of eject button bitmask ", (uint8_t)EJECT_BTN_MASK);
+    }
+    else
+    {
+        setEjectButton(target_idx, devCfg->ejectButton);
+    }
     img.ejectFixedDiskEnable = devCfg->ejectFixedDiskEnable;
     img.ejectFixedDiskDelay = devCfg->ejectFixedDiskDelay;
     img.ejectFixedDiskReadOnly = devCfg->ejectFixedDiskReadOnly;
@@ -1322,6 +1329,8 @@ void setEjectButton(uint8_t idx, int8_t eject_button)
 {
     g_DiskImages[idx].ejectButton = eject_button;
     g_scsi_settings.getDevice(idx)->ejectButton = eject_button;
+    platform_set_eject_button(eject_button);
+
 }
 
 // Check if we have multiple drive images to cycle when drive is ejected.

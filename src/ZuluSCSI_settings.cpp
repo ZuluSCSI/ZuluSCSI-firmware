@@ -961,7 +961,10 @@ const bool ZuluSCSISettings::isEjectButtonSet()
     bool is_set = false;
     for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
-        if (m_dev[i].ejectButton != 0)
+        if (
+            (m_dev[i].ejectButton & EJECT_BTN_MASK) != 0
+            || (m_dev[i].cowButton & (EJECT_BTN_MASK | USER_BTN_MASK)) != 0
+        )
         {
             is_set = true;
             break;

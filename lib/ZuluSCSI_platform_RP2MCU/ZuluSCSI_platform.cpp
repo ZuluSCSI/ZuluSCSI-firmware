@@ -94,6 +94,7 @@ static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
 static bool g_led_state = false;
 static uint8_t g_console_buttons = 0;
+static uint8_t g_enabled_eject_buttons = 0;
 static struct {
     uint32_t slice;
     uint32_t chan;
@@ -115,6 +116,7 @@ typedef enum
     USB_INPUT_LOG_TO_SD,
     USB_INPUT_BUTTON_1,
     USB_INPUT_BUTTON_2,
+    USB_INPUT_BUTTON_4,
     USB_INPUT_MEDIA_SUBMENU
 }
 usb_input_type_t;
@@ -1436,17 +1438,32 @@ const uint8_t* platform_get_8byte_mcu_id()
 uint8_t platform_get_buttons()
 {
     static bool init_buttons = false;
-    if (!g_displayEnabled) // use legacy button pressing stuff
-    {
-        uint8_t buttons = 0;
+    uint8_t buttons = 0;
 
-    #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-        if (g_scsi_settings.getSystem()->enableCDAudio)
-        {   // pulled to VCC via resistor, sinking when pressed
-            if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
-        }
-        else if (!g_displayEnabled)
+#if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    if (g_scsi_settings.getSystem()->enableCDAudio)
+    {   // pulled to VCC via resistor, sinking when pressed
+        if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+    }
+    else if (!g_displayEnabled)
+    {
+        if (!init_buttons)
         {
+            init_buttons = true;
+            //        pin             function       pup   pdown  out    state  fast
+            gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_SIO, true, false, false, false, false);
+            gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
+        }
+        // SDA = button 1, SCL = button 2
+        if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
+        if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
+    }
+#elif defined(ZULUSCSI_WIDE) && defined(GPIO_EJECT_BTN)
+    // EJECT_BTN = 1
+    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
+#elif defined(GPIO_I2C_SDA)
+    if (!g_displayEnabled)
+    {
             if (!init_buttons)
             {
                 init_buttons = true;
@@ -1455,53 +1472,55 @@ uint8_t platform_get_buttons()
                 gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
             }
             // SDA = button 1, SCL = button 2
-            if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
-            if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
-        }
-    #elif defined(GPIO_EJECT_BTN)
-        // EJECT_BTN = 1
-        if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
-    #elif defined(GPIO_I2C_SDA)
         // SDA = button 1, SCL = button 2
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
         if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
-    #endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-        // Virtual buttons from console
-        if (g_console_buttons != 0)
-        {
-            buttons |= g_console_buttons;
-            g_console_buttons = 0;
-        }
-
-        // Simple debouncing logic: handle button releases after 100 ms delay.
-        static uint32_t debounce;
-        static uint8_t buttons_debounced = 0;
-
-        if (buttons != 0)
-        {
-            buttons_debounced = buttons;
-            debounce = millis();
-        }
-        else if ((uint32_t)(millis() - debounce) > 100)
-        {
-            buttons_debounced = 0;
-        }
-
-        return buttons_debounced;
     }
-    else
+#  ifdef GPIO_EJECT_BTN
+    // EJECT_BTN = 4
+    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 4;
+#  endif
+#endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    // Virtual buttons from console
+    if (g_console_buttons != 0)
     {
-        return 0;
+        buttons |= g_console_buttons;
+        g_console_buttons = 0;
     }
+
+    // Simple debouncing logic: handle button releases after 100 ms delay.
+    static uint32_t debounce;
+    static uint8_t buttons_debounced = 0;
+
+    if (buttons != 0)
+    {
+        buttons_debounced = buttons;
+        debounce = millis();
+    }
+    else if ((uint32_t)(millis() - debounce) > 100)
+    {
+        buttons_debounced = 0;
+    }
+
+    return buttons_debounced;
 }
 
-bool platform_has_phy_eject_button()
+uint8_t platform_phy_eject_button()
 {
-#ifdef ZULUSCSI_WIDE
-    return true;
+#ifdef GPIO_EJECT_BTN
+#  ifdef ZULUSCSI_BLASTER
+    return 4;
+#  else
+    return 1;
+#  endif
 #else
-    return false;
+    return 0;
 #endif
+}
+
+void platform_set_eject_button(uint8_t eject_button)
+{
+    g_enabled_eject_buttons |= eject_button & EJECT_BTN_MASK;
 }
 
 /************************************/
@@ -1815,6 +1834,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
             case '2':
                 input_type = USB_INPUT_BUTTON_2;
                 break;
+            case '4':
+                input_type = USB_INPUT_BUTTON_4;
+                break;
             case 'M':
             case 'm':
                 input_type = USB_INPUT_MEDIA_SUBMENU;
@@ -1850,8 +1872,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'u' - reboot into the UF2 bootloader\r\n"
                 "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
-                "    '1' - push function button 1 (eject, switch image)\r\n"
-                "    '2' - push function button 2 (eject, switch image)\r\n"
+                (g_enabled_eject_buttons & 1) ? "    '1' - push function button 1 (eject, switch image)\r\n" : "",
+                (g_enabled_eject_buttons & 2) ? "    '2' - push function button 2 (eject, switch image)\r\n" : "",
+                (g_enabled_eject_buttons & 4) ? "    '4' - push function button 4 (eject, switch image)\r\n" : "",
                 "    'm' - media management (image select, eject, insert)\r\n"
                 "  press 'y' after a command to confirm and execute"
             );
@@ -1903,6 +1926,10 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     logmsg("Pushed function button 2");
                     g_console_buttons |= 2;
                     break;
+                case USB_INPUT_BUTTON_4:
+                    logmsg("Pushed function button 4");
+                    g_console_buttons |= 4;
+                    break;
                 case USB_INPUT_MEDIA_SUBMENU:
                     *scratch0 = 0;
                     serialMediaMenuEnter();
@@ -1945,6 +1972,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     break;
                 case USB_INPUT_BUTTON_2:
                     logmsg("Push function button 2, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_BUTTON_4:
+                    logmsg("Push function button 4, press 'y' to engage or any key to clear");
                     break;
                 case USB_INPUT_MEDIA_SUBMENU:
                     logmsg("Enter media management submenu, press 'y' to engage or any key to clear");

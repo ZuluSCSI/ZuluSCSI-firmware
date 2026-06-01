@@ -49,6 +49,21 @@
 #include "ZuluSCSI_platform_gpio_RP2040.h"
 #endif
 
+// Masks for buttons
+#ifdef ZULUSCSI_WIDE
+#  define EJECT_BTN_MASK (1)
+#  define USER_BTN_MASK  (0)
+#elif defined(ZULUSCSI_BLASTER)
+#  define EJECT_BTN_MASK (1|2|4)
+#  define USER_BTN_MASK  (0)
+#elif defined(ZULUSCSI_RP2040)
+#  define EJECT_BTN_MASK (1|2)
+#  define USER_BTN_MASK  (0)
+#else
+#  define EJECT_BTN_MASK (0)
+#  define USER_BTN_MASK  (0)
+#endif
+
 #include "scsiHostPhy.h"
 
 
@@ -218,8 +233,11 @@ static inline bool scsi_check_parity(uint32_t w)
 
 #endif
 
-// Returns true if the board has a physical eject button 
-bool platform_has_phy_eject_button();
+// Returns the default eject button number if the board has a physical eject button 
+uint8_t platform_phy_eject_button();
+
+// Track which eject buttons are enabled
+void platform_set_eject_button(uint8_t eject_button);
 
 #ifdef __cplusplus
 }
