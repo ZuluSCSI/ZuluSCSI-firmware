@@ -164,7 +164,8 @@ void platform_boot_to_main_firmware();
 
 // True if the board has a physical eject button
 uint8_t platform_phy_eject_button();
-inline voidplatform_set_eject_button(uint8_t eject_button){};
+void platform_set_eject_button(uint8_t eject_button);
+void platform_set_cow_button(uint8_t cow_button);
 
 // Configuration customizations based on DIP switch settings
 // When DIPSW1 is on, Apple quirks are enabled by default.

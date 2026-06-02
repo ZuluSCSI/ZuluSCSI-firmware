@@ -798,7 +798,7 @@ bool findHDDImages()
       {
         if( getEjectButton(id) != 0)
         {
-          logmsg("-- SCSI ID: ", (int)id, " type: ", (int) s2s_getConfigById(id)->deviceType, " button mask: ", getEjectButton(id));
+          logmsg("-- SCSI ID: ", (int)id, " type: ", (int) s2s_getConfigById(id)->deviceType, " button: ", getEjectButton(id));
         }
       }
     }
@@ -1199,7 +1199,7 @@ static void init_eject_button()
       )
       {
           setEjectButton(i, platform_phy_eject_button());
-          logmsg("Setting hardware eject button to the first ejectable device on SCSI ID ", (int)i);
+          logmsg("Setting hardware eject button ", (int)platform_phy_eject_button(), " to the first ejectable device on SCSI ID ", (int)i);
           break;
       }
     }
