@@ -746,9 +746,10 @@ bool findHDDImages()
       else
       {
         logmsg("SCSI ID: ", (int)(cfg->scsiId & S2S_CFG_TARGET_ID_BITS),
-              ", BlockSize: ", (int)cfg->bytesPerSector,
               ", Type: ", (int)cfg->deviceType,
               ", Quirks: ", (int)cfg->quirks,
+              ", BlockSize: ", (int)cfg->bytesPerSector,
+              ", Sectors: ", (int) cfg->scsiSectors,
               ", Size: ", capacity_kB, "kB",
               typeIsRemovable((S2S_CFG_TYPE)cfg->deviceType) ? ", Removable" : ""
               );
@@ -765,7 +766,7 @@ bool findHDDImages()
         {
           removable_count++;
           last_removable_device = id;
-          if ( getEjectButton(id) !=0 )
+          if (getEjectButton(id) != 0)
           {
             eject_btn_set++;
           }
@@ -777,8 +778,8 @@ bool findHDDImages()
   {
     // If there is a removable device
     if (eject_btn_set == 1)
-      logmsg("Eject set to device with ID: ", last_removable_device);
-    else if (eject_btn_set == 0 && !platform_has_phy_eject_button())
+      logmsg("Eject button ", (int) getEjectButton(last_removable_device), " set to device with SCSI ID: ", (int)last_removable_device);
+    else if (eject_btn_set == 0 && !platform_phy_eject_button())
     {
       logmsg("Found 1 removable device, to set an eject button see EjectButton in the '", CONFIGFILE,"', or the http://zuluscsi.com/manual");
     }
@@ -797,13 +798,13 @@ bool findHDDImages()
       {
         if( getEjectButton(id) != 0)
         {
-          logmsg("-- SCSI ID: ", (int)id, " type: ", (int) s2s_getConfigById(id)->deviceType, " button mask: ", getEjectButton(id));
+          logmsg("-- SCSI ID: ", (int)id, " type: ", (int) s2s_getConfigById(id)->deviceType, " button: ", getEjectButton(id));
         }
       }
     }
     else
     {
-      if (platform_has_phy_eject_button())
+      if (platform_phy_eject_button())
         logmsg("Other removable devices found, to set an eject button for different SCSI IDs see EjectButton in the '", CONFIGFILE,"', or the http://zuluscsi.com/manual");
       else
         logmsg("Multiple removable devices, to set an eject button see EjectButton in the '", CONFIGFILE,"', or the http://zuluscsi.com/manual");
@@ -1184,7 +1185,7 @@ static void kiosk_restore_images();
 
 static void init_eject_button()
 {
-  if (platform_has_phy_eject_button() &&  !g_scsi_settings.isEjectButtonSet())
+  if (platform_phy_eject_button() &&  !g_scsi_settings.isEjectButtonSet())
   {
     for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
@@ -1197,8 +1198,8 @@ static void init_eject_button()
           || dev_type == S2S_CFG_SEQUENTIAL
       )
       {
-          setEjectButton(i, 1);
-          logmsg("Setting hardware eject button to the first ejectable device on SCSI ID ", (int)i);
+          setEjectButton(i, platform_phy_eject_button());
+          logmsg("Setting hardware eject button ", (int)platform_phy_eject_button(), " to the first ejectable device on SCSI ID ", (int)i);
           break;
       }
     }

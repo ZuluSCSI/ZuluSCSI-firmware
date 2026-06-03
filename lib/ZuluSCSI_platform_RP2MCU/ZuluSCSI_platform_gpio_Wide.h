@@ -134,6 +134,7 @@
 
 // Ejection button
 #define GPIO_EJECT_BTN 44
+#define PLATFORM_DEFAULT_EJECT_BUTTON 1
 
 // Enable sniffer functionality
 // Captures all SCSI signals except OUT_SEL and OUT_BSY
