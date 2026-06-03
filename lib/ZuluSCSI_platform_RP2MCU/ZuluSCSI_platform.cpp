@@ -263,11 +263,11 @@ mass_storage_mode platform_rebooted_into_mass_storage()
     if (mode != MASS_STORAGE_MODE_NONE)
         return mode;
     volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
-    if (*scratch0 == REBOOT_INTO_MASS_STORAGE_MAGIC_NUM)
+    if ((*scratch0 & REBOOT_PURPOSE_MASK) == REBOOT_INTO_MASS_STORAGE_MAGIC_NUM)
     {
         mode = MASS_STORAGE_MODE_SD;
     }
-    else if (*scratch0 == REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM)
+    else if ((*scratch0 & REBOOT_PURPOSE_MASK) == REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM)
     {
         mode = MASS_STORAGE_MODE_IMAGES;
     }   
@@ -772,6 +772,14 @@ void platform_late_init()
         gpio_conf(SCSI_OUT_ACK,   GPIO_FUNC_SIO, false,false, true,  true, true);
         gpio_conf(SCSI_OUT_ATN,   GPIO_FUNC_SIO, false,false, true,  true, true);
 #endif  // PLATFORM_HAS_INITIATOR_MODE
+    }
+
+// Restore COW state after reboot
+    volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+    volatile uint32_t* scratch1 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH1_OFFSET);
+    if (*scratch0 & REBOOT_ENABLE_COW_BIT)
+    {
+        g_cow_button_state = REBOOT_COW_BUTTON_STATE_MASK & *scratch1;
     }
 
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
@@ -1783,6 +1791,10 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 #endif
 
 #ifdef PLATFORM_MASS_STORAGE
+static inline uint32_t get_cow_enabled_bit()
+{
+    return g_cow_button_state ? REBOOT_ENABLE_COW_BIT : 0;
+}
 static usb_input_type_t serial_menu(menu_context_t context)
 {
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
@@ -1795,6 +1807,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
     static usb_input_type_t input_type = USB_INPUT_NONE;
     
     volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+    volatile uint32_t* scratch1 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH1_OFFSET);
     
     int32_t available = Serial.available();
     bool yes_keyed = false;
@@ -1919,11 +1932,11 @@ static usb_input_type_t serial_menu(menu_context_t context)
         }
         else if (yes_keyed)
         {
+            *scratch0 = 0;
             switch (input_type)
             {
                 case USB_INPUT_REBOOT:
                     logmsg("Rebooting");
-                    *scratch0 = 0;
                     g_rebooting = true;
                     break;
                 case USB_INPUT_REBOOT_MSC:
@@ -1938,23 +1951,19 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     break;
                 case USB_INPUT_REBOOT_UF2:
                     logmsg("Rebooting into UF2 mode");
-                    *scratch0 =0;
                     g_uf2_mode = true;
                     g_rebooting = true;
                     break;
                 case USB_INPUT_TOGGLE_DEBUG:
-                    *scratch0 = 0;
                     g_log_debug = !g_log_debug;
                     logmsg("Turning debug logging ", g_log_debug ? "on" : "off");
                     break;
                 case USB_INPUT_LOG_TO_SD:
-                    *scratch0 = 0;
                     g_log_to_sd = !g_log_to_sd;
                     logmsg("Turning logging to SD card ", g_log_to_sd ? "on" : "off");
                     break;
                 case USB_INPUT_EXIT_MSC:
                     logmsg("Exiting mass storage");
-                    *scratch0 = 0;
                     break;
                 case USB_INPUT_BUTTON_1:
                     if (g_enabled_eject_buttons & 1)
@@ -2005,13 +2014,19 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     }
                     break;
                 case USB_INPUT_MEDIA_SUBMENU:
-                    *scratch0 = 0;
                     serialMediaMenuEnter();
                     break;
                 default:
-                    *scratch0 = 0;
                     input_type = USB_INPUT_NONE;
             }
+
+            if (get_cow_enabled_bit())
+            {
+                *scratch0 |= get_cow_enabled_bit();
+                *scratch1 &= ~REBOOT_COW_BUTTON_STATE_MASK;
+                *scratch1 |= g_cow_button_state; 
+            }
+
             usb_input_type_t return_type = input_type;
             input_type = USB_INPUT_NONE;
             return return_type;
