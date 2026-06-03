@@ -320,7 +320,12 @@ uint32_t scsiHostWrite(const uint8_t *data, uint32_t count)
 
 uint32_t scsiHostRead(uint8_t *data, uint32_t count)
 {
-    int parityError = 0;
+    int parityErrorValue = 0;
+    int* parityError = nullptr;
+    if (g_scsi_settings.getSystem()->enableParity)
+    {
+        parityError = &parityErrorValue;
+    }
     uint32_t fullcount = count;
 
     int cd_start = SCSI_IN(CD);
@@ -329,7 +334,7 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
     if ((count & 1) == 0 && ((uint32_t)data & 1) == 0)
     {
         // Even number of bytes, use accelerated routine
-        count = scsi_accel_host_read(data, count, &parityError, g_scsiHostBusWidth, &g_scsiHostPhyReset);
+        count = scsi_accel_host_read(data, count, parityError, g_scsiHostBusWidth, &g_scsiHostPhyReset);
     }
     else
     {
@@ -360,12 +365,12 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
 
             if (g_scsiHostBusWidth == 0)
             {
-                data[i] = scsiHostReadOneByte(&parityError);
+                data[i] = scsiHostReadOneByte(parityError);
             }
 #ifdef ZULUSCSI_WIDE
             else if (g_scsiHostBusWidth == 1)
             {
-                uint16_t word = scsiHostReadOneWord(&parityError);
+                uint16_t word = scsiHostReadOneWord(parityError);
                 data[i++] = word & 0xFF;
                 if (i < count) data[i] = word >> 8;
             }
@@ -380,7 +385,7 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
 
     scsiLogDataIn(data, count);
 
-    if (g_scsiHostPhyReset || parityError)
+    if (g_scsiHostPhyReset || (parityError && *parityError))
     {
         return 0;
     }
