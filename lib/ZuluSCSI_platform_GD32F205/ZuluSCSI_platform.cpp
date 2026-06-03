@@ -887,9 +887,9 @@ uint8_t platform_get_buttons()
     return buttons_debounced;
 }
 
-bool platform_has_phy_eject_button()
+uint8_t platform_phy_eject_button()
 {
-    return g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2;
+    return (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2) ? 1 : 0;
 }
 
 /***********************/

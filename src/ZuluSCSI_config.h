@@ -142,11 +142,6 @@
 #define ENABLE_COW 1
 #endif
 
-// Masks for buttons
-#define EJECT_BTN_MASK (1|2)
-#define USER_BTN_MASK  (4)
-
-
 // Zip disk  media sizes
 #define ZIP100_DISK_SIZE    100663296 // bytes
 #define ZIP250_DISK_SIZE    250640384 // bytes
@@ -154,6 +149,8 @@
 #define TAPE_DEFAULT_NAME  "tape.000"
 
 // Settings for rebooting
+#define REBOOT_PURPOSE_MASK 0x00FFFFFF
 #define REBOOT_INTO_MASS_STORAGE_MAGIC_NUM 0x5eeded
-#define REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM 0xde1ce5
-
+#define REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM 0x3e1ce5
+#define REBOOT_ENABLE_COW_BIT 0x01000000
+#define REBOOT_COW_BUTTON_STATE_MASK 0xFF

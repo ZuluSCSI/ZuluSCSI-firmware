@@ -63,11 +63,18 @@ bool COWStorage::initialize(const char *filename, uint32_t scsi_block_size, scsi
     if (btn_config > 0 && btn_config <= 8)
     {
         btn_configmask = 1 << (btn_config - 1);
-        btn_bitmask = platform_get_buttons() & (EJECT_BTN_MASK | USER_BTN_MASK);
-
-        if (device_settings->cowButtonInvert)
+        uint8_t override_btn_mask = btn_configmask & platform_get_cow_buttons_override();
+        if (override_btn_mask)
         {
-            btn_bitmask = btn_bitmask ^ (EJECT_BTN_MASK | USER_BTN_MASK);
+            btn_bitmask = override_btn_mask;
+        }
+        else
+        {
+            btn_bitmask = platform_get_buttons() & (EJECT_BTN_MASK | USER_BTN_MASK);
+            if (device_settings->cowButtonInvert)
+            {
+                btn_bitmask = btn_bitmask ^ (EJECT_BTN_MASK | USER_BTN_MASK);
+            }
         }
     }
 
