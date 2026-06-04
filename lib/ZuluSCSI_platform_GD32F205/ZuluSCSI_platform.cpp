@@ -306,8 +306,10 @@ void platform_init()
         // Buttons
         gpio_init(EJECT_BTN_PORT, GPIO_MODE_IPU, 0, EJECT_BTN_PIN);
         gpio_init(USER_BTN_PORT, GPIO_MODE_IPU, 0, USER_BTN_PIN);
+    #ifdef ENABLE_AUDIO_OUTPUT
         init_audio_gpio();
         g_audio_enabled = true;
+    #endif
     }
     else if (g_zuluscsi_version == ZSVersion_v1_2)
     {
@@ -424,7 +426,9 @@ void platform_late_init()
         set_termination(ODE_DIP_PORT, ODE_DIPSW3_PIN, "DIPSW3");
         g_log_debug = get_debug(ODE_DIP_PORT, ODE_DIPSW2_PIN, "DIPSW2");
         g_enable_apple_quirks = get_quirks(ODE_DIP_PORT, ODE_DIPSW1_PIN, "DIPSW1");
+#ifdef ENABLE_AUDIO_OUTPUT
         audio_setup();
+#endif
     }
     else if (ZSVersion_v1_2 == g_zuluscsi_version)
     {
@@ -451,6 +455,7 @@ void platform_late_init()
 
 void platform_post_sd_card_init()
 {
+#ifdef ENABLE_AUDIO_OUTPUT
     #ifdef PLATFORM_VERSION_1_1_PLUS
     if (ZSVersion_v1_2 == g_zuluscsi_version && g_scsi_settings.getSystem()->enableCDAudio)
     {
@@ -460,6 +465,7 @@ void platform_post_sd_card_init()
         audio_setup();
     }
     #endif
+#endif
 }
 
 void platform_write_led(bool state)
@@ -845,7 +851,7 @@ uint8_t platform_get_buttons()
     if (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2)
     {
         if (!gpio_input_bit_get(EJECT_BTN_PORT, EJECT_BTN_PIN))   buttons |= 1;
-        if (!gpio_input_bit_get(USER_BTN_PORT, USER_BTN_PIN))   buttons |= 4;
+        if (!gpio_input_bit_get(USER_BTN_PORT, USER_BTN_PIN))   buttons |= 2;
     }
     else
     {
@@ -870,26 +876,21 @@ uint8_t platform_get_buttons()
         buttons_debounced = 0;
     }
 
-#ifdef PLATFORM_VERSION_1_1_PLUS
-    if(g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2)
-    {
-        static uint8_t previous = 0x00;
-        uint8_t bitmask = buttons_debounced & USER_BTN_MASK;
-        uint8_t ejectors = (previous ^ bitmask) & previous;
-        previous = bitmask;
-        if (ejectors & USER_BTN_MASK)
-        {
-            logmsg("User button pressed - feature not yet implemented");
-        }
-    }
-#endif
-
     return buttons_debounced;
 }
 
 uint8_t platform_phy_eject_button()
 {
     return (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2) ? 1 : 0;
+}
+
+uint8_t platform_get_eject_button_mask()
+{
+    return (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2) ? 1 : 3;
+}
+uint8_t platform_get_user_button_mask()
+{
+    return (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2) ? 2 : 0;
 }
 
 /***********************/
