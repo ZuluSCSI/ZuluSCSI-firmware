@@ -29,7 +29,8 @@ extern bool g_ode_audio_stopped;
 
 // size of the a circular audio sample buffer, in bytes
 // these must be divisible by 1024
-#define AUDIO_BUFFER_SIZE 16384
+#define AUDIO_BUFFER_SIZE 10240
+// #define AUDIO_BUFFER_SIZE 16384
 // #define AUDIO_BUFFER_SIZE 8192 // ~46.44ms 
 // # define AUDIO_BUFFER_SIZE 4096 // reduce memory usage
 #define AUDIO_BUFFER_HALF_SIZE AUDIO_BUFFER_SIZE / 2
