@@ -73,6 +73,7 @@ SdFs SD;
 FsFile g_logfile;
 bool g_rawdrive_active;
 bool g_romdrive_active;
+bool g_defaultdrive_active;
 bool g_sdcard_present;
 bool g_rebooting = false;
 bool g_log_to_sd;
@@ -716,6 +717,12 @@ bool findHDDImages()
   if(usedDefaultId > 0) {
     logmsg("Some images did not specify a SCSI ID. Last file will be used at ID ", usedDefaultId);
   }
+
+    if (DEFAULT_DRIVE_SCSI_ID >= 0 && !s2s_getConfigById(DEFAULT_DRIVE_SCSI_ID))
+    {
+      g_defaultdrive_active = scsiDiskActivateDefaultDrive(DEFAULT_DRIVE_SCSI_ID, DEFAULT_DRIVE_DEVICE_TYPE);
+    }
+
   root.close();
 
   g_romdrive_active = scsiDiskActivateRomDrive();
@@ -1190,13 +1197,7 @@ static void init_eject_button()
     for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
       S2S_CFG_TYPE dev_type = (S2S_CFG_TYPE)scsiDev.targets[i].cfg->deviceType;
-      if (dev_type == S2S_CFG_OPTICAL
-          ||dev_type == S2S_CFG_ZIP100
-          || dev_type == S2S_CFG_REMOVABLE
-          || dev_type == S2S_CFG_FLOPPY_14MB
-          || dev_type == S2S_CFG_MO
-          || dev_type == S2S_CFG_SEQUENTIAL
-      )
+      if (scsiDiskIsTypeRemovable(dev_type))
       {
           setEjectButton(i, platform_phy_eject_button());
           logmsg("Setting hardware eject button ", (int)platform_phy_eject_button(), " to the first ejectable device on SCSI ID ", (int)i);
@@ -1234,16 +1235,22 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     dbgmsg("SD card init failed, sdErrorCode: ", (int)SD.sdErrorCode(),
            " sdErrorData: ", (int)SD.sdErrorData());
 
-    if (romDriveCheckPresent())
+
+    g_defaultdrive_active = scsiDiskActivateDefaultDrive( DEFAULT_DRIVE_SCSI_ID, DEFAULT_DRIVE_DEVICE_TYPE);
+
+    if (romDriveCheckPresent() || g_defaultdrive_active)
     {
       reinitSCSI();
-      if (g_romdrive_active)
+      if (g_romdrive_active || g_defaultdrive_active)
       {
         if (g_displayEnabled)
         {
           sdCardStateChanged(g_sdcard_present, g_romdrive_active);
         }
-        logmsg("Enabled ROM drive without SD card");
+        if (g_romdrive_active)
+          logmsg("Enabled ROM drive without SD card");
+        if (g_defaultdrive_active)
+          logmsg("Enabled default drive without SD card");
         return;
       }
     }
@@ -1425,6 +1432,19 @@ void control_disk_swap()
 #endif
 }
 
+// Eject all removable type drives, disables auto insert.
+static void ejectAllRemovableMedia()
+{
+  for (uint8_t scsi_id = 0; scsi_id < S2S_MAX_TARGETS; scsi_id++)
+  {
+    S2S_CFG_TYPE type = (S2S_CFG_TYPE)scsiDev.targets[scsi_id].cfg->deviceType;
+    if (s2s_getConfigById(scsi_id) && scsiDiskIsTypeRemovable(type))
+    {
+      scsiDiskEjectDisableAutoInsert(scsi_id);
+    }
+  }
+}
+
 extern "C" void zuluscsi_main_loop(void)
 {
     // While timer for reboot is going, attempt to close SD images
@@ -1515,7 +1535,7 @@ extern "C" void zuluscsi_main_loop(void)
         {
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
-
+          ejectAllRemovableMedia();
           if (g_displayEnabled)
           {
             sdCardStateChanged(g_sdcard_present, g_romdrive_active);
@@ -1550,7 +1570,7 @@ extern "C" void zuluscsi_main_loop(void)
           sdCardStateChanged(g_sdcard_present, g_romdrive_active);
         }
       }
-      else if (!g_romdrive_active)
+      else if (!g_romdrive_active && !g_defaultdrive_active)
       {
         blinkStatus(BLINK_ERROR_NO_SD_CARD);
         platform_reset_watchdog();
@@ -1564,7 +1584,7 @@ extern "C" void zuluscsi_main_loop(void)
           }
         }
       }
-    } while (!g_sdcard_present && !g_romdrive_active && !is_initiator && !g_rebooting);
+    } while (!g_sdcard_present && !g_romdrive_active &&  !g_defaultdrive_active && !is_initiator && !g_rebooting);
   }
 }
 

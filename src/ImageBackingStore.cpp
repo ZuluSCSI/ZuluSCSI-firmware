@@ -61,8 +61,13 @@ ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_s
         return; // COW mode successfully enabled
     }
 #endif
-
-    if (strncasecmp(filename, "RAW:", 4) == 0)
+    if (strncasecmp(filename, "DEFAULT:", 8) == 0)
+    {
+        // \todo delete me
+        logmsg("Setting up default drive");
+        m_isdefault = true;
+    }
+    else if (strncasecmp(filename, "RAW:", 4) == 0)
     {
         char *endptr, *endptr2;
         m_bgnsector = strtoul(filename + 4, &endptr, 0);
@@ -214,6 +219,10 @@ bool ImageBackingStore::isOpen()
         {
             return (m_romhdr.imagesize > 0);
         }
+        else if (m_isdefault)
+        {
+            return true;
+        }
         return false;
     }
     else
@@ -250,6 +259,11 @@ bool ImageBackingStore::isRaw()
 bool ImageBackingStore::isRom()
 {
     return m_isrom;
+}
+
+bool ImageBackingStore::isDefault()
+{
+    return m_isdefault;
 }
 
 bool ImageBackingStore::isFolder()
