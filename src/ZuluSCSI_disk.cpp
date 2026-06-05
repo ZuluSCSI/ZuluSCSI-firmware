@@ -317,7 +317,23 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     img.reinsert_on_inquiry = devCfg->reinsertOnInquiry;
     img.reinsert_after_eject = devCfg->reinsertAfterEject;
     img.eject_on_stop = devCfg->ejectOnStop;
-    img.ejectButton = devCfg->ejectButton;
+    if (devCfg->ejectButton > 0)
+    {
+        uint8_t eject_button_bit = 1 << (devCfg->ejectButton - 1);
+        if ((eject_button_bit & EJECT_BTN_MASK) == 0)
+        {
+            logmsg("---- For SCSI target ", (int)target_idx, ": EjectButton=", (int)devCfg->ejectButton," is over the usable button number(s) ", (int)EJECT_BTN_MAX);
+        }
+        else
+        {
+            setEjectButton(target_idx, devCfg->ejectButton);
+        }
+    }
+    uint8_t cow_button_bit = 1 << (devCfg->cowButton - 1);
+    if ((devCfg->cowButton > 0) && (cow_button_bit & (((EJECT_BTN_MASK | USER_BTN_MASK) << 1) | 1)))
+    {
+        platform_set_cow_button(cow_button_bit);
+    }
     img.ejectFixedDiskEnable = devCfg->ejectFixedDiskEnable;
     img.ejectFixedDiskDelay = devCfg->ejectFixedDiskDelay;
     img.ejectFixedDiskReadOnly = devCfg->ejectFixedDiskReadOnly;
@@ -1322,6 +1338,8 @@ void setEjectButton(uint8_t idx, int8_t eject_button)
 {
     g_DiskImages[idx].ejectButton = eject_button;
     g_scsi_settings.getDevice(idx)->ejectButton = eject_button;
+    platform_set_eject_button(eject_button);
+
 }
 
 // Check if we have multiple drive images to cycle when drive is ejected.
@@ -1403,12 +1421,14 @@ static void diskEjectAction(uint8_t buttonId)
     for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
         image_config_t &img = g_DiskImages[i];
-        if (img.ejectButton & buttonId)
+        if (img.ejectButton == 0) continue;
+        uint8_t eject_button_bit = 1 << (img.ejectButton - 1);
+        if (eject_button_bit & buttonId)
         {
             if (img.deviceType == S2S_CFG_OPTICAL)
             {
                 found = true;
-                logmsg("Eject button ", (int)buttonId, " pressed, passing to CD drive SCSI ID: ", (int)i);
+                logmsg("Eject button ", (int)img.ejectButton, " pressed, passing to CD drive SCSI ID: ", (int)i);
                 cdromPerformEject(img);
             }
             else if (img.deviceType == S2S_CFG_ZIP100 
@@ -1418,7 +1438,7 @@ static void diskEjectAction(uint8_t buttonId)
                     || img.deviceType == S2S_CFG_SEQUENTIAL)
             {
                 found = true;
-                logmsg("Eject button ", (int)buttonId, " pressed, passing to device SCSI ID: ", (int)i);
+                logmsg("Eject button ", (int)img.ejectButton, " pressed, passing to device SCSI ID: ", (int)i);
                 doPerformEject(img);
             }
             else if (img.deviceType == S2S_CFG_FIXED
@@ -1428,7 +1448,7 @@ static void diskEjectAction(uint8_t buttonId)
                 uint8_t target = img.scsiId & 7;
                 if (!img.ejectFixedDiskPending && !img.ejectFixedDiskWriteBlocked)
                 {
-                    logmsg("Eject button ", (int)buttonId, " pressed, scheduling eject for fixed disk SCSI ID: ", (int)i);
+                    logmsg("Eject button ", (int)img.ejectButton, " pressed, scheduling eject for fixed disk SCSI ID: ", (int)i);
                     img.ejectFixedDiskPending = true;
                     img.ejectFixedDiskTimer = millis();
                     blink_cancel();
@@ -1437,7 +1457,7 @@ static void diskEjectAction(uint8_t buttonId)
                 }
                 else
                 {
-                    logmsg("Eject button ", (int)buttonId, " pressed, but eject in progress or already ejected for SCSI ID: ", (int)i);
+                    logmsg("Eject button ", (int)img.ejectButton, " pressed, but eject in progress or already ejected for SCSI ID: ", (int)i);
                 }
             }
         }
@@ -1445,7 +1465,16 @@ static void diskEjectAction(uint8_t buttonId)
 
     if (!found)
     {
-        logmsg("Eject button ", (int)buttonId, " pressed, but no drives with EjectButton=", (int)buttonId, " setting found!");
+        uint8_t button_num = 0;
+        for (uint8_t i = 0; i < 8; i++)
+        {
+            if (buttonId & (1 << i))
+            {
+                button_num = i + 1;
+                break;
+            }
+        }
+        logmsg("Eject button ", (int)button_num, " pressed, but no drives with EjectButton=", (int)button_num, " setting found!");
     }
 }
 
