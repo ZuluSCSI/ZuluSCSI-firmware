@@ -70,7 +70,16 @@ struct bytearray {
     const uint8_t *data;
     size_t len;
 };
+
+struct fullbytearray {
+    fullbytearray(const uint8_t *data, size_t len): data(data), len(len) {}
+    const uint8_t *data;
+    size_t len;
+};
+
 void log_raw(bytearray array);
+
+void log_raw(fullbytearray array);
 
 inline void log_raw()
 {

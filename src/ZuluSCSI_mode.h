@@ -29,3 +29,5 @@ int modeSelectCDAudioControlPage(int pageLen, int idx);
 
 int modeMaxSectorSize();
 int modeMinSectorSize();
+
+void modeLogData(uint8_t scsi_id, const char* msg, const uint8_t *buf, size_t len);

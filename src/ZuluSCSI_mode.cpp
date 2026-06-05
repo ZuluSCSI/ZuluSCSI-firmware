@@ -24,7 +24,7 @@
 
 #include <stdint.h>
 #include <string.h>
-
+#include <minIni.h>
 #ifdef ENABLE_AUDIO_OUTPUT
 #include "ZuluSCSI_audio.h"
 #endif
@@ -238,4 +238,19 @@ int modeMinSectorSize()
         return scsiTapeMinSectorSize();
     }
     return MIN_SECTOR_SIZE;
+}
+
+extern "C"
+void modeLogData(uint8_t scsi_id, const char* msg, const uint8_t *buf, size_t len)
+{
+    static int8_t log_data = -1;
+    if (log_data == -1)
+    {
+        log_data = ini_getbool("SCSI", "LogModeData", 0, CONFIGFILE);
+    }
+
+    if (log_data)
+    {
+        logmsg("SCSIID: ", (int)scsi_id, " ", msg , "\n", fullbytearray(buf, len));
+    }
 }

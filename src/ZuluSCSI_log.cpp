@@ -145,6 +145,17 @@ void log_raw(bytearray array)
     }
 }
 
+void log_raw(fullbytearray array)
+{
+    for (size_t i = 0; i < array.len; i++)
+    {
+        log_raw(array.data[i]);
+        log_raw(" ");
+    }
+}
+
+
+
 void logmsg_start()
 {
     log_raw("[", (int)millis(), "ms] ");
