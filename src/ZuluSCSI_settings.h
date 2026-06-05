@@ -72,6 +72,8 @@ typedef enum
     SYS_PRESET_AS400,
     SYS_PRESET_AS400_BS520,
     SYS_PRESET_AS400_BS522,
+    SYS_PRESET_AS400_CISC,
+    SYS_PRESET_AS400_PPC,
 #endif
 } scsi_system_preset_t;
 
@@ -83,6 +85,8 @@ typedef enum
 #ifdef PLATFORM_AS400
     DEV_PRESET_AS400_BS520,
     DEV_PRESET_AS400_BS522,
+    DEV_PRESET_AS400_CISC,
+    DEV_PRESET_AS400_PPC,
 #endif
 } scsi_device_preset_t;
 

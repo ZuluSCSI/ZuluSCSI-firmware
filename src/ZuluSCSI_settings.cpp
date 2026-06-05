@@ -39,12 +39,12 @@ ZuluSCSISettings g_scsi_settings;
 
 const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "X68000-SCSI","X68000-SASI", "DOS", "NeXT",
 #ifdef PLATFORM_AS400
-    "AS400", "AS400_BS520", "AS400_BS522",
+    "AS400", "AS400_BS520", "AS400_BS522", "AS400_CISC", "AS400_PPC",
 #endif
 };
 const char *devicePresetName[] = {"", "ST32430N", 
 #ifdef PLATFORM_AS400
-    "AS400_BS520", "AS400_BS522",
+    "AS400_BS520", "AS400_BS522", "AS400_CISC", "AS400_PPC",
 #endif
 };
 
@@ -353,11 +353,13 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
             case SYS_PRESET_AS400:
             // For the AS400 preset, we want to set the device preset to the block size 520
                 [[fallthrough]];
-            case SYS_PRESET_AS400_BS520:
-                m_devPreset[scsiId] = DEV_PRESET_AS400_BS520;
+            case SYS_PRESET_AS400_BS520: [[fallthrough]];
+            case SYS_PRESET_AS400_CISC:
+                m_devPreset[scsiId] = DEV_PRESET_AS400_CISC;
                 break;
-            case SYS_PRESET_AS400_BS522:
-                m_devPreset[scsiId] = DEV_PRESET_AS400_BS522;
+            case SYS_PRESET_AS400_BS522: [[fallthrough]];
+            case SYS_PRESET_AS400_PPC:
+                m_devPreset[scsiId] = DEV_PRESET_AS400_PPC;
                 break;
             default:
                 break;  
@@ -377,12 +379,14 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
             driveinfo = deviceInitST32430N(scsiId);
             break;
 #ifdef PLATFORM_AS400
-        case DEV_PRESET_AS400_BS520:
+        case DEV_PRESET_AS400_BS520: [[fallthrough]];
+        case DEV_PRESET_AS400_CISC:
             deviceInitAS400(scsiId);
             cfgDev.blockSize = 520;
             driveinfo = as400_driveinfo_dgvs09u_fixed;
             break;
-        case DEV_PRESET_AS400_BS522:
+        case DEV_PRESET_AS400_BS522: [[fallthrough]];
+        case DEV_PRESET_AS400_PPC:
             deviceInitAS400(scsiId);
             cfgDev.blockSize = 522;
             driveinfo = as400_driveinfo_dgvs09u_fixed;
@@ -725,16 +729,18 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
         m_sysPreset = SYS_PRESET_AS400;
     }
-    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS520], presetName))
+    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS520], presetName)
+            || strequals(systemPresetName[SYS_PRESET_AS400_CISC], presetName))
     {
         deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
-        m_sysPreset = SYS_PRESET_AS400_BS520;
+        m_sysPreset = SYS_PRESET_AS400_CISC;
     }
-    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS522], presetName))
+    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS522], presetName)
+            || strequals(systemPresetName[SYS_PRESET_AS400_PPC], presetName))
     {
 
         deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
-        m_sysPreset = SYS_PRESET_AS400_BS522;
+        m_sysPreset = SYS_PRESET_AS400_PPC;
     }
 #endif 
     else
