@@ -94,6 +94,10 @@ static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
 static bool g_led_state = false;
 static uint8_t g_console_buttons = 0;
+static uint8_t g_enabled_eject_buttons = 0;
+static uint8_t g_enabled_cow_buttons = 0;
+static uint8_t g_cow_button_state = 0;
+
 static struct {
     uint32_t slice;
     uint32_t chan;
@@ -115,6 +119,8 @@ typedef enum
     USB_INPUT_LOG_TO_SD,
     USB_INPUT_BUTTON_1,
     USB_INPUT_BUTTON_2,
+    USB_INPUT_BUTTON_3,
+    USB_INPUT_BUTTON_4,
     USB_INPUT_MEDIA_SUBMENU
 }
 usb_input_type_t;
@@ -257,11 +263,11 @@ mass_storage_mode platform_rebooted_into_mass_storage()
     if (mode != MASS_STORAGE_MODE_NONE)
         return mode;
     volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
-    if (*scratch0 == REBOOT_INTO_MASS_STORAGE_MAGIC_NUM)
+    if ((*scratch0 & REBOOT_PURPOSE_MASK) == REBOOT_INTO_MASS_STORAGE_MAGIC_NUM)
     {
         mode = MASS_STORAGE_MODE_SD;
     }
-    else if (*scratch0 == REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM)
+    else if ((*scratch0 & REBOOT_PURPOSE_MASK) == REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM)
     {
         mode = MASS_STORAGE_MODE_IMAGES;
     }   
@@ -766,6 +772,14 @@ void platform_late_init()
         gpio_conf(SCSI_OUT_ACK,   GPIO_FUNC_SIO, false,false, true,  true, true);
         gpio_conf(SCSI_OUT_ATN,   GPIO_FUNC_SIO, false,false, true,  true, true);
 #endif  // PLATFORM_HAS_INITIATOR_MODE
+    }
+
+// Restore COW state after reboot
+    volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+    volatile uint32_t* scratch1 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH1_OFFSET);
+    if (*scratch0 & REBOOT_ENABLE_COW_BIT)
+    {
+        g_cow_button_state = REBOOT_COW_BUTTON_STATE_MASK & *scratch1;
     }
 
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
@@ -1436,17 +1450,32 @@ const uint8_t* platform_get_8byte_mcu_id()
 uint8_t platform_get_buttons()
 {
     static bool init_buttons = false;
-    if (!g_displayEnabled) // use legacy button pressing stuff
-    {
-        uint8_t buttons = 0;
+    uint8_t buttons = 0;
 
-    #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-        if (g_scsi_settings.getSystem()->enableCDAudio)
-        {   // pulled to VCC via resistor, sinking when pressed
-            if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
-        }
-        else if (!g_displayEnabled)
+#if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    if (g_scsi_settings.getSystem()->enableCDAudio)
+    {   // pulled to VCC via resistor, sinking when pressed
+        if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+    }
+    else if (!g_displayEnabled)
+    {
+        if (!init_buttons)
         {
+            init_buttons = true;
+            //        pin             function       pup   pdown  out    state  fast
+            gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_SIO, true, false, false, false, false);
+            gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
+        }
+        // SDA = button 1, SCL = button 2
+        if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
+        if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
+    }
+#elif defined(ZULUSCSI_WIDE) && defined(GPIO_EJECT_BTN)
+    // EJECT_BTN = 1
+    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
+#elif defined(GPIO_I2C_SDA)
+    if (!g_displayEnabled)
+    {
             if (!init_buttons)
             {
                 init_buttons = true;
@@ -1455,53 +1484,67 @@ uint8_t platform_get_buttons()
                 gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
             }
             // SDA = button 1, SCL = button 2
-            if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
-            if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
-        }
-    #elif defined(GPIO_EJECT_BTN)
-        // EJECT_BTN = 1
-        if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
-    #elif defined(GPIO_I2C_SDA)
         // SDA = button 1, SCL = button 2
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
         if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
-    #endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-        // Virtual buttons from console
-        if (g_console_buttons != 0)
-        {
-            buttons |= g_console_buttons;
-            g_console_buttons = 0;
-        }
-
-        // Simple debouncing logic: handle button releases after 100 ms delay.
-        static uint32_t debounce;
-        static uint8_t buttons_debounced = 0;
-
-        if (buttons != 0)
-        {
-            buttons_debounced = buttons;
-            debounce = millis();
-        }
-        else if ((uint32_t)(millis() - debounce) > 100)
-        {
-            buttons_debounced = 0;
-        }
-
-        return buttons_debounced;
     }
-    else
+#  ifdef GPIO_EJECT_BTN
+    // EJECT_BTN = 4
+    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 4;
+#  endif
+#endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    // Virtual buttons from console
+    if (g_console_buttons != 0)
     {
-        return 0;
+        buttons |= g_console_buttons;
+        g_console_buttons = 0;
     }
+
+    // Simple debouncing logic: handle button releases after 100 ms delay.
+    static uint32_t debounce;
+    static uint8_t buttons_debounced = 0;
+
+    if (buttons != 0)
+    {
+        buttons_debounced = buttons;
+        debounce = millis();
+    }
+    else if ((uint32_t)(millis() - debounce) > 100)
+    {
+        buttons_debounced = 0;
+    }
+
+    return buttons_debounced;
 }
 
-bool platform_has_phy_eject_button()
+uint8_t platform_phy_eject_button()
 {
-#ifdef ZULUSCSI_WIDE
-    return true;
+#ifdef GPIO_EJECT_BTN
+#  ifdef ZULUSCSI_BLASTER
+    return 3;
+#  else
+    return 1;
+#  endif
 #else
-    return false;
+    return 0;
 #endif
+}
+
+void platform_set_eject_button(uint8_t eject_button)
+{
+    if (eject_button == 0) return;
+    uint8_t eject_btn_bit = 1 << (eject_button - 1);
+    g_enabled_eject_buttons |= eject_btn_bit;
+}
+
+void platform_set_cow_button(uint8_t cow_button)
+{
+    g_enabled_cow_buttons |= cow_button & ((EJECT_BTN_MASK << 1) | 1);
+}
+
+uint8_t platform_get_cow_buttons_override()
+{
+    return g_cow_button_state;
 }
 
 /************************************/
@@ -1748,6 +1791,10 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 #endif
 
 #ifdef PLATFORM_MASS_STORAGE
+static inline uint32_t get_cow_enabled_bit()
+{
+    return g_cow_button_state ? REBOOT_ENABLE_COW_BIT : 0;
+}
 static usb_input_type_t serial_menu(menu_context_t context)
 {
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
@@ -1760,6 +1807,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
     static usb_input_type_t input_type = USB_INPUT_NONE;
     
     volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+    volatile uint32_t* scratch1 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH1_OFFSET);
     
     int32_t available = Serial.available();
     bool yes_keyed = false;
@@ -1810,10 +1858,29 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 input_type = USB_INPUT_LOG_TO_SD;
                 break;
             case '1':
-                input_type = USB_INPUT_BUTTON_1;
+                if (g_enabled_eject_buttons & 1 || g_enabled_cow_buttons & 1)
+                    input_type = USB_INPUT_BUTTON_1;
+                else
+                    ignore_key = true;
                 break;
             case '2':
-                input_type = USB_INPUT_BUTTON_2;
+                if (g_enabled_eject_buttons & 2 || g_enabled_cow_buttons & 2)
+                    input_type = USB_INPUT_BUTTON_2;
+                else
+                    ignore_key = true;
+                break;
+                break;
+            case '3':
+                if (g_enabled_eject_buttons & 4 || g_enabled_cow_buttons & 4)
+                    input_type = USB_INPUT_BUTTON_3;
+                else
+                    ignore_key = true;
+                break;
+            case '4':
+                if (g_enabled_eject_buttons & 8 || g_enabled_cow_buttons & 8)
+                    input_type = USB_INPUT_BUTTON_4;
+                else
+                    ignore_key = true;
                 break;
             case 'M':
             case 'm':
@@ -1848,21 +1915,28 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    's' - reboot with SD card as USB drive\r\n"
                 "    'i' - reboot with images presented as USB drives\r\n"
                 "    'u' - reboot into the UF2 bootloader\r\n"
-                "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
-                "    '1' - push function button 1 (eject, switch image)\r\n"
-                "    '2' - push function button 2 (eject, switch image)\r\n"
+                "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
+                (g_enabled_eject_buttons & 1)   ? "    '1' - push function button 1 (eject, switch image)\r\n" : "",
+                (g_enabled_cow_buttons & 1)     ? "    '1' - push function button 1 (cow init, currently " : "", (g_enabled_cow_buttons & 1) ? ((g_cow_button_state & 1) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (g_enabled_eject_buttons & 2)   ? "    '2' - push function button 2 (eject, switch image)\r\n" : "",
+                (g_enabled_cow_buttons & 2)     ? "    '2' - push function button 2 (cow init, currently ": "",  (g_enabled_cow_buttons & 2) ? ((g_cow_button_state & 2) ? "enabled)\r\n)\r\n" : "disabled)\r\n") : "",
+                (g_enabled_eject_buttons & 4)   ? "    '3' - push function button 3 (eject, switch image)\r\n" : "",
+                (g_enabled_cow_buttons & 4)     ? "    '3' - push function button 3 (cow init, currently ": "", (g_enabled_cow_buttons & 4) ? ((g_cow_button_state & 4) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (g_enabled_eject_buttons & 8)   ? "    '4' - push function button 4 (eject, switch image)\r\n" : "",
+                (g_enabled_cow_buttons & 8)     ? "    '4' - push function button 4 (cow init, currently ": "", (g_enabled_cow_buttons & 8) ? ((g_cow_button_state & 8) ? "enabled)\r\n" : "disabled)\r\n") : "",
+
                 "    'm' - media management (image select, eject, insert)\r\n"
                 "  press 'y' after a command to confirm and execute"
             );
         }
         else if (yes_keyed)
         {
+            *scratch0 = 0;
             switch (input_type)
             {
                 case USB_INPUT_REBOOT:
                     logmsg("Rebooting");
-                    *scratch0 = 0;
                     g_rebooting = true;
                     break;
                 case USB_INPUT_REBOOT_MSC:
@@ -1877,40 +1951,82 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     break;
                 case USB_INPUT_REBOOT_UF2:
                     logmsg("Rebooting into UF2 mode");
-                    *scratch0 =0;
                     g_uf2_mode = true;
                     g_rebooting = true;
                     break;
                 case USB_INPUT_TOGGLE_DEBUG:
-                    *scratch0 = 0;
                     g_log_debug = !g_log_debug;
                     logmsg("Turning debug logging ", g_log_debug ? "on" : "off");
                     break;
                 case USB_INPUT_LOG_TO_SD:
-                    *scratch0 = 0;
                     g_log_to_sd = !g_log_to_sd;
                     logmsg("Turning logging to SD card ", g_log_to_sd ? "on" : "off");
                     break;
                 case USB_INPUT_EXIT_MSC:
                     logmsg("Exiting mass storage");
-                    *scratch0 = 0;
                     break;
                 case USB_INPUT_BUTTON_1:
-                    logmsg("Pushed function button 1");
-                    g_console_buttons |= 1;
+                    if (g_enabled_eject_buttons & 1)
+                    {
+                        logmsg("Ejecting/switching image for function button 1");
+                        g_console_buttons |= 1;
+                    }
+                    else if (g_enabled_cow_buttons & 1)
+                    {
+                        logmsg((g_cow_button_state & 1) ? "Disabling" : "Enabling", " cow init on function button 1");
+                        g_cow_button_state ^= 1;
+                    }
                     break;
                 case USB_INPUT_BUTTON_2:
-                    logmsg("Pushed function button 2");
-                    g_console_buttons |= 2;
+                    if (g_enabled_eject_buttons & 2)
+                    {
+                        logmsg("Ejecting/switching image for function button 2");
+                        g_console_buttons |= 2;
+                    }
+                    else if (g_enabled_cow_buttons & 2)
+                    {
+                        logmsg((g_cow_button_state & 2) ? "Disabling" : "Enabling", " cow init on function button 2");
+                        g_cow_button_state ^= 2;
+                    }
+                    break;
+                case USB_INPUT_BUTTON_3:
+                    if (g_enabled_eject_buttons & 4)
+                    {
+                        logmsg("Ejecting/switching image for function button 3");
+                        g_console_buttons |= 4;
+                    }
+                    else if (g_enabled_cow_buttons & 4)
+                    {
+                        logmsg((g_cow_button_state & 4) ? "Disabling" : "Enabling", " cow init on function button 3");
+                        g_cow_button_state ^= 4;
+                    }
+                    break;
+                case USB_INPUT_BUTTON_4:
+                    if (g_enabled_eject_buttons & 8)
+                    {
+                        logmsg("Ejecting/switching image for function button 4");
+                        g_console_buttons |= 8;
+                    }
+                    else if (g_enabled_cow_buttons & 8)
+                    {
+                        logmsg((g_cow_button_state & 8) ? "Disabling" : "Enabling", " cow init on function button 4");
+                        g_cow_button_state ^= 8;
+                    }
                     break;
                 case USB_INPUT_MEDIA_SUBMENU:
-                    *scratch0 = 0;
                     serialMediaMenuEnter();
                     break;
                 default:
-                    *scratch0 = 0;
                     input_type = USB_INPUT_NONE;
             }
+
+            if (get_cow_enabled_bit())
+            {
+                *scratch0 |= get_cow_enabled_bit();
+                *scratch1 &= ~REBOOT_COW_BUTTON_STATE_MASK;
+                *scratch1 |= g_cow_button_state; 
+            }
+
             usb_input_type_t return_type = input_type;
             input_type = USB_INPUT_NONE;
             return return_type;
@@ -1941,10 +2057,34 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     logmsg("Exit mass storage mode, press 'y' to engage or any key to clear");
                     break;
                 case USB_INPUT_BUTTON_1:
-                    logmsg("Push function button 1, press 'y' to engage or any key to clear");
+                    if (g_enabled_eject_buttons & 1)
+                    {
+                        logmsg("Push function button 1, press 'y' to engage or any key to clear");
+                    }
+                    else if (g_enabled_cow_buttons & 1)
+                    {
+                        logmsg(g_cow_button_state & 1 ? "Disable" : "Enable", " cow init on function button 1, press 'y' to engage or any key to clear");
+                    }
                     break;
                 case USB_INPUT_BUTTON_2:
-                    logmsg("Push function button 2, press 'y' to engage or any key to clear");
+                    if (g_enabled_eject_buttons & 2)
+                    {
+                        logmsg("Push function button 2, press 'y' to engage or any key to clear");
+                    }
+                    else if (g_enabled_cow_buttons & 2)
+                    {
+                        logmsg(g_cow_button_state & 2 ? "Disable" : "Enable", " cow init on function button 2, press 'y' to engage or any key to clear");
+                    }
+                    break;
+                case USB_INPUT_BUTTON_3:
+                    if (g_enabled_eject_buttons & 4)
+                    {
+                        logmsg("Push function button 3, press 'y' to engage or any key to clear");
+                    }
+                    else if (g_enabled_cow_buttons & 4)
+                    {
+                        logmsg(g_cow_button_state & 4 ? "Disable" : "Enable", " cow init on function button 3, press 'y' to engage or any key to clear");
+                    }
                     break;
                 case USB_INPUT_MEDIA_SUBMENU:
                     logmsg("Enter media management submenu, press 'y' to engage or any key to clear");

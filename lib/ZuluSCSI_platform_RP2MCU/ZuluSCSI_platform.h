@@ -49,6 +49,19 @@
 #include "ZuluSCSI_platform_gpio_RP2040.h"
 #endif
 
+// Masks for buttons
+#ifdef ZULUSCSI_WIDE
+#  define EJECT_BTN_MAX  (1)
+#elif defined(ZULUSCSI_BLASTER)
+#  define EJECT_BTN_MAX  (3)
+#elif defined(ZULUSCSI_RP2040)
+#  define EJECT_BTN_MAX  (2)
+#else
+#  define EJECT_BTN_MAX (0)
+#endif
+#define EJECT_BTN_MASK ((1 << EJECT_BTN_MAX) - 1)
+#define USER_BTN_MASK  (0)
+
 #include "scsiHostPhy.h"
 
 
@@ -218,8 +231,20 @@ static inline bool scsi_check_parity(uint32_t w)
 
 #endif
 
-// Returns true if the board has a physical eject button 
-bool platform_has_phy_eject_button();
+// Returns the default eject button number if the board has a physical eject button 
+uint8_t platform_phy_eject_button();
+
+// Track which eject buttons are enabled
+void platform_set_eject_button(uint8_t eject_button);
+
+// Track which COW buttons are enabled
+// Allow cow button to be 1 outside the allowable button numbers for eject
+// This is so it can be used in the USB serial menu system with boards without two physical eject buttons
+void platform_set_cow_button(uint8_t cow_button);
+
+// Get the current state of COW buttons override,
+// This can be tested to see if a cow button is overridden on, if not the current platform_get_buttons() state should be used
+uint8_t platform_get_cow_buttons_override();
 
 #ifdef __cplusplus
 }

@@ -200,7 +200,7 @@ const uint32_t platform_flash_sector_map[] =
 bool platform_firmware_erase(FsFile &file);
 bool platform_firmware_program(FsFile &file);
 
-bool platform_has_phy_eject_button(){return false};
+inline uint8_t platform_phy_eject_button(){return 0};
 
 // SD card driver for SdFat
 
