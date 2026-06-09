@@ -185,17 +185,22 @@ void init_logfile()
                     // Write a copy of the LOGFILEPREV in the LOGFILEDIR directory
                     while(true)
                     {
-                      size_t bytes_read = prev_log_file.readBytes(scsiDev.data, sizeof(scsiDev.data));
-                      if (bytes_read)
+                      int bytes_read = prev_log_file.read(scsiDev.data, sizeof(scsiDev.data));
+                      if (bytes_read < 0)
                       {
-                        size_t bytes_written = destination.write(scsiDev.data, bytes_read);
+                        logmsg("Log rotation error reading ", LOGFILEPREV, " to buffer");
+                        break;
+                      }
+                      if (bytes_read > 0)
+                      {
+                        size_t bytes_written = destination.write((void*)scsiDev.data, bytes_read);
                         if (bytes_written != bytes_read)
                         {
-                          logmsg("Log rotation error copying ", LOGFILEPREV, " to ", filename);
+                          logmsg("Log rotation error writing ", LOGFILEPREV, " to ", filename);
                           break;
                         }
                       }
-                      else
+                      if (bytes_read != sizeof(scsiDev.data))
                       {
                         break;
                       }
