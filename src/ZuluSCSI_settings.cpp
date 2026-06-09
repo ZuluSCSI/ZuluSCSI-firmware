@@ -268,6 +268,7 @@ void log_getl_log_rotate(const char *Key, long value)
         logmsg("---- ", Key, " = ", (int) value, ": ",
            value == 0 ? "Log rotation disabled"
          : value == 1 ? "Rotate log to zululog_prev.txt"
+         : value == 2 ? "Save all rotations in /zululog/"
          : "invalid"
          );
 }

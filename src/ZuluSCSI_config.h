@@ -40,6 +40,9 @@
 // Configuration and log file paths
 #define CONFIGFILE  "zuluscsi.ini"
 #define LOGFILE     "zululog.txt"
+#define LOGFILEPREV "zululog_prev.txt"
+#define LOGFILEROTATE "zululog_rotate"
+#define LOGFILEDIR "zululog"
 #define CRASHFILE   "zuluerr.txt"
 #define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
