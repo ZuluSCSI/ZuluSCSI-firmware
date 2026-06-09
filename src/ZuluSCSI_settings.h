@@ -134,6 +134,8 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     bool logToSDCard;
 
+    int logRotate;
+
 #if ENABLE_COW
     uint16_t cowBufferSize;
 #endif

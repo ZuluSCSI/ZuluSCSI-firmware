@@ -262,6 +262,18 @@ void log_getl_bus_width(const char *Key, long value)
          );
 }
 
+
+void log_getl_log_rotate(const char *Key, long value)
+{
+        logmsg("---- ", Key, " = ", (int) value, ": ",
+           value == 0 ? "Log rotation disabled"
+         : value == 1 ? "Rotate log to zululog_prev.txt"
+         : value == 2 ? "Save all rotations in /zuluscsi_log/"
+         : "invalid"
+         );
+}
+
+
 // Acts just like ini_gets but logs the setting if enabled is true
 static int log_ini_gets(const char *Section, const char *Key, const char *DefValue, char *Buffer, int BufferSize, const char *Filename, bool enabled, void (*custom_message)(const char *Key, char *buffer, int BufferSize) = nullptr)
 {
@@ -614,6 +626,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     cfgSys.logToSDCard = true;
 
+    cfgSys.logRotate = 1;
+
     cfgSys.initiatorParity = true;
 
 #ifdef ENABLE_COW
@@ -808,6 +822,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     cfgSys.maxBusWidth = log_ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE, log_settings, log_getl_bus_width);
     cfgSys.logToSDCard = log_ini_getbool("SCSI", "LogToSDCard", cfgSys.logToSDCard, CONFIGFILE, log_settings);
+    cfgSys.logRotate = log_ini_getl("SCSI", "LogRotate", cfgSys.logRotate, CONFIGFILE, log_settings, log_getl_log_rotate);
+    
     cfgSys.initiatorParity = log_ini_getbool("SCSI", "InitiatorParity", cfgSys.initiatorParity, CONFIGFILE, log_settings);
 
 #if ENABLE_COW
