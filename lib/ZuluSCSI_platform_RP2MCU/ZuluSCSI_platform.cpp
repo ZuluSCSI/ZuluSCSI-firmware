@@ -98,6 +98,10 @@ static uint8_t g_enabled_eject_buttons = 0;
 static uint8_t g_enabled_cow_buttons = 0;
 static uint8_t g_cow_button_state = 0;
 
+#ifdef ZULUSCSI_WIDE
+static bool g_is_sca = false;
+#endif
+
 static struct {
     uint32_t slice;
     uint32_t chan;
@@ -422,6 +426,12 @@ void platform_init()
     bool data_dir_state = false;
 #else
     bool data_dir_state = true;
+#endif
+
+#if defined(ZULUSCSI_WIDE) && defined(GPIO_SCA_TEST)
+    gpio_conf(GPIO_SCA_TEST, GPIO_FUNC_SIO, false, false, false, false, false);
+    g_is_sca = !gpio_get(GPIO_SCA_TEST);
+
 #endif
 
     //        pin             function       pup   pdown  out   state           fast
@@ -1546,6 +1556,14 @@ uint8_t platform_get_cow_buttons_override()
 {
     return g_cow_button_state;
 }
+
+
+#ifdef ZULUSCSI_WIDE
+bool platform_is_sca()
+{
+    return g_is_sca;
+}
+#endif
 
 /************************************/
 /* ROM drive in extra flash space   */

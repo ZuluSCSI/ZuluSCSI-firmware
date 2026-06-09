@@ -93,6 +93,34 @@ int8_t scsiParseId(const char scsi_id_text)
     return -1;
 }
 
+// SCSI ID read from the GPIO I2C expander at boot. -1 = not available.
+static int8_t g_dynamic_scsi_id = -1;
+
+void scsiDiskSetDynamicId(int8_t id)
+{
+    g_dynamic_scsi_id = (id >= 0 && id < S2S_MAX_TARGETS) ? id : -1;
+    if (g_dynamic_scsi_id >= 0)
+        logmsg("Dynamic SCSI ID: ", (int)g_dynamic_scsi_id);
+}
+
+int8_t scsiDiskGetDynamicId()
+{
+    return g_dynamic_scsi_id;
+}
+
+bool scsiDiskHasDynamicDirs()
+{
+    static const char * const dirs[] = {
+        "HDn", "CDn", "REn", "MOn", "TPn", "FDn", "ZPn"
+    };
+    for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++)
+    {
+        if (SD.exists(dirs[i]))
+            return true;
+    }
+    return false;
+}
+
 char scsiEncodeID(const uint8_t scsi_id)
 {
     if (scsi_id >= 0xA && scsi_id <= 0xF)
@@ -810,16 +838,17 @@ bool scsiDiskFolderIsTapeFolder(FsFile *dir)
 {
     char filename[MAX_FILE_PATH + 1];
     dir->getName(filename, sizeof(filename));
-    // string starts with 'tp', the 3rd character is a SCSI ID, and it has more 3 charters
-    // e.g. "tp0 - tape 01"
-    if (strlen(filename) > 3 && strncasecmp("tp", filename, 2) == 0 && scsiParseId(filename[2]) > 0)
+    // string starts with 'tp', the 3rd character is a SCSI ID or the dynamic ID char,
+    // and the name has more than 3 characters — e.g. "tp0 - tape 01" or "tpn - tape"
+    if (strlen(filename) > 3 && strncasecmp("tp", filename, 2) == 0
+        && (scsiParseId(filename[2]) > 0 || tolower(filename[2]) == DYNAMIC_SCSI_ID_CHAR))
     {
         return true;
     }
     return false;
 }
 
-static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* img, S2S_CFG_TYPE type, const char* type_name)
+static void scsiDiskCheckDir(const char * dir_name, int target_idx, image_config_t* img, S2S_CFG_TYPE type, const char* type_name)
 {
     if (SD.exists(dir_name))
     {
@@ -844,7 +873,7 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
 // Otherwise keep current settings.
 static void scsiDiskSetConfig(int target_idx)
 {
-    
+
     image_config_t &img = g_DiskImages[target_idx];
     img.scsiId = target_idx;
 
@@ -854,7 +883,15 @@ static void scsiDiskSetConfig(int target_idx)
     section[4] = scsiEncodeID(target_idx);
     char tmp[32];
 
-    ini_gets(section, "ImgDir", "", tmp, sizeof(tmp), CONFIGFILE);
+    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id);
+
+    // [SCSIn] ImgDir takes priority over [SCSI<X>] ImgDir for the dynamic target.
+    tmp[0] = '\0';
+    if (is_dynamic)
+        ini_gets(DYNAMIC_SCSI_INI_SECTION, "ImgDir", "", tmp, sizeof(tmp), CONFIGFILE);
+    if (!tmp[0])
+        ini_gets(section, "ImgDir", "", tmp, sizeof(tmp), CONFIGFILE);
+
     if (tmp[0])
     {
         logmsg("SCSI", target_idx, " using image directory '", tmp, "'");
@@ -864,6 +901,19 @@ static void scsiDiskSetConfig(int target_idx)
     }
     else
     {
+        // For the dynamic target, check HDn/CDn/etc. directories first.
+        // These take priority over the hardcoded HD<X>/CD<X>/etc. directories.
+        if (is_dynamic)
+        {
+            scsiDiskCheckDir("HDn", target_idx, &img, S2S_CFG_FIXED, "disk");
+            scsiDiskCheckDir("CDn", target_idx, &img, S2S_CFG_OPTICAL, "optical");
+            scsiDiskCheckDir("REn", target_idx, &img, S2S_CFG_REMOVABLE, "removable");
+            scsiDiskCheckDir("MOn", target_idx, &img, S2S_CFG_MO, "magneto-optical");
+            scsiDiskCheckDir("TPn", target_idx, &img, S2S_CFG_SEQUENTIAL, "tape");
+            scsiDiskCheckDir("FDn", target_idx, &img, S2S_CFG_FLOPPY_14MB, "floppy");
+            scsiDiskCheckDir("ZPn", target_idx, &img, S2S_CFG_ZIP100, "Iomega Zip 100");
+        }
+
         strcpy(tmp, "HD0");
         tmp[2] = scsiEncodeID(target_idx);
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_FIXED, "disk");
@@ -913,6 +963,7 @@ static void scsiDiskSetConfig(int target_idx)
     }
 #endif
     g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType, true);
+
 }
 
 // Compares the prefix of both files and the scsi ID
@@ -1105,6 +1156,8 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
     char section[6] = "SCSI0";
     section[4] = scsiEncodeID(target_idx);
 
+    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id);
+
     // sanity check: is provided buffer is long enough to store a filename?
     assert(buflen >= MAX_FILE_PATH);
 
@@ -1128,37 +1181,44 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
         // image directory was found during startup
         char dirname[MAX_FILE_PATH];
         char key[] = "ImgDir";
-        int dirlen = ini_gets(section, key, "", dirname, sizeof(dirname), CONFIGFILE);
+        // For the dynamic target, check [SCSIn] ImgDir first, then [SCSI<X>].
+        int dirlen = 0;
+        if (is_dynamic)
+            dirlen = ini_gets(DYNAMIC_SCSI_INI_SECTION, key, "", dirname, sizeof(dirname), CONFIGFILE);
+        if (!dirlen)
+            dirlen = ini_gets(section, key, "", dirname, sizeof(dirname), CONFIGFILE);
         if (!dirlen)
         {
+            // Reconstruct the default directory name from the device type.
+            // Dynamic targets use the 'n' suffix (HDn, CDn, …); others use the hex ID.
             switch (img.deviceType)
             {
                 case S2S_CFG_FIXED:
-                    strcpy(dirname ,"HD0");
+                    strcpy(dirname, "HD0");
                     break;
                 case S2S_CFG_OPTICAL:
                     strcpy(dirname, "CD0");
-                break;
+                    break;
                 case S2S_CFG_REMOVABLE:
                     strcpy(dirname, "RE0");
-                break;
+                    break;
                 case S2S_CFG_MO:
                     strcpy(dirname, "MO0");
-                break;
+                    break;
                 case S2S_CFG_SEQUENTIAL:
-                    strcpy(dirname ,"TP0");
-                break;
+                    strcpy(dirname, "TP0");
+                    break;
                 case S2S_CFG_FLOPPY_14MB:
                     strcpy(dirname, "FD0");
-                break;
+                    break;
                 case S2S_CFG_ZIP100:
                     strcpy(dirname, "ZP0");
-                break;
+                    break;
                 default:
                     dbgmsg("No matching device type for default directory found");
                     return 0;
             }
-            dirname[2] = scsiEncodeID(target_idx);
+            dirname[2] = is_dynamic ? DYNAMIC_SCSI_ID_CHAR : scsiEncodeID(target_idx);
             if (!SD.exists(dirname))
             {
                 dbgmsg("Default image directory, ", dirname, " does not exist");
@@ -1251,7 +1311,14 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
             char key[5] = "IMG0";
             key[3] = '0' + img.image_index;
 
-            int ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+            // For the dynamic target, check [SCSIn] IMG keys first, then [SCSI<X>].
+            int ret = 0;
+            buf[0] = '\0';
+            if (is_dynamic)
+                ret = ini_gets(DYNAMIC_SCSI_INI_SECTION, key, "", buf, buflen, CONFIGFILE);
+            if (!ret || buf[0] == '\0')
+                ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+
             if (buf[0] != '\0')
             {
                 img.deviceType = g_scsi_settings.getDevice(target_idx)->deviceType;
@@ -1277,6 +1344,16 @@ void scsiDiskLoadConfig(int target_idx)
 {
     // Then settings specific to target ID
     scsiDiskSetConfig(target_idx);
+
+    // Apply [SCSIn] on top of the [SCSI<X>] settings that scsiDiskSetConfig loaded,
+    // then immediately sync g_scsi_settings → g_DiskImages so that scsiDiskGetNextImageName
+    // reads the final device type and settings (not the pre-override values).
+    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id && scsiDiskHasDynamicDirs());
+    if (is_dynamic)
+    {
+        g_scsi_settings.applyDynamicSectionOverrides(target_idx);
+        scsiDiskSetImageConfig(target_idx);
+    }
 
     // Check if we have image specified by name
     char filename[MAX_FILE_PATH];

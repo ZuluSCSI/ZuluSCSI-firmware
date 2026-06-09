@@ -72,6 +72,12 @@
 #define HDIMG_LUN_POS 3                 // Position to embed LUN numbers
 #define HDIMG_BLK_POS 5                 // Position to embed block size numbers
 
+// Dynamic SCSI ID — set at boot from GPIO I2C expander (see ZuluSCSI_sca_hw_config.h).
+// The INI section [SCSIn] and image prefixes HDn/CDn/TPn/etc. apply to this device.
+// [SCSIn] settings take priority over the hardcoded [SCSI<X>] section for this ID.
+#define DYNAMIC_SCSI_INI_SECTION "SCSIn"
+#define DYNAMIC_SCSI_ID_CHAR     'n'
+
 #if defined(CONTROL_BOARD)
 #define MAX_FILE_PATH 260                // Maximum file name length
 #else
