@@ -322,7 +322,7 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
 {
     int parityErrorValue = 0;
     int* parityError = nullptr;
-    if (g_scsi_settings.getSystem()->enableParity)
+    if (g_scsi_settings.getSystem()->initiatorParity)
     {
         parityError = &parityErrorValue;
     }

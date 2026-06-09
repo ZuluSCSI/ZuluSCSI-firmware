@@ -126,6 +126,8 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     uint8_t maxBusWidth;
 
+    bool initiatorParity;
+
     bool logToSDCard;
 
 #if ENABLE_COW

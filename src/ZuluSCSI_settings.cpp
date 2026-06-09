@@ -609,7 +609,10 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 #endif
 
     cfgSys.logToSDCard = true;
-#if ENABLE_COW
+
+    cfgSys.initiatorParity = true;
+
+#ifdef ENABLE_COW
     cfgSys.cowBufferSize = DEFAULT_COW_BUFFER_SIZE;
 #endif
 
@@ -799,6 +802,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     cfgSys.maxBusWidth = log_ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE, log_settings, log_getl_bus_width);
     cfgSys.logToSDCard = log_ini_getbool("SCSI", "LogToSDCard", cfgSys.logToSDCard, CONFIGFILE, log_settings);
+    cfgSys.initiatorParity = log_ini_getbool("SCSI", "InitiatorParity", cfgSys.initiatorParity, CONFIGFILE, log_settings);
 
 #if ENABLE_COW
     cfgSys.cowBufferSize = log_ini_getl("SCSI", "CowBufferSize", cfgSys.cowBufferSize, CONFIGFILE, log_settings);
