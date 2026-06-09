@@ -348,3 +348,17 @@ bool getCustomSPD(uint8_t scsiId, uint8_t *buf, uint16_t *length)
     return false;
 }
 
+extern "C"
+void inquiryLogData(uint8_t scsi_id, const uint8_t pageCode, const char* msg, const uint8_t *buf, size_t len)
+{
+    static int8_t log_data = -1;
+    if (log_data == -1)
+    {
+        log_data = ini_getbool("SCSI", "LogInquiryData", 0, CONFIGFILE);
+    }
+
+    if (log_data)
+    {
+        logmsg("SCSIID: ", (int)scsi_id, " page: ", pageCode," ", msg , "\n", fullbytearray(buf, len));
+    }
+}

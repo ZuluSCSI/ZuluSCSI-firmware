@@ -31,6 +31,7 @@
 #include <string.h>
 #include <ZuluSCSI_platform_config.h>
 #include <ZuluSCSI_platform.h>
+
 #ifdef PLATFORM_AS400
 #include <as400_values.h>
 #endif
@@ -273,6 +274,11 @@ void s2s_scsiInquiry()
 	{
 		scsiDev.data[0] = 0x7F;
 	}
+	uint8_t scsi_id = scsiDev.target->cfg->scsiId & S2S_CFG_TARGET_ID_BITS;
+	const char vpd_string[] = "VPD: ";
+	const char std_string[] = "STD: ";
+	inquiryLogData(scsi_id, pageCode, evpd ? vpd_string: std_string, scsiDev.data, scsiDev.dataLen);
+
 }
 
 uint32_t s2s_getStandardInquiry(

@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <scsi2sd.h>
@@ -44,6 +45,8 @@ bool getCustomVPD(uint8_t scsiId, uint8_t pageCode, uint8_t *buf, uint8_t *lengt
 // If found, copies data into buf and sets *length. Returns true if custom data exists.
 bool getCustomSPD(uint8_t scsiId, uint8_t *buf, uint16_t *length);
 
+
+void inquiryLogData(uint8_t scsi_id, const uint8_t pageCode, const char* msg,  const uint8_t *buf, size_t len);
 #ifdef __cplusplus
 }
 #endif
