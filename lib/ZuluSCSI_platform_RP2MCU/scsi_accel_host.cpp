@@ -229,24 +229,26 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, in
         }
     }
 
+    if (parityError)
+    {
 #ifdef ZULUSCSI_WIDE
-    bool parity_ok;
-    if (busWidth == 0)
-        parity_ok = scsi_check_parity(paritycheck);
-    else
-        parity_ok = scsi_check_parity_16bit(paritycheck);
+        bool parity_ok;
+        if (busWidth == 0)
+            parity_ok = scsi_check_parity(paritycheck);
+        else
+            parity_ok = scsi_check_parity_16bit(paritycheck);
 #else
-    bool parity_ok = scsi_check_parity(paritycheck & 0xFFFF) && scsi_check_parity(paritycheck >> 16);
+        bool parity_ok = scsi_check_parity(paritycheck & 0xFFFF) && scsi_check_parity(paritycheck >> 16);
 #endif
 
-    // Check parity errors in whole block
-    // This doesn't detect if there is even number of parity errors in block.
-    if (!parity_ok)
-    {
-        logmsg("Parity error in scsi_accel_host_read(): ", paritycheck);
-        *parityError = 1;
+        // Check parity errors in whole block
+        // This doesn't detect if there is even number of parity errors in block.
+        if (!parity_ok)
+        {
+            logmsg("Parity error in scsi_accel_host_read(): ", paritycheck);
+            *parityError = 1;
+        }
     }
-
     g_scsi_host_state = SCSIHOST_IDLE;
     SCSI_RELEASE_DATA_REQ();
     scsi_accel_host_config_gpio(busWidth);
