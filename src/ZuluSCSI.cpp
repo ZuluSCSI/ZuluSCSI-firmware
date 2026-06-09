@@ -130,6 +130,23 @@ void init_logfile()
 
   static bool first_open_after_boot = true;
 
+  if (first_open_after_boot)
+  {
+    if (g_scsi_settings.getSystem()->logRotate == 1)
+    {
+      FsFile prev_log_file = SD.open(LOGFILE, O_RDONLY);
+      if (prev_log_file.isOpen())
+      {
+        if (SD.exists("zululog_prev.txt"))
+        {
+          SD.remove("zululog_prev.txt");
+        }
+        prev_log_file.rename("zululog_prev.txt");
+        prev_log_file.close();
+      }
+    }
+  }
+
   bool truncate = first_open_after_boot;
   int flags = O_WRONLY | O_CREAT | (truncate ? O_TRUNC : O_APPEND);
   g_logfile = SD.open(LOGFILE, flags);
