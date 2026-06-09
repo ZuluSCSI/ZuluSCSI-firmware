@@ -39,12 +39,12 @@ ZuluSCSISettings g_scsi_settings;
 
 const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "X68000-SCSI","X68000-SASI", "DOS", "NeXT",
 #ifdef PLATFORM_AS400
-    "AS400", "AS400_BS520", "AS400_BS522",
+    "AS400", "AS400_BS520", "AS400_BS522", "AS400_CISC", "AS400_PPC",
 #endif
 };
 const char *devicePresetName[] = {"", "ST32430N", 
 #ifdef PLATFORM_AS400
-    "AS400_BS520", "AS400_BS522",
+    "AS400_BS520", "AS400_BS522", "AS400_CISC", "AS400_PPC",
 #endif
 };
 
@@ -262,6 +262,18 @@ void log_getl_bus_width(const char *Key, long value)
          );
 }
 
+
+void log_getl_log_rotate(const char *Key, long value)
+{
+        logmsg("---- ", Key, " = ", (int) value, ": ",
+           value == 0 ? "Log rotation disabled"
+         : value == 1 ? "Rotate log to zululog_prev.txt"
+         : value == 2 ? "Save all rotations in /zuluscsi_log/"
+         : "invalid"
+         );
+}
+
+
 // Acts just like ini_gets but logs the setting if enabled is true
 static int log_ini_gets(const char *Section, const char *Key, const char *DefValue, char *Buffer, int BufferSize, const char *Filename, bool enabled, void (*custom_message)(const char *Key, char *buffer, int BufferSize) = nullptr)
 {
@@ -353,11 +365,13 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
             case SYS_PRESET_AS400:
             // For the AS400 preset, we want to set the device preset to the block size 520
                 [[fallthrough]];
-            case SYS_PRESET_AS400_BS520:
-                m_devPreset[scsiId] = DEV_PRESET_AS400_BS520;
+            case SYS_PRESET_AS400_BS520: [[fallthrough]];
+            case SYS_PRESET_AS400_CISC:
+                m_devPreset[scsiId] = DEV_PRESET_AS400_CISC;
                 break;
-            case SYS_PRESET_AS400_BS522:
-                m_devPreset[scsiId] = DEV_PRESET_AS400_BS522;
+            case SYS_PRESET_AS400_BS522: [[fallthrough]];
+            case SYS_PRESET_AS400_PPC:
+                m_devPreset[scsiId] = DEV_PRESET_AS400_PPC;
                 break;
             default:
                 break;  
@@ -377,12 +391,14 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
             driveinfo = deviceInitST32430N(scsiId);
             break;
 #ifdef PLATFORM_AS400
-        case DEV_PRESET_AS400_BS520:
+        case DEV_PRESET_AS400_BS520: [[fallthrough]];
+        case DEV_PRESET_AS400_CISC:
             deviceInitAS400(scsiId);
             cfgDev.blockSize = 520;
             driveinfo = as400_driveinfo_dgvs09u_fixed;
             break;
-        case DEV_PRESET_AS400_BS522:
+        case DEV_PRESET_AS400_BS522: [[fallthrough]];
+        case DEV_PRESET_AS400_PPC:
             deviceInitAS400(scsiId);
             cfgDev.blockSize = 522;
             driveinfo = as400_driveinfo_dgvs09u_fixed;
@@ -609,7 +625,12 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 #endif
 
     cfgSys.logToSDCard = true;
-#if ENABLE_COW
+
+    cfgSys.logRotate = 1;
+
+    cfgSys.initiatorParity = true;
+
+#ifdef ENABLE_COW
     cfgSys.cowBufferSize = DEFAULT_COW_BUFFER_SIZE;
 #endif
 
@@ -725,16 +746,18 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
         m_sysPreset = SYS_PRESET_AS400;
     }
-    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS520], presetName))
+    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS520], presetName)
+            || strequals(systemPresetName[SYS_PRESET_AS400_CISC], presetName))
     {
         deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
-        m_sysPreset = SYS_PRESET_AS400_BS520;
+        m_sysPreset = SYS_PRESET_AS400_CISC;
     }
-    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS522], presetName))
+    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS522], presetName)
+            || strequals(systemPresetName[SYS_PRESET_AS400_PPC], presetName))
     {
 
         deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
-        m_sysPreset = SYS_PRESET_AS400_BS522;
+        m_sysPreset = SYS_PRESET_AS400_PPC;
     }
 #endif 
     else
@@ -799,6 +822,9 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     cfgSys.maxBusWidth = log_ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE, log_settings, log_getl_bus_width);
     cfgSys.logToSDCard = log_ini_getbool("SCSI", "LogToSDCard", cfgSys.logToSDCard, CONFIGFILE, log_settings);
+    cfgSys.logRotate = log_ini_getl("SCSI", "LogRotate", cfgSys.logRotate, CONFIGFILE, log_settings, log_getl_log_rotate);
+    
+    cfgSys.initiatorParity = log_ini_getbool("SCSI", "InitiatorParity", cfgSys.initiatorParity, CONFIGFILE, log_settings);
 
 #if ENABLE_COW
     cfgSys.cowBufferSize = log_ini_getl("SCSI", "CowBufferSize", cfgSys.cowBufferSize, CONFIGFILE, log_settings);
