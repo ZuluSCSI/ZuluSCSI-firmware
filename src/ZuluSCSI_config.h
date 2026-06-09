@@ -42,7 +42,7 @@
 #define LOGFILE     "zululog.txt"
 #define LOGFILEPREV "zululog_prev.txt"
 #define LOGFILEROTATE "zululog_rotate"
-#define LOGFILEDIR "zululog"
+#define LOGFILEDIR "zuluscsi_log"
 #define CRASHFILE   "zuluerr.txt"
 #define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
