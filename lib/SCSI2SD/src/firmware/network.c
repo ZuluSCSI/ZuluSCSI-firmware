@@ -16,9 +16,6 @@
 
 #ifdef ZULUSCSI_NETWORK
 
-
-// #define DAYNAPORT_OLD_READS
-
 #include <string.h>
 #include "scsi.h"
 #include "scsi2sd_time.h"
@@ -259,53 +256,7 @@ int scsiNetworkCommand()
 		}
 
 		scsiEnterPhase(DATA_IN);
-#ifdef DAYNAPORT_OLD_READS
-		// DaynaPort SCSI/Link-3 reads one packet at a time
-		uint32_t packetSize = scsiNetworkInboundQueue.sizes[scsiNetworkInboundQueue.readIndex];
-		if (packetSize + 6 > size)
-		{
-			LOGMSG_F("%s: packet size too big (%d)", __func__, packetSize);
-			packetSize = size - 6;
-		}
-		DBGMSG_F("%s: sending packet[%d] to host of size %zu + 6", __func__, scsiNetworkInboundQueue.readIndex, packetSize);
-		scsiDev.dataLen = packetSize + 6; // 2-byte length + 4-byte flag + packet
-		memcpy(scsiDev.data + 6, scsiNetworkInboundQueue.packets[scsiNetworkInboundQueue.readIndex], packetSize);
-		scsiDev.data[0] = (packetSize >> 8) & 0xff;
-		scsiDev.data[1] = packetSize & 0xff;
-		if (scsiNetworkInboundQueue.readIndex == NETWORK_PACKET_QUEUE_SIZE - 1)
-		{
-			scsiNetworkInboundQueue.readIndex = 0;
-		}
-		else
-		{
-			scsiNetworkInboundQueue.readIndex++;
-		}
-		done = scsiNetworkInboundQueue.readIndex == scsiNetworkInboundQueue.writeIndex;
-		scsiDev.data[2] = 0;
-		scsiDev.data[3] = 0;
-		scsiDev.data[4] = 0;
-		// more data to read?
-		scsiDev.data[5] = ( done ? 0 : 0x10);
-		scsiWrite(scsiDev.data, 6);
-		while (!scsiIsWriteFinished(NULL))
-		{
-			platform_poll();
-		}
-		scsiFinishWrite();
-		if (scsiDev.dataLen > 6)
-		{
-			s2s_delay_us(75); // DaynaPort Mac driver needs a short delay after reading size and flags.
 
-			scsiWrite(scsiDev.data + 6, scsiDev.dataLen - 6);
-			while (!scsiIsWriteFinished(NULL))
-			{
-				platform_poll();
-			}
-			scsiFinishWrite();
-		}
-
-
-#else // DANAPORT_OLD_READS - Multiple Packet reads at a time
 		for (done = 0, total = 0; !done; )
 		{
 			idx = scsiNetworkInboundQueue.readIndex;
@@ -374,7 +325,7 @@ int scsiNetworkCommand()
 				sleep_us(300);
 			}
 		}
-#endif
+
 		scsiDev.status = GOOD;
 		scsiDev.phase = STATUS;
 		break;
