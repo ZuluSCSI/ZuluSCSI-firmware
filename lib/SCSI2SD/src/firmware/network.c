@@ -16,8 +16,6 @@
 
 #ifdef ZULUSCSI_NETWORK
 
-#define DAYNAPORT_OLD_READS
-
 #include <string.h>
 #include "scsi.h"
 #include "scsi2sd_time.h"
@@ -225,7 +223,15 @@ int scsiNetworkCommand()
 
 	switch (command) {
 	case 0x08:
+	{
 		// read(6)
+		// CDB[5] bit 6 indicates transfer mode from the host driver:
+		//   0x80 (bit 6 clear) = polled mode (old SCSI Manager, VM present) -> single packet
+		//   0xC0 (bit 6 set)   = blind mode (new SCSI Manager, no VM) -> multi-packet OK
+		// When bit 6 is clear, we send only one packet per READ(6) to minimize SCSI bus
+		// hold time, allowing the VM pager to access the bus between transactions.
+
+		int multiPacket = (scsiDev.cdb[5] & 0x40) != 0;
 		if (unlikely(size == 1))
 		{
 			scsiDev.status = CHECK_CONDITION;
@@ -250,58 +256,12 @@ int scsiNetworkCommand()
 		}
 
 		scsiEnterPhase(DATA_IN);
-#ifdef DAYNAPORT_OLD_READS
-		// DaynaPort SCSI/Link-3 reads one packet at a time
-		uint32_t packetSize = scsiNetworkInboundQueue.sizes[scsiNetworkInboundQueue.readIndex];
-		if (packetSize + 6 > size)
-		{
-			LOGMSG_F("%s: packet size too big (%d)", __func__, packetSize);
-			packetSize = size - 6;
-		}
-		DBGMSG_F("%s: sending packet[%d] to host of size %zu + 6", __func__, scsiNetworkInboundQueue.readIndex, packetSize);
-		scsiDev.dataLen = packetSize + 6; // 2-byte length + 4-byte flag + packet
-		memcpy(scsiDev.data + 6, scsiNetworkInboundQueue.packets[scsiNetworkInboundQueue.readIndex], packetSize);
-		scsiDev.data[0] = (packetSize >> 8) & 0xff;
-		scsiDev.data[1] = packetSize & 0xff;
-		if (scsiNetworkInboundQueue.readIndex == NETWORK_PACKET_QUEUE_SIZE - 1)
-		{
-			scsiNetworkInboundQueue.readIndex = 0;
-		}
-		else
-		{
-			scsiNetworkInboundQueue.readIndex++;
-		}
-		done = scsiNetworkInboundQueue.readIndex == scsiNetworkInboundQueue.writeIndex;
-		scsiDev.data[2] = 0;
-		scsiDev.data[3] = 0;
-		scsiDev.data[4] = 0;
-		// more data to read?
-		scsiDev.data[5] = ( done ? 0 : 0x10);
-		scsiWrite(scsiDev.data, 6);
-		while (!scsiIsWriteFinished(NULL))
-		{
-			platform_poll();
-		}
-		scsiFinishWrite();
-		if (scsiDev.dataLen > 6)
-		{
-			s2s_delay_us(75); // DaynaPort Mac driver needs a short delay after reading size and flags.
 
-			scsiWrite(scsiDev.data + 6, scsiDev.dataLen - 6);
-			while (!scsiIsWriteFinished(NULL))
-			{
-				platform_poll();
-			}
-			scsiFinishWrite();
-		}
-
-
-#else // DANAPORT_OLD_READS - Multiple Packet reads at a time
 		for (done = 0, total = 0; !done; )
 		{
 			idx = scsiNetworkInboundQueue.readIndex;
 			len = scsiNetworkInboundQueue.sizes[idx];
-			total += len;
+			total += len + 6;  // packet data + 6-byte header;
 
 			if (scsiNetworkInboundQueue.readIndex == NETWORK_PACKET_QUEUE_SIZE - 1)
 			{
@@ -314,9 +274,21 @@ int scsiNetworkCommand()
 
 			done = (scsiNetworkInboundQueue.readIndex == scsiNetworkInboundQueue.writeIndex);
 
-			// there's no hard limit since each packet is processed separately, but we shouldn't tie up
-			// the SCSI bus for a long time, so stop after ~2 max-sized packets
-			if (!done && total >= (DAYNAPORT_SCSI_PACKET_MAX * 2))
+		// In polled mode (bit 6 clear), only send one packet per READ(6)
+			// to avoid holding the SCSI bus while the VM pager needs it.
+			if (!done && !multiPacket)
+			{
+				done = 1;
+			}
+
+			// Don't exceed the transfer size requested by the host
+			if (!done && total + DAYNAPORT_SCSI_PACKET_MAX + 6 > size)
+			{
+				done = 1;
+			}
+
+			// Don't tie up the SCSI bus too long even in multi-packet mode
+			if (!done && total >= (DAYNAPORT_SCSI_PACKET_MAX + 6) * 2)
 			{
 				done = 1;
 			}
@@ -353,10 +325,11 @@ int scsiNetworkCommand()
 				sleep_us(300);
 			}
 		}
-#endif
+
 		scsiDev.status = GOOD;
 		scsiDev.phase = STATUS;
 		break;
+	}
 
 	case 0x09:
 		// read mac address and stats
