@@ -490,6 +490,7 @@ static bool typeIsRemovable(S2S_CFG_TYPE type)
 static bool mountSDCard();
 static void spin_for_reboot(bool rebooting);
 
+#ifdef DYNAMIC_SCSI_ID
 // set the Dynamic SCSI ID
 static void configDynamicScsiId()
 {
@@ -559,6 +560,7 @@ static void configDynamicScsiId()
       scsiDiskSetDynamicId(zuluscsi_sca_hw_scsi_id());
   }
 }
+#endif
 
 // Iterate over the root path in the SD card looking for candidate image files.
 bool findHDDImages()
@@ -683,18 +685,20 @@ bool findHDDImages()
 
         // Parse SCSI device ID
         int file_name_length = strlen(name);
+
         if(file_name_length > 2) { // HD[N]
+#ifdef DYNAMIC_SCSI_ID
           // The dynamic ID character 'n' maps to the run time acquired SCSI ID.
           if (tolower(name[HDIMG_ID_POS]) == DYNAMIC_SCSI_ID_CHAR)
           {
-#ifdef ZULUSCSI_WIDE
+
             // Lazily resolve the SCA SCSI ID the first time an 'n'-prefixed
             // image is found, so the expander is only queried when needed.
             if (scsiDiskGetDynamicId() < 0 && zuluscsi_is_sca())
             {
               configDynamicScsiId();
             }
-#endif
+
             int8_t dyn_id = scsiDiskGetDynamicId();
             if (dyn_id >= 0)
             {
@@ -708,6 +712,7 @@ bool findHDDImages()
             }
           }
           else
+#endif // DYNAMIC_SCSI_ID
           {
             int tmp_id = scsiParseId(name[HDIMG_ID_POS]);
             if (tmp_id >= S2S_MAX_TARGETS)
@@ -772,9 +777,11 @@ bool findHDDImages()
         if (is_zp) type = S2S_CFG_ZIP100;
 
         g_scsi_settings.initDevice(id, type);
+#ifdef DYNAMIC_SCSI_ID
         // For the dynamic target, [SCSIn] settings override [SCSI<X>] settings.
         if (id == (int)scsiDiskGetDynamicId())
             g_scsi_settings.applyDynamicSectionOverrides(id);
+#endif
         // set the default block size now that we know the device type
         if (g_scsi_settings.getDevice(id)->blockSize == 0)
         {
@@ -1065,7 +1072,7 @@ static void reinitSCSI()
   else
 #endif // ZULUSCSI_HARDWARE_CONFIG
   {
-#ifdef ZULUSCSI_WIDE
+#ifdef DYNAMIC_SCSI_ID
     // Lazily resolve the SCA SCSI ID the first time 'n'-prefixed directories
     // are found, so the expander is only queried when needed.
     if (scsiDiskGetDynamicId() < 0 && zuluscsi_is_sca() && scsiDiskHasDynamicDirs())

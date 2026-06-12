@@ -29,7 +29,7 @@
 #pragma once
 #include <stdint.h>
 
-#ifdef ZULUSCSI_WIDE
+#ifdef DYNAMIC_SCSI_ID
 
 // Return whether the ZuluSCSI is using an SCA connector
 bool zuluscsi_is_sca();
@@ -54,4 +54,4 @@ bool zululscsi_sca_hw_remote_start();
 
 
 
-#endif // ZULUSCSI_WIDE
+#endif // DYNAMIC_SCSI_ID

@@ -19,7 +19,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-#ifdef ZULUSCSI_WIDE
+#ifdef DYNAMIC_SCSI_ID
 
 #include "ZuluSCSI_sca_hw_config.h"
 #include "ZuluSCSI_log.h"
@@ -151,4 +151,4 @@ bool zululscsi_sca_hw_remote_start()
     return g_sca_hardware_config.remote_start;
 }
 
-#endif // ZULUSCSI_WIDE
+#endif // DYNAMIC_SCSI_ID
