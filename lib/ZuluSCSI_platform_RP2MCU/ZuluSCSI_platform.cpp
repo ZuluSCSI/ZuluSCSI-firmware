@@ -1558,7 +1558,7 @@ uint8_t platform_get_cow_buttons_override()
 }
 
 
-#ifdef ZULUSCSI_WIDE
+#if defined(ZULUSCSI_WIDE) && defined(DYNAMIC_SCSI_ID)
 bool platform_is_sca()
 {
     return g_is_sca;

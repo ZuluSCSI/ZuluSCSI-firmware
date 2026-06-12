@@ -691,27 +691,40 @@ bool findHDDImages()
           // The dynamic ID character 'n' maps to the run time acquired SCSI ID.
           if (tolower(name[HDIMG_ID_POS]) == DYNAMIC_SCSI_ID_CHAR)
           {
+             if (zuluscsi_is_sca())
+             {
+              // Lazily resolve the SCA SCSI ID the first time an 'n'-prefixed
+              // image is found, so the expander is only queried when needed.
+              if (scsiDiskGetDynamicId() < 0)
+              {
+                configDynamicScsiId();
+              }
 
-            // Lazily resolve the SCA SCSI ID the first time an 'n'-prefixed
-            // image is found, so the expander is only queried when needed.
-            if (scsiDiskGetDynamicId() < 0 && zuluscsi_is_sca())
-            {
-              configDynamicScsiId();
-            }
-
-            int8_t dyn_id = scsiDiskGetDynamicId();
-            if (dyn_id >= 0)
-            {
-              id = dyn_id;
-              use_prefix = true;
+              int8_t dyn_id = scsiDiskGetDynamicId();
+              if (dyn_id >= 0)
+              {
+                id = dyn_id;
+                use_prefix = true;
+              }
+              else
+              {
+                logmsg("-- Ignoring \"", name, "\": uses dynamic ID char 'n' but query for ID failed");
+                continue;
+              }
             }
             else
             {
-              logmsg("-- Ignoring ", name, ": uses dynamic ID char 'n' but query for ID failed");
+              logmsg("-- Ignoring \"", name, "\": this board does not support dynamic SCSI IDs, set 'n' to a valid SCSI ID");
               continue;
             }
           }
           else
+#else // !DYNAMIC_SCSI_ID
+          if (tolower(name[HDIMG_ID_POS]) == DYNAMIC_SCSI_ID_CHAR)
+          {
+            logmsg("-- Ignoring \"", name, "\": this board does not support dynamic SCSI IDs, set 'n' to a valid SCSI ID");
+            continue;
+          }
 #endif // DYNAMIC_SCSI_ID
           {
             int tmp_id = scsiParseId(name[HDIMG_ID_POS]);
