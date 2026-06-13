@@ -921,6 +921,24 @@ scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYP
     return &cfg;
 }
 
+scsi_device_settings_t* ZuluSCSISettings::applyDynamicSectionOverrides(uint8_t scsiId, bool disable_logging)
+{
+    scsi_device_settings_t& cfg = m_dev[scsiId];
+    bool log_settings = false;
+    if (!disable_logging)
+    {
+        log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
+        if (log_settings)
+            logmsg("-- [" DYNAMIC_SCSI_INI_SECTION "] settings in ", CONFIGFILE, ":");
+    }
+    readIniSCSIDeviceSetting(cfg, DYNAMIC_SCSI_INI_SECTION, log_settings);
+    formatDriveInfoField(cfg.vendor, sizeof(cfg.vendor), cfg.rightAlignStrings);
+    formatDriveInfoField(cfg.prodId, sizeof(cfg.prodId), cfg.rightAlignStrings);
+    formatDriveInfoField(cfg.revision, sizeof(cfg.revision), cfg.rightAlignStrings);
+    formatDriveInfoField(cfg.serial, sizeof(cfg.serial), true);
+    return &cfg;
+}
+
 scsi_system_settings_t *ZuluSCSISettings::getSystem()
 {
     return &m_sys;

@@ -180,6 +180,14 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
         size_t len = AS400VendorInquiryLen;
         if (len > MAX_SPD_SIZE) len = MAX_SPD_SIZE;
         memcpy(g_custom_spd[scsiId].data, AS400VendorInquiry, len);
+        // Patch vendor (bytes 8-15) and product ID (bytes 16-31) from device
+        // settings so that [SCSI<X>] and [SCSIn] Vendor/Product overrides take
+        // effect even when the AS/400 default SPD is active.
+        const scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(scsiId);
+        if (len >= 16)
+            memcpy(g_custom_spd[scsiId].data + 8, devCfg->vendor, sizeof(devCfg->vendor));
+        if (len >= 32)
+            memcpy(g_custom_spd[scsiId].data + 16, devCfg->prodId, sizeof(devCfg->prodId));
         if (len >= 46)
             injectSerial(g_custom_spd[scsiId].data, 38, scsiId);
         if (len >= 121)

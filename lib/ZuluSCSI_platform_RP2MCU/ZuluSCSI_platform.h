@@ -246,6 +246,11 @@ void platform_set_cow_button(uint8_t cow_button);
 // This can be tested to see if a cow button is overridden on, if not the current platform_get_buttons() state should be used
 uint8_t platform_get_cow_buttons_override();
 
+#ifdef ZULUSCSI_WIDE
+// Returns true if the SCSI connector is SCA
+bool platform_is_sca();
+#endif
+
 #ifdef __cplusplus
 }
 

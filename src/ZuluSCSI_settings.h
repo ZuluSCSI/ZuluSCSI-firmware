@@ -229,6 +229,12 @@ public:
     // see if any SCSI devices have an eject button set
     const bool isEjectButtonSet();
 
+    // Apply [SCSIn] settings as overrides on top of already-loaded [SCSI<X>] settings
+    // for the device whose ID was read from the GPIO expander.
+    // Only modifies fields that are explicitly present in the [SCSIn] section.
+    // Pass disable_logging=true to suppress the section-header and per-key log lines.
+    scsi_device_settings_t* applyDynamicSectionOverrides(uint8_t scsiId, bool disable_logging = false);
+
 protected:
     // Set default drive vendor / product info after the image file
     // is loaded and the device type is known.
