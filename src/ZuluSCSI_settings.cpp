@@ -630,6 +630,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     cfgSys.initiatorParity = true;
 
+    cfgSys.wiFiMultiPacketMax = 2;
+
 #ifdef ENABLE_COW
     cfgSys.cowBufferSize = DEFAULT_COW_BUFFER_SIZE;
 #endif
@@ -825,6 +827,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     cfgSys.logRotate = log_ini_getl("SCSI", "LogRotate", cfgSys.logRotate, CONFIGFILE, log_settings, log_getl_log_rotate);
     
     cfgSys.initiatorParity = log_ini_getbool("SCSI", "InitiatorParity", cfgSys.initiatorParity, CONFIGFILE, log_settings);
+
+    cfgSys.wiFiMultiPacketMax = log_ini_getl("SCSI", "WiFiMultiPacketMax", cfgSys.wiFiMultiPacketMax, CONFIGFILE, log_settings);
 
 #if ENABLE_COW
     cfgSys.cowBufferSize = log_ini_getl("SCSI", "CowBufferSize", cfgSys.cowBufferSize, CONFIGFILE, log_settings);

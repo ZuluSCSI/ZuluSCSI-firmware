@@ -18,6 +18,7 @@
 #include "ZuluSCSI_platform_network.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
+#include <ZuluSCSI_settings.h>
 #include <scsi.h>
 #include <network.h>
 
@@ -105,6 +106,8 @@ bool platform_network_init(char *mac)
 		return false;
 
 	// long signal blink at network initialization
+	
+	scsiNetworkMultiPacketMax = g_scsi_settings.getSystem()->wiFiMultiPacketMax;
 
 	// Set LED off and check if RM2 communication is working (returns 0 on success)
 	if (0 != cyw43_gpio_set(&cyw43_state, PICO_W_GPIO_LED_PIN, 0))

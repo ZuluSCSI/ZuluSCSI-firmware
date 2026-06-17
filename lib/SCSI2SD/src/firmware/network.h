@@ -54,6 +54,12 @@ struct __attribute__((packed)) wifi_network_entry {
 #define WIFI_NETWORK_LIST_ENTRY_COUNT 10
 extern struct wifi_network_entry wifi_network_list[WIFI_NETWORK_LIST_ENTRY_COUNT];
 
+#ifndef WIFI_NETWORK_MULTIPACK_MAX
+#define WIFI_NETWORK_MULTIPACK_MAX 2
+#endif
+extern uint32_t scsiNetworkMultiPacketMax;
+
+
 struct __attribute__((packed)) wifi_join_request {
 	char ssid[64];
 	char key[64];

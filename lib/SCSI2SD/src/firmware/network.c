@@ -25,6 +25,7 @@
 
 extern int platform_network_send(uint8_t *buf, size_t len);
 
+uint32_t scsiNetworkMultiPacketMax = WIFI_NETWORK_MULTIPACK_MAX;
 bool scsiNetworkEnabled = false;
 struct scsiNetworkPacketQueue scsiNetworkInboundQueue;
 
@@ -288,7 +289,7 @@ int scsiNetworkCommand()
 			}
 
 			// Don't tie up the SCSI bus too long even in multi-packet mode
-			if (!done && total >= (DAYNAPORT_SCSI_PACKET_MAX + 6) * 2)
+			if (!done && total >= (DAYNAPORT_SCSI_PACKET_MAX + 6) * scsiNetworkMultiPacketMax)
 			{
 				done = 1;
 			}

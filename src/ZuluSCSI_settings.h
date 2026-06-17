@@ -136,6 +136,8 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     int logRotate;
 
+    uint32_t wiFiMultiPacketMax;
+
 #if ENABLE_COW
     uint16_t cowBufferSize;
 #endif
