@@ -27,7 +27,7 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "2026.06.13"
+#define FW_VER_NUM      "2026.06.16"
 #define FW_VER_SUFFIX   "devel"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
@@ -88,7 +88,7 @@
 #endif
 
 // Image definition options
-#define IMAGE_INDEX_MAX 9               // Maximum number of 'IMG0' style statements parsed
+#define IMAGE_INDEX_MAX 99              // Maximum number of 'IMG0' - `IMG99` style statements parsed
 
 // SCSI config
 #define NUM_SCSILUN 1          // Maximum number of LUNs supported     (Currently has to be 1)
