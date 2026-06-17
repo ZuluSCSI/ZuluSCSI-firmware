@@ -1224,15 +1224,17 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
                     strcpy(dirname, "ZP0");
                     break;
                 default:
-                    dbgmsg("No matching device type for default directory found");
+                    logmsg("No matching device type for default directory found");
                     return 0;
             }
 #ifdef DYNAMIC_SCSI_ID
             dirname[2] = is_dynamic ? DYNAMIC_SCSI_ID_CHAR : scsiEncodeID(target_idx);
+#else
+            dirname[2] = scsiEncodeID(target_idx);
 #endif
             if (!SD.exists(dirname))
             {
-                dbgmsg("Default image directory, ", dirname, " does not exist");
+                logmsg("Default image directory, ", dirname, " does not exist");
                 return 0;
             }
         }
@@ -1319,8 +1321,17 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
                 img.image_index = 0;
             }
 
-            char key[5] = "IMG0";
-            key[3] = '0' + img.image_index;
+            char key[6] = "IMG00";
+
+            if (img.image_index < 10)
+            {
+                key[4] = '0' + img.image_index;
+            }
+            else
+            {
+                key[3] = '0' + img.image_index / 10;
+                key[4] = '0' + img.image_index % 10;
+            }
 
             // For the dynamic target, check [SCSIn] IMG keys first, then [SCSI<X>].
             int ret = 0;
