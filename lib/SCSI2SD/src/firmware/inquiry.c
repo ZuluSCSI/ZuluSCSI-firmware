@@ -355,6 +355,7 @@ uint8_t getDeviceTypeQualifier()
 
 	case S2S_CFG_NETWORK:
 	case S2S_CFG_AMIGAWIFI:
+	case S2S_CFG_AUDIO:
 		// processor device
 		return 0x03;
 		break;

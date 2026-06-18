@@ -112,6 +112,7 @@
 #define DRIVEINFO_NETWORK   {"Dayna",    "SCSI/Link", "2.0f",            ""}
 #define DRIVEINFO_TAPE      {"ZULUSCSI", "TAPE",      PLATFORM_REVISION, ""}
 #define DRIVEINFO_AMIGAWIFI {"AmigaNET", "SCSI/Link", "1.0f", ""}
+#define DRIVEINFO_AUDIO     {"ZULUSCSI", "AUDIO",     PLATFORM_REVISION, ""}
 
 // Default block size
 #define DEFAULT_BLOCKSIZE 512
