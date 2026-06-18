@@ -1229,6 +1229,8 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
             }
 #ifdef DYNAMIC_SCSI_ID
             dirname[2] = is_dynamic ? DYNAMIC_SCSI_ID_CHAR : scsiEncodeID(target_idx);
+#else
+            dirname[2] = scsiEncodeID(target_idx);
 #endif
             if (!SD.exists(dirname))
             {

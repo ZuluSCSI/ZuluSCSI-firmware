@@ -67,6 +67,7 @@
 #include "ROMDrive.h"
 #include "custom_vendor_inquiry.h"
 #include "vhd_support.h"
+#include <ZuluSCSI_WebUI.h>
 
 #include "ui.h"
 
@@ -1514,8 +1515,6 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
   if (g_sdcard_present)
   {
-
-
     if (SD.clusterCount() == 0)
     {
       logmsg("SD card without filesystem!");
@@ -1584,7 +1583,9 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
   {
     init_eject_button();
   }
-
+#ifdef ZULUCONTROL_FIRMWARE
+  zuluWebUINotifySDCardReady();
+#endif
   blinkStatus(BLINK_STATUS_OK);
 }
 
@@ -1638,7 +1639,14 @@ extern "C" void zuluscsi_setup(void)
     }
   }
 #endif
-    logmsg("Firmware initialization complete!");
+#ifdef ZULUCONTROL_FIRMWARE
+  if (g_sdcard_present && g_i2c_claimed)
+  {
+    zuluWebUIInit();
+  }
+#endif
+
+  logmsg("Firmware initialization complete!");
 }
 
 void control_disk_swap()
@@ -1744,7 +1752,9 @@ extern "C" void zuluscsi_main_loop(void)
         {
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
-
+#ifdef ZULUCONTROL_FIRMWARE
+          zuluWebUINotifySDCardRemoved();
+#endif
           if (g_displayEnabled)
           {
             sdCardStateChanged(g_sdcard_present, g_romdrive_active);
@@ -1778,6 +1788,9 @@ extern "C" void zuluscsi_main_loop(void)
         {
           sdCardStateChanged(g_sdcard_present, g_romdrive_active);
         }
+#ifdef ZULUCONTROL_FIRMWARE
+        zuluWebUINotifySDCardReady();
+#endif
       }
       else if (!g_romdrive_active)
       {
