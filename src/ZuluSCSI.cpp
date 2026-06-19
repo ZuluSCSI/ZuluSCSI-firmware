@@ -757,11 +757,17 @@ bool findHDDImages()
       bool is_ne = (tolower(name[0]) == 'n' && tolower(name[1]) == 'e');
       bool is_am = (tolower(name[0]) == 'a' && tolower(name[1]) == 'm');
 #endif // ZULUSCSI_NETWORK
+#ifdef ENABLE_AUDIO_STREAM
+      bool is_sn = (tolower(name[0]) == 's' && tolower(name[1]) == 'n');
+#endif // ENABLE_AUDIO_STREAM
 
       if (is_hd || is_cd || is_fd || is_mo || is_re || is_tp || is_zp
 #ifdef ZULUSCSI_NETWORK
         || is_ne || is_am
 #endif // ZULUSCSI_NETWORK
+#ifdef ENABLE_AUDIO_STREAM
+        || is_sn
+#endif // ENABLE_AUDIO_STREAM
       )
       {
         // Check if the image should be loaded to microcontroller flash ROM drive
@@ -884,6 +890,9 @@ bool findHDDImages()
         if (is_re) type = S2S_CFG_REMOVABLE;
         if (is_tp) type = S2S_CFG_SEQUENTIAL;
         if (is_zp) type = S2S_CFG_ZIP100;
+#ifdef ENABLE_AUDIO_STREAM
+        if (is_sn) type = S2S_CFG_AUDIO;
+#endif // ENABLE_AUDIO_STREAM
 
         g_scsi_settings.initDevice(id, type);
 #ifdef DYNAMIC_SCSI_ID

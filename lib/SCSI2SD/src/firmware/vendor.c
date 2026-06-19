@@ -210,4 +210,14 @@ void scsiVendorCommandSetLen(uint8_t command, uint8_t* command_length)
 			*command_length = 10;
 		}
 	}
+#ifdef ENABLE_AUDIO_STREAM
+	// Host PCM audio opcodes (0xC3-0xC5) are group 6. Linux's COMMAND_SIZE()
+	// forces group-6 vendor opcodes to 10-byte CDBs, so the host always sends 10;
+	// match that here (default group-6 length is 6) or the COMMAND phase desyncs.
+	if (scsiDev.target->cfg->deviceType == S2S_CFG_AUDIO &&
+		command >= 0xC3 && command <= 0xC5)
+	{
+		*command_length = 10;
+	}
+#endif
 }

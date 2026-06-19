@@ -502,7 +502,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             tape_is_tap_format = true;
         }
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && !img.file.isFolder() && !tape_is_tap_format)
+        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && type != S2S_CFG_AUDIO && !img.file.isFolder() && !tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
@@ -510,7 +510,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         }
 
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || img.file.isFolder() || tape_is_tap_format)
+        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO || img.file.isFolder() || tape_is_tap_format)
         {
             // Contiguous file doesn't matter for these types
         }
@@ -582,6 +582,13 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             img.deviceType = S2S_CFG_AMIGAWIFI;
         }
 #endif // ZULUSCSI_NETWORK
+#ifdef ENABLE_AUDIO_STREAM
+        else if (type == S2S_CFG_AUDIO)
+        {
+            logmsg("---- Configuring as PCM audio device based on image name");
+            img.setDeviceType(S2S_CFG_AUDIO);
+        }
+#endif // ENABLE_AUDIO_STREAM
         else if (type == S2S_CFG_REMOVABLE)
         {
             logmsg("---- Configuring as removable drive");
@@ -612,7 +619,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Vendor / product id set from image file name");
         }
 
-        if (type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI)
+        if (type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO)
         {
             // prefetch not used, skip emitting log message
         }
@@ -1907,7 +1914,8 @@ static void doFormatUnitHeader(void)
 
 static uint64_t getCapacityBlocks(image_config_t &img, uint32_t bytesPerSector)
 {
-    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI))
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI)
+        || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AUDIO))
     {
         return 1;
     }

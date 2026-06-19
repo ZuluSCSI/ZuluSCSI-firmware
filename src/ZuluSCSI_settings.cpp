@@ -202,6 +202,8 @@ void log_getl_device_type(const char *Key, long value)
         : value == 5 ? "Tape"
         : value == 6 ? "Network"
         : value == 7 ? "Zip100"
+        : value == 8 ? "AmigaWiFi"
+        : value == 9 ? "Audio"
         : "Unknown"
     );
 }
@@ -324,6 +326,7 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
     static const char * const driveinfo_network[4]   = DRIVEINFO_NETWORK;
     static const char * const driveinfo_tape[4]      = DRIVEINFO_TAPE;
     static const char * const driveinfo_amigawifi[4] = DRIVEINFO_AMIGAWIFI;
+    static const char * const driveinfo_audio[4]     = DRIVEINFO_AUDIO;
 
     static const char * const apl_driveinfo_fixed[4]     = APPLE_DRIVEINFO_FIXED;
     static const char * const apl_driveinfo_removable[4] = APPLE_DRIVEINFO_REMOVABLE;
@@ -426,6 +429,7 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
                 case S2S_CFG_SEQUENTIAL:    driveinfo = apl_driveinfo_tape; break;
                 case S2S_CFG_ZIP100:        driveinfo = iomega_driveinfo_removeable; break;
                 case S2S_CFG_AMIGAWIFI:     driveinfo = driveinfo_amigawifi; break;
+                case S2S_CFG_AUDIO:         driveinfo = driveinfo_audio; break;
                 default:                    driveinfo = apl_driveinfo_fixed; break;
             }
         }
@@ -441,6 +445,7 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
                 case S2S_CFG_MO:            driveinfo = driveinfo_magopt; break;
                 case S2S_CFG_NETWORK:       driveinfo = driveinfo_network; break;
                 case S2S_CFG_AMIGAWIFI:     driveinfo = driveinfo_amigawifi; break;
+                case S2S_CFG_AUDIO:         driveinfo = driveinfo_audio; break;
                 case S2S_CFG_SEQUENTIAL:    driveinfo = driveinfo_tape; break;
                 case S2S_CFG_ZIP100:        driveinfo = iomega_driveinfo_removeable; break;
                 default:                    driveinfo = driveinfo_fixed; break;
