@@ -65,7 +65,10 @@ bool controlIsRemovableDevice(uint8_t scsi_id)
 {
     if (scsi_id >= S2S_MAX_TARGETS) return false;
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
-    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
+    // Use img.deviceType rather than S2S_CFG_TARGET_ENABLED: scsiDiskSetImageConfig
+    // always sets deviceType from persisted settings even when scsiDiskOpenHDDImage
+    // fails, leaving scsiId without the ENABLED bit. Zero-initialized (unconfigured)
+    // targets have deviceType=S2S_CFG_FIXED which isRemovableType() rejects.
     return isRemovableType((S2S_CFG_TYPE)img.deviceType);
 }
 
@@ -84,7 +87,6 @@ const char* controlGetDeviceTypeName(uint8_t scsi_id)
 {
     if (scsi_id >= S2S_MAX_TARGETS) return "Unknown";
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
-    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return "Inactive";
     switch ((S2S_CFG_TYPE)img.deviceType)
     {
         case S2S_CFG_OPTICAL:     return "CD-ROM";
@@ -104,9 +106,30 @@ bool controlGetCurrentImage(uint8_t scsi_id, char *buf, size_t buflen)
     if (scsi_id >= S2S_MAX_TARGETS) return false;
 
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
-    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
     if (img.ejected || !img.file.isOpen() || img.current_image[0] == '\0')
         return false;
+
+    strncpy(buf, img.current_image, buflen - 1);
+    buf[buflen - 1] = '\0';
+    return true;
+}
+
+bool controlGetMediaStatus(uint8_t scsi_id, char *buf, size_t buflen, bool *ejected_out)
+{
+    if (!buf || buflen == 0) return false;
+    buf[0] = '\0';
+    if (scsi_id >= S2S_MAX_TARGETS) return false;
+
+    image_config_t &img = scsiDiskGetImageConfig(scsi_id);
+    bool has_file = img.file.isOpen() && img.current_image[0] != '\0';
+
+    // Report the actual SCSI ejected state; the image path is always returned
+    // when a file is open so the UI shows the loaded image even during the
+    // transient media-change eject that follows a controlLoadImage call.
+    if (ejected_out)
+        *ejected_out = img.ejected || !has_file;
+
+    if (!has_file) return false;
 
     strncpy(buf, img.current_image, buflen - 1);
     buf[buflen - 1] = '\0';
@@ -120,7 +143,6 @@ bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen)
     if (scsi_id >= S2S_MAX_TARGETS) return false;
 
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
-    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
 
     // Explicit ImgDir in zuluscsi.ini takes first priority
     char section[] = "SCSI0";
@@ -179,7 +201,6 @@ bool controlGetImagePrefix(uint8_t scsi_id, char *buf, size_t buflen)
     buf[0] = '\0';
     if (scsi_id >= S2S_MAX_TARGETS) return false;
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
-    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
     if (!img.use_prefix) return false;
 
     const char *tp;
@@ -307,7 +328,6 @@ bool controlLoadImage(uint8_t scsi_id, const char *full_path)
 {
     if (scsi_id >= S2S_MAX_TARGETS) return false;
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
-    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
     if (!isRemovableType((S2S_CFG_TYPE)img.deviceType)) return false;
 
     if (full_path == nullptr || full_path[0] == '\0')
@@ -332,7 +352,6 @@ bool controlEjectMedia(uint8_t scsi_id)
 {
     if (scsi_id >= S2S_MAX_TARGETS) return false;
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
-    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
     if (!isRemovableType((S2S_CFG_TYPE)img.deviceType)) return false;
 
     if (img.ejected) return true;
@@ -353,7 +372,6 @@ bool controlInsertMedia(uint8_t scsi_id)
 {
     if (scsi_id >= S2S_MAX_TARGETS) return false;
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
-    if (!(img.scsiId & S2S_CFG_TARGET_ENABLED)) return false;
     if (!isRemovableType((S2S_CFG_TYPE)img.deviceType)) return false;
 
     if (!img.ejected) return true;

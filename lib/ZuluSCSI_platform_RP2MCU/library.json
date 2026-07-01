@@ -9,6 +9,7 @@
     "platforms": "*",
     "dependencies":
     {
-        "CUEParser": "https://github.com/rabbitholecomputing/CUEParser#v2026.03.13"
+        "CUEParser": "https://github.com/rabbitholecomputing/CUEParser#v2026.03.13",
+        "ZuluSCSI_WebUI_RP2MCU": ""
     }
 }

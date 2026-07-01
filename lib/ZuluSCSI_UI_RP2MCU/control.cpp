@@ -479,6 +479,7 @@ bool initScreenHardware()
         return false;
     }
     g_displayEnabled = true;
+    g_i2c_claimed = true;
         // Clear the buffer
     g_display->clearDisplay();
     g_display->display();
