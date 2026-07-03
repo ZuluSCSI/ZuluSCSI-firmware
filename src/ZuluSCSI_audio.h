@@ -225,3 +225,27 @@ void audio_reset(uint8_t id);
  * Play a wave file
  */
 bool audio_play_wav(const char *filename);
+
+#ifdef ENABLE_AUDIO_STREAM
+/*
+ * Host PCM streaming: the host pushes 44.1kHz/16-bit/stereo PCM over SCSI and it
+ * is played out the DAC, reusing the CD-audio double-buffer (no new allocation).
+ * Mutually exclusive with CD-DA playback (one DAC / one engine). Implemented in
+ * audio_i2s.cpp; driven by scsiAudioCommand() in ZuluSCSI_audio_stream.cpp.
+ */
+
+// Begin streaming on the given SCSI ID. Preempts any active playback.
+bool audio_stream_start(uint8_t owner);
+// Append up to one slot of PCM; returns bytes accepted (0 = no room, overflow counted).
+uint32_t audio_stream_write(const uint8_t* data, uint32_t len);
+// Discard queued audio.
+void audio_stream_flush();
+// Max bytes per write / total ring size / live fill levels.
+uint32_t audio_stream_slot_size();
+uint32_t audio_stream_total_size();
+uint32_t audio_stream_bytes_free();
+uint32_t audio_stream_bytes_queued();
+uint32_t audio_stream_underruns();
+uint32_t audio_stream_overflows();
+bool     audio_stream_is_active();
+#endif // ENABLE_AUDIO_STREAM

@@ -40,6 +40,11 @@
 #include "toolbox.h"
 #include <ZuluSCSI_platform_config.h>
 
+#ifdef ENABLE_AUDIO_STREAM
+// Host PCM audio streaming handler (ZuluSCSI_audio_stream.cpp, C++ extern "C").
+int scsiAudioCommand(void);
+#endif
+
 // Global SCSI device state.
 ScsiDevice scsiDev S2S_DMA_ALIGN;
 
@@ -681,6 +686,9 @@ static void process_Command()
 		((cfg->deviceType == S2S_CFG_AMIGAWIFI && amigaWifiCommand())) ||
 		((cfg->deviceType == S2S_CFG_NETWORK && scsiNetworkCommand())) ||
 #endif // ZULUSCSI_NETWORK
+#ifdef ENABLE_AUDIO_STREAM
+		((cfg->deviceType == S2S_CFG_AUDIO) && scsiAudioCommand()) ||
+#endif // ENABLE_AUDIO_STREAM
 		((cfg->deviceType == S2S_CFG_MO) && scsiMOCommand()))
 	{
 		// Already handled.

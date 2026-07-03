@@ -112,6 +112,8 @@
     #define AUDIO_DMA_IRQ_NUM DMA_IRQ_2
 #endif
 
+#define GPIO_SCA_TEST GPIO_I2C_INTR
+
 #ifdef ENABLE_AUDIO_OUTPUT_I2S
     #define GPIO_I2S_BCLK 45
     #define GPIO_I2S_WS   46

@@ -111,7 +111,7 @@ long g_button3StartTime[TOTAL_CONTROL_BOARD_BUTTONS];
 bool g_button3Press[TOTAL_CONTROL_BOARD_BUTTONS];
 bool g_waitingForButton3Release[TOTAL_CONTROL_BOARD_BUTTONS];
 
-static TwoWire g_wire(i2c1, GPIO_I2C_SDA, GPIO_I2C_SCL);
+TwoWire g_wire(i2c1, GPIO_I2C_SDA, GPIO_I2C_SCL);
 Adafruit_SSD1306 *g_display;
 DeviceMap *g_devices = nullptr;
 
@@ -444,7 +444,7 @@ void enableScreen(bool state)
 
 bool initScreenHardware()
 {
-    g_wire.setClock(100000);
+    g_wire.setClock(PLATFORM_I2C_CLK_SPEED);
 
     // Setting the drive strength seems to help the I2C bus with the Pico W controller and the controller OLED display
     // to communicate and handshake properly
@@ -479,6 +479,7 @@ bool initScreenHardware()
         return false;
     }
     g_displayEnabled = true;
+    g_i2c_claimed = true;
         // Clear the buffer
     g_display->clearDisplay();
     g_display->display();
@@ -490,7 +491,7 @@ bool initControlBoardHardware()
 {
     // System clock may have changed
     g_wire.end();
-    g_wire.setClock(100000);
+    g_wire.setClock(PLATFORM_I2C_CLK_SPEED);
     g_wire.begin();
 
     initScreens();

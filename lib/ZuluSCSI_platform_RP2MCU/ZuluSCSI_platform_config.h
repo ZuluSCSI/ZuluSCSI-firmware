@@ -114,3 +114,7 @@
 #ifndef PLATFORM_AS400
 #define  PLATFORM_AS400
 #endif
+
+#ifndef PLATFORM_I2C_CLK_SPEED
+#define PLATFORM_I2C_CLK_SPEED 100000
+#endif

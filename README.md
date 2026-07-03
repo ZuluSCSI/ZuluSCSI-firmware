@@ -200,7 +200,7 @@ Zulu Control Board
 -------------------
 The Zulu Control Board is a small device which plugs into the I2C connector of the ZuluSCSI Blaster (Currently, that is the only supported board)
 It features an OLED screen, a rotary encoder, and two push buttons.
-This allows you to both control and visualise various aspects of the ZuluSCSI.
+This allows you to both control and visualize various aspects of the ZuluSCSI.
 Note: There are no error screens. Error must still be inspected in the log files.
 
 On power up a splash screen will display the current firmware version:
@@ -463,6 +463,26 @@ Control Board Config
 - 4 - Horizontal Scrolling Icons
 - 5 - Vertical Raining Icons
 - 6 - Light speed
+
+
+ZuluControl-firmware
+----------------------
+See [ZuluControl-firmware](https://github.com/rabbitholecomputing/ZuluControl-firmware) for the latest.
+
+This is firmware that runs on a separate wireless board and communicates with the ZuluSCSI over the I2C interface. It provides a simple HTTP webserver that allows controlling images on removable devices.
+
+The basic settings to get the HTTP webserver up and running are the following under the `[WebUI]` section in the `zuluscsi.ini` file.
+```
+[WebUI]
+WiFiSSID = "your_ssid" # SSID for the WIFI network
+WiFiPassword = "your_password" # Password for the WIFI network.
+
+#Optional Static IPv4 Settings - fill in with your network settings
+StaticIP = "192.168.1.42"
+Netmask = "255.255.255.0"
+Gateway = "192.168.1.1"
+```
+Goto the IP with your favorite web browser, and you should be able to control the ZuluSCSI over a web interface.
 
 
 Project structure

@@ -44,6 +44,12 @@ const char* controlGetDeviceTypeName(uint8_t scsi_id);
 // Returns false and sets buf[0]='\0' when ejected or device inactive.
 bool controlGetCurrentImage(uint8_t scsi_id, char *buf, size_t buflen);
 
+// UI-oriented media status: returns true and fills buf with the loaded image
+// path whenever a file is open, including during a SCSI media-change eject
+// (unlike controlGetCurrentImage which returns false when ejected).
+// ejected_out receives the actual SCSI ejected flag.
+bool controlGetMediaStatus(uint8_t scsi_id, char *buf, size_t buflen, bool *ejected_out);
+
 // Get the directory that is searched for available images for a device.
 // Returns true and writes the directory path into buf on success.
 // For prefix-mode devices (root-directory layout) buf receives "/".
