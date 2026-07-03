@@ -616,6 +616,7 @@ void SCSI_SEL_IRQ (void)
 
 static void init_irqs()
 {
+    __disable_irq();
     // Falling edge of RST pin
     gpio_exti_source_select(SCSI_RST_EXTI_SOURCE_PORT, SCSI_RST_EXTI_SOURCE_PIN);
     exti_init(SCSI_RST_EXTI, EXTI_INTERRUPT, EXTI_TRIG_FALLING);
@@ -643,6 +644,7 @@ static void init_irqs()
         NVIC_SetPriority(SCSI_SEL_IRQn, 1);
         NVIC_EnableIRQ(SCSI_SEL_IRQn);
     }
+    __enable_irq();
 }
 
 
