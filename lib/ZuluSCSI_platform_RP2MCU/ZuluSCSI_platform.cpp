@@ -43,6 +43,10 @@
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
 #include "ZuluSCSI_usb_console_media.h"
+#ifdef ZULUCONTROL_FIRMWARE 
+#include <ZuluSCSI_WebUI.h>
+#include <ZuluSCSI_WebUI_I2CServer.h>
+#endif
 
 #ifdef ZULUSCSI_MCU_RP23XX
 # include <hardware/structs/scb.h>
@@ -97,6 +101,10 @@ static uint8_t g_console_buttons = 0;
 static uint8_t g_enabled_eject_buttons = 0;
 static uint8_t g_enabled_cow_buttons = 0;
 static uint8_t g_cow_button_state = 0;
+bool g_i2c_claimed = false;
+#ifdef ZULUSCSI_WIDE
+static bool g_is_sca = false;
+#endif
 
 static struct {
     uint32_t slice;
@@ -424,6 +432,12 @@ void platform_init()
     bool data_dir_state = true;
 #endif
 
+#if defined(ZULUSCSI_WIDE) && defined(GPIO_SCA_TEST)
+    gpio_conf(GPIO_SCA_TEST, GPIO_FUNC_SIO, false, false, false, false, false);
+    g_is_sca = !gpio_get(GPIO_SCA_TEST);
+
+#endif
+
     //        pin             function       pup   pdown  out   state           fast
     gpio_conf(SCSI_DATA_DIR,  GPIO_FUNC_SIO, false,false, true, data_dir_state, true);
     gpio_conf(SCSI_OUT_RST,   GPIO_FUNC_SIO, false,false, true, true,           true);
@@ -664,7 +678,9 @@ void platform_late_init()
     multicore_launch_core1(core1_handler);
 
     initUIDisplay();
-
+#ifdef ZULUCONTROL_FIRMWARE
+    webuiI2CDetectClient();
+#endif
     if (!g_scsi_initiator)
     {
         // Act as SCSI device / target
@@ -1423,6 +1439,11 @@ void platform_poll()
     // This does nothing if the sniffer is not enabled
     platform_sniffer_poll();
 #endif
+
+#ifdef ZULUCONTROL_FIRMWARE
+    if (scsiDev.phase == BUS_FREE)
+        zuluWebUITask();
+#endif
 }
 
 void platform_reset_mcu(uint32_t reset_in_ms)
@@ -1474,7 +1495,7 @@ uint8_t platform_get_buttons()
     // EJECT_BTN = 1
     if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
 #elif defined(GPIO_I2C_SDA)
-    if (!g_displayEnabled)
+    if (!g_i2c_claimed)
     {
             if (!init_buttons)
             {
@@ -1546,6 +1567,14 @@ uint8_t platform_get_cow_buttons_override()
 {
     return g_cow_button_state;
 }
+
+
+#if defined(ZULUSCSI_WIDE) && defined(DYNAMIC_SCSI_ID)
+bool platform_is_sca()
+{
+    return g_is_sca;
+}
+#endif
 
 /************************************/
 /* ROM drive in extra flash space   */

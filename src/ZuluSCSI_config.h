@@ -27,7 +27,7 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "2026.06.12"
+#define FW_VER_NUM      "2026.07.01"
 #define FW_VER_SUFFIX   "V1.x-LTS-release"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
@@ -75,6 +75,12 @@
 #define HDIMG_LUN_POS 3                 // Position to embed LUN numbers
 #define HDIMG_BLK_POS 5                 // Position to embed block size numbers
 
+
+// The INI section [SCSIn] and image prefixes HDn/CDn/TPn/etc. apply to this device.
+// [SCSIn] settings take priority over the hardcoded [SCSI<X>] section for this ID.
+#define DYNAMIC_SCSI_INI_SECTION "SCSIn"
+#define DYNAMIC_SCSI_ID_CHAR     'n'
+
 #if defined(CONTROL_BOARD)
 #define MAX_FILE_PATH 260                // Maximum file name length
 #else
@@ -82,7 +88,7 @@
 #endif
 
 // Image definition options
-#define IMAGE_INDEX_MAX 9               // Maximum number of 'IMG0' style statements parsed
+#define IMAGE_INDEX_MAX 99              // Maximum number of 'IMG0' - `IMG99` style statements parsed
 
 // SCSI config
 #define NUM_SCSILUN 1          // Maximum number of LUNs supported     (Currently has to be 1)
@@ -106,6 +112,7 @@
 #define DRIVEINFO_NETWORK   {"Dayna",    "SCSI/Link", "2.0f",            ""}
 #define DRIVEINFO_TAPE      {"ZULUSCSI", "TAPE",      PLATFORM_REVISION, ""}
 #define DRIVEINFO_AMIGAWIFI {"AmigaNET", "SCSI/Link", "1.0f", ""}
+#define DRIVEINFO_AUDIO     {"ZULUSCSI", "AUDIO",     PLATFORM_REVISION, ""}
 
 // Default block size
 #define DEFAULT_BLOCKSIZE 512

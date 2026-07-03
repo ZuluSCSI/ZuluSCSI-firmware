@@ -225,6 +225,18 @@ int8_t scsiParseId(const char scsi_id_text);
 // Encode ID as char
 char scsiEncodeID(const uint8_t scsi_id);
 
+// Store the SCSI ID read at boot (-1 = not available).
+// Must be called before readSCSIDeviceConfig().
+void scsiDiskSetDynamicId(int8_t id);
+
+// Return the stored dynamic SCSI ID (-1 if not set).
+int8_t scsiDiskGetDynamicId();
+
+// Return true if any 'n'-prefixed device directory (HDn, CDn, TPn, …) exists on the SD card.
+// Used to decide whether to query the SCA hardware for a dynamic SCSI ID before
+// readSCSIDeviceConfig() runs.
+bool scsiDiskHasDynamicDirs();
+
 // Begin writing to prefetch buffer.
 // If the buffer is not available, returns NULL.
 // Otherwise returns pointer to which caller can write up to maxSectors sectors.

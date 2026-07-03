@@ -57,6 +57,7 @@
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_settings.h"
 #include "ZuluSCSI_disk.h"
+#include "ZuluSCSI_sca_hw_config.h"
 #include "ZuluSCSI_initiator.h"
 #include "ZuluSCSI_msc_initiator.h"
 #include "ZuluSCSI_msc.h"
@@ -66,6 +67,7 @@
 #include "ROMDrive.h"
 #include "custom_vendor_inquiry.h"
 #include "vhd_support.h"
+#include <ZuluSCSI_WebUI.h>
 
 #include "ui.h"
 
@@ -582,6 +584,80 @@ static bool typeIsRemovable(S2S_CFG_TYPE type)
     return false;
   }
 }
+static bool mountSDCard();
+static void spin_for_reboot(bool rebooting);
+
+#ifdef DYNAMIC_SCSI_ID
+// set the Dynamic SCSI ID
+static void configDynamicScsiId()
+{
+  
+  int8_t id_override = ini_getl("SCSI", "DynamicScsiId", -1, CONFIGFILE);
+  if (id_override >= 0)
+  {
+    logmsg("Dynamic SCSI ID overridden by 'DynamicScsiId = ", (int) id_override,"' in ", CONFIGFILE);
+    scsiDiskSetDynamicId(id_override);
+  }
+  else
+  {
+    // This is nearly like the main loop as it could loop indefinitely
+    // It allows for menu reset and saving the log file to the SD so the user can figure
+    // out if they are hanging due to a bad SCA connection
+    bool first_loop = true;
+    uint32_t check_sd_start = millis();
+    FsFile file_check;
+    file_check = SD.open("/", O_RDONLY);
+    if (SD.card() && SD.sdErrorCode() == 0 && file_check.isOpen())
+        file_check.close();
+    else
+      g_sdcard_present = mountSDCard();
+    
+    init_logfile();
+
+    bool sca_hw_works = false;
+    do {
+      sca_hw_works = zuluscsi_sca_hw_update();
+
+      if (first_loop && sca_hw_works && !zuluscsi_sca_hw_valid())
+      {
+        logmsg("SCA connector reported not mated (check the SCA connection) - will poll indefinitely until SCA is properly seated.");
+        logmsg("To override set 'DynamicScsiId = <0 - ",S2S_MAX_TARGETS - 1,">' in ", CONFIGFILE, " or do not use 'n' for image SCSI ID");
+      }
+      first_loop = false;
+
+      // psuedo main loop - for logging, to trap resets and SD card removal/inserts
+      // rebooting into SD card reader doesn't work, but standard reboot does
+      if ((uint32_t)(millis() - check_sd_start) > 3000)
+      {
+        file_check = SD.open("/", O_RDONLY);
+        if (SD.card() && SD.sdErrorCode() == 0 && file_check.isOpen())
+        {
+          file_check.close();
+        }
+        else
+        {
+          g_sdcard_present = mountSDCard();
+          init_logfile();
+        }
+        check_sd_start = millis();
+      }
+      platform_poll();
+      save_logfile();
+      // if the SD card has been removed and this setting changed to a valid ID
+      id_override = ini_getl("SCSI", "DynamicScsiId", -1, CONFIGFILE);
+      if (id_override >= 0 && id_override < S2S_MAX_TARGETS)
+      {
+        scsiDiskSetDynamicId(id_override);
+        break;
+      }
+      spin_for_reboot(g_rebooting);
+    } while (sca_hw_works && !zuluscsi_sca_hw_valid());
+
+    if (id_override < 0 && sca_hw_works)
+      scsiDiskSetDynamicId(zuluscsi_sca_hw_scsi_id());
+  }
+}
+#endif
 
 // Iterate over the root path in the SD card looking for candidate image files.
 bool findHDDImages()
@@ -682,11 +758,17 @@ bool findHDDImages()
       bool is_ne = (tolower(name[0]) == 'n' && tolower(name[1]) == 'e');
       bool is_am = (tolower(name[0]) == 'a' && tolower(name[1]) == 'm');
 #endif // ZULUSCSI_NETWORK
+#ifdef ENABLE_AUDIO_STREAM
+      bool is_sn = (tolower(name[0]) == 's' && tolower(name[1]) == 'n');
+#endif // ENABLE_AUDIO_STREAM
 
       if (is_hd || is_cd || is_fd || is_mo || is_re || is_tp || is_zp
 #ifdef ZULUSCSI_NETWORK
         || is_ne || is_am
 #endif // ZULUSCSI_NETWORK
+#ifdef ENABLE_AUDIO_STREAM
+        || is_sn
+#endif // ENABLE_AUDIO_STREAM
       )
       {
         // Check if the image should be loaded to microcontroller flash ROM drive
@@ -706,22 +788,64 @@ bool findHDDImages()
 
         // Parse SCSI device ID
         int file_name_length = strlen(name);
-        if(file_name_length > 2) { // HD[N]
-          int tmp_id = scsiParseId(name[HDIMG_ID_POS]);
-          if (tmp_id >= S2S_MAX_TARGETS)
-          {
-            logmsg("The file, ", name, " with SCSI ID: ", tmp_id, " is larger than allowed on the SCSI bus, skipping file");
-            continue;
-          }
 
-          if(tmp_id > -1 && tmp_id < S2S_MAX_TARGETS)
+        if(file_name_length > 2) { // HD[N]
+#ifdef DYNAMIC_SCSI_ID
+          // The dynamic ID character 'n' maps to the run time acquired SCSI ID.
+          if (tolower(name[HDIMG_ID_POS]) == DYNAMIC_SCSI_ID_CHAR)
           {
-            id = tmp_id; // If valid id, set it, else use default
-            use_prefix = true;
+             if (zuluscsi_is_sca())
+             {
+              // Lazily resolve the SCA SCSI ID the first time an 'n'-prefixed
+              // image is found, so the expander is only queried when needed.
+              if (scsiDiskGetDynamicId() < 0)
+              {
+                configDynamicScsiId();
+              }
+
+              int8_t dyn_id = scsiDiskGetDynamicId();
+              if (dyn_id >= 0)
+              {
+                id = dyn_id;
+                use_prefix = true;
+              }
+              else
+              {
+                logmsg("-- Ignoring \"", name, "\": uses dynamic ID char 'n' but query for ID failed");
+                continue;
+              }
+            }
+            else
+            {
+              logmsg("-- Ignoring \"", name, "\": this board does not support dynamic SCSI IDs, set 'n' to a valid SCSI ID");
+              continue;
+            }
           }
           else
+#else // !DYNAMIC_SCSI_ID
+          if (tolower(name[HDIMG_ID_POS]) == DYNAMIC_SCSI_ID_CHAR)
           {
-            id = usedDefaultId++;
+            logmsg("-- Ignoring \"", name, "\": this board does not support dynamic SCSI IDs, set 'n' to a valid SCSI ID");
+            continue;
+          }
+#endif // DYNAMIC_SCSI_ID
+          {
+            int tmp_id = scsiParseId(name[HDIMG_ID_POS]);
+            if (tmp_id >= S2S_MAX_TARGETS)
+            {
+              logmsg("The file, ", name, " with SCSI ID: ", tmp_id, " is larger than allowed on the SCSI bus, skipping file");
+              continue;
+            }
+
+            if(tmp_id > -1 && tmp_id < S2S_MAX_TARGETS)
+            {
+              id = tmp_id; // If valid id, set it, else use default
+              use_prefix = true;
+            }
+            else
+            {
+              id = usedDefaultId++;
+            }
           }
         }
 
@@ -767,8 +891,16 @@ bool findHDDImages()
         if (is_re) type = S2S_CFG_REMOVABLE;
         if (is_tp) type = S2S_CFG_SEQUENTIAL;
         if (is_zp) type = S2S_CFG_ZIP100;
+#ifdef ENABLE_AUDIO_STREAM
+        if (is_sn) type = S2S_CFG_AUDIO;
+#endif // ENABLE_AUDIO_STREAM
 
         g_scsi_settings.initDevice(id, type);
+#ifdef DYNAMIC_SCSI_ID
+        // For the dynamic target, [SCSIn] settings override [SCSI<X>] settings.
+        if (id == (int)scsiDiskGetDynamicId())
+            g_scsi_settings.applyDynamicSectionOverrides(id);
+#endif
         // set the default block size now that we know the device type
         if (g_scsi_settings.getDevice(id)->blockSize == 0)
         {
@@ -1059,6 +1191,14 @@ static void reinitSCSI()
   else
 #endif // ZULUSCSI_HARDWARE_CONFIG
   {
+#ifdef DYNAMIC_SCSI_ID
+    // Lazily resolve the SCA SCSI ID the first time 'n'-prefixed directories
+    // are found, so the expander is only queried when needed.
+    if (scsiDiskGetDynamicId() < 0 && zuluscsi_is_sca() && scsiDiskHasDynamicDirs())
+    {
+      configDynamicScsiId();
+    }
+#endif
     readSCSIDeviceConfig();
     findHDDImages();
 
@@ -1384,8 +1524,6 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
   if (g_sdcard_present)
   {
-
-
     if (SD.clusterCount() == 0)
     {
       logmsg("SD card without filesystem!");
@@ -1454,7 +1592,9 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
   {
     init_eject_button();
   }
-
+#ifdef ZULUCONTROL_FIRMWARE
+  zuluWebUINotifySDCardReady();
+#endif
   blinkStatus(BLINK_STATUS_OK);
 }
 
@@ -1508,7 +1648,14 @@ extern "C" void zuluscsi_setup(void)
     }
   }
 #endif
-    logmsg("Firmware initialization complete!");
+#ifdef ZULUCONTROL_FIRMWARE
+  if (g_sdcard_present && g_i2c_claimed)
+  {
+    zuluWebUIInit();
+  }
+#endif
+
+  logmsg("Firmware initialization complete!");
 }
 
 void control_disk_swap()
@@ -1521,10 +1668,9 @@ void control_disk_swap()
 #endif
 }
 
-extern "C" void zuluscsi_main_loop(void)
+static void spin_for_reboot(bool rebooting)
 {
-    // While timer for reboot is going, attempt to close SD images
-  if (g_rebooting)
+  if (rebooting)
   {
     while (!scsiIsWriteFinished(NULL) || !scsiIsReadFinished(NULL))
     {
@@ -1542,6 +1688,12 @@ extern "C" void zuluscsi_main_loop(void)
       platform_reset_watchdog();
     }
   }
+}
+
+extern "C" void zuluscsi_main_loop(void)
+{
+    // While timer for reboot is going, attempt to close SD images
+  spin_for_reboot(g_rebooting);
 
   static uint32_t sd_card_check_time = 0;
   static uint32_t last_request_time = 0;
@@ -1596,8 +1748,6 @@ extern "C" void zuluscsi_main_loop(void)
     }
   }
 
-
-
   if (g_sdcard_present)
   {
     // Check SD card status for hotplug
@@ -1611,7 +1761,9 @@ extern "C" void zuluscsi_main_loop(void)
         {
           g_sdcard_present = false;
           logmsg("SD card removed, trying to reinit");
-
+#ifdef ZULUCONTROL_FIRMWARE
+          zuluWebUINotifySDCardRemoved();
+#endif
           if (g_displayEnabled)
           {
             sdCardStateChanged(g_sdcard_present, g_romdrive_active);
@@ -1645,6 +1797,9 @@ extern "C" void zuluscsi_main_loop(void)
         {
           sdCardStateChanged(g_sdcard_present, g_romdrive_active);
         }
+#ifdef ZULUCONTROL_FIRMWARE
+        zuluWebUINotifySDCardReady();
+#endif
       }
       else if (!g_romdrive_active)
       {

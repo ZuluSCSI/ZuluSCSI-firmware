@@ -71,7 +71,7 @@ extern "C" {
 
 /* These are used in debug output and default SCSI strings */
 extern const char *g_platform_name;
-
+extern bool g_i2c_claimed;
 // NOTE: The driver supports synchronous speeds higher than 10MB/s, but this
 // has not been tested due to lack of fast enough SCSI adapter.
 // #define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_SYNC_20
@@ -245,6 +245,11 @@ void platform_set_cow_button(uint8_t cow_button);
 // Get the current state of COW buttons override,
 // This can be tested to see if a cow button is overridden on, if not the current platform_get_buttons() state should be used
 uint8_t platform_get_cow_buttons_override();
+
+#ifdef ZULUSCSI_WIDE
+// Returns true if the SCSI connector is SCA
+bool platform_is_sca();
+#endif
 
 #ifdef __cplusplus
 }

@@ -128,6 +128,17 @@ static volatile uint16_t channel[MAX_AUDIO_TARGETS] = {
 // mechanism for cleanly stopping DMA units
 static volatile bool audio_stopping = false;
 
+#ifdef ENABLE_AUDIO_STREAM
+// Host PCM streaming: the host fills output_buf_a/b directly via the SCSI
+// AUDIO_WRITE command instead of audio_poll() reading from a CD image. There is
+// one DAC / one engine, so this is mutually exclusive with CD-DA playback
+// (arbitrated by audio_owner, last-start-wins). No new buffers are allocated -
+// the existing CD-audio double-buffer is reused.
+static bool audio_src_host = false;
+static volatile uint32_t audio_host_underruns = 0;
+static volatile uint32_t audio_host_overflows = 0;
+#endif
+
 /*
  * I2S format is directly compatible to CD 16-bit audio with left and right channels
  * The only encoding needed is adjusting the volume and muting if one of the channels
@@ -460,6 +471,39 @@ void audio_disable()
 void audio_poll() {
     if (audio_idle) return;
 
+#ifdef ENABLE_AUDIO_STREAM
+    if (audio_src_host) {
+        // Host PCM mode: the SCSI AUDIO_WRITE handler is the producer (see the
+        // audio_stream_* functions). Here we only handle pause and underrun.
+        static bool host_pause_clear = true;
+        if (audio_paused) {
+            if (host_pause_clear) {
+                memset(output_buf_a, 0, sizeof(output_buf_a));
+                memset(output_buf_b, 0, sizeof(output_buf_b));
+            }
+            host_pause_clear = false;
+            return;
+        }
+        host_pause_clear = true;
+
+        // Underrun: inject silence only when BOTH slots are drained (genuine
+        // starvation). While one slot still holds audio, leave the STALE slot for
+        // the host to refill. ponytail: a hard underrun may replay up to one
+        // ~160ms slot before silence engages - fine for music (318ms buffer), and
+        // on a host crash it is one glitch then clean silence. Finer = smaller slots.
+        if (sbufst_a == STALE && sbufst_b == STALE) {
+            memset(output_buf_a, 0, sizeof(output_buf_a));
+            memset(output_buf_b, 0, sizeof(output_buf_b));
+            out_len_a = AUDIO_BUFFER_SIZE;
+            out_len_b = AUDIO_BUFFER_SIZE;
+            sbufst_a = READY;
+            sbufst_b = READY;
+            audio_host_underruns++;
+        }
+        return;
+    }
+#endif
+
     static bool set_pause_buf = true;
     if (audio_paused)
     {
@@ -698,6 +742,34 @@ bool  audio_play_track_index(uint8_t owner,      image_config_t* img,
 }
 
 
+// Configure and start the two hand-off DMA channels feeding the I2S FIFO.
+// Source-agnostic: used by both CD-DA playback and host PCM streaming.
+static void audio_dma_start_channels()
+{
+    snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CHA);
+    channel_config_set_transfer_data_size(&snd_dma_a_cfg, DMA_SIZE_32);
+    channel_config_set_dreq(&snd_dma_a_cfg, i2s.getPioDreq());
+    channel_config_set_read_increment(&snd_dma_a_cfg, true);
+    channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CHB);
+    channel_config_set_high_priority(&snd_dma_a_cfg, true);
+    dma_channel_configure(SOUND_DMA_CHA, &snd_dma_a_cfg, i2s.getPioFIFOAddr(),
+            output_buf_a, AUDIO_OUT_BUFFER_SIZE, false);
+    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHA );
+    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CHA, true);
+    snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
+    channel_config_set_transfer_data_size(&snd_dma_b_cfg, DMA_SIZE_32);
+    channel_config_set_dreq(&snd_dma_b_cfg, i2s.getPioDreq());
+    channel_config_set_read_increment(&snd_dma_b_cfg, true);
+    channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHA);
+    channel_config_set_high_priority(&snd_dma_b_cfg, true);
+    dma_channel_configure(SOUND_DMA_CHB, &snd_dma_b_cfg, i2s.getPioFIFOAddr(),
+            output_buf_b, AUDIO_OUT_BUFFER_SIZE, false);
+    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHB );
+    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CHB, true);
+    // ready to go
+    dma_channel_start(SOUND_DMA_CHA);
+}
+
 static void audio_start_dma()
 {
     // read in initial sample buffers
@@ -737,28 +809,7 @@ static void audio_start_dma()
     }
     // setup the two DMA units to hand-off to each other
     // to maintain a stable bitstream these need to run without interruption
-	snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CHA);
-	channel_config_set_transfer_data_size(&snd_dma_a_cfg, DMA_SIZE_32);
-	channel_config_set_dreq(&snd_dma_a_cfg, i2s.getPioDreq());
-	channel_config_set_read_increment(&snd_dma_a_cfg, true);
-	channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CHB);
-    channel_config_set_high_priority(&snd_dma_a_cfg, true);
-	dma_channel_configure(SOUND_DMA_CHA, &snd_dma_a_cfg, i2s.getPioFIFOAddr(),
-			output_buf_a, AUDIO_OUT_BUFFER_SIZE, false);
-    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHA );
-    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CHA, true);
-    snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
-	channel_config_set_transfer_data_size(&snd_dma_b_cfg, DMA_SIZE_32);
-	channel_config_set_dreq(&snd_dma_b_cfg, i2s.getPioDreq());
-	channel_config_set_read_increment(&snd_dma_b_cfg, true);
-	channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHA);
-    channel_config_set_high_priority(&snd_dma_b_cfg, true);
-	dma_channel_configure(SOUND_DMA_CHB, &snd_dma_b_cfg, i2s.getPioFIFOAddr(),
-			output_buf_b, AUDIO_OUT_BUFFER_SIZE, false);
-    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHB );
-    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CHB, true);
-    // ready to go
-    dma_channel_start(SOUND_DMA_CHA);
+    audio_dma_start_channels();
 }
 
 bool audio_play(uint8_t owner, image_config_t* img, uint32_t start, uint32_t length, bool swap) {
@@ -876,8 +927,103 @@ void audio_stop(uint8_t id, bool startup_skip) {
     audio_paused = false;
     audio_playing = false;
     audio_idle = true;
+#ifdef ENABLE_AUDIO_STREAM
+    audio_src_host = false;
+#endif
     audio_file.close();
 }
+
+#ifdef ENABLE_AUDIO_STREAM
+/* ------------------------------------------------------------------------ */
+/* ---------- HOST PCM STREAMING ------------------------------------------ */
+/* Reuses the CD-audio double-buffer (output_buf_a/b) as the stream buffer:  */
+/* two AUDIO_BUFFER_SIZE slots, ~318ms total. The SCSI AUDIO_WRITE handler   */
+/* (see ZuluSCSI_audio_stream.cpp) fills STALE slots; audio_poll() handles    */
+/* pause + underrun. Single producer + consumer, both on core0 -> no locks.  */
+/* ------------------------------------------------------------------------ */
+
+uint32_t audio_stream_slot_size()   { return AUDIO_BUFFER_SIZE; }
+uint32_t audio_stream_total_size()  { return 2 * AUDIO_BUFFER_SIZE; }
+uint32_t audio_stream_underruns()   { return audio_host_underruns; }
+uint32_t audio_stream_overflows()   { return audio_host_overflows; }
+bool     audio_stream_is_active()   { return audio_src_host && !audio_idle; }
+
+uint32_t audio_stream_bytes_free() {
+    uint32_t n = 0;
+    if (sbufst_a == STALE) n += AUDIO_BUFFER_SIZE;
+    if (sbufst_b == STALE) n += AUDIO_BUFFER_SIZE;
+    return n;
+}
+
+uint32_t audio_stream_bytes_queued() {
+    return audio_stream_total_size() - audio_stream_bytes_free();
+}
+
+// Begin host PCM streaming on the given SCSI ID. Preempts any active playback
+// (last-start-wins, matching audio_play). Both slots start as silence; the host
+// fills them as the DMA drains them.
+bool audio_stream_start(uint8_t owner) {
+    if (!audio_idle) audio_stop();
+
+    audio_owner = owner;
+    audio_host_underruns = 0;
+    audio_host_overflows = 0;
+    audio_src_host = true;
+
+    memset(output_buf_a, 0, sizeof(output_buf_a));
+    memset(output_buf_b, 0, sizeof(output_buf_b));
+    out_len_a = AUDIO_BUFFER_SIZE;
+    out_len_b = AUDIO_BUFFER_SIZE;
+    sbufst_a = READY;
+    sbufst_b = READY;
+
+    audio_last_status[owner] = ASC_PLAYING;
+    audio_paused = false;
+    audio_playing = true;
+    audio_idle = false;
+    audio_dma_start_channels();
+    return true;
+}
+
+// Append up to one slot of interleaved 16-bit stereo PCM. Returns bytes
+// accepted, or 0 (overflow counted) if no slot is free. The host paces writes
+// via audio_stream_bytes_free(), so overflow only happens on a flow-control race.
+uint32_t audio_stream_write(const uint8_t* data, uint32_t len) {
+    if (!audio_src_host || audio_idle) return 0;
+    if (len > AUDIO_BUFFER_SIZE) len = AUDIO_BUFFER_SIZE; // one slot per write (v1)
+
+    uint8_t* sbuf;
+    uint32_t* obuf;
+    volatile bufstate* st;
+    uint32_t* olen;
+    if (sbufst_a == STALE)      { sbuf = sample_buf_a; obuf = output_buf_a; st = &sbufst_a; olen = &out_len_a; }
+    else if (sbufst_b == STALE) { sbuf = sample_buf_b; obuf = output_buf_b; st = &sbufst_b; olen = &out_len_b; }
+    else { audio_host_overflows++; return 0; }
+
+    *st = FILLING;
+    memcpy(sbuf, data, len);
+    if (len < AUDIO_BUFFER_SIZE) memset(sbuf + len, 0, AUDIO_BUFFER_SIZE - len); // zero-pad short writes
+    *olen = AUDIO_BUFFER_SIZE;
+    *st = PROCESSING;
+    // Apply volume in place (same as snd_process, but inline on core0 - the
+    // write handler is not bus-timing-critical and this keeps the slot ready
+    // synchronously). sample_buf aliases output_buf, so this is in-place.
+    snd_encode((int16_t*)sbuf, (int16_t*)obuf, AUDIO_BUFFER_SIZE / 2);
+    *st = READY;
+    return len;
+}
+
+// Discard queued audio (e.g. host seek). Brief glitch if the DMA is mid-slot.
+void audio_stream_flush() {
+    if (!audio_src_host || audio_idle) return;
+    memset(output_buf_a, 0, sizeof(output_buf_a));
+    memset(output_buf_b, 0, sizeof(output_buf_b));
+    out_len_a = AUDIO_BUFFER_SIZE;
+    out_len_b = AUDIO_BUFFER_SIZE;
+    sbufst_a = READY;
+    sbufst_b = READY;
+}
+#endif // ENABLE_AUDIO_STREAM
 
 audio_status_code audio_get_status_code(uint8_t id) {
     audio_status_code tmp = audio_last_status[id];
