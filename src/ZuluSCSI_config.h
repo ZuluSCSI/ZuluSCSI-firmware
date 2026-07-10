@@ -65,6 +65,11 @@
 #define WIFI_RECONECT_MAX_INTERVAL 15000
 #define WIFI_RECONNECT_INCREMENT_INTERVAL 5000
 
+// How often to send a dummy Ethernet frame while idle, to keep the CYW43
+// radio active and give it a chance to notice/recover from an AP-initiated
+// deauth. Well under typical AP idle timeouts (commonly 300-1000s).
+#define WIFI_KEEPALIVE_INTERVAL 120
+
 // Watchdog timeout
 // Watchdog will first issue a bus reset and if that does not help, crashdump.
 #define WATCHDOG_BUS_RESET_TIMEOUT 15000
