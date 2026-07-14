@@ -147,19 +147,6 @@ bool platform_network_init(char *mac)
 	// setting the MAC requires libpico to be compiled with CYW43_USE_OTP_MAC=0
 	memcpy(cyw43_state.mac, mac, sizeof(cyw43_state.mac));
 	cyw43_arch_enable_sta_mode();
-
-	// Disable Wi-Fi power-save mode. The CYW43's default power management
-	// (CYW43_DEFAULT_PM) puts the radio to sleep between DTIM beacons. If
-	// the AP ages out and deauthenticates an idle client while the radio
-	// is asleep, the chip can miss that traffic entirely and never report
-	// a link-down event back to the host - silently leaving the client
-	// associated from the host's point of view, with no automatic
-	// reconnect ever triggered (see cyw43_cb_tcpip_set_link_down below).
-	// Disabling power-save keeps the radio awake and responsive, so any
-	// deauth is actually seen and can trigger the reconnect logic.
-	if (0 != cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE))
-		logmsg("WARNING: failed to disable Wi-Fi power-save mode");
-
 	cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, read_mac);
 	char mac_hex_string[4*6] = {0};
 	sprintf(mac_hex_string, "%02X:%02X:%02X:%02X:%02X:%02X", read_mac[0], read_mac[1], read_mac[2], read_mac[3], read_mac[4], read_mac[5]);
@@ -595,10 +582,6 @@ void cyw43_cb_tcpip_set_link_up(cyw43_t *self, int itf)
 		wifi_reconnect_interval = WIFI_RECONNECT_START_INTERVAL;
 		g_blink_connected = BLINK_CONNECTED_ON;
 		g_wifi_reconnect = false;
-
-		// Defensively re-assert no-powersave mode on every (re)association,
-		// in case the PM setting is reset internally on rejoin.
-		cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE);
 	}
 }
 
