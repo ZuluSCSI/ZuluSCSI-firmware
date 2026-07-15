@@ -1651,6 +1651,11 @@ extern "C" void zuluscsi_setup(void)
 #ifdef ZULUCONTROL_FIRMWARE
   if (g_sdcard_present && g_i2c_claimed)
   {
+    if (SD.exists(ZULUCONTROL_FW_FILE))
+    {
+      logmsg("-- ZuluControl-firmware file found on SD card, attempting to upgrade firmware");
+      zuluWebUIUpgradeFirmware(ZULUCONTROL_FW_FILE);
+    }
     zuluWebUIInit();
   }
 #endif

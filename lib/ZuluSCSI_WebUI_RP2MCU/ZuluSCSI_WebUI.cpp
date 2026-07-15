@@ -32,12 +32,19 @@
 
 #include "ZuluSCSI_WebUI.h"
 #include "ZuluSCSI_WebUI_I2CServer.h"
+#include "ZuluSCSI_WebUI_i2c_master_dma.h"
 #include <ZuluSCSI_log.h>
 #include <ZuluSCSI_control_api.h>
+#include <ZuluSCSI_platform.h>
+#include <ZuluSCSI_blink.h>
 #include <minIni.h>
 #include <Arduino.h>
+#include <SdFat.h>
+#include <pico/time.h>
 #include <string.h>
 #include <stdio.h>
+
+extern SdFs SD;
 
 #define CONFIGFILE "zuluscsi.ini"
 
@@ -385,6 +392,212 @@ static void handle_client_message(uint8_t cmd, const uint8_t *payload, uint16_t 
         default:
             logmsg("WebUI: unhandled client command 0x", (int)cmd);
             break;
+    }
+}
+
+// ── Firmware upgrade ──────────────────────────────────────────────────────────
+// Ports ZuluIDE-firmware's platform_i2c_upgrade_zulucontrol_fw() to ZuluSCSI --
+// same wire protocol, same DMA transport (ZuluSCSI_WebUI_i2c_master_dma.h),
+// same ZuluControl-firmware client on the other end.
+
+enum class WebUIFwUpgradeRequest : uint8_t { START = 0, FINISH = 1, ABORT = 2, RETRY = 3 };
+
+static void send_fw_upgrade_request(WebUIFwUpgradeRequest request)
+{
+    uint8_t requestByte = (uint8_t)request;
+    webuiI2CSend(I2C_SERVER_UPDATE_FW_REQUEST, &requestByte, 1);
+}
+
+// Polls for the client's ack of a previously sent chunk (or the sentinel ack
+// sent after FINISH), retrying on anything else -- most commonly
+// I2C_CLIENT_NOOP, the client's normal "nothing queued yet" reply while its
+// core0 hasn't dequeued/processed the chunk yet -- until one arrives or
+// `until` is reached.
+static bool read_fw_upgrade_ack(uint16_t *outLength, uint32_t *outCrc, absolute_time_t until)
+{
+    uint8_t payload[WEBUI_MAX_MSG_SIZE + 1];
+    while (true)
+    {
+        uint8_t cmd = I2C_CLIENT_NOOP;
+        uint16_t len = 0;
+        if (webuiI2CReceive(&cmd, payload, &len) && cmd == I2C_CLIENT_UPDATE_FW_ACK && len == 6)
+        {
+            if (outLength) *outLength = ((uint16_t)payload[0] << 8) | payload[1];
+            if (outCrc) *outCrc = ((uint32_t)payload[2] << 24) | ((uint32_t)payload[3] << 16) |
+                                  ((uint32_t)payload[4] << 8) | payload[5];
+            return true;
+        }
+
+        if (absolute_time_diff_us(get_absolute_time(), until) < 0)
+        {
+            return false;
+        }
+        sleep_us(200);
+    }
+}
+
+void zuluWebUIUpgradeFirmware(const char *filename)
+{
+    send_fw_upgrade_request(WebUIFwUpgradeRequest::START);
+
+    // Fast LED blink, one toggle per chunk sent -- mirrors ZuluIDE-firmware's
+    // platform_i2c_upgrade_zulucontrol_fw() and the ZuluIDE/ZuluSCSI
+    // bootloader's own per-page LED blink during a .bin update.
+    LED_OFF();
+
+    if (!webuiI2CDmaInit(i2c1))
+    {
+        logmsg("-- WebUI I2C: no free DMA channel available for ZuluControl-firmware upgrade, aborting");
+        send_fw_upgrade_request(WebUIFwUpgradeRequest::ABORT);
+        LED_OFF();
+        return;
+    }
+
+    FsFile fwFile = SD.open(filename, O_RDONLY);
+    if (!fwFile)
+    {
+        logmsg("Failed to open firmware file: ", filename);
+        send_fw_upgrade_request(WebUIFwUpgradeRequest::ABORT);
+        webuiI2CDmaDeinit();
+        LED_OFF();
+        return;
+    }
+
+    const size_t chunkSize = WEBUI_FW_UPGRADE_MAX_CHUNK;
+    // Static, not stack-local: this runs deep in the boot call stack
+    // (zuluscsi_setup()), and a buffer this size is worth being defensive
+    // about even though it's unlikely to blow a typical RP2040/2350 stack.
+    static uint8_t buffer[chunkSize];
+    uint32_t totalBytesSent = 0;
+    uint32_t chunksSent = 0;
+    uint32_t lastProgressLogTime = ms_now();
+
+    while (fwFile.isOpen())
+    {
+        int bytesRead = fwFile.read(buffer, chunkSize);
+        if (bytesRead == 0)
+        {
+            // Clean EOF. When the file size is an exact multiple of chunkSize,
+            // the *previous* iteration's read already consumed a full final
+            // chunk (bytesRead == chunkSize), so the "bytesRead < chunkSize"
+            // early-out below never fires for it -- EOF is only observable on
+            // this following read, which correctly returns 0. That's a normal
+            // way to finish, not an error.
+            logmsg("Finished sending ZuluControl-firmware file: ", filename, " (", (int)fwFile.size(), " bytes)");
+            break;
+        }
+        if (bytesRead < 0)
+        {
+            send_fw_upgrade_request(WebUIFwUpgradeRequest::ABORT);
+            fwFile.close();
+            webuiI2CDmaDeinit();
+            LED_OFF();
+            logmsg("Error reading ZuluControl-firmware file: ", filename);
+            return;
+        }
+
+        // Two distinct failure modes get one retry counter: a transaction-level
+        // failure (NACK/timeout) just resends -- nothing was staged client-side.
+        // A content mismatch (CRC or length wrong on an otherwise-successful round
+        // trip) sends RETRY first, since that's the only case where the client
+        // actually has something staged that needs discarding.
+        bool chunk_ok = false;
+        for (int attempt = 0; attempt < 3 && !chunk_ok; attempt++)
+        {
+            if (attempt > 0) sleep_ms(2);
+
+            uint32_t sent_crc = 0;
+            bool sent = webuiI2CDmaSendChunk(I2C_SERVER_UPDATE_FW_DATA, buffer, (uint16_t)bytesRead,
+                                             &sent_crc, make_timeout_time_ms(2000));
+            if (!sent)
+            {
+                logmsg("-- Failed to send firmware chunk at offset: ", (int)totalBytesSent,
+                       " (attempt ", (int)(attempt + 1), "/3)");
+                continue;
+            }
+
+            uint16_t ack_len = 0;
+            uint32_t ack_crc = 0;
+            bool acked = read_fw_upgrade_ack(&ack_len, &ack_crc, make_timeout_time_ms(2000));
+            if (!acked)
+            {
+                logmsg("-- WebUI I2C client did not acknowledge the firmware chunk at offset: ",
+                       (int)totalBytesSent, " (attempt ", (int)(attempt + 1), "/3)");
+                continue;
+            }
+
+            if (ack_len != (uint16_t)bytesRead || ack_crc != sent_crc)
+            {
+                logmsg("-- Error: WebUI I2C client ack mismatch at offset: ", (int)totalBytesSent,
+                       " expected len=", (int)bytesRead, " crc=", (int)sent_crc,
+                       " got len=", (int)ack_len, " crc=", (int)ack_crc,
+                       " (attempt ", (int)(attempt + 1), "/3)");
+                send_fw_upgrade_request(WebUIFwUpgradeRequest::RETRY);
+                continue;
+            }
+
+            chunk_ok = true;
+        }
+
+        if (!chunk_ok)
+        {
+            logmsg("-- Error: firmware chunk failed after 3 attempts at offset: ", (int)totalBytesSent);
+            send_fw_upgrade_request(WebUIFwUpgradeRequest::ABORT);
+            fwFile.close();
+            webuiI2CDmaDeinit();
+            LED_OFF();
+            return;
+        }
+
+        totalBytesSent += bytesRead;
+        chunksSent++;
+        if (chunksSent & 1) LED_ON(); else LED_OFF();
+
+        // Log progress at most every 2 seconds rather than every chunk.
+        uint32_t now = ms_now();
+        if ((uint32_t)(now - lastProgressLogTime) >= 2000)
+        {
+            lastProgressLogTime = now;
+            uint32_t percent = (uint32_t)((uint64_t)totalBytesSent * 100 / fwFile.size());
+            logmsg("Bytes of ZuluControl-firmware sent to device: ", (int)totalBytesSent, "/",
+                   (int)fwFile.size(), " bytes total (", (int)percent, "%)");
+        }
+
+        if (bytesRead < (int)chunkSize)
+        {
+            logmsg("Finished sending ZuluControl-firmware file: ", filename, " (", (int)fwFile.size(), " bytes)");
+            break;
+        }
+
+        platform_reset_watchdog();
+        blink_poll();
+    }
+
+    fwFile.close();
+    send_fw_upgrade_request(WebUIFwUpgradeRequest::FINISH);
+    LED_OFF();
+
+    // The client sends a sentinel ack (length 0xFFFF, crc32 0x00000000 -- a
+    // value no real chunk ack can ever produce, since chunks are capped at
+    // WEBUI_FW_UPGRADE_MAX_CHUNK bytes) once it has successfully committed
+    // the final chunk to flash and is about to reboot into the new firmware.
+    // Only delete the upgrade file once that's actually been confirmed: if
+    // the ack never arrives (e.g. it was lost, or the client failed to
+    // finish), the file needs to stay put so the upgrade can be retried on
+    // the next boot.
+    uint16_t finishAckLen = 0;
+    uint32_t finishAckCrc = 0;
+    bool finishAcked = read_fw_upgrade_ack(&finishAckLen, &finishAckCrc, make_timeout_time_ms(3000));
+    webuiI2CDmaDeinit();
+    if (finishAcked && finishAckLen == 0xFFFF && finishAckCrc == 0x00000000)
+    {
+        logmsg("ZuluControl-firmware update confirmed, device is rebooting. Removing file: ", filename);
+        SD.remove(filename);
+    }
+    else
+    {
+        logmsg("-- Warning: did not receive confirmation that the ZuluControl-firmware update "
+               "succeeded; leaving ", filename, " in place for retry");
     }
 }
 

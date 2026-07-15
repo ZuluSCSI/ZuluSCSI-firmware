@@ -19,6 +19,7 @@
 #ifdef ZULUSCSI_NETWORK
 #include <sys/types.h>
 #include "AmigaWIFI/AmigaWIFI.h"
+#include "crc32_ethernet.h"
 
 #ifdef __cplusplus
 extern "C" {
