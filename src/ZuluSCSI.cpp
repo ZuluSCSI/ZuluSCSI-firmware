@@ -1442,6 +1442,7 @@ static void init_eject_button()
   }
 }
 
+extern uint32_t g_i2c_bus_speed;
 // Place all the setup code that requires the SD card to be initialized here
 // Which is pretty much everything after platform_init and and platform_late_init
 static void zuluscsi_setup_sd_card(bool wait_for_card = true)
@@ -1653,7 +1654,7 @@ extern "C" void zuluscsi_setup(void)
   {
     if (SD.exists(ZULUCONTROL_FW_FILE))
     {
-      logmsg("-- ZuluControl-firmware file found on SD card, attempting to upgrade firmware");
+      logmsg("ZuluControl-firmware file found on SD card, attempting to upgrade firmware");
       zuluWebUIUpgradeFirmware(ZULUCONTROL_FW_FILE);
     }
     zuluWebUIInit();

@@ -456,7 +456,7 @@ void zuluWebUIUpgradeFirmware(const char *filename)
     FsFile fwFile = SD.open(filename, O_RDONLY);
     if (!fwFile)
     {
-        logmsg("Failed to open firmware file: ", filename);
+        logmsg("-- Failed to open firmware file: ", filename);
         send_fw_upgrade_request(WebUIFwUpgradeRequest::ABORT);
         webuiI2CDmaDeinit();
         LED_OFF();
@@ -492,7 +492,7 @@ void zuluWebUIUpgradeFirmware(const char *filename)
             fwFile.close();
             webuiI2CDmaDeinit();
             LED_OFF();
-            logmsg("Error reading ZuluControl-firmware file: ", filename);
+            logmsg("-- Error reading ZuluControl-firmware file: ", filename);
             return;
         }
 
@@ -559,13 +559,13 @@ void zuluWebUIUpgradeFirmware(const char *filename)
         {
             lastProgressLogTime = now;
             uint32_t percent = (uint32_t)((uint64_t)totalBytesSent * 100 / fwFile.size());
-            logmsg("Bytes of ZuluControl-firmware sent to device: ", (int)totalBytesSent, "/",
+            logmsg("-- Bytes of ZuluControl-firmware sent to device: ", (int)totalBytesSent, "/",
                    (int)fwFile.size(), " bytes total (", (int)percent, "%)");
         }
 
         if (bytesRead < (int)chunkSize)
         {
-            logmsg("Finished sending ZuluControl-firmware file: ", filename, " (", (int)fwFile.size(), " bytes)");
+            logmsg("-- Finished sending ZuluControl-firmware file: ", filename, " (", (int)fwFile.size(), " bytes)");
             break;
         }
 
@@ -591,7 +591,7 @@ void zuluWebUIUpgradeFirmware(const char *filename)
     webuiI2CDmaDeinit();
     if (finishAcked && finishAckLen == 0xFFFF && finishAckCrc == 0x00000000)
     {
-        logmsg("ZuluControl-firmware update confirmed, device is rebooting. Removing file: ", filename);
+        logmsg("-- ZuluControl-firmware update confirmed, device is rebooting. Removing file: ", filename);
         SD.remove(filename);
     }
     else

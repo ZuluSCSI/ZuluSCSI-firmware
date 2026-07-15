@@ -50,6 +50,7 @@
 
 extern bool g_sdcard_present;
 extern bool g_romdrive_active;
+extern uint32_t g_i2c_bus_speed;
 
 enum rotary_direction_t {
     ROTARY_DIR_NONE = 0,
@@ -444,21 +445,41 @@ void enableScreen(bool state)
 
 bool initScreenHardware()
 {
-    g_wire.setClock(PLATFORM_I2C_CLK_SPEED);
-
     // Setting the drive strength seems to help the I2C bus with the Pico W controller and the controller OLED display
     // to communicate and handshake properly
     gpio_set_drive_strength(GPIO_I2C_SCL, GPIO_DRIVE_STRENGTH_12MA);
     gpio_set_drive_strength(GPIO_I2C_SDA, GPIO_DRIVE_STRENGTH_12MA);
 
     g_wire.begin();
+
     dbgmsg("Checking for I2C Display");
-    g_wire.beginTransmission(SCREEN_ADDRESS);
-    if (g_wire.endTransmission() != 0)
+
+    if (g_i2c_bus_speed != STANDARD_I2C_CLK_SPEED)
     {
-        dbgmsg("Could not find Display on I2C bus");
-        g_wire.end();
-        return false;
+        g_i2c_bus_speed = FAST_I2C_CLK_SPEED;
+    }
+    g_wire.setClock(g_i2c_bus_speed);
+
+    uint32_t test_i2c_bus_speed = g_i2c_bus_speed;
+    while (true)
+    {
+        g_wire.beginTransmission(SCREEN_ADDRESS);
+        if (g_wire.endTransmission() != 0)
+        {
+            if (test_i2c_bus_speed == STANDARD_I2C_CLK_SPEED)
+            {
+                dbgmsg("Could not find Display on I2C bus");
+                g_wire.end();
+                return false;
+            }
+            else
+            {
+                // attempt standard speed
+                test_i2c_bus_speed = STANDARD_I2C_CLK_SPEED;
+            }
+        }
+        else
+            break;
     }
 #if ZULUSCSI_RESERVED_SRAM_LEN > 0
     uint8_t *object_addr = reserve_buffer_align(sizeof(Adafruit_SSD1306), 4);
@@ -467,7 +488,7 @@ bool initScreenHardware()
     g_display = &allocated_g_display;
 #endif
 
-
+ 
     // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
     if(!g_display->begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) 
     {
@@ -478,6 +499,11 @@ bool initScreenHardware()
 
         return false;
     }
+
+    if (g_i2c_bus_speed != test_i2c_bus_speed && test_i2c_bus_speed == STANDARD_I2C_CLK_SPEED)
+        logmsg("I2C successfully fell back to normal bus speed (100kHz)");
+    g_i2c_bus_speed = test_i2c_bus_speed;
+
     g_displayEnabled = true;
     g_i2c_claimed = true;
         // Clear the buffer
@@ -491,7 +517,14 @@ bool initControlBoardHardware()
 {
     // System clock may have changed
     g_wire.end();
-    g_wire.setClock(PLATFORM_I2C_CLK_SPEED);
+
+    if (STANDARD_I2C_CLK_SPEED != g_i2c_bus_speed)
+    {
+        g_i2c_bus_speed = FAST_I2C_CLK_SPEED;
+        g_wire.setClock(g_i2c_bus_speed);
+    }
+    uint32_t test_i2c_bus_speed = g_i2c_bus_speed;
+    g_wire.setClock(test_i2c_bus_speed);
     g_wire.begin();
 
     initScreens();
@@ -512,6 +545,19 @@ bool initControlBoardHardware()
 
     enableScreen(true);
     g_controlBoardEnabled = initControlBoardI2C();
+    if (!g_controlBoardEnabled && test_i2c_bus_speed != STANDARD_I2C_CLK_SPEED)
+    {
+        test_i2c_bus_speed = STANDARD_I2C_CLK_SPEED;
+        g_wire.setClock(test_i2c_bus_speed);
+        g_controlBoardEnabled = initControlBoardI2C();
+    }
+
+    if (g_controlBoardEnabled)
+    {
+        if (test_i2c_bus_speed == STANDARD_I2C_CLK_SPEED && g_i2c_bus_speed != test_i2c_bus_speed)
+            logmsg("I2C successfully fell back to normal bus speed (100kHz)");
+        g_i2c_bus_speed = test_i2c_bus_speed;
+    }
     return true;
 }
 

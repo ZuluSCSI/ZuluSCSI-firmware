@@ -27,8 +27,8 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "2026.07.01"
-#define FW_VER_SUFFIX   "release"
+#define FW_VER_NUM      "2026.07.15"
+#define FW_VER_SUFFIX   "dev"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
 #define STRINGFY(STR) #STR
@@ -46,11 +46,9 @@
 #define CRASHFILE   "zuluerr.txt"
 #define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
-// Firmware image for the WebUI/ZuluControl companion board, uploaded over I2C
-// at boot if present on the SD card (see zuluWebUIUpgradeFirmware()). Same
-// filename ZuluIDE-firmware uses, since it's the same companion board/client
-// firmware for both.
+
 #define ZULUCONTROL_FW_FILE "zulucontrol.uf2"
+
 #define SNIFFERFILE "zuluscsi_sniff.dat"
 
 // Prefix for command file to create new image (case-insensitive)

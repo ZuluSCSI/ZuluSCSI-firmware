@@ -95,6 +95,7 @@ bool WaitForChannelOrAbort(i2c_inst_t* i2c, uint channel, absolute_time_t until)
 // numbers. Called once at the start of a firmware-upgrade attempt (boot
 // time, after the SD card and SCSI targets are already initialized), so any
 // channels already in real use are correctly reflected in the claim bitmap.
+extern uint32_t g_i2c_bus_speed;
 bool webuiI2CDmaInit(i2c_inst_t* i2c) {
     g_i2c = i2c;
     g_hdr_channel = dma_claim_unused_channel(false);
@@ -108,6 +109,7 @@ bool webuiI2CDmaInit(i2c_inst_t* i2c) {
         return false;
     }
     g_initialized = true;
+    i2c_set_baudrate(g_i2c, g_i2c_bus_speed);
     return true;
 }
 

@@ -39,8 +39,8 @@
 // Maximum payload length accepted on the receive path
 #define WEBUI_MAX_MSG_SIZE       512
 
-// Protocol version string - must match ZuluSCSI_WebUI_I2CClient.h
-#define WEBUI_I2C_API_VERSION    "4.0.0"
+// Protocol version string
+#define WEBUI_I2C_API_VERSION    "5.0.0"
 
 // ── Server → client commands (ZuluSCSI sends to WebUI board) ────────────────
 #define I2C_SERVER_API_VERSION            0x01  // API version string

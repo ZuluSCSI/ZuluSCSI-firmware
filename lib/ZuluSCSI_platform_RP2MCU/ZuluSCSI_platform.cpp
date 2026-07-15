@@ -86,6 +86,7 @@ extern "C" {
 
 extern bool g_rawdrive_active;
 extern bool g_log_to_sd;
+uint32_t g_i2c_bus_speed = 0;
 
 extern "C" {
 #include "timings_RP2MCU.h"
