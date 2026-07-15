@@ -1478,7 +1478,7 @@ uint8_t platform_get_buttons()
     {   // pulled to VCC via resistor, sinking when pressed
         if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
     }
-    else if (!g_displayEnabled)
+    else if (!g_i2c_claimed)
     {
         if (!init_buttons)
         {
