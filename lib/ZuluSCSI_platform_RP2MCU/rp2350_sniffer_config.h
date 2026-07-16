@@ -30,13 +30,13 @@ void sniffer_log(const char *msg);
 #endif
 
 // DMA channel for transfer of data from PIO to RAM
-#ifndef SNIFFER_DMACH
-#define SNIFFER_DMACH 6
+#ifndef SNIFFER_DMA_CH_A
+#define SNIFFER_DMA_CH_A 12
 #endif
 
 // DMA channel for reconfiguring first DMA channel
-#ifndef SNIFFER_DMACH_B
-#define SNIFFER_DMACH_B 7
+#ifndef SNIFFER_DMA_CH_B
+#define SNIFFER_DMA_CH_B 13
 #endif
 
 // PIO block used for capture
