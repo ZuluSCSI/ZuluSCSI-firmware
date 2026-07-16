@@ -1652,11 +1652,24 @@ extern "C" void zuluscsi_setup(void)
 #ifdef ZULUCONTROL_FIRMWARE
   if (g_sdcard_present && g_i2c_claimed)
   {
-    if (SD.exists(ZULUCONTROL_FW_FILE))
+    FsFile root = SD.open("/");
+    FsFile file;
+    while (file.openNext(&root))
     {
-      logmsg("ZuluControl-firmware file found on SD card, attempting to upgrade firmware");
-      zuluWebUIUpgradeFirmware(ZULUCONTROL_FW_FILE);
+      char filename[MAX_FILE_PATH];
+      file.getName(filename, sizeof(filename));
+      const char *extension = strrchr(filename, '.');
+      if (extension && strncasecmp(extension, ".uf2", 4) == 0 && strncasecmp(filename, ZULUCONTROL_UF2_PREFIX, sizeof(ZULUCONTROL_UF2_PREFIX) - 1) == 0)
+      {
+        file.close();
+        logmsg("ZuluControl-firmware UF2, \"", filename, "\", found on SD card, attempting to upgrade firmware");
+        zuluWebUIUpgradeFirmware(filename);
+        break;
+      }
     }
+    file.close();
+    root.close();
+
     zuluWebUIInit();
   }
 #endif
