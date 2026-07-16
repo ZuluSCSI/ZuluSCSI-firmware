@@ -395,25 +395,25 @@ extern "C"
 {
 void audio_dma_irq() {
     // Using dma irq raw register access, because the 2.1.0 pico-sdk function seem to cause issues
-    if (dma_hw->intr & (1 << SOUND_DMA_CHA)) {
-        dma_hw->ints2 = (1 << SOUND_DMA_CHA);
+    if (dma_hw->intr & (1 << SOUND_DMA_CH_A)) {
+        dma_hw->ints2 = (1 << SOUND_DMA_CH_A);
         sbufst_a = STALE;
         if (audio_stopping) {
-            channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CHA);
+            channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CH_A);
         }
-        dma_channel_configure(SOUND_DMA_CHA,
+        dma_channel_configure(SOUND_DMA_CH_A,
                 &snd_dma_a_cfg,
                 i2s.getPioFIFOAddr(),
                 output_buf_a,
                 out_len_a / 4,
                 false);
-    } else if (dma_hw->intr & (1 << SOUND_DMA_CHB)) {
-        dma_hw->ints2 = (1 <<  SOUND_DMA_CHB);
+    } else if (dma_hw->intr & (1 << SOUND_DMA_CH_B)) {
+        dma_hw->ints2 = (1 <<  SOUND_DMA_CH_B);
         sbufst_b = STALE;
         if (audio_stopping) {
-            channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHB);
+            channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CH_B);
         }
-        dma_channel_configure(SOUND_DMA_CHB,
+        dma_channel_configure(SOUND_DMA_CH_B,
                 &snd_dma_b_cfg,
                 i2s.getPioFIFOAddr(),
                 output_buf_b,
@@ -443,8 +443,8 @@ void audio_setup() {
     i2s.setBitsPerSample(16);
     i2s.setDivider(g_zuluscsi_timings->audio.clk_div_pio, 0);
     i2s.begin(I2S_PIO_HW, I2S_PIO_SM);
-    dma_channel_claim(SOUND_DMA_CHA);
-	dma_channel_claim(SOUND_DMA_CHB);
+    dma_channel_claim(SOUND_DMA_CH_A);
+	dma_channel_claim(SOUND_DMA_CH_B);
 
     irq_set_exclusive_handler(I2S_DMA_IRQ_NUM, audio_dma_irq);
     irq_set_enabled(I2S_DMA_IRQ_NUM, true);
@@ -463,8 +463,8 @@ void audio_disable()
     if (audio_is_active())
         audio_stop();
     i2s.end();
-    dma_channel_unclaim(SOUND_DMA_CHA);
-    dma_channel_unclaim(SOUND_DMA_CHB);
+    dma_channel_unclaim(SOUND_DMA_CH_A);
+    dma_channel_unclaim(SOUND_DMA_CH_B);
     irq_remove_handler(DMA_IRQ_0, audio_dma_irq);
 }
 
@@ -746,28 +746,28 @@ bool  audio_play_track_index(uint8_t owner,      image_config_t* img,
 // Source-agnostic: used by both CD-DA playback and host PCM streaming.
 static void audio_dma_start_channels()
 {
-    snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CHA);
+    snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CH_A);
     channel_config_set_transfer_data_size(&snd_dma_a_cfg, DMA_SIZE_32);
     channel_config_set_dreq(&snd_dma_a_cfg, i2s.getPioDreq());
     channel_config_set_read_increment(&snd_dma_a_cfg, true);
-    channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CHB);
+    channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CH_B);
     channel_config_set_high_priority(&snd_dma_a_cfg, true);
-    dma_channel_configure(SOUND_DMA_CHA, &snd_dma_a_cfg, i2s.getPioFIFOAddr(),
+    dma_channel_configure(SOUND_DMA_CH_A, &snd_dma_a_cfg, i2s.getPioFIFOAddr(),
             output_buf_a, AUDIO_OUT_BUFFER_SIZE, false);
-    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHA );
-    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CHA, true);
-    snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
+    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CH_A );
+    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CH_A, true);
+    snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CH_B);
     channel_config_set_transfer_data_size(&snd_dma_b_cfg, DMA_SIZE_32);
     channel_config_set_dreq(&snd_dma_b_cfg, i2s.getPioDreq());
     channel_config_set_read_increment(&snd_dma_b_cfg, true);
-    channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHA);
+    channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CH_A);
     channel_config_set_high_priority(&snd_dma_b_cfg, true);
-    dma_channel_configure(SOUND_DMA_CHB, &snd_dma_b_cfg, i2s.getPioFIFOAddr(),
+    dma_channel_configure(SOUND_DMA_CH_B, &snd_dma_b_cfg, i2s.getPioFIFOAddr(),
             output_buf_b, AUDIO_OUT_BUFFER_SIZE, false);
-    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CHB );
-    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CHB, true);
+    hw_set_bits(&dma_hw->inte2, 1 << SOUND_DMA_CH_B );
+    dma_irqn_set_channel_enabled(I2S_DMA_IRQ_IDX, SOUND_DMA_CH_B, true);
     // ready to go
-    dma_channel_start(SOUND_DMA_CHA);
+    dma_channel_start(SOUND_DMA_CH_A);
 }
 
 static void audio_start_dma()
@@ -913,15 +913,15 @@ void audio_stop(uint8_t id, bool startup_skip) {
     // then indicate that the streams should no longer chain to one another
     // and wait for them to shut down naturally
     audio_stopping = true;
-    while (dma_channel_is_busy(SOUND_DMA_CHA)) tight_loop_contents();
-    while (dma_channel_is_busy(SOUND_DMA_CHB)) tight_loop_contents();
+    while (dma_channel_is_busy(SOUND_DMA_CH_A)) tight_loop_contents();
+    while (dma_channel_is_busy(SOUND_DMA_CH_B)) tight_loop_contents();
     // \todo check if I2S pio is done
     // The way to check is the I2S pio is done would be to check
     // if the fifo is empty and the PIO's program counter is at the first instruction
     // while (spi_is_busy(AUDIO_SPI)) tight_loop_contents();
     audio_stopping = false;
-    dma_channel_abort(SOUND_DMA_CHA);
-    dma_channel_abort(SOUND_DMA_CHB);
+    dma_channel_abort(SOUND_DMA_CH_A);
+    dma_channel_abort(SOUND_DMA_CH_B);
     // idle the subsystem
     audio_last_status[audio_owner] = ASC_COMPLETED;
     audio_paused = false;
