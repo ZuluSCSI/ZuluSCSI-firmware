@@ -26,6 +26,7 @@
 #include "ZuluSCSI_WebUI_I2CServer.h"
 #include <Wire.h>
 #include <ZuluSCSI_log.h>
+#include <ZuluSCSI_settings.h>
 #include <string.h>
 
 // Shared with ZuluSCSI_UI_RP2MCU (control.cpp defines it on i2c1 + GPIO_I2C_SDA/SCL)
@@ -40,26 +41,51 @@ bool webuiI2CWebUIPresent()
 {
     return g_webui_present;
 }
-
+extern uint32_t g_i2c_bus_speed;
 void webuiI2CDetectClient()
 {
-
-    g_wire.setClock(PLATFORM_I2C_CLK_SPEED);
-    g_wire.begin();
-
-    g_wire.beginTransmission(WEBUI_I2C_SLAVE_ADDR);
-    if (g_wire.endTransmission() == 0)
     {
-        g_i2c_claimed = true;
-        logmsg("WebUI I2C: client detected at ", (uint8_t)WEBUI_I2C_SLAVE_ADDR, ", I2C bus claimed");
-    }
-    else
-    {
-        if (!g_i2c_claimed)
+        g_wire.begin();
+
+        if (STANDARD_I2C_CLK_SPEED != g_i2c_bus_speed)
         {
-            g_wire.end();
+            g_i2c_bus_speed = FAST_I2C_CLK_SPEED;
+            g_wire.setClock(g_i2c_bus_speed);
         }
-        dbgmsg("WebUI I2C: client not detected");
+        uint32_t test_i2c_bus_speed = g_i2c_bus_speed;
+        g_wire.setClock(test_i2c_bus_speed);
+
+        while(true)
+        {
+            g_wire.beginTransmission(WEBUI_I2C_SLAVE_ADDR);
+            if (g_wire.endTransmission() == 0)
+            {
+                if (test_i2c_bus_speed == STANDARD_I2C_CLK_SPEED && g_i2c_bus_speed != test_i2c_bus_speed)
+                    logmsg("I2C successfully fell back to normal bus speed (100kHz)");
+                g_i2c_bus_speed = test_i2c_bus_speed;
+                g_i2c_claimed = true;
+                logmsg("WebUI I2C: client detected at ", (uint8_t)WEBUI_I2C_SLAVE_ADDR, ", I2C bus claimed");
+                break;
+            }
+            else
+            {
+                if (test_i2c_bus_speed == STANDARD_I2C_CLK_SPEED)
+                {
+                    if (!g_i2c_claimed)
+                    {
+                        g_wire.end();
+                    }
+                    dbgmsg("WebUI I2C: client not detected");
+                    break;
+                }
+                else
+                {
+                    // retry at the standard clockspeed
+                    test_i2c_bus_speed = STANDARD_I2C_CLK_SPEED;
+                    g_wire.setClock(test_i2c_bus_speed);
+                }
+            }
+        }
     }
 }
 

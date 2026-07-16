@@ -39,12 +39,14 @@
 // Maximum payload length accepted on the receive path
 #define WEBUI_MAX_MSG_SIZE       512
 
-// Protocol version string - must match ZuluSCSI_WebUI_I2CClient.h
-#define WEBUI_I2C_API_VERSION    "4.0.0"
+// Protocol version string
+#define WEBUI_I2C_API_VERSION    "5.0.0"
 
 // ── Server → client commands (ZuluSCSI sends to WebUI board) ────────────────
 #define I2C_SERVER_API_VERSION            0x01  // API version string
 #define I2C_SERVER_WIFI_CONNECT           0x02  // Tell I2C WebUI client to connect to WiFi
+#define I2C_SERVER_UPDATE_FW_REQUEST      0x03  // Start/finish/abort/retry a ZuluControl-firmware upgrade; payload[0]=WebUIFwUpgradeRequest
+#define I2C_SERVER_UPDATE_FW_DATA         0x04  // A chunk of ZuluControl-firmware data (DMA transport, see ZuluSCSI_WebUI_i2c_master_dma.h)
 #define I2C_SERVER_UPDATE_FILENAME_CACHE  0x08  // Announce start of filename list
 #define I2C_SERVER_IMAGE_FILENAME         0x09  // One filename; payload[0]=scsi_id, [1..]=name; empty=done
 #define I2C_SERVER_SYSTEM_STATUS_JSON     0x0A  // System status as JSON object
@@ -63,6 +65,7 @@
 // ── Client → server commands (WebUI board sends to ZuluSCSI) ────────────────
 #define I2C_CLIENT_NOOP                   0x00  // No operation (slave queue empty)
 #define I2C_CLIENT_API_VERSION            0x01  // I2C WebUI client API version string
+#define I2C_CLIENT_UPDATE_FW_ACK          0x03  // Ack for a firmware chunk; payload=[len_hi][len_lo][crc32:4]. Sentinel len=0xFFFF/crc=0 after FINISH means the client flashed successfully and is rebooting.
 #define I2C_CLIENT_FETCH_FILENAMES        0x09  // Request filename list; payload[0]=scsi_id
 #define I2C_CLIENT_SUBSCRIBE_STATUS_JSON  0x0A  // Subscribe to periodic status updates
 #define I2C_CLIENT_LOAD_IMAGE             0x0B  // Mount image; payload[0]=scsi_id, [1..]=full_path
