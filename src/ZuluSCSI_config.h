@@ -48,6 +48,7 @@
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
 
 #define ZULUCONTROL_FW_FILE "zulucontrol.uf2"
+#define ZULUCONTROL_UF2_PREFIX "zulucontrol"
 
 #define SNIFFERFILE "zuluscsi_sniff.dat"
 
