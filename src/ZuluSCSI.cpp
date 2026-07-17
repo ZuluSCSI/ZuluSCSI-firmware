@@ -1652,12 +1652,12 @@ extern "C" void zuluscsi_setup(void)
 #ifdef ZULUCONTROL_FIRMWARE
   if (g_sdcard_present && g_i2c_claimed)
   {
-    FsFile root = SD.open("/");
+    FsFile root = SD.open("/", O_RDONLY);
     FsFile file;
+    char *filename = new char[MAX_FILE_PATH+1];
     while (file.openNext(&root))
     {
-      char filename[MAX_FILE_PATH];
-      file.getName(filename, sizeof(filename));
+      file.getName(filename, MAX_FILE_PATH+1);
       const char *extension = strrchr(filename, '.');
       if (extension && strncasecmp(extension, ".uf2", 4) == 0 && strncasecmp(filename, ZULUCONTROL_UF2_PREFIX, sizeof(ZULUCONTROL_UF2_PREFIX) - 1) == 0)
       {
@@ -1667,6 +1667,8 @@ extern "C" void zuluscsi_setup(void)
         break;
       }
     }
+    delete[] filename;
+    filename = nullptr;
     file.close();
     root.close();
 
