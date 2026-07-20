@@ -1163,6 +1163,31 @@ int findNextImageAfter(image_config_t &img,
     }
 }
 
+int scsiDiskReadImgX(const char *section, int index, char *buf, size_t buflen)
+{
+    char key[6] = "IMG00";
+    if (index < 10)
+    {
+        key[3] = '0' + index;
+        key[4] = '\0';
+    }
+    else
+    {
+        key[3] = '0' + index / 10;
+        key[4] = '0' + index % 10;
+    }
+
+    buf[0] = '\0';
+    int ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+    if (buf[0] == '\0' && index < 10)
+    {
+        key[3] = '0';
+        key[4] = '0' + index;
+        ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+    }
+    return ret;
+}
+
 int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 {
     int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
@@ -1328,27 +1353,15 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
                 img.image_index = 0;
             }
 
-            char key[6] = "IMG00";
-
-            if (img.image_index < 10)
-            {
-                key[4] = '0' + img.image_index;
-            }
-            else
-            {
-                key[3] = '0' + img.image_index / 10;
-                key[4] = '0' + img.image_index % 10;
-            }
-
             // For the dynamic target, check [SCSIn] IMG keys first, then [SCSI<X>].
             int ret = 0;
             buf[0] = '\0';
 #ifdef DYNAMIC_SCSI_ID
             if (is_dynamic)
-                ret = ini_gets(DYNAMIC_SCSI_INI_SECTION, key, "", buf, buflen, CONFIGFILE);
+                ret = scsiDiskReadImgX(DYNAMIC_SCSI_INI_SECTION, img.image_index, buf, buflen);
 #endif
             if (!ret || buf[0] == '\0')
-                ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+                ret = scsiDiskReadImgX(section, img.image_index, buf, buflen);
 
             if (buf[0] != '\0')
             {
