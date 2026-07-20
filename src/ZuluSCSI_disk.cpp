@@ -1165,6 +1165,10 @@ int findNextImageAfter(image_config_t &img,
 
 int scsiDiskReadImgX(const char *section, int index, char *buf, size_t buflen)
 {
+    buf[0] = '\0';
+    if (index < 0 || index > IMAGE_INDEX_MAX)
+        return 0;
+
     char key[6] = "IMG00";
     if (index < 10)
     {
