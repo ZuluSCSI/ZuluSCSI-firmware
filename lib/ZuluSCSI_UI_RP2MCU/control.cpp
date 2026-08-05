@@ -1101,10 +1101,7 @@ void patchDevice(uint8_t target_idx)
                 int j;
                 for (j=0;j<=IMAGE_INDEX_MAX;j++)
                 {
-                    char key[5] = "IMG0";
-                    key[3] = '0' + j;
-
-                    ini_gets(section, key, "", filename, MAX_PATH_LEN, CONFIGFILE);
+                    scsiDiskReadImgX(section, j, filename, MAX_PATH_LEN);
                     if (filename[0] == '\0')
                     {
                         break;

@@ -168,6 +168,10 @@ void scsiDiskCloseTray(image_config_t &img);
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type = S2S_CFG_FIXED, bool use_prefix = false);
 void scsiDiskLoadConfig(int target_idx);
 
+// Read IMG0-IMG99 entry from an ini section, accepting both
+// unpadded (IMG5) and zero-padded (IMG05) single digit keys.
+int scsiDiskReadImgX(const char *section, int index, char *buf, size_t buflen);
+
 // Checks if a filename extension is appropriate for further processing as a disk image.
 // The current implementation does not check the the filename prefix for validity.
 bool scsiDiskFilenameValid(const char* name);
