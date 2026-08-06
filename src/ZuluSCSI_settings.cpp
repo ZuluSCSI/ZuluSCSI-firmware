@@ -37,7 +37,7 @@
 // SCSI system and device settings
 ZuluSCSISettings g_scsi_settings;
 
-const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "X68000-SCSI","X68000-SASI", "DOS", "NeXT",
+const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "X68000-SCSI","X68000-SASI", "DOS", "NeXT", "PC-9801-55",
 #ifdef PLATFORM_AS400
     "AS400", "AS400_BS520", "AS400_BS522", "AS400_CISC", "AS400_PPC",
 #endif
@@ -734,6 +734,14 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         cfgSys.enableParity = false;
         cfgSys.maxSyncSpeed = 5;
     }
+    else if (strequals(systemPresetName[SYS_PRESET_PC_9801_55], presetName))
+    {
+        m_sysPreset = SYS_PRESET_PC_9801_55;
+        cfgSys.quirks = S2S_CFG_QUIRKS_PC98_55;
+        cfgSys.enableSCSI2 = false;
+        cfgDev.sectorsPerTrack = 25;
+        cfgDev.headsPerCylinder = 8;
+    }
     else if (strequals(systemPresetName[SYS_PRESET_DOS], presetName))
     {
         m_sysPreset = SYS_PRESET_DOS;
@@ -779,6 +787,15 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     memset(cfgDev.revision, 0, sizeof(cfgDev.revision));
     memset(cfgDev.serial, 0, sizeof(cfgDev.serial));
 
+    if (m_sysPreset == SYS_PRESET_PC_9801_55)
+    {
+        // The controller requires that Vendor starts with "NEC"; the
+        // remaining characters are ignored by the host
+        strncpy(cfgDev.vendor, "NECSCSI", sizeof(cfgDev.vendor));
+    }
+
+
+    
     // Read default setting overrides from ini file for each SCSI device
     readIniSCSIDeviceSetting(cfgDev, "SCSI", log_settings);
 
