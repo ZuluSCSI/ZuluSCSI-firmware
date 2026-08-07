@@ -46,4 +46,15 @@ void zuluWebUINotifySDCardReady();
 // Notify the WebUI that the SD card has been removed.
 // Pushes an empty filename list for each device so the I2C WebUI client clears its cache.
 void zuluWebUINotifySDCardRemoved();
+
+// Uploads a ZuluControl-firmware image (a raw .uf2 file) from the SD card to
+// the WebUI/ZuluControl companion board over I2C, using a DMA-driven master
+// transmit path with CRC32 verification and up to 3 retries per chunk. Call
+// once at boot, after the I2C bus has been probed (g_i2c_claimed) and before
+// zuluWebUIInit() -- independent of whether WiFi/WebUI itself is configured,
+// since the companion board should be kept up to date regardless. Deletes
+// `filename` from the SD card only once the client has confirmed (via a
+// sentinel ACK) that it successfully flashed the update and is rebooting;
+// otherwise leaves it in place so the upgrade is retried on the next boot.
+void zuluWebUIUpgradeFirmware(const char* filename);
 #endif

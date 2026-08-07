@@ -27,7 +27,7 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "2026.07.01"
+#define FW_VER_NUM      "2026.08.07"
 #define FW_VER_SUFFIX   "V1.x-LTS-release"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
@@ -46,6 +46,10 @@
 #define CRASHFILE   "zuluerr.txt"
 #define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
+
+#define ZULUCONTROL_FW_FILE "zulucontrol.uf2"
+#define ZULUCONTROL_UF2_PREFIX "zulucontrol"
+
 #define SNIFFERFILE "zuluscsi_sniff.dat"
 
 // Prefix for command file to create new image (case-insensitive)
@@ -64,6 +68,11 @@
 #define WIFI_RECONNECT_START_INTERVAL 5000
 #define WIFI_RECONECT_MAX_INTERVAL 15000
 #define WIFI_RECONNECT_INCREMENT_INTERVAL 5000
+
+// How often to send a dummy Ethernet frame while idle, to keep the CYW43
+// radio active and give it a chance to notice/recover from an AP-initiated
+// deauth. Well under typical AP idle timeouts (commonly 300-1000s).
+#define WIFI_KEEPALIVE_INTERVAL 120
 
 // Watchdog timeout
 // Watchdog will first issue a bus reset and if that does not help, crashdump.

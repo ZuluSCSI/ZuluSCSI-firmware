@@ -20,6 +20,7 @@
 #include "ZuluSCSI_config.h"
 #include <scsi.h>
 #include <network.h>
+#include <ZuluSCSI_settings.h>
 
 extern "C" {
 
@@ -146,7 +147,6 @@ bool platform_network_init(char *mac)
 	// setting the MAC requires libpico to be compiled with CYW43_USE_OTP_MAC=0
 	memcpy(cyw43_state.mac, mac, sizeof(cyw43_state.mac));
 	cyw43_arch_enable_sta_mode();
-
 	cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, read_mac);
 	char mac_hex_string[4*6] = {0};
 	sprintf(mac_hex_string, "%02X:%02X:%02X:%02X:%02X:%02X", read_mac[0], read_mac[1], read_mac[2], read_mac[3], read_mac[4], read_mac[5]);
@@ -291,12 +291,66 @@ void platform_network_poll()
 		wifi_reconnect_interval += WIFI_RECONNECT_INCREMENT_INTERVAL;
 		if (wifi_reconnect_interval > WIFI_RECONECT_MAX_INTERVAL)
 			wifi_reconnect_interval = WIFI_RECONECT_MAX_INTERVAL;
-		logmsg("Attempting Wi-Fi reconnection to \"", ssid, "\" attempts: ", wifi_reconnect_attempts, " next attempt in ", (int)wifi_reconnect_interval / 1000, " seconds");
+		logmsg("Attempting Wi-Fi reconnection to \"", ssid, "\" attempts: ", wifi_reconnect_attempts, ", next attempt in ", (int)wifi_reconnect_interval / 1000, " seconds");
 		platform_network_wifi_join(ssid, (g_wifi_reconnect_password[0]) ? g_wifi_reconnect_password : scsiDev.boardCfg.wifiPassword, true);
 
 	}
 
 	last_network_status = status;
+
+	// TEMPORARY DIAGNOSTIC: log the raw link status every ~10s, unconditionally,
+	// regardless of what the keepalive condition below checks for. This is to
+	// directly observe what status value this device actually reports while
+	// idle, since the keepalive block's silence hasn't told us that on its own.
+	// Disabled for release; uncomment for diagnostics.
+#if 0
+	static uint32_t status_log_time = 0;
+	if ((uint32_t)(millis() - status_log_time) > 10000)
+	{
+		status_log_time = millis();
+		logmsg("DIAG: link status=", status, " network_in_use=", (int)network_in_use);
+	}
+#endif
+
+	// Periodically send a dummy Ethernet frame while associated. This is a
+	// workaround for CYW43 behavior observed on Aruba Instant APs: once the
+	// AP ages out and deauths an idle client, the chip does not appear to
+	// notice/recover on its own, even with power-save disabled - but it
+	// reliably does recover the next time the host attempts to transmit.
+	// Rather than rely on the SCSI host (e.g. classic Mac) happening to
+	// generate traffic often enough, proactively send a minimal broadcast
+	// frame on a timer, well under typical AP idle timeouts. The frame uses
+	// the IEEE-reserved "local experimental" EtherType (0x88B5) and an
+	// all-zero payload so it is inert to anything else on the network.
+	static uint32_t keep_alive_interval = 0;
+	static bool keep_alive_set = false;
+	if (!keep_alive_set)
+	{
+		keep_alive_set = true;
+		keep_alive_interval = g_scsi_settings.getSystem()->wifi_keep_alive_s * 1000;
+	}
+
+	static uint32_t wifi_keepalive_time = 0;
+	if (keep_alive_interval > 0
+		&& status >= CYW43_LINK_JOIN
+		&& (uint32_t)(millis() - wifi_keepalive_time) > keep_alive_interval)
+	{
+		wifi_keepalive_time = millis();
+
+		uint8_t keepalive_frame[60] = {0};
+		// Destination: broadcast
+		memset(&keepalive_frame[0], 0xFF, 6);
+		// Source: our own MAC
+		memcpy(&keepalive_frame[6], cyw43_state.mac, 6);
+		// EtherType: 0x88B5, IEEE Std 802 - Local Experimental Ethertype 1
+		keepalive_frame[12] = 0x88;
+		keepalive_frame[13] = 0xB5;
+		// Remaining bytes are zero-padding to meet minimum frame size
+
+		int ret = cyw43_send_ethernet(&cyw43_state, 0, sizeof(keepalive_frame), keepalive_frame, 0);
+		dbgmsg("Wi-Fi keepalive frame send attempt, status=", status, " ret=", ret);
+	}
+
 	cyw43_arch_poll();
 }
 
@@ -507,11 +561,11 @@ void cyw43_cb_tcpip_set_link_down(cyw43_t *self, int itf)
 {
 	if (g_wifi_scan_suspend_reconnect)
 	{
-		logmsg("Disassociated from Wi-Fi to scan for hotspots");
+		logmsg("Link down from Wi-Fi to scan for hotspots");
 		return;
 	}
 
-	logmsg("Disassociated from Wi-Fi SSID \"",  g_wifi_reconnect_ssid,"\" reconnecting");
+	logmsg("Link down from Wi-Fi SSID \"",  g_wifi_reconnect_ssid,"\" reconnecting");
 	g_wifi_reconnect = true;
 }
 
@@ -521,7 +575,9 @@ void cyw43_cb_tcpip_set_link_up(cyw43_t *self, int itf)
 
 	if (ssid)
 	{
-		logmsg("Successfully connected to Wi-Fi SSID \"",ssid,"\"");
+		int32_t rssi;
+		cyw43_wifi_get_rssi(&cyw43_state, &rssi);
+		logmsg("Successfully connected to Wi-Fi SSID \"",ssid,"\" with signal strength ", (int) rssi,  "dBm");
 		wifi_reconnect_attempts = 0;
 		wifi_reconnect_interval = WIFI_RECONNECT_START_INTERVAL;
 		g_blink_connected = BLINK_CONNECTED_ON;

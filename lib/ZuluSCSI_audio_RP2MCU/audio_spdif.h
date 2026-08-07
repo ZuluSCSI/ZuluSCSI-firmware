@@ -21,8 +21,8 @@
 #include <stdint.h>
 
 // audio subsystem DMA channels
-#define SOUND_DMA_CHA 6
-#define SOUND_DMA_CHB 7
+#define SOUND_DMA_CH_A 6
+#define SOUND_DMA_CH_B 7
 
 // size of the two audio sample buffers, in bytes
 // these must be divisible by 1024

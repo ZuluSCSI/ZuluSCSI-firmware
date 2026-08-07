@@ -417,6 +417,14 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		}
 	}
 
+	// The PC-9801-55 SCSI-1 controller, and its first party derivatives
+	// will ask for all pages (0x3F), expecting only these pages back:
+	// 0x01 - Read-write error recovery page
+	// 0x03 - Format device page
+	// 0x04 - Rigid disk geometry page
+	// This quirk is expected to be used with SCSI-1 mode only
+	int oldNecHddMode = scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_PC98_55;
+
 	////////////// Block Descriptor
 	////////////////////////////////////
 	if (!dbd)
@@ -425,9 +433,24 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		// Number of blocks
 		// Zero == all remaining blocks shall have the medium
 		// characteristics specified.
-		scsiDev.data[idx++] = 0;
-		scsiDev.data[idx++] = 0;
-		scsiDev.data[idx++] = 0;
+		uint32_t blocks = 0;
+		if (oldNecHddMode)
+		{
+			// NEC PC-9801-55 does not detect the drive without an
+			// explicit block count. Only 3 bytes are available, so
+			// clamp instead of truncating capacities above 8GB.
+			blocks = getScsiCapacity(
+				scsiDev.target->cfg->sdSectorStart,
+				scsiDev.target->liveCfg.bytesPerSector,
+				scsiDev.target->cfg->scsiSectors);
+			if (blocks > 0xFFFFFF)
+			{
+				blocks = 0xFFFFFF;
+			}
+		}
+		scsiDev.data[idx++] = blocks >> 16;
+		scsiDev.data[idx++] = blocks >> 8;
+		scsiDev.data[idx++] = blocks & 0xFF;
 
 		scsiDev.data[idx++] = 0; // reserved
 
@@ -455,7 +478,7 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		}
 	}
 
-	if (pageCode == 0x02 || pageCode == 0x3F)
+	if (!oldNecHddMode && (pageCode == 0x02 || pageCode == 0x3F))
 	{
 		pageFound = 1;
 		if ((scsiDev.compatMode >= COMPAT_SCSI2))
@@ -477,6 +500,18 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		pageIn(pc, idx, FormatDevicePage, sizeof(FormatDevicePage));
 		if (pc != 0x01)
 		{
+			if (oldNecHddMode)
+			{
+				// This mimics ArdSCSino-stm32 behavior, setting
+				// "Tracks per zone" to the heads per cylinder value.
+				// If left as 0, PC-9801FA doesn't detect the drive
+				// properly.
+				scsiDev.data[idx+2] = 0x00;
+				scsiDev.data[idx+3] = scsiDev.target->cfg->headsPerCylinder;
+				// Interleave field
+				scsiDev.data[idx+15] = 0x00;
+			}
+
 			uint16_t sectorsPerTrack = scsiDev.target->cfg->sectorsPerTrack;
 			scsiDev.data[idx+10] = sectorsPerTrack >> 8;
 			scsiDev.data[idx+11] = sectorsPerTrack & 0xFF;
@@ -654,7 +689,10 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		idx += sizeof(AppleVendorPage);
 	}
 
-	if (scsiToolboxEnabled() && (pageCode == 0x31 || pageCode == 0x3F))
+	// Hide the toolbox vendor page from all-pages responses under the
+	// PC-9801-55 quirk, but still answer a client probing for it directly.
+	if (scsiToolboxEnabled() &&
+		(pageCode == 0x31 || (pageCode == 0x3F && !oldNecHddMode)))
 	{
 		pageFound = 1;
 		pageIn(pc, idx, ToolboxVendorPage, sizeof(ToolboxVendorPage));
@@ -669,7 +707,7 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 	}
 
 	// SCSI 2 standard says page 0 is always last.
-	if (pageCode == 0x00 || pageCode == 0x3F)
+	if (!oldNecHddMode && (pageCode == 0x00 || pageCode == 0x3F))
 	{
 		pageFound = 1;
 		if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
@@ -728,6 +766,13 @@ static void doModeSelect(void)
 
 		int idx;
 		int blockDescLen;
+
+		// SCSI2 8.2.8: the command shall be terminated with CHECK CONDITION
+		// if the parameter list length truncates the mode parameter header,
+		// the block descriptor(s), or a mode page.
+		int headerLen = (scsiDev.cdb[0] == 0x55) ? 8 : 4;
+		if (scsiDev.dataLen < headerLen) goto badLength;
+
 		if (scsiDev.cdb[0] == 0x55)
 		{
 			blockDescLen =
@@ -739,6 +784,9 @@ static void doModeSelect(void)
 			blockDescLen = scsiDev.data[3];
 			idx = 4;
 		}
+
+		// The header check above guarantees dataLen >= idx.
+		if (blockDescLen > scsiDev.dataLen - idx) goto badLength;
 
 		// Store device-specific parameter byte (byte 2 for 6-byte, byte 3 for 10-byte)
 		// For sequential devices this contains buffered mode in bits 6-4
@@ -791,8 +839,10 @@ static void doModeSelect(void)
 			int pageCode = scsiDev.data[idx] & 0x3F;
 			if (pageCode == 0) goto out;
 
+			if (idx + 2 > scsiDev.dataLen) goto badLength;
+
 			int pageLen = scsiDev.data[idx + 1];
-			if (idx + 2 + pageLen > scsiDev.dataLen) goto bad;
+			if (idx + 2 + pageLen > scsiDev.dataLen) goto badLength;
 
 			switch (pageCode)
 			{
@@ -838,6 +888,15 @@ static void doModeSelect(void)
 	}
 
 	goto out;
+
+// SCSI2 8.2.8 separates a parameter list that is too short for what it
+// describes (1Ah) from one whose contents are unsupported (26h).
+badLength:
+	scsiDev.status = CHECK_CONDITION;
+	scsiDev.target->sense.code = ILLEGAL_REQUEST;
+	scsiDev.target->sense.asc = PARAMETER_LIST_LENGTH_ERROR;
+	goto out;
+
 bad:
 	scsiDev.status = CHECK_CONDITION;
 	scsiDev.target->sense.code = ILLEGAL_REQUEST;

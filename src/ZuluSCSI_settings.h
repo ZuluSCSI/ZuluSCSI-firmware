@@ -68,6 +68,7 @@ typedef enum
     SYS_PRESET_X68000_SASI,
     SYS_PRESET_DOS,
     SYS_PRESET_NeXT,
+    SYS_PRESET_PC_9801_55,
 #ifdef PLATFORM_AS400
     SYS_PRESET_AS400,
     SYS_PRESET_AS400_BS520,
@@ -135,6 +136,8 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
     bool logToSDCard;
 
     int logRotate;
+
+    uint32_t wifi_keep_alive_s;
 
 #if ENABLE_COW
     uint16_t cowBufferSize;

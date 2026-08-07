@@ -346,25 +346,25 @@ static void snd_process_b() {
 /* ------------------------------------------------------------------------ */
 
 void audio_dma_irq() {
-    if (dma_hw->intr & (1 << SOUND_DMA_CHA)) {
-        dma_hw->ints0 = (1 << SOUND_DMA_CHA);
+    if (dma_hw->intr & (1 << SOUND_DMA_CH_A)) {
+        dma_hw->ints0 = (1 << SOUND_DMA_CH_A);
         multicore_fifo_push_blocking((uintptr_t) &snd_process_a);
         if (audio_stopping) {
-            channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CHA);
+            channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CH_A);
         }
-        dma_channel_configure(SOUND_DMA_CHA,
+        dma_channel_configure(SOUND_DMA_CH_A,
                 &snd_dma_a_cfg,
                 &(spi_get_hw(AUDIO_SPI)->dr),
                 wire_buf_a,
                 WIRE_BUFFER_SIZE,
                 false);
-    } else if (dma_hw->intr & (1 << SOUND_DMA_CHB)) {
-        dma_hw->ints0 = (1 << SOUND_DMA_CHB);
+    } else if (dma_hw->intr & (1 << SOUND_DMA_CH_B)) {
+        dma_hw->ints0 = (1 << SOUND_DMA_CH_B);
         multicore_fifo_push_blocking((uintptr_t) &snd_process_b);
         if (audio_stopping) {
-            channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHB);
+            channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CH_B);
         }
-        dma_channel_configure(SOUND_DMA_CHB,
+        dma_channel_configure(SOUND_DMA_CH_B,
                 &snd_dma_b_cfg,
                 &(spi_get_hw(AUDIO_SPI)->dr),
                 wire_buf_b,
@@ -417,8 +417,8 @@ void audio_setup() {
     spi_get_hw(AUDIO_SPI)->dmacr = SPI_SSPDMACR_TXDMAE_BITS;
     hw_set_bits(&spi_get_hw(AUDIO_SPI)->cr1, SPI_SSPCR1_SSE_BITS);
 
-    dma_channel_claim(SOUND_DMA_CHA);
-	dma_channel_claim(SOUND_DMA_CHB);
+    dma_channel_claim(SOUND_DMA_CH_A);
+	dma_channel_claim(SOUND_DMA_CH_B);
 
 #ifdef AUDIO_DMA_IRQ_NUM
     irq_set_exclusive_handler(AUDIO_DMA_IRQ_NUM, audio_dma_irq);
@@ -489,28 +489,28 @@ static void audio_start_dma()
 {
     // setup the two DMA units to hand-off to each other
     // to maintain a stable bitstream these need to run without interruption
-	snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CHA);
+	snd_dma_a_cfg = dma_channel_get_default_config(SOUND_DMA_CH_A);
 	channel_config_set_transfer_data_size(&snd_dma_a_cfg, DMA_SIZE_16);
 	channel_config_set_dreq(&snd_dma_a_cfg, spi_get_dreq(AUDIO_SPI, true));
 	channel_config_set_read_increment(&snd_dma_a_cfg, true);
-	channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CHB);
+	channel_config_set_chain_to(&snd_dma_a_cfg, SOUND_DMA_CH_B);
     // version of pico-sdk lacks channel_config_set_high_priority()
     snd_dma_a_cfg.ctrl |= DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_BITS;
-	dma_channel_configure(SOUND_DMA_CHA, &snd_dma_a_cfg, &(spi_get_hw(AUDIO_SPI)->dr),
+	dma_channel_configure(SOUND_DMA_CH_A, &snd_dma_a_cfg, &(spi_get_hw(AUDIO_SPI)->dr),
 			wire_buf_a, WIRE_BUFFER_SIZE, false);
-    dma_channel_set_irq0_enabled(SOUND_DMA_CHA, true);
-	snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CHB);
+    dma_channel_set_irq0_enabled(SOUND_DMA_CH_A, true);
+	snd_dma_b_cfg = dma_channel_get_default_config(SOUND_DMA_CH_B);
 	channel_config_set_transfer_data_size(&snd_dma_b_cfg, DMA_SIZE_16);
 	channel_config_set_dreq(&snd_dma_b_cfg, spi_get_dreq(AUDIO_SPI, true));
 	channel_config_set_read_increment(&snd_dma_b_cfg, true);
-	channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CHA);
+	channel_config_set_chain_to(&snd_dma_b_cfg, SOUND_DMA_CH_A);
     snd_dma_b_cfg.ctrl |= DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_BITS;
-	dma_channel_configure(SOUND_DMA_CHB, &snd_dma_b_cfg, &(spi_get_hw(AUDIO_SPI)->dr),
+	dma_channel_configure(SOUND_DMA_CH_B, &snd_dma_b_cfg, &(spi_get_hw(AUDIO_SPI)->dr),
 			wire_buf_b, WIRE_BUFFER_SIZE, false);
-    dma_channel_set_irq0_enabled(SOUND_DMA_CHB, true);
+    dma_channel_set_irq0_enabled(SOUND_DMA_CH_B, true);
 
     // ready to go
-    dma_channel_start(SOUND_DMA_CHA);
+    dma_channel_start(SOUND_DMA_CH_A);
 }
 
 bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end, bool swap) {
@@ -627,8 +627,8 @@ void audio_stop(uint8_t id, bool startup_skip) {
     // then indicate that the streams should no longer chain to one another
     // and wait for them to shut down naturally
     audio_stopping = true;
-    while (dma_channel_is_busy(SOUND_DMA_CHA)) tight_loop_contents();
-    while (dma_channel_is_busy(SOUND_DMA_CHB)) tight_loop_contents();
+    while (dma_channel_is_busy(SOUND_DMA_CH_A)) tight_loop_contents();
+    while (dma_channel_is_busy(SOUND_DMA_CH_B)) tight_loop_contents();
     while (spi_is_busy(AUDIO_SPI)) tight_loop_contents();
     audio_stopping = false;
 

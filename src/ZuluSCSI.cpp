@@ -1442,6 +1442,7 @@ static void init_eject_button()
   }
 }
 
+extern uint32_t g_i2c_bus_speed;
 // Place all the setup code that requires the SD card to be initialized here
 // Which is pretty much everything after platform_init and and platform_late_init
 static void zuluscsi_setup_sd_card(bool wait_for_card = true)
@@ -1651,6 +1652,26 @@ extern "C" void zuluscsi_setup(void)
 #ifdef ZULUCONTROL_FIRMWARE
   if (g_sdcard_present && g_i2c_claimed)
   {
+    FsFile root = SD.open("/", O_RDONLY);
+    FsFile file;
+    char *filename = new char[MAX_FILE_PATH+1];
+    while (file.openNext(&root))
+    {
+      file.getName(filename, MAX_FILE_PATH+1);
+      const char *extension = strrchr(filename, '.');
+      if (extension && strncasecmp(extension, ".uf2", 4) == 0 && strncasecmp(filename, ZULUCONTROL_UF2_PREFIX, sizeof(ZULUCONTROL_UF2_PREFIX) - 1) == 0)
+      {
+        file.close();
+        logmsg("ZuluControl-firmware UF2, \"", filename, "\", found on SD card, attempting to upgrade firmware");
+        zuluWebUIUpgradeFirmware(filename);
+        break;
+      }
+    }
+    delete[] filename;
+    filename = nullptr;
+    file.close();
+    root.close();
+
     zuluWebUIInit();
   }
 #endif

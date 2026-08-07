@@ -47,6 +47,7 @@ bool zuluscsi_is_sca()
     return platform_is_sca();
 }
 
+extern uint32_t g_i2c_bus_speed;
 bool zuluscsi_sca_hw_update()
 {
     g_sca_hardware_config.failed = false;
@@ -54,25 +55,58 @@ bool zuluscsi_sca_hw_update()
     g_sca_hardware_config.scsi_id = -1;
     int expander_io_input = -1;
     g_wire.end();
-    g_wire.setClock(PLATFORM_I2C_CLK_SPEED);
-    g_wire.begin();
 
-    // invert all inputs
-    g_wire.beginTransmission(ZULUSCSI_SCA_I2C_EXPANDER_ADDR);
-    g_wire.write((uint8_t) 0x02); // Control - Switch to write to Polarity Register
-    g_wire.write((uint8_t) 0x7F); // Set Polarity Register - invert all bits but spindle
-    uint8_t status = g_wire.endTransmission();
+    g_wire.begin();
+    if (STANDARD_I2C_CLK_SPEED != g_i2c_bus_speed)
+    {
+        g_i2c_bus_speed = FAST_I2C_CLK_SPEED;
+        g_wire.setClock(g_i2c_bus_speed);
+    }
+
+    uint32_t test_i2c_bus_speed = g_i2c_bus_speed;
+    bool retry = false;
+    uint8_t status;
+    while(true)
+    {
+        // invert all inputs
+        g_wire.beginTransmission(ZULUSCSI_SCA_I2C_EXPANDER_ADDR);
+        g_wire.write((uint8_t) 0x02); // Control - Switch to write to Polarity Register
+        g_wire.write((uint8_t) 0x7F); // Set Polarity Register - invert all bits but spindle
+        uint8_t status = g_wire.endTransmission();
+        if (status != 0)
+        {
+            if (retry)
+            {
+                g_sca_hardware_config.failed = true;
+                logmsg("Error, ", (int)status,", communicating with the SCA I2C IO expander with address ", (uint8_t)ZULUSCSI_SCA_I2C_EXPANDER_ADDR, ". Check for conflicting I2C devices and a clean I2C bus");
+                break;
+            }
+            else
+            {
+                // Attempt I2C normal bus speed
+                test_i2c_bus_speed = STANDARD_I2C_CLK_SPEED;
+                g_wire.setClock(test_i2c_bus_speed);
+                retry = true;
+            }
+        }
+        else
+        {
+            // status good
+            break;
+        }
+    }
+
     if (status == 0)
     {
+        if (g_i2c_bus_speed != test_i2c_bus_speed && test_i2c_bus_speed == STANDARD_I2C_CLK_SPEED)
+            logmsg("I2C successfully fell back to normal bus speed (100kHz)");
+        g_i2c_bus_speed = test_i2c_bus_speed;
+
         g_wire.beginTransmission(ZULUSCSI_SCA_I2C_EXPANDER_ADDR);
         g_wire.write((uint8_t) 0x00); // Control - Switch to read from Input Register
         status = g_wire.endTransmission();
     } 
-    if (0 != status)
-    {
-        g_sca_hardware_config.failed = true;
-        logmsg("Error, ", (int)status,", communicating with the SCA I2C IO expander with address ", (uint8_t)ZULUSCSI_SCA_I2C_EXPANDER_ADDR, ". Check for conflicting I2C devices and a clean I2C bus");
-    }
+
 
     if (!g_sca_hardware_config.failed)
     {
