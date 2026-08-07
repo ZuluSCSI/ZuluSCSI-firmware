@@ -47,8 +47,9 @@ enum ZuluSCSIVersion_t
 
 };
 
-#define EJECT_BTN_MASK (1|2)
-#define USER_BTN_MASK  (4)
+#define EJECT_BTN_MASK (platform_get_eject_button_mask())
+#define EJECT_BTN_MAX  2
+#define USER_BTN_MASK  (platform_get_user_button_mask())
 
 extern enum ZuluSCSIVersion_t g_zuluscsi_version;
 extern bool g_moved_select_in;
@@ -164,9 +165,11 @@ void platform_boot_to_main_firmware();
 
 // True if the board has a physical eject button
 uint8_t platform_phy_eject_button();
-void platform_set_eject_button(uint8_t eject_button);
-void platform_set_cow_button(uint8_t cow_button);
-
+inline void platform_set_eject_button(uint8_t eject_button){;}
+inline void platform_set_cow_button(uint8_t cow_button){;}
+inline uint8_t platform_get_cow_buttons_override(){return 0;}
+uint8_t platform_get_eject_button_mask();
+uint8_t platform_get_user_button_mask();
 // Configuration customizations based on DIP switch settings
 // When DIPSW1 is on, Apple quirks are enabled by default.
 void platform_config_hook(S2S_TargetCfg *config);

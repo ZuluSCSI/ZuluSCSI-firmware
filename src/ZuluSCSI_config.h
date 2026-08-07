@@ -28,7 +28,7 @@
 
 // Use variables for version number
 #define FW_VER_NUM      "2026.08.07"
-#define FW_VER_SUFFIX   "release"
+#define FW_VER_SUFFIX   "V1.x-LTS-release"
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
 #define STRINGFY(STR) #STR
