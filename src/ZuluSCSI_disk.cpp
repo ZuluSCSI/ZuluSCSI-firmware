@@ -2927,6 +2927,13 @@ void diskDataOut()
             platform_set_sd_callback(&diskDataOut_callback, buf);
             //KM//debuglog("DiskDataOut LEN:",len);
 
+            // Bytes actually written to the SD card in this chunk, i.e. the amount to
+            // credit against transfer.bytes_sd below. Normally equal to len, but the
+            // AS/400 Skip Write branch below only ever writes whole sectors and must
+            // report a smaller value so the leftover partial-sector bytes stay in the
+            // buffer to be combined with the next chunk instead of being skipped over.
+            uint32_t sd_consumed = len;
+
 #ifdef PLATFORM_AS400
             if (g_disk_transfer.writesame_count)
             {
@@ -2970,10 +2977,16 @@ void diskDataOut()
             }
             else if(g_disk_transfer.skip_command == 0xEA)
             {
-                // Skip Write: selectively write sectors based on skip mask
+                // Skip Write: selectively write sectors based on skip mask.
+                // Only whole sectors are written here; any trailing partial-sector
+                // remainder (len is not generally a multiple of bytesPerSector - it is
+                // chosen by SD buffer availability, not by sector size) is left in the
+                // SCSI buffer and picked up on the next chunk once more data has
+                // arrived to complete the sector. sd_consumed reflects that below.
                 uint32_t aligned_len = len - (len % bytesPerSector);
                 int sectors_remaining = aligned_len / bytesPerSector;
                 uint8_t *ptr = buf;
+                bool write_ok = true;
 
                 while (sectors_remaining > 0)
                 {
@@ -2988,10 +3001,7 @@ void diskDataOut()
                         if (img.file.write(ptr, write_bytes) != write_bytes)
                         {
                             logmsg("SD card write failed during Skip Write: ", SD.sdErrorCode());
-                            scsiDev.status = CHECK_CONDITION;
-                            scsiDev.target->sense.code = MEDIUM_ERROR;
-                            scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
-                            scsiDev.phase = STATUS;
+                            write_ok = false;
                             break;
                         }
                         sectors_remaining -= run;
@@ -3000,8 +3010,28 @@ void diskDataOut()
                     else
                     {
                         break;
-                    }                    
+                    }
                 }
+
+                // The skip mask must cover every sector in this chunk. If the loop
+                // exits with sectors unfilled, the mask ran out early - matching the
+                // guard already applied to the Skip Read side.
+                if (write_ok && sectors_remaining > 0)
+                {
+                    logmsg("Skip Write mask exhausted with ", (int)sectors_remaining,
+                           " sectors unfilled");
+                    write_ok = false;
+                }
+
+                if (!write_ok)
+                {
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = MEDIUM_ERROR;
+                    scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+                    scsiDev.phase = STATUS;
+                }
+
+                sd_consumed = aligned_len;
             }
             else
 #endif
@@ -3014,7 +3044,7 @@ void diskDataOut()
                 scsiDev.phase = STATUS;
             }
             platform_set_sd_callback(NULL, NULL);
-            scsiDev.target->transfer.bytes_sd += len;
+            scsiDev.target->transfer.bytes_sd += sd_consumed;
 
             // Reset the watchdog while the transfer is progressing.
             // If the host stops transferring, the watchdog will eventually expire.
