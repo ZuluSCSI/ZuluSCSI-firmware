@@ -167,7 +167,7 @@ ADDL=$(be_uint "$INQ_RAW" 4 1)
 if [ ! -s "$INQ_RAW" ] || [ "$ADDL" -eq 0 ]; then
     info "sg_inq gave nothing usable, probing INQUIRY directly via sg_raw..."
     PROBE_RAW="$SCRATCHDIR/inquiry_probe.bin"
-    if run_capture "$PROBE_RAW" sg_raw -r 36 "$DEV" 12 00 00 00 24 00; then
+    if run_capture "$PROBE_RAW" sg_raw -o - -r 36 "$DEV" 12 00 00 00 24 00; then
         ADDL=$(be_uint "$PROBE_RAW" 4 1)
         if [ -s "$PROBE_RAW" ] && [ "$ADDL" -gt 0 ]; then
             cp "$PROBE_RAW" "$INQ_RAW"
@@ -177,7 +177,7 @@ fi
 
 if [ "$ADDL" -gt 0 ]; then
     FULL_LEN=$((ADDL + 5))
-    run_capture "$INQ_RAW" sg_raw -r "$FULL_LEN" "$DEV" 12 00 00 00 "$(printf '%02x' "$FULL_LEN")" 00 || true
+    run_capture "$INQ_RAW" sg_raw -o - -r "$FULL_LEN" "$DEV" 12 00 00 00 "$(printf '%02x' "$FULL_LEN")" 00 || true
 fi
 
 INQ_SIZE=$(wc -c < "$INQ_RAW" 2>/dev/null | tr -d ' '); INQ_SIZE=${INQ_SIZE:-0}
@@ -199,7 +199,7 @@ fi
 info "Reading capacity..."
 CAP_RAW="$SCRATCHDIR/readcap.bin"
 SECTORS=0 BLOCKSIZE=0
-run_capture "$CAP_RAW" sg_raw -r 8 "$DEV" 25 00 00 00 00 00 00 00 00 00 || true
+run_capture "$CAP_RAW" sg_raw -o - -r 8 "$DEV" 25 00 00 00 00 00 00 00 00 00 || true
 CAP_SIZE=$(wc -c < "$CAP_RAW" 2>/dev/null | tr -d ' '); CAP_SIZE=${CAP_SIZE:-0}
 if [ "$CAP_SIZE" -eq 8 ]; then
     LAST_LBA=$(be_uint "$CAP_RAW" 0 4)
@@ -270,7 +270,7 @@ done
 info "Reading MODE SENSE (all pages)..."
 MS_RAW="$SCRATCHDIR/modesense.bin"
 # MODE SENSE(6): opcode=1A, DBD=0, PC=0 (current), page=3F, alloc=0xFF
-run_capture "$MS_RAW" sg_raw -r 255 "$DEV" 1a 00 3f 00 ff 00 || true
+run_capture "$MS_RAW" sg_raw -o - -r 255 "$DEV" 1a 00 3f 00 ff 00 || true
 if [ ! -s "$MS_RAW" ]; then
     info "sg_raw MODE SENSE gave nothing, trying sg_modes..."
     run_capture "$MS_RAW" sg_modes --raw --page=0x3f --six "$DEV" || true
