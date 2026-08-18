@@ -149,21 +149,41 @@ be_uint() {
 echo "=== Capturing AS/400 disk profile '$LABEL' from $DEV ===" >&2
 
 # ===== 1. Standard INQUIRY (full length, including vendor-specific tail) ===
+# Deliberately does NOT rely solely on `sg_inq --raw` succeeding: some real
+# AS/400-era drives answer sg_raw-issued CDBs fine but return nothing useful
+# to sg_inq's own more particular request. So: always try sg_inq first (it's
+# usually fine and simplest), but fall back to a raw INQUIRY CDB via sg_raw
+# — first a minimal 36-byte probe (the SPC-mandated standard length) to learn
+# the real additional-length field, then a full-length re-fetch — regardless
+# of whether sg_inq produced anything at all. Earlier versions of this script
+# only attempted the sg_raw path if sg_inq had *already* returned enough
+# bytes to read the additional-length field from, which meant a drive that
+# didn't answer sg_inq at all got no INQUIRY data captured whatsoever.
 info "Reading standard INQUIRY..."
 INQ_RAW="$SCRATCHDIR/inquiry.bin"
 run_capture "$INQ_RAW" sg_inq --raw "$DEV" || true
 
-if [ -s "$INQ_RAW" ]; then
-    ADDL=$(be_uint "$INQ_RAW" 4 1)
-    FULL_LEN=$((ADDL + 5))
-    if [ "$FULL_LEN" -gt 5 ]; then
-        run_capture "$INQ_RAW" sg_raw -r "$FULL_LEN" "$DEV" 12 00 00 00 "$(printf '%02x' "$FULL_LEN")" 00 || true
+ADDL=$(be_uint "$INQ_RAW" 4 1)
+if [ ! -s "$INQ_RAW" ] || [ "$ADDL" -eq 0 ]; then
+    info "sg_inq gave nothing usable, probing INQUIRY directly via sg_raw..."
+    PROBE_RAW="$SCRATCHDIR/inquiry_probe.bin"
+    if run_capture "$PROBE_RAW" sg_raw -r 36 "$DEV" 12 00 00 00 24 00; then
+        ADDL=$(be_uint "$PROBE_RAW" 4 1)
+        if [ -s "$PROBE_RAW" ] && [ "$ADDL" -gt 0 ]; then
+            cp "$PROBE_RAW" "$INQ_RAW"
+        fi
     fi
+fi
+
+if [ "$ADDL" -gt 0 ]; then
+    FULL_LEN=$((ADDL + 5))
+    run_capture "$INQ_RAW" sg_raw -r "$FULL_LEN" "$DEV" 12 00 00 00 "$(printf '%02x' "$FULL_LEN")" 00 || true
 fi
 
 INQ_SIZE=$(wc -c < "$INQ_RAW" 2>/dev/null | tr -d ' '); INQ_SIZE=${INQ_SIZE:-0}
 if [ "$INQ_SIZE" -eq 0 ]; then
-    warn "Standard INQUIRY returned no data — capture will be incomplete."
+    warn "Standard INQUIRY returned no data via sg_inq OR sg_raw — capture will be incomplete."
+    warn "Try manually: sg_raw -v -r 36 $DEV 12 00 00 00 24 00 | xxd"
 fi
 info "Standard INQUIRY: $INQ_SIZE bytes"
 
@@ -179,15 +199,16 @@ fi
 info "Reading capacity..."
 CAP_RAW="$SCRATCHDIR/readcap.bin"
 SECTORS=0 BLOCKSIZE=0
-if run_capture "$CAP_RAW" sg_raw -r 8 "$DEV" 25 00 00 00 00 00 00 00 00 00; then
-    if [ "$(wc -c < "$CAP_RAW" | tr -d ' ')" -eq 8 ]; then
-        LAST_LBA=$(be_uint "$CAP_RAW" 0 4)
-        BLOCKSIZE=$(be_uint "$CAP_RAW" 4 4)
-        SECTORS=$((LAST_LBA + 1))
-    fi
+run_capture "$CAP_RAW" sg_raw -r 8 "$DEV" 25 00 00 00 00 00 00 00 00 00 || true
+CAP_SIZE=$(wc -c < "$CAP_RAW" 2>/dev/null | tr -d ' '); CAP_SIZE=${CAP_SIZE:-0}
+if [ "$CAP_SIZE" -eq 8 ]; then
+    LAST_LBA=$(be_uint "$CAP_RAW" 0 4)
+    BLOCKSIZE=$(be_uint "$CAP_RAW" 4 4)
+    SECTORS=$((LAST_LBA + 1))
 fi
 if [ "$SECTORS" -eq 0 ]; then
-    warn "READ CAPACITY(10) failed or returned nothing usable — Sectors/BlockSize will be 0, fill in by hand."
+    warn "READ CAPACITY(10) did not return a usable 8-byte response (got $CAP_SIZE bytes) — Sectors/BlockSize will be 0, fill in by hand."
+    warn "Try manually: sg_raw -v -r 8 $DEV 25 00 00 00 00 00 00 00 00 00 | xxd"
 else
     info "Sectors=$SECTORS BlockSize=$BLOCKSIZE (=> $((SECTORS * BLOCKSIZE)) bytes exactly)"
 fi
@@ -242,13 +263,24 @@ for pc in "${PAGE_CODES[@]}"; do
 done
 
 # ===== 4. MODE SENSE(6), all pages (0x3F) ===================================
+# The sg_modes fallback must trigger on EMPTY output too, not just a nonzero
+# exit from sg_raw — sg3_utils tools generally treat "good status, fewer
+# bytes than the allocation length" as success, not failure, so a drive that
+# answers with nothing useful would previously skip the fallback entirely.
 info "Reading MODE SENSE (all pages)..."
 MS_RAW="$SCRATCHDIR/modesense.bin"
 # MODE SENSE(6): opcode=1A, DBD=0, PC=0 (current), page=3F, alloc=0xFF
-run_capture "$MS_RAW" sg_raw -r 255 "$DEV" 1a 00 3f 00 ff 00 || \
+run_capture "$MS_RAW" sg_raw -r 255 "$DEV" 1a 00 3f 00 ff 00 || true
+if [ ! -s "$MS_RAW" ]; then
+    info "sg_raw MODE SENSE gave nothing, trying sg_modes..."
     run_capture "$MS_RAW" sg_modes --raw --page=0x3f --six "$DEV" || true
+fi
 
 MS_SIZE=$(wc -c < "$MS_RAW" 2>/dev/null | tr -d ' '); MS_SIZE=${MS_SIZE:-0}
+if [ "$MS_SIZE" -eq 0 ]; then
+    warn "MODE SENSE 0x3F returned no data via sg_raw OR sg_modes."
+    warn "Try manually: sg_raw -v -r 255 $DEV 1a 00 3f 00 ff 00 | xxd"
+fi
 info "MODE SENSE 0x3F: $MS_SIZE bytes"
 
 # Decode CHS geometry for human review, if pages 0x03/0x04 are present in the
