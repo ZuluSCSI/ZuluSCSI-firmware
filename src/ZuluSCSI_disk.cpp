@@ -2899,6 +2899,23 @@ void diskDataOut()
             }
         }
 
+#ifdef PLATFORM_AS400
+        // A Skip Write must commit only whole sectors: it walks the skip mask
+        // sector-by-sector, so any partial trailing sector left in len would
+        // either be dropped or (worse) offset every subsequent sector in the
+        // command by however many bytes were missing. len above is sized by
+        // SD buffer/write-size availability, not by bytesPerSector, so it is
+        // generally not a sector multiple - round it down before it is used
+        // for anything, so scsiFinishRead(), the write below, and the
+        // bytes_sd credit all agree on the same already-aligned amount. The
+        // remainder stays in the SCSI buffer and is picked up whole once the
+        // next chunk has enough bytes to complete the sector.
+        if (g_disk_transfer.skip_command == 0xEA)
+        {
+            len -= len % bytesPerSector;
+        }
+#endif
+
         if (len == 0)
         {
             // Nothing ready to transfer, check if we can read more from SCSI bus
@@ -2926,13 +2943,6 @@ void diskDataOut()
             // dbgmsg("SD write ", (int)start, " + ", (int)len, " ", bytearray(buf, len));
             platform_set_sd_callback(&diskDataOut_callback, buf);
             //KM//debuglog("DiskDataOut LEN:",len);
-
-            // Bytes actually written to the SD card in this chunk, i.e. the amount to
-            // credit against transfer.bytes_sd below. Normally equal to len, but the
-            // AS/400 Skip Write branch below only ever writes whole sectors and must
-            // report a smaller value so the leftover partial-sector bytes stay in the
-            // buffer to be combined with the next chunk instead of being skipped over.
-            uint32_t sd_consumed = len;
 
 #ifdef PLATFORM_AS400
             if (g_disk_transfer.writesame_count)
@@ -2978,13 +2988,10 @@ void diskDataOut()
             else if(g_disk_transfer.skip_command == 0xEA)
             {
                 // Skip Write: selectively write sectors based on skip mask.
-                // Only whole sectors are written here; any trailing partial-sector
-                // remainder (len is not generally a multiple of bytesPerSector - it is
-                // chosen by SD buffer availability, not by sector size) is left in the
-                // SCSI buffer and picked up on the next chunk once more data has
-                // arrived to complete the sector. sd_consumed reflects that below.
-                uint32_t aligned_len = len - (len % bytesPerSector);
-                int sectors_remaining = aligned_len / bytesPerSector;
+                // len is already a whole number of sectors (aligned above,
+                // before scsiFinishRead()), so every byte received in this
+                // chunk is consumed here.
+                int sectors_remaining = len / bytesPerSector;
                 uint8_t *ptr = buf;
                 bool write_ok = true;
 
@@ -3030,8 +3037,6 @@ void diskDataOut()
                     scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
                     scsiDev.phase = STATUS;
                 }
-
-                sd_consumed = aligned_len;
             }
             else
 #endif
@@ -3044,7 +3049,7 @@ void diskDataOut()
                 scsiDev.phase = STATUS;
             }
             platform_set_sd_callback(NULL, NULL);
-            scsiDev.target->transfer.bytes_sd += sd_consumed;
+            scsiDev.target->transfer.bytes_sd += len;
 
             // Reset the watchdog while the transfer is progressing.
             // If the host stops transferring, the watchdog will eventually expire.
