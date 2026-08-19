@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# extract_as400_disk_data.sh — Capture a real AS/400 disk's identity data
+# extract_as400_disk_data.sh --- Capture a real AS/400 disk's identity data
 #
 # Reads standard INQUIRY, all VPD pages the drive actually reports, the full
 # MODE SENSE (all pages), READ CAPACITY, and LOG SENSE pages 0x00/0x30/0x31
@@ -8,11 +8,11 @@
 # section to a plain-text definitions file (default: as400_disk_definitions.txt,
 # meant to be copied to the root of the ZuluSCSI's SD card).
 #
-# This is deliberately NOT XML/JSON — it's a minIni-compatible INI file, using
+# This is deliberately NOT XML/JSON --- it's a minIni-compatible INI file, using
 # the same space-separated-hex-byte convention that src/custom_vendor_inquiry.cpp
 # already parses for zuluscsi.ini's [SCSIn] "spd"/"vpdXX" keys. Hex fields that
 # exceed a safe INI line length (minIni's INI_BUFFERSIZE is 512 bytes) are split
-# into NAME_0, NAME_1, ... chunks; the firmware does not yet reassemble these —
+# into NAME_0, NAME_1, ... chunks; the firmware does not yet reassemble these ---
 # capture now, load later.
 #
 # Requirements:  sg3_utils (sg_inq, sg_vpd, sg_modes, sg_logs, sg_raw), xxd
@@ -20,35 +20,41 @@
 #                sg_readcap itself is not required)
 #                Run as root or with appropriate /dev/sg* permissions.
 #
-# Usage:  ./extract_as400_disk_data.sh /dev/sgN <FeatureModel> [outfile]
+# Usage:  ./extract_as400_disk_data.sh /dev/sgN [Label] [outfile]
 #
-#   /dev/sgN      — the sg device for the target disk
-#   FeatureModel  — REQUIRED. The IBM Feature+Model designation for this disk
-#                   (e.g. "6607-050"), used as the [section] name. This is NOT
-#                   auto-detected: it is not present in the drive's own
-#                   INQUIRY/VPD data (checked — every ASCII-shaped field in a
-#                   known-real capture decodes to vendor/product/FRU/serial
-#                   strings, never a Feature+Model pair). You know it from the
-#                   physical unit's markings or system configuration records;
-#                   the drive does not.
-#   outfile       — file to append the profile to (default:
+#   /dev/sgN      --- the sg device for the target disk
+#   Label         --- OPTIONAL. [section] name for this profile. If omitted,
+#                   it's auto-derived from VPD page 0x01's 12-byte FRU/part-
+#                   number field (offset 5) --- the number actually printed on
+#                   the physical drive, per this project's labeling
+#                   convention (Feature codes are a system-level packaging
+#                   designation, only ever visible from within OS/400 itself
+#                   alongside the serial number, and are NOT present in the
+#                   drive's own INQUIRY/VPD data --- checked; every
+#                   ASCII-shaped field in a known-real capture decodes to
+#                   vendor/product/FRU/serial strings, never a Feature+Model
+#                   pair). Pass this explicitly to override auto-detection,
+#                   e.g. if VPD page 0x01 is unsupported or you want a
+#                   different name.
+#   outfile       --- file to append the profile to (default:
 #                   as400_disk_definitions.txt in the current directory).
 #                   Run once per physical drive; each run appends one section.
 #
 # Example:
-#   ./extract_as400_disk_data.sh /dev/sg3 6607-050 as400_disk_definitions.txt
+#   ./extract_as400_disk_data.sh /dev/sg3
+#   ./extract_as400_disk_data.sh /dev/sg3 59H7001 as400_disk_definitions.txt
 # ---------------------------------------------------------------------------
 
 set -uo pipefail
 
-DEV="${1:?Usage: $0 /dev/sgN <FeatureModel> [outfile]}"
-LABEL="${2:?Usage: $0 /dev/sgN <FeatureModel> [outfile] -- FeatureModel is required, e.g. 6607-050}"
+DEV="${1:?Usage: $0 /dev/sgN [Label] [outfile]}"
+LABEL="${2:-}"
 OUTFILE="${3:-as400_disk_definitions.txt}"
 
 # Max raw bytes per emitted hex field before splitting into NAME_0, NAME_1, ...
 # 3 chars per byte ("XX ") * 140 = ~420 chars of value, leaving comfortable
 # headroom under minIni's 512-byte INI_BUFFERSIZE for "KEYNAME_N = " plus
-# whatever margin minIni needs internally — measured 495/512 at 160 bytes/line
+# whatever margin minIni needs internally --- measured 495/512 at 160 bytes/line
 # in testing, too close for comfort given key names vary in length.
 MAX_HEX_BYTES_PER_LINE=140
 
@@ -57,12 +63,14 @@ if [ ! -c "$DEV" ]; then
     exit 1
 fi
 
-case "$LABEL" in
-    \[*|*\]*)
-        echo "Error: FeatureModel '$LABEL' must not contain '[' or ']' (it becomes an INI section name)." >&2
-        exit 1
-        ;;
-esac
+if [ -n "$LABEL" ]; then
+    case "$LABEL" in
+        \[*|*\]*)
+            echo "Error: Label '$LABEL' must not contain '[' or ']' (it becomes an INI section name)." >&2
+            exit 1
+            ;;
+    esac
+fi
 
 MISSING_TOOLS=()
 for tool in sg_inq sg_vpd sg_modes sg_logs sg_raw xxd; do
@@ -146,15 +154,19 @@ be_uint() {
     echo $((16#$hex))
 }
 
-echo "=== Capturing AS/400 disk profile '$LABEL' from $DEV ===" >&2
+if [ -n "$LABEL" ]; then
+    echo "=== Capturing AS/400 disk profile '$LABEL' from $DEV ===" >&2
+else
+    echo "=== Capturing AS/400 disk profile from $DEV (label will be auto-derived from VPD page 0x01) ===" >&2
+fi
 
 # ===== 1. Standard INQUIRY (full length, including vendor-specific tail) ===
 # Deliberately does NOT rely solely on `sg_inq --raw` succeeding: some real
 # AS/400-era drives answer sg_raw-issued CDBs fine but return nothing useful
 # to sg_inq's own more particular request. So: always try sg_inq first (it's
 # usually fine and simplest), but fall back to a raw INQUIRY CDB via sg_raw
-# — first a minimal 36-byte probe (the SPC-mandated standard length) to learn
-# the real additional-length field, then a full-length re-fetch — regardless
+# --- first a minimal 36-byte probe (the SPC-mandated standard length) to learn
+# the real additional-length field, then a full-length re-fetch --- regardless
 # of whether sg_inq produced anything at all. Earlier versions of this script
 # only attempted the sg_raw path if sg_inq had *already* returned enough
 # bytes to read the additional-length field from, which meant a drive that
@@ -182,7 +194,7 @@ fi
 
 INQ_SIZE=$(wc -c < "$INQ_RAW" 2>/dev/null | tr -d ' '); INQ_SIZE=${INQ_SIZE:-0}
 if [ "$INQ_SIZE" -eq 0 ]; then
-    warn "Standard INQUIRY returned no data via sg_inq OR sg_raw — capture will be incomplete."
+    warn "Standard INQUIRY returned no data via sg_inq OR sg_raw --- capture will be incomplete."
     warn "Try manually: sg_raw -v -r 36 $DEV 12 00 00 00 24 00 | xxd"
 fi
 info "Standard INQUIRY: $INQ_SIZE bytes"
@@ -195,7 +207,7 @@ if [ "$INQ_SIZE" -ge 36 ]; then
     info "Vendor='$VENDOR' Product='$PRODUCT' Revision='$REVISION'"
 fi
 
-# ===== 2. READ CAPACITY — the ground-truth size, independent of everything else
+# ===== 2. READ CAPACITY --- the ground-truth size, independent of everything else
 info "Reading capacity..."
 CAP_RAW="$SCRATCHDIR/readcap.bin"
 SECTORS=0 BLOCKSIZE=0
@@ -207,13 +219,13 @@ if [ "$CAP_SIZE" -eq 8 ]; then
     SECTORS=$((LAST_LBA + 1))
 fi
 if [ "$SECTORS" -eq 0 ]; then
-    warn "READ CAPACITY(10) did not return a usable 8-byte response (got $CAP_SIZE bytes) — Sectors/BlockSize will be 0, fill in by hand."
+    warn "READ CAPACITY(10) did not return a usable 8-byte response (got $CAP_SIZE bytes) --- Sectors/BlockSize will be 0, fill in by hand."
     warn "Try manually: sg_raw -v -r 8 $DEV 25 00 00 00 00 00 00 00 00 00 | xxd"
 else
     info "Sectors=$SECTORS BlockSize=$BLOCKSIZE (=> $((SECTORS * BLOCKSIZE)) bytes exactly)"
 fi
 
-# ===== 3. VPD pages — read the REAL supported-page list, not a guessed one ==
+# ===== 3. VPD pages --- read the REAL supported-page list, not a guessed one ==
 info "Reading VPD page list (0x00)..."
 VPD_LIST="$SCRATCHDIR/vpd00.bin"
 run_capture "$VPD_LIST" sg_vpd --raw --page=0x00 "$DEV" || true
@@ -262,9 +274,38 @@ for pc in "${PAGE_CODES[@]}"; do
     fi
 done
 
+# ===== 3b. Auto-derive the section label, if not given explicitly ===========
+# VPD page 0x01 on these drives carries a 12-byte FRU/part-number field at
+# offset 5 (byte 0: peripheral qualifier/type, byte 1: 0x01 page code, bytes
+# 2-3: page length, byte 4: a flag/count byte, bytes 5-16: the FRU string,
+# space-padded, e.g. "59H7001     "). Confirmed against this session's real
+# hardware captures. This is the number printed on the physical drive --- see
+# project memory for why that's the primary key here and Feature+Model is not.
+if [ -z "$LABEL" ]; then
+    VPD01_FILE="$SCRATCHDIR/vpd_01.bin"
+    AUTO_LABEL=""
+    if [ -s "$VPD01_FILE" ]; then
+        AUTO_LABEL=$(dd if="$VPD01_FILE" bs=1 skip=5 count=12 2>/dev/null | tr -d '\0' | sed -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//')
+    fi
+    if [ -n "$AUTO_LABEL" ]; then
+        LABEL="$AUTO_LABEL"
+        info "Auto-derived section label '$LABEL' from VPD page 0x01 (FRU field)"
+    else
+        warn "Could not auto-derive a label from VPD page 0x01 (page missing, empty, or unrecognized layout)."
+        LABEL=$(printf '%s_%s_%s' "${VENDOR:-unknown}" "${PRODUCT:-unknown}" "${REVISION:-unknown}" | tr -s '[:space:]?' '_')
+        warn "Falling back to '$LABEL' --- rename this section by hand to the drive's actual part number."
+    fi
+    case "$LABEL" in
+        \[*|*\]*)
+            echo "Error: derived label '$LABEL' must not contain '[' or ']'." >&2
+            exit 1
+            ;;
+    esac
+fi
+
 # ===== 4. MODE SENSE(6), all pages (0x3F) ===================================
 # The sg_modes fallback must trigger on EMPTY output too, not just a nonzero
-# exit from sg_raw — sg3_utils tools generally treat "good status, fewer
+# exit from sg_raw --- sg3_utils tools generally treat "good status, fewer
 # bytes than the allocation length" as success, not failure, so a drive that
 # answers with nothing useful would previously skip the fallback entirely.
 info "Reading MODE SENSE (all pages)..."
@@ -315,7 +356,7 @@ if [ "$MS_SIZE" -ge 4 ]; then
     if [ -n "$SPT" ] && [ -n "$CYL" ] && [ -n "$HEADS" ] && [ "$SPT" -gt 0 ] && [ "$HEADS" -gt 0 ]; then
         IMPLIED=$((CYL * HEADS * SPT))
         GEOMETRY_COMMENT="; Decoded from MODE SENSE pages 0x03/0x04: cylinders=$CYL heads=$HEADS sectors/track=$SPT (block size per descriptor: ${BPS_FROM_DESC:-unknown})
-; => implied capacity $IMPLIED sectors. Compare against Sectors= below (from READ CAPACITY) —
+; => implied capacity $IMPLIED sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
 ; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
 ; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
@@ -403,9 +444,9 @@ fi
 {
     echo "; ==========================================================================="
     echo "; AS/400 disk profile '$LABEL', captured from $DEV on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "; Feature+Model is not auto-detected — it is not present in this drive's own"
-    echo "; INQUIRY/VPD data (checked; see project memory for the reasoning). Confirm"
-    echo "; this label is actually correct for the physical unit before relying on it."
+    echo "; Label is the drive's own part number (from VPD page 0x01, or given explicitly)."
+    echo "; Feature+Model (e.g. #6607) is a system-level packaging designation, not"
+    echo "; present in the drive's own INQUIRY/VPD data --- see project memory for why."
     echo "; ==========================================================================="
     echo "[$LABEL]"
     cat "$SECTION_BODY"
@@ -422,4 +463,4 @@ echo "LOG SENSE pages: 0x00=${LS00_SIZE}B 0x30=${LS30_SIZE}B 0x31=${LS31_SIZE}B"
 echo "" >&2
 echo "Appended profile [$LABEL] to $OUTFILE" >&2
 echo "Copy $OUTFILE to the root of the ZuluSCSI's SD card as as400_disk_definitions.txt" >&2
-echo "(the firmware does not yet load this file — capture now, loader is future work)." >&2
+echo "(the firmware does not yet load this file --- capture now, loader is future work)." >&2
