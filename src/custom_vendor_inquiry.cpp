@@ -260,22 +260,57 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
         if (len > 0) g_custom_spd[scsiId].length = len;
     }
 
-    for (int page = 0; page < 0xFF && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; page++)
+    // Read VPD page 0x00 (the standard "supported pages" list, SPC format:
+    // byte 0 periph qualifier/type, byte 1 page code, bytes 2-3 page list
+    // length, bytes 4.. the actual page codes) first, and only attempt the
+    // specific pages it declares - typically ~8 - instead of blindly trying
+    // all 255 possible page codes. minIni has no index and re-scans the
+    // whole file from the start on every single query, so trying all 255
+    // costs ~247 wasted full-file scans per profile load: measured at ~9
+    // seconds against a real, 400+-line as400_disk_definitions.txt on real
+    // hardware, long enough to matter for AS/400 DASD-discovery timing.
+    if (!hasCustomVPD(scsiId, 0x00))
     {
-        if (hasCustomVPD(scsiId, page))
-            continue; // this ID's own [SCSI<n>] vpdXX already set this page
-
-        char field[8];
-        snprintf(field, sizeof(field), "VPD%02X", page);
-        len = readProfileHexField(profileName, field, tmpbuf, MAX_VPD_DATA_SIZE);
+        len = readProfileHexField(profileName, "VPD00", tmpbuf, MAX_VPD_DATA_SIZE);
         if (len > 0)
         {
             int idx = g_custom_vpd_count;
             g_custom_vpd[idx].scsiId = scsiId;
-            g_custom_vpd[idx].pageCode = page;
+            g_custom_vpd[idx].pageCode = 0x00;
             g_custom_vpd[idx].length = len;
             memcpy(g_custom_vpd[idx].data, tmpbuf, len);
             g_custom_vpd_count++;
+        }
+    }
+
+    uint8_t vpd00[MAX_VPD_DATA_SIZE];
+    uint8_t vpd00_len = 0;
+    getCustomVPD(scsiId, 0x00, vpd00, &vpd00_len);
+
+    if (vpd00_len >= 4)
+    {
+        int declared_len = (vpd00[2] << 8) | vpd00[3];
+        int available = vpd00_len - 4;
+        if (declared_len > available) declared_len = available;
+
+        for (int i = 0; i < declared_len && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; i++)
+        {
+            int page = vpd00[4 + i];
+            if (page == 0x00 || hasCustomVPD(scsiId, page))
+                continue; // page 0 already handled above; others already set via [SCSI<n>] vpdXX
+
+            char field[8];
+            snprintf(field, sizeof(field), "VPD%02X", page);
+            len = readProfileHexField(profileName, field, tmpbuf, MAX_VPD_DATA_SIZE);
+            if (len > 0)
+            {
+                int idx = g_custom_vpd_count;
+                g_custom_vpd[idx].scsiId = scsiId;
+                g_custom_vpd[idx].pageCode = page;
+                g_custom_vpd[idx].length = len;
+                memcpy(g_custom_vpd[idx].data, tmpbuf, len);
+                g_custom_vpd_count++;
+            }
         }
     }
 
