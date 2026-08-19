@@ -92,6 +92,17 @@ static struct {
     uint8_t ebcdic[7];
 } g_as400_part_override[S2S_MAX_TARGETS];
 
+// BlockSize/Sectors captured from a loaded AS/400 disk profile (see
+// loadAS400ProfileFromFile() below), for a given SCSI ID. Not consumed by
+// anything yet -- live capacity reporting is always computed from the actual
+// backing image file's size, never from this. This is here for the upcoming
+// auto-image-creation feature, which needs to know a profile's real capacity
+// before it can create a correctly-sized image for it.
+static struct {
+    uint32_t blockSize;
+    uint32_t sectors;
+} g_as400_profile_info[S2S_MAX_TARGETS];
+
 // Convert a single ASCII character to IBM EBCDIC (CP037 subset).
 // Supports digits, uppercase A-Z, and space. Lowercase is uppercased first.
 // Anything else returns EBCDIC space (0x40).
@@ -169,6 +180,113 @@ static void injectPartNumber(uint8_t *data, int asciiOffset, int ebcdicOffset, u
     memcpy(data + asciiOffset, g_as400_part_override[id].ascii, 7);
     if (ebcdicOffset >= 0)
         memcpy(data + ebcdicOffset, g_as400_part_override[id].ebcdic, 7);
+}
+#endif
+
+#ifdef PLATFORM_AS400
+// Read a hex-byte field from a captured AS/400 disk profile section,
+// reassembling it if the extractor split it into <field>_0, <field>_1, ...
+// <field>_chunks (see emit_hex_field() in utils/extract_as400_disk_data.sh --
+// fields short enough to fit one INI line are stored plain under <field>).
+// Returns the number of bytes decoded, 0 if the field is absent entirely.
+static int readProfileHexField(const char *section, const char *field, uint8_t *buf, int maxlen)
+{
+    char tmp[512];
+
+    if (ini_gets(section, field, "", tmp, sizeof(tmp), AS400_PROFILES_FILE) && tmp[0] != '\0')
+    {
+        return parseHexString(tmp, buf, maxlen);
+    }
+
+    char chunkKey[24];
+    snprintf(chunkKey, sizeof(chunkKey), "%s_chunks", field);
+    long numChunks = ini_getl(section, chunkKey, 0, AS400_PROFILES_FILE);
+    if (numChunks <= 0) return 0;
+
+    int total = 0;
+    for (long i = 0; i < numChunks && total < maxlen; i++)
+    {
+        snprintf(chunkKey, sizeof(chunkKey), "%s_%ld", field, i);
+        if (!ini_gets(section, chunkKey, "", tmp, sizeof(tmp), AS400_PROFILES_FILE))
+            break;
+        total += parseHexString(tmp, buf + total, maxlen - total);
+    }
+    return total;
+}
+
+// Load a named AS/400 disk profile from AS400_PROFILES_FILE
+// (as400_disk_definitions.txt, captured by utils/extract_as400_disk_data.sh)
+// into this SCSI ID's custom SPD/VPD/MODE SENSE storage. Only fills in data
+// not already supplied by this ID's own [SCSI<n>] vpdXX/spd keys -- those
+// still take precedence, same as loadAS400Defaults() below.
+//
+// Fails loud rather than silently falling back to the single built-in
+// profile: a missing/empty definitions file or a typo'd profile name should
+// be an obvious, logged error, not a quiet switch to the wrong drive.
+static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
+{
+    FsFile f = SD.open(AS400_PROFILES_FILE, O_RDONLY);
+    bool fileUsable = f.isOpen() && f.fileSize() > 0;
+    if (f.isOpen()) f.close();
+    if (!fileUsable)
+    {
+        logmsg("---- ERROR: AS/400 disk profile '", profileName, "' requested for SCSI ID ",
+               (int)scsiId, " but ", AS400_PROFILES_FILE, " is missing or empty");
+        return;
+    }
+
+    if (!ini_hassection(profileName, AS400_PROFILES_FILE))
+    {
+        logmsg("---- ERROR: AS/400 disk profile '", profileName, "' not found in ",
+               AS400_PROFILES_FILE, " for SCSI ID ", (int)scsiId);
+        return;
+    }
+
+    uint8_t tmpbuf[MAX_MODESENSE_SIZE]; // MAX_MODESENSE_SIZE == MAX_VPD_DATA_SIZE (255)
+    int len;
+
+    if (g_custom_spd[scsiId].length == 0)
+    {
+        len = readProfileHexField(profileName, "SPD", g_custom_spd[scsiId].data, MAX_SPD_SIZE);
+        if (len > 0) g_custom_spd[scsiId].length = len;
+    }
+
+    for (int page = 0; page < 0xFF && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; page++)
+    {
+        if (hasCustomVPD(scsiId, page))
+            continue; // this ID's own [SCSI<n>] vpdXX already set this page
+
+        char field[8];
+        snprintf(field, sizeof(field), "VPD%02X", page);
+        len = readProfileHexField(profileName, field, tmpbuf, MAX_VPD_DATA_SIZE);
+        if (len > 0)
+        {
+            int idx = g_custom_vpd_count;
+            g_custom_vpd[idx].scsiId = scsiId;
+            g_custom_vpd[idx].pageCode = page;
+            g_custom_vpd[idx].length = len;
+            memcpy(g_custom_vpd[idx].data, tmpbuf, len);
+            g_custom_vpd_count++;
+        }
+    }
+
+    if (g_custom_modesense[scsiId].length == 0)
+    {
+        len = readProfileHexField(profileName, "ModeSense3F", tmpbuf, MAX_MODESENSE_SIZE);
+        if (len > 0)
+        {
+            g_custom_modesense[scsiId].length = len;
+            memcpy(g_custom_modesense[scsiId].data, tmpbuf, len);
+        }
+    }
+
+    long blockSize = ini_getl(profileName, "BlockSize", 0, AS400_PROFILES_FILE);
+    long sectors = ini_getl(profileName, "Sectors", 0, AS400_PROFILES_FILE);
+    if (blockSize > 0) g_as400_profile_info[scsiId].blockSize = (uint32_t)blockSize;
+    if (sectors > 0) g_as400_profile_info[scsiId].sectors = (uint32_t)sectors;
+
+    logmsg("---- Loaded AS/400 disk profile '", profileName, "' for SCSI ID ", (int)scsiId,
+           " (BlockSize=", (int)blockSize, " Sectors=", (int)sectors, ")");
 }
 #endif
 
@@ -263,6 +381,7 @@ void resetCustomInquiryData()
 #ifdef PLATFORM_AS400
     memset(g_as400_serial_override, 0, sizeof(g_as400_serial_override));
     memset(g_as400_part_override, 0, sizeof(g_as400_part_override));
+    memset(g_as400_profile_info, 0, sizeof(g_as400_profile_info));
 #endif
 }
 
@@ -343,6 +462,16 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
             g_as400_part_override[id].length = 7;
             logmsg("---- Custom AS/400 disk part number for SCSI ID ", (int) scsiId, ": \"", tmp, "\"");
         }
+    }
+
+    // Load a named AS/400 disk profile: AS400_DiskProfile=<section name in
+    // as400_disk_definitions.txt, e.g. "59H7001">. Runs after this section's
+    // own vpdXX/spd keys above (which still win) and before the built-in
+    // defaults below (which fill in anything the profile doesn't supply).
+    if (ini_gets(section, "AS400_DiskProfile", "", tmp, sizeof(tmp), CONFIGFILE))
+    {
+        if (tmp[0] != '\0')
+            loadAS400ProfileFromFile(scsiId, tmp);
     }
 
     // Load AS/400 defaults for any IDs that don't have INI overrides
