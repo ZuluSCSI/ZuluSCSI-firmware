@@ -3130,7 +3130,17 @@ void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
 
 #ifdef PREFETCH_BUFFER_SIZE
         uint32_t prefetch_sectors = 0;
-        const uint8_t *prefetch_ptr = scsiDiskPrefetchRead(img.scsiId, transfer.lba, bytesPerSector, &prefetch_sectors);
+        const uint8_t *prefetch_ptr = NULL;
+#ifdef PLATFORM_AS400
+        // The prefetch cache holds sectors from a prior ordinary contiguous
+        // read. An AS/400 Skip Read (the linked Read10 that follows a Skip
+        // Read mask CDB, dispatched here with skip_command already set to
+        // 0xE8) must gather its data per the skip mask instead - serving it
+        // from the cache would return contiguous data and silently bypass
+        // the mask.
+        if (g_disk_transfer.skip_command == 0)
+#endif
+        prefetch_ptr = scsiDiskPrefetchRead(img.scsiId, transfer.lba, bytesPerSector, &prefetch_sectors);
 
         if (prefetch_ptr)
         {
