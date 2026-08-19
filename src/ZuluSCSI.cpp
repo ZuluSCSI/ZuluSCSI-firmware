@@ -702,6 +702,12 @@ bool findHDDImages()
   uint8_t removable_count = 0;
   uint8_t eject_btn_set = 0;
   uint8_t last_removable_device = 255;
+
+  // Reset custom-inquiry state once for the whole scan below, not per ID --
+  // parseCustomInquiryData() is called once per discovered SCSI ID inside
+  // this loop, and its own reset would wipe every other ID's custom data.
+  resetCustomInquiryData();
+
   while (1)
   {
     if (!file.openNext(&root, O_READ))

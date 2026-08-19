@@ -237,19 +237,28 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
 }
 #endif
 
-void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
+// Resets shared storage for ALL SCSI IDs. Must be called exactly once before
+// the scan loop that calls parseCustomInquiryData() once per discovered ID --
+// previously these resets lived at the top of parseCustomInquiryData() itself,
+// which meant every ID's call wiped every *other* already-processed ID's
+// custom VPD/SPD/serial/part-number data. Only the last ID scanned ever kept
+// its custom data. Not previously visible because nothing exercised custom
+// data differing across multiple IDs at once.
+void resetCustomInquiryData()
 {
-    char tmp[512];
-    char section[6] = "SCSI0";
-    char key[8];
-
     g_custom_vpd_count = 0;
     memset(g_custom_spd, 0, sizeof(g_custom_spd));
 #ifdef PLATFORM_AS400
     memset(g_as400_serial_override, 0, sizeof(g_as400_serial_override));
     memset(g_as400_part_override, 0, sizeof(g_as400_part_override));
 #endif
+}
 
+void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
+{
+    char tmp[512];
+    char section[6] = "SCSI0";
+    char key[8];
 
     section[4] = scsiEncodeID(scsiId);
 
