@@ -3061,12 +3061,24 @@ void diskDataOut()
 
     // Release SCSI bus
     scsiFinishRead(NULL, 0, &scsiDev.target->transfer.parityError);
+    transfer.currentBlock += blockcount;
 #ifdef PLATFORM_AS400
-    if(g_disk_transfer.skip_command) {
+    // A Skip Write larger than fits in one SD write buffer spans multiple
+    // diskDataOut() invocations (skip commands allow up to 256 blocks; at
+    // 522 bytes/sector the buffer holds only ~125 per invocation, so any
+    // mask above that size needs a second call). skip_command/skip_position/
+    // skip_mask must survive until the whole command is done, or the next
+    // invocation falls through to a plain contiguous write for the
+    // remainder, silently ignoring the mask for however much data is left.
+    // Only clear once the command has actually finished, failed, or been
+    // reset - not after every invocation.
+    if (g_disk_transfer.skip_command &&
+        (transfer.currentBlock == transfer.blocks ||
+         scsiDev.phase != DATA_OUT || scsiDev.resetFlag))
+    {
         g_disk_transfer.skip_command = 0;
     }
 #endif
-    transfer.currentBlock += blockcount;
     scsiDev.dataPtr = scsiDev.dataLen = 0;
 
     if (transfer.currentBlock == transfer.blocks)
