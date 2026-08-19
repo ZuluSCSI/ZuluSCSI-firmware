@@ -191,7 +191,14 @@ static void injectPartNumber(uint8_t *data, int asciiOffset, int ebcdicOffset, u
 // Returns the number of bytes decoded, 0 if the field is absent entirely.
 static int readProfileHexField(const char *section, const char *field, uint8_t *buf, int maxlen)
 {
-    char tmp[512];
+    // static, not a stack local: this is called up to 255 times in a row from
+    // loadAS400ProfileFromFile()'s VPD-page loop, nested several calls deep
+    // inside the boot-time SCSI ID scan. A 512-byte stack local here, on top
+    // of that scan's own buffers, was enough to overflow the stack on real
+    // hardware (CFSR StackOverflow, RP2350, confirmed via a real crash log).
+    // Safe as static: this function is only ever called sequentially, never
+    // reentrantly, from this single-threaded boot-time scan.
+    static char tmp[512];
 
     if (ini_gets(section, field, "", tmp, sizeof(tmp), AS400_PROFILES_FILE) && tmp[0] != '\0')
     {
@@ -242,7 +249,9 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
         return;
     }
 
-    uint8_t tmpbuf[MAX_MODESENSE_SIZE]; // MAX_MODESENSE_SIZE == MAX_VPD_DATA_SIZE (255)
+    // static for the same reason as readProfileHexField()'s tmp[] above --
+    // one less sizable buffer stacked on top of an already-deep call chain.
+    static uint8_t tmpbuf[MAX_MODESENSE_SIZE]; // MAX_MODESENSE_SIZE == MAX_VPD_DATA_SIZE (255)
     int len;
 
     if (g_custom_spd[scsiId].length == 0)
