@@ -29,6 +29,7 @@
 
 #ifdef PLATFORM_AS400
 #include <as400_values.h>
+#include <custom_vendor_inquiry.h>
 #endif
 
 #include <string.h>
@@ -318,11 +319,21 @@ static void pageIn(int pc, int dataIdx, const uint8_t* pageData, int pageLen)
 static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int allocLength)
 {
 #ifdef PLATFORM_AS400
-	// copy of a raw capture of an AS400 drive
 	if (sixByteCmd && pageCode == 0x3F && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
 	{
-		scsiDev.dataLen = as400_mode_sense_all_pages_len > allocLength ? allocLength : as400_mode_sense_all_pages_len;
-		memcpy(scsiDev.data, as400_mode_sense_all_pages, scsiDev.dataLen); 
+		// A loaded AS/400 disk profile (see custom_vendor_inquiry.cpp) can
+		// supply its own captured MODE SENSE response; fall back to the
+		// single built-in capture if none is configured for this target.
+		uint16_t customLen = 0;
+		if (getCustomModeSense(scsiDev.target->cfg->scsiId, scsiDev.data, &customLen))
+		{
+			scsiDev.dataLen = customLen > allocLength ? allocLength : customLen;
+		}
+		else
+		{
+			scsiDev.dataLen = as400_mode_sense_all_pages_len > allocLength ? allocLength : as400_mode_sense_all_pages_len;
+			memcpy(scsiDev.data, as400_mode_sense_all_pages, scsiDev.dataLen);
+		}
 		scsiDev.phase = DATA_IN;
 		return;
 	}

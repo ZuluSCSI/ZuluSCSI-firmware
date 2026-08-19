@@ -62,6 +62,17 @@ static struct {
     uint8_t data[MAX_SPD_SIZE];
 } g_custom_spd[S2S_MAX_TARGETS];
 
+// Storage for a custom MODE SENSE page 0x3F ("all pages") response per SCSI ID.
+//
+// MAX_MODESENSE_SIZE matches MAX_VPD_DATA_SIZE: the firmware's built-in
+// as400_mode_sense_all_pages blob is 220 bytes, and the extractor script
+// captures MODE SENSE(6) with an allocation length of 0xFF (255).
+#define MAX_MODESENSE_SIZE 255
+static struct {
+    uint16_t length;
+    uint8_t data[MAX_MODESENSE_SIZE];
+} g_custom_modesense[S2S_MAX_TARGETS];
+
 #ifdef PLATFORM_AS400
 // Per-SCSI-ID override for the 8-byte AS/400 serial, supplied via the
 // `AS400_DiskSerialNumber` key in [SCSI<n>] sections. When length == 8,
@@ -248,6 +259,7 @@ void resetCustomInquiryData()
 {
     g_custom_vpd_count = 0;
     memset(g_custom_spd, 0, sizeof(g_custom_spd));
+    memset(g_custom_modesense, 0, sizeof(g_custom_modesense));
 #ifdef PLATFORM_AS400
     memset(g_as400_serial_override, 0, sizeof(g_as400_serial_override));
     memset(g_as400_part_override, 0, sizeof(g_as400_part_override));
@@ -359,6 +371,18 @@ bool getCustomSPD(uint8_t scsiId, uint8_t *buf, uint16_t *length)
     {
         *length = g_custom_spd[id].length;
         memcpy(buf, g_custom_spd[id].data, g_custom_spd[id].length);
+        return true;
+    }
+    return false;
+}
+
+bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length)
+{
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (g_custom_modesense[id].length > 0)
+    {
+        *length = g_custom_modesense[id].length;
+        memcpy(buf, g_custom_modesense[id].data, g_custom_modesense[id].length);
         return true;
     }
     return false;
