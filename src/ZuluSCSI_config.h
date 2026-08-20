@@ -79,6 +79,9 @@
 // How often to check for SD card presence
 #define SDCARD_POLL_INTERVAL 5000
 
+// How often to check an empty SD card for insert
+#define SDCARD_POLL_INSERT_INTERVAL 1500
+
 // How often to attempt WiFi reconnection after link loss (ms)
 #define WIFI_RECONNECT_START_INTERVAL 5000
 #define WIFI_RECONECT_MAX_INTERVAL 15000
