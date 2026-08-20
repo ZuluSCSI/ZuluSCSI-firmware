@@ -28,7 +28,18 @@
 
 // Use variables for version number
 #define FW_VER_NUM      "2026.08.07"
+
+// FW_VER_SUFFIX must distinguish the GD32/V1.x LTS build line from the
+// RP2040/RP2350 (RP2MCU) build line - they were unintentionally collapsed
+// onto one hardcoded value by the "Merge branch 'LTS/V1.x' into main" merge,
+// so every RP2MCU build (Wide, Blaster, Pico, etc) reported the "V1.x-LTS"
+// suffix that only ever meant anything for the GD32 boards. Before that
+// merge, RP2MCU builds correctly reported plain "release".
+#if defined(ZULUSCSI_V1_0) || defined(ZULUSCSI_V1_1_plus)
 #define FW_VER_SUFFIX   "V1.x-LTS-release"
+#else
+#define FW_VER_SUFFIX   "release"
+#endif
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
 #define STRINGFY(STR) #STR
@@ -43,6 +54,10 @@
 #define LOGFILEPREV "zululog_prev.txt"
 #define LOGFILEROTATE "zululog_rotate"
 #define LOGFILEDIR "zuluscsi_log"
+
+// AS/400 disk profile definitions, captured by utils/extract_as400_disk_data.sh
+// and selected per-[SCSIn] via the AS400_DiskProfile key.
+#define AS400_PROFILES_FILE "as400_disk_definitions.txt"
 #define CRASHFILE   "zuluerr.txt"
 #define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
