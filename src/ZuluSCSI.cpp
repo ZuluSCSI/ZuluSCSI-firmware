@@ -1183,7 +1183,8 @@ static void reinitSCSI()
     }
     else
     {
-      snprintf(raw_filename, sizeof(raw_filename), "RAW:0x%X:0x%X", start, end);
+      snprintf(raw_filename, sizeof(raw_filename), "RAW:0x%lX:0x%lX",
+        (unsigned long int) start, (unsigned long int) end);
     }
 
     success = scsiDiskOpenHDDImage(scsiId, raw_filename, 0,
