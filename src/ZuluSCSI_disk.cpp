@@ -3130,17 +3130,7 @@ void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
 
 #ifdef PREFETCH_BUFFER_SIZE
         uint32_t prefetch_sectors = 0;
-        const uint8_t *prefetch_ptr = NULL;
-#ifdef PLATFORM_AS400
-        // The prefetch cache holds sectors from a prior ordinary contiguous
-        // read. An AS/400 Skip Read (the linked Read10 that follows a Skip
-        // Read mask CDB, dispatched here with skip_command already set to
-        // 0xE8) must gather its data per the skip mask instead - serving it
-        // from the cache would return contiguous data and silently bypass
-        // the mask.
-        if (g_disk_transfer.skip_command == 0)
-#endif
-        prefetch_ptr = scsiDiskPrefetchRead(img.scsiId, transfer.lba, bytesPerSector, &prefetch_sectors);
+        const uint8_t *prefetch_ptr = scsiDiskPrefetchRead(img.scsiId, transfer.lba, bytesPerSector, &prefetch_sectors);
 
         if (prefetch_ptr)
         {
@@ -3604,8 +3594,19 @@ void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t ski
     }
     else
     {
-        g_disk_transfer.skip_command = skip_command;        
+        g_disk_transfer.skip_command = skip_command;
         g_disk_transfer.skip_position = 0;
+
+        if (skip_command == 0xE8)
+        {
+            // A Skip Read must gather its data per the mask; invalidate any
+            // sectors already sitting in the prefetch cache from a prior
+            // ordinary contiguous read now, so the linked Read10 that
+            // follows can't be served contiguous data that would silently
+            // bypass the mask. No-op if nothing is cached for this ID, or
+            // if PREFETCH_BUFFER_SIZE isn't defined at all.
+            scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
+        }
 
         // Support optional linked command (CDB byte 9 bit 0)
         if (scsiDev.cdb[9] & 1)
