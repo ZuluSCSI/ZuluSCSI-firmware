@@ -1798,49 +1798,37 @@ extern "C" void zuluscsi_main_loop(void)
     }
   }
 
-  if (!g_sdcard_present && (uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INTERVAL
-      && !g_msc_initiator)
-  {
-    sd_card_check_time = millis();
-
+  if (!g_sdcard_present && !g_msc_initiator)
+  { 
     // Try to remount SD card
-    do
+    if ((uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INSERT_INTERVAL)
     {
       g_sdcard_present = mountSDCard();
+      sd_card_check_time = millis();
+    }
 
-      if (g_sdcard_present)
+    if (g_sdcard_present)
+    {
+      blink_cancel();
+      LED_OFF();
+      logmsg("SD card reinit succeeded");
+      print_sd_info();
+      reinitSCSI();
+      init_logfile();
+      init_eject_button();
+      blinkStatus(BLINK_STATUS_OK);
+      if (g_displayEnabled)
       {
-        blink_cancel();
-        LED_OFF();
-        logmsg("SD card reinit succeeded");
-        print_sd_info();
-        reinitSCSI();
-        init_logfile();
-        init_eject_button();
-        blinkStatus(BLINK_STATUS_OK);
-        if (g_displayEnabled)
-        {
-          sdCardStateChanged(g_sdcard_present, g_romdrive_active);
-        }
+        sdCardStateChanged(g_sdcard_present, g_romdrive_active);
+      }
 #ifdef ZULUCONTROL_FIRMWARE
-        zuluWebUINotifySDCardReady();
+      zuluWebUINotifySDCardReady();
 #endif
-      }
-      else if (!g_romdrive_active)
-      {
-        blinkStatus(BLINK_ERROR_NO_SD_CARD);
-        platform_reset_watchdog();
-        platform_poll();
-        if (g_displayEnabled)
-        {
-          uint32_t input_wait_start = millis();
-          while (scsiDev.phase == BUS_FREE && (uint32_t)(millis() - input_wait_start) < 500)
-          {
-              controlLoop();
-          }
-        }
-      }
-    } while (!g_sdcard_present && !g_romdrive_active && !is_initiator && !g_rebooting);
+    }
+    else if (!g_romdrive_active)
+    {
+      blinkStatus(BLINK_ERROR_NO_SD_CARD);
+    }
   }
 }
 
