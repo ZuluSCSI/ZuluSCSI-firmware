@@ -287,6 +287,7 @@ int controlListImages(uint8_t scsi_id,
     FsFile entry;
     while (entry.openNext(&dir, O_RDONLY))
     {
+	int ret = 0;
         if (!entry.getName(name, sizeof(name)) || entry.isHidden())
         {
             entry.close();
@@ -301,9 +302,18 @@ int controlListImages(uint8_t scsi_id,
             continue;
 
         if (root_dir)
-            snprintf(full_path, sizeof(full_path), "/%s", name);
-        else
-            snprintf(full_path, sizeof(full_path), "%s/%s", imgdir, name);
+            ret = snprintf(full_path, sizeof(full_path), "/%s", name);
+	else
+            ret = snprintf(full_path, sizeof(full_path), "%s/%s", imgdir, name);
+        if (ret >= sizeof(full_path)) {
+            /*
+             * Note: this may log an extra / but it saves two strings in the
+             * firmware image.  Sufficient C ternary operations can fix this
+             * if needed (or just log two separate strings.)
+             */
+            logmsg("Warning: full path %s/%s is too long!", imgdir, name);
+            continue;
+        }
 
         if (is_dir)
         {
