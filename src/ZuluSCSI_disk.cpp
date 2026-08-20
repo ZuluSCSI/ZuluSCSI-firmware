@@ -2899,6 +2899,23 @@ void diskDataOut()
             }
         }
 
+#ifdef PLATFORM_AS400
+        // A Skip Write must commit only whole sectors: it walks the skip mask
+        // sector-by-sector, so any partial trailing sector left in len would
+        // either be dropped or (worse) offset every subsequent sector in the
+        // command by however many bytes were missing. len above is sized by
+        // SD buffer/write-size availability, not by bytesPerSector, so it is
+        // generally not a sector multiple - round it down before it is used
+        // for anything, so scsiFinishRead(), the write below, and the
+        // bytes_sd credit all agree on the same already-aligned amount. The
+        // remainder stays in the SCSI buffer and is picked up whole once the
+        // next chunk has enough bytes to complete the sector.
+        if (g_disk_transfer.skip_command == 0xEA)
+        {
+            len -= len % bytesPerSector;
+        }
+#endif
+
         if (len == 0)
         {
             // Nothing ready to transfer, check if we can read more from SCSI bus
@@ -2970,10 +2987,13 @@ void diskDataOut()
             }
             else if(g_disk_transfer.skip_command == 0xEA)
             {
-                // Skip Write: selectively write sectors based on skip mask
-                uint32_t aligned_len = len - (len % bytesPerSector);
-                int sectors_remaining = aligned_len / bytesPerSector;
+                // Skip Write: selectively write sectors based on skip mask.
+                // len is already a whole number of sectors (aligned above,
+                // before scsiFinishRead()), so every byte received in this
+                // chunk is consumed here.
+                int sectors_remaining = len / bytesPerSector;
                 uint8_t *ptr = buf;
+                bool write_ok = true;
 
                 while (sectors_remaining > 0)
                 {
@@ -2988,10 +3008,7 @@ void diskDataOut()
                         if (img.file.write(ptr, write_bytes) != write_bytes)
                         {
                             logmsg("SD card write failed during Skip Write: ", SD.sdErrorCode());
-                            scsiDev.status = CHECK_CONDITION;
-                            scsiDev.target->sense.code = MEDIUM_ERROR;
-                            scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
-                            scsiDev.phase = STATUS;
+                            write_ok = false;
                             break;
                         }
                         sectors_remaining -= run;
@@ -3000,7 +3017,25 @@ void diskDataOut()
                     else
                     {
                         break;
-                    }                    
+                    }
+                }
+
+                // The skip mask must cover every sector in this chunk. If the loop
+                // exits with sectors unfilled, the mask ran out early - matching the
+                // guard already applied to the Skip Read side.
+                if (write_ok && sectors_remaining > 0)
+                {
+                    logmsg("Skip Write mask exhausted with ", (int)sectors_remaining,
+                           " sectors unfilled");
+                    write_ok = false;
+                }
+
+                if (!write_ok)
+                {
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = MEDIUM_ERROR;
+                    scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+                    scsiDev.phase = STATUS;
                 }
             }
             else
@@ -3026,12 +3061,24 @@ void diskDataOut()
 
     // Release SCSI bus
     scsiFinishRead(NULL, 0, &scsiDev.target->transfer.parityError);
+    transfer.currentBlock += blockcount;
 #ifdef PLATFORM_AS400
-    if(g_disk_transfer.skip_command) {
+    // A Skip Write larger than fits in one SD write buffer spans multiple
+    // diskDataOut() invocations (skip commands allow up to 256 blocks; at
+    // 522 bytes/sector the buffer holds only ~125 per invocation, so any
+    // mask above that size needs a second call). skip_command/skip_position/
+    // skip_mask must survive until the whole command is done, or the next
+    // invocation falls through to a plain contiguous write for the
+    // remainder, silently ignoring the mask for however much data is left.
+    // Only clear once the command has actually finished, failed, or been
+    // reset - not after every invocation.
+    if (g_disk_transfer.skip_command &&
+        (transfer.currentBlock == transfer.blocks ||
+         scsiDev.phase != DATA_OUT || scsiDev.resetFlag))
+    {
         g_disk_transfer.skip_command = 0;
     }
 #endif
-    transfer.currentBlock += blockcount;
     scsiDev.dataPtr = scsiDev.dataLen = 0;
 
     if (transfer.currentBlock == transfer.blocks)
@@ -3083,7 +3130,17 @@ void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
 
 #ifdef PREFETCH_BUFFER_SIZE
         uint32_t prefetch_sectors = 0;
-        const uint8_t *prefetch_ptr = scsiDiskPrefetchRead(img.scsiId, transfer.lba, bytesPerSector, &prefetch_sectors);
+        const uint8_t *prefetch_ptr = NULL;
+#ifdef PLATFORM_AS400
+        // The prefetch cache holds sectors from a prior ordinary contiguous
+        // read. An AS/400 Skip Read (the linked Read10 that follows a Skip
+        // Read mask CDB, dispatched here with skip_command already set to
+        // 0xE8) must gather its data per the skip mask instead - serving it
+        // from the cache would return contiguous data and silently bypass
+        // the mask.
+        if (g_disk_transfer.skip_command == 0)
+#endif
+        prefetch_ptr = scsiDiskPrefetchRead(img.scsiId, transfer.lba, bytesPerSector, &prefetch_sectors);
 
         if (prefetch_ptr)
         {
