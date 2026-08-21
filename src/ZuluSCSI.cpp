@@ -159,7 +159,11 @@ void init_logfile()
         FsFile log_dir = SD.open(LOGFILEDIR, O_RDWR);
         if (!log_dir.isOpen())
         {
-          SD.mkdir(LOGFILEDIR);
+          if (!SD.mkdir(LOGFILEDIR))
+          {
+            logmsg("Log rotation could not create directory ", LOGFILEDIR,
+                   ", sdErrorCode: ", (int)SD.sdErrorCode());
+          }
           log_dir = SD.open(LOGFILEDIR);
         }
 
