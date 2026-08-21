@@ -1469,9 +1469,24 @@ const uint8_t* platform_get_8byte_mcu_id()
     return mcu_id;
 }
 
-uint8_t platform_get_buttons()
+#if defined(ENABLE_AUDIO_OUTPUT_SPDIF) || defined(GPIO_I2C_SDA)
+static void
+platform_init_buttons()
 {
     static bool init_buttons = false;
+
+    if (!init_buttons) {
+        // SDA = button 1, SCL = button 2
+        init_buttons = true;
+        //        pin             function       pup   pdown  out    state  fast
+        gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_SIO, true, false, false, false, false);
+        gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
+    }
+}
+#endif
+
+uint8_t platform_get_buttons()
+{
     uint8_t buttons = 0;
 
 #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
@@ -1481,13 +1496,7 @@ uint8_t platform_get_buttons()
     }
     else if (!g_i2c_claimed)
     {
-        if (!init_buttons)
-        {
-            init_buttons = true;
-            //        pin             function       pup   pdown  out    state  fast
-            gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_SIO, true, false, false, false, false);
-            gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
-        }
+        platform_init_buttons();
         // SDA = button 1, SCL = button 2
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
         if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
@@ -1498,14 +1507,7 @@ uint8_t platform_get_buttons()
 #elif defined(GPIO_I2C_SDA)
     if (!g_i2c_claimed)
     {
-            if (!init_buttons)
-            {
-                init_buttons = true;
-                //        pin             function       pup   pdown  out    state  fast
-                gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_SIO, true, false, false, false, false);
-                gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
-            }
-            // SDA = button 1, SCL = button 2
+        platform_init_buttons();
         // SDA = button 1, SCL = button 2
         if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
         if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
