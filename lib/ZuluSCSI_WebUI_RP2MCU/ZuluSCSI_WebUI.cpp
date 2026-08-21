@@ -267,7 +267,7 @@ static void handle_client_message(uint8_t cmd, const uint8_t *payload, uint16_t 
             g_subscribed = true;
             send_status_json();
             {
-                uint8_t sd_payload[1] = {g_sd_ready ? I2C_SERVER_SD_PRESENT : I2C_SERVER_SD_NOT_PRESENT};
+                uint8_t sd_payload[1] = {(uint8_t) (g_sd_ready ? I2C_SERVER_SD_PRESENT : I2C_SERVER_SD_NOT_PRESENT)};
                 webuiI2CSend(I2C_SERVER_SD_STATUS_CHANGE, sd_payload, 1);
             }
             send_all_filenames();
@@ -716,7 +716,6 @@ void zuluWebUITask()
                 bool major_version_match = false;
                 if (client_ver[0] != '\0')
                 {
-                    unsigned long local_major_version;
                     char* period_location = strchr(client_ver, '.');
                     if (period_location != NULL)
                     {
@@ -845,7 +844,7 @@ void zuluWebUITask()
             if (g_subscribed && elapsed(g_last_status_ms, STATUS_INTERVAL_MS))
             {
                 send_status_json();
-                uint8_t sd_payload[1] = {g_sd_ready ? I2C_SERVER_SD_PRESENT : I2C_SERVER_SD_NOT_PRESENT};
+                uint8_t sd_payload[1] = {(uint8_t) (g_sd_ready ? I2C_SERVER_SD_PRESENT : I2C_SERVER_SD_NOT_PRESENT)};
                 webuiI2CSend(I2C_SERVER_SD_STATUS_CHANGE, sd_payload, 1);
                 g_last_status_ms = ms_now();
             }
