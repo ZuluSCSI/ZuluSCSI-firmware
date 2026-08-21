@@ -410,9 +410,7 @@ void scsiInitiatorMainLoop()
             }
             else
             {
-#ifndef ZULUSCSI_NETWORK
                 dbgmsg("Failed to connect to SCSI ID ", g_initiator_state.target_id);
-#endif
                 g_initiator_state.sectorsize = 0;
                 g_initiator_state.sectorcount = g_initiator_state.sectorcount_all = 0;
             }
@@ -764,9 +762,7 @@ int scsiInitiatorRunCommand(int target_id,
 
     if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
     {
-#ifndef ZULUSCSI_NETWORK
         dbgmsg("------ Target ", target_id, " did not respond");
-#endif
         scsiHostPhyRelease();
         return -1;
     }
@@ -848,9 +844,7 @@ int scsiInitiatorRunCommand(int target_id,
             uint8_t tmp = -1;
             scsiHostRead(&tmp, 1);
             status = tmp;
-#ifndef ZULUSCSI_NETWORK
             dbgmsg("------ STATUS: ", tmp);
-#endif
         }
     }
 
