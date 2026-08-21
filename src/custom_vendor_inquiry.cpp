@@ -93,14 +93,19 @@ static struct {
 } g_as400_part_override[S2S_MAX_TARGETS];
 
 // BlockSize/Sectors captured from a loaded AS/400 disk profile (see
-// loadAS400ProfileFromFile() below), for a given SCSI ID. Not consumed by
-// anything yet -- live capacity reporting is always computed from the actual
-// backing image file's size, never from this. This is here for the upcoming
-// auto-image-creation feature, which needs to know a profile's real capacity
-// before it can create a correctly-sized image for it.
+// loadAS400ProfileFromFile() below), for a given SCSI ID. blockSize/sectors
+// are not consumed by anything yet -- live capacity reporting is always
+// computed from the actual backing image file's size, never from this. They
+// are here for the upcoming auto-image-creation feature, which needs to know
+// a profile's real capacity before it can create a correctly-sized image for
+// it. `loaded` is consumed immediately, by loadAS400Defaults() below: a
+// named profile's declared VPD page set is authoritative for that SCSI ID,
+// so any page IT doesn't have should stay absent rather than being patched
+// in from the built-in default's unrelated physical drive.
 static struct {
     uint32_t blockSize;
     uint32_t sectors;
+    bool loaded;
 } g_as400_profile_info[S2S_MAX_TARGETS];
 
 // Convert a single ASCII character to IBM EBCDIC (CP037 subset).
@@ -328,6 +333,7 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
     long sectors = ini_getl(profileName, "Sectors", 0, AS400_PROFILES_FILE);
     if (blockSize > 0) g_as400_profile_info[scsiId].blockSize = (uint32_t)blockSize;
     if (sectors > 0) g_as400_profile_info[scsiId].sectors = (uint32_t)sectors;
+    g_as400_profile_info[scsiId].loaded = true;
 
     logmsg("---- Loaded AS/400 disk profile '", profileName, "' for SCSI ID ", (int)scsiId,
            " (BlockSize=", (int)blockSize, " Sectors=", (int)sectors, ")");
@@ -368,15 +374,21 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
         loaded_default_data = true;
     }
 
-    // Default VPD pages
+    // Default VPD pages. Skipped entirely once a named profile is active for
+    // this ID (see loadAS400ProfileFromFile()): that profile's own captured
+    // page set is authoritative, and patching in a page it doesn't have from
+    // the built-in default would splice a different, unrelated physical
+    // drive's identity data into an otherwise self-consistent profile -
+    // confirmed in practice for VPD pages 0x01/0x82/0x83 on a profile that
+    // doesn't happen to capture them.
     for (size_t p = 0; p < AS400VitalPagesLen && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; p++)
     {
         uint8_t pageLen = AS400VitalPages[p][0]; // first byte is length
         if (pageLen < 2) continue;
         uint8_t pageCode = AS400VitalPages[p][2]; // page code at offset 2 in data
 
-        if (hasCustomVPD(scsiId, pageCode))
-            continue; // INI override takes precedence
+        if (hasCustomVPD(scsiId, pageCode) || g_as400_profile_info[scsiId].loaded)
+            continue; // INI override, or an active named profile, takes precedence
 
         loaded_default_data = true;
         int idx = g_custom_vpd_count;
