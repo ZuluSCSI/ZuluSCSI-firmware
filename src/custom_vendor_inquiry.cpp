@@ -35,14 +35,22 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Storage for custom VPD pages: up to 16 entries across all SCSI IDs
-// Each entry: [0]=scsiId, [1]=pageCode, [2]=length, [3..]=data
+// Storage for custom VPD pages: entries shared across all SCSI IDs (not
+// per-device -- an ID with more declared pages than another just uses more
+// of the shared pool). Each entry: [0]=scsiId, [1]=pageCode, [2]=length, [3..]=data
+//
+// MAX_CUSTOM_VPD_ENTRIES is sized per S2S_MAX_TARGETS rather than a flat
+// guess: real AS/400 disk-profile captures declare up to ~13 VPD pages each
+// (see as400_disk_definitions.txt), so a flat 16-entry table -- fine for a
+// single profiled ID -- silently overflows with just 2-3 profiled IDs
+// loaded at once. 10 covers VPD00 plus headroom for every real capture seen
+// so far, times every possible SCSI ID.
 //
 // MAX_VPD_DATA_SIZE is 255 -- the maximum representable in the `length`
 // field below (uint8_t). The largest AS/400 disk-profile capture in tree
 // today is XCPR036 page 0xC3 at 250 bytes; pages 0xD1 / 0xD2 are 244 B.
 // Going to 255 leaves a few bytes of headroom without widening `length`.
-#define MAX_CUSTOM_VPD_ENTRIES 16
+#define MAX_CUSTOM_VPD_ENTRIES (S2S_MAX_TARGETS * 10)
 #define MAX_VPD_DATA_SIZE 255
 static struct {
     uint8_t scsiId;
@@ -277,7 +285,7 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
     if (!hasCustomVPD(scsiId, 0x00))
     {
         len = readProfileHexField(profileName, "VPD00", tmpbuf, MAX_VPD_DATA_SIZE);
-        if (len > 0)
+        if (len > 0 && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES)
         {
             int idx = g_custom_vpd_count;
             g_custom_vpd[idx].scsiId = scsiId;
@@ -285,6 +293,11 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
             g_custom_vpd[idx].length = len;
             memcpy(g_custom_vpd[idx].data, tmpbuf, len);
             g_custom_vpd_count++;
+        }
+        else if (len > 0)
+        {
+            logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
+                   " entries), VPD page 0x00 for SCSI ID ", (int)scsiId, " was not loaded");
         }
     }
 
@@ -298,7 +311,8 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
         int available = vpd00_len - 4;
         if (declared_len > available) declared_len = available;
 
-        for (int i = 0; i < declared_len && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; i++)
+        int i;
+        for (i = 0; i < declared_len && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; i++)
         {
             int page = vpd00[4 + i];
             if (page == 0x00 || hasCustomVPD(scsiId, page))
@@ -316,6 +330,12 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
                 memcpy(g_custom_vpd[idx].data, tmpbuf, len);
                 g_custom_vpd_count++;
             }
+        }
+
+        if (i < declared_len)
+        {
+            logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
+                   " entries), some VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
         }
     }
 
@@ -381,7 +401,8 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
     // drive's identity data into an otherwise self-consistent profile -
     // confirmed in practice for VPD pages 0x01/0x82/0x83 on a profile that
     // doesn't happen to capture them.
-    for (size_t p = 0; p < AS400VitalPagesLen && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; p++)
+    size_t p;
+    for (p = 0; p < AS400VitalPagesLen && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; p++)
     {
         uint8_t pageLen = AS400VitalPages[p][0]; // first byte is length
         if (pageLen < 2) continue;
@@ -414,6 +435,11 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
             injectPartNumber(g_custom_vpd[idx].data, 5, 29, scsiId);
 
         g_custom_vpd_count++;
+    }
+    if (p < AS400VitalPagesLen)
+    {
+        logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
+               " entries), some default VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
     }
     if (loaded_default_data)
     {
@@ -450,7 +476,8 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
     section[4] = scsiEncodeID(scsiId);
 
     // Parse VPD pages: vpd00, vpd80, etc.
-    for (int page = 0; page < 0xFF && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; page++)
+    int page;
+    for (page = 0; page < 0xFF && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; page++)
     {
         snprintf(key, sizeof(key), "vpd%02x", page);
         if (ini_gets(section, key, "", tmp, sizeof(tmp), CONFIGFILE))
@@ -466,6 +493,13 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
                 g_custom_vpd_count++;
             }
         }
+    }
+
+    if (page < 0xFF)
+    {
+        logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
+               " entries), SCSI ID ", scsiId, " vpdXX overrides for page number ",
+               page, " and above were not checked");
     }
 
     // Parse standard inquiry override: spd=
