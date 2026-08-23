@@ -43,14 +43,27 @@
 // guess: real AS/400 disk-profile captures declare up to ~13 VPD pages each
 // (see as400_disk_definitions.txt), so a flat 16-entry table -- fine for a
 // single profiled ID -- silently overflows with just 2-3 profiled IDs
-// loaded at once. 10 covers VPD00 plus headroom for every real capture seen
-// so far, times every possible SCSI ID.
+// loaded at once.
+//
+// The multiplier is deliberately modest (6, not enough for every possible
+// SCSI ID to carry a full 13-page profile simultaneously) rather than a
+// larger "cover every worst case" number: each entry costs 258 bytes
+// (see MAX_VPD_DATA_SIZE below), and this table is static RAM on a
+// platform with no swap. S2S_MAX_TARGETS*10 (160 entries on ZuluSCSI_Wide,
+// ~41.3KB) was tried and overflowed the linker's fixed 512KB RAM region by
+// 544 bytes on real hardware -- this firmware's other features (FreeRTOS,
+// lwIP, display/UI, USB, WebUI, audio) already consume most of the ~36.6KB
+// that was actually free before this table grew. *10 was sized from a
+// percentage of total RAM without accounting for that; *6 (96 entries,
+// ~24.8KB on Wide, a ~20.6KB growth) leaves real margin instead of just
+// barely fitting. Covers ~7 fully-profiled SCSI IDs at once, comfortably
+// above the "3+ IDs" scenario this fix was written to support.
 //
 // MAX_VPD_DATA_SIZE is 255 -- the maximum representable in the `length`
 // field below (uint8_t). The largest AS/400 disk-profile capture in tree
 // today is XCPR036 page 0xC3 at 250 bytes; pages 0xD1 / 0xD2 are 244 B.
 // Going to 255 leaves a few bytes of headroom without widening `length`.
-#define MAX_CUSTOM_VPD_ENTRIES (S2S_MAX_TARGETS * 10)
+#define MAX_CUSTOM_VPD_ENTRIES (S2S_MAX_TARGETS * 6)
 #define MAX_VPD_DATA_SIZE 255
 static struct {
     uint8_t scsiId;
