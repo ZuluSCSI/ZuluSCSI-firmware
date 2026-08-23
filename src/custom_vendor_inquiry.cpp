@@ -59,11 +59,25 @@
 // barely fitting. Covers ~7 fully-profiled SCSI IDs at once, comfortably
 // above the "3+ IDs" scenario this fix was written to support.
 //
+// *6 assumed RAM headroom tracks S2S_MAX_TARGETS, which turned out false
+// too: ZuluSCSI_Blaster is an 8-target board (same class as plain RP2040
+// boards, which build fine at 48 entries) but also carries the full
+// networking stack, DaynaPORT, audio, display/UI, and the logic sniffer on
+// top -- far less headroom than its target count alone would suggest, and
+// it overflowed the same 512KB RAM region by 6516 bytes at 48 entries on
+// real CI. Board RAM headroom depends on each board's whole feature set,
+// not just its bus width, so a single S2S_MAX_TARGETS-scaled formula can't
+// fit every board -- overridable per-board via a build flag (see
+// ZuluSCSI_Blaster's build_flags in platformio.ini), same pattern already
+// used for PREFETCH_BUFFER_SIZE.
+//
 // MAX_VPD_DATA_SIZE is 255 -- the maximum representable in the `length`
 // field below (uint8_t). The largest AS/400 disk-profile capture in tree
 // today is XCPR036 page 0xC3 at 250 bytes; pages 0xD1 / 0xD2 are 244 B.
 // Going to 255 leaves a few bytes of headroom without widening `length`.
+#ifndef MAX_CUSTOM_VPD_ENTRIES
 #define MAX_CUSTOM_VPD_ENTRIES (S2S_MAX_TARGETS * 6)
+#endif
 #define MAX_VPD_DATA_SIZE 255
 static struct {
     uint8_t scsiId;
