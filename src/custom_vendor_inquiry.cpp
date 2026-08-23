@@ -44,7 +44,11 @@
 // guess: real AS/400 disk-profile captures declare up to ~13 VPD pages each
 // (see as400_disk_definitions.txt), so a flat 16-entry table -- fine for a
 // single profiled ID -- silently overflows with just 2-3 profiled IDs
-// loaded at once.
+// loaded at once. Adding the PPC tape identity (loadAS400TapeDefaults(), up
+// to 14 pages of its own, same shared pool) fits comfortably within this
+// same formula-based sizing -- the most ordinary combined config (one
+// AS/400 disk on its default identity plus one PPC tape unit) needs up to
+// 22 entries, well under the default's 96 on a board with no override.
 //
 // The multiplier is deliberately modest (6, not enough for every possible
 // SCSI ID to carry a full 13-page profile simultaneously) rather than a
@@ -70,7 +74,11 @@
 // not just its bus width, so a single S2S_MAX_TARGETS-scaled formula can't
 // fit every board -- overridable per-board via a build flag (see
 // ZuluSCSI_Blaster's build_flags in platformio.ini), same pattern already
-// used for PREFETCH_BUFFER_SIZE.
+// used for PREFETCH_BUFFER_SIZE. (This branch originally carried its own,
+// smaller, non-overridable literal here (32) to avoid a rebase collision
+// with the disk-profile-loader branch's independent, larger fix to this
+// same constant -- now that both are combined, the formula-based value
+// above supersedes it, since it already exceeds what tape alone needs.)
 //
 // MAX_VPD_DATA_SIZE is 255 -- the maximum representable in the `length`
 // field below (uint8_t). The largest AS/400 disk-profile capture in tree
