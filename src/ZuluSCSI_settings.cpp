@@ -397,14 +397,26 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
         case DEV_PRESET_AS400_BS520: [[fallthrough]];
         case DEV_PRESET_AS400_CISC:
             deviceInitAS400(scsiId);
-            cfgDev.blockSize = 520;
-            driveinfo = as400_driveinfo_dgvs09u_fixed;
+            // blockSize/driveinfo below are disk-shaped defaults (520-byte
+            // CISC sectors, the DGVS09U disk identity strings) -- only
+            // meaningful for S2S_CFG_FIXED. A tape ID with this same
+            // Device= preset gets its own identity from
+            // loadAS400TapeDefaults() (custom_vendor_inquiry.cpp) instead;
+            // imposing a disk block size on it here would be wrong.
+            if (type == S2S_CFG_FIXED)
+            {
+                cfgDev.blockSize = 520;
+                driveinfo = as400_driveinfo_dgvs09u_fixed;
+            }
             break;
         case DEV_PRESET_AS400_BS522: [[fallthrough]];
         case DEV_PRESET_AS400_PPC:
             deviceInitAS400(scsiId);
-            cfgDev.blockSize = 522;
-            driveinfo = as400_driveinfo_dgvs09u_fixed;
+            if (type == S2S_CFG_FIXED)
+            {
+                cfgDev.blockSize = 522;
+                driveinfo = as400_driveinfo_dgvs09u_fixed;
+            }
             break;
 #endif
         default:

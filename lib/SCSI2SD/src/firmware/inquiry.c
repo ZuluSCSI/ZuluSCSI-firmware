@@ -237,10 +237,13 @@ void s2s_scsiInquiry()
 			allocationLength = 254;
 		}
 #ifdef PLATFORM_AS400
-		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
+		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 &&
+			(scsiDev.target->cfg->deviceType == S2S_CFG_FIXED || scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL))
 		{
-			// AS400 send the exact number of byte in data length if it fits in 
-			// the allocationLength and does not send padded zeros
+			// AS400 send the exact number of byte in data length if it fits in
+			// the allocationLength and does not send padded zeros. Applies to
+			// tape too now (S2S_CFG_SEQUENTIAL) -- real captured AS/400 tape
+			// drives respond this way as well, matching disk.
 			if (allocationLength < scsiDev.dataLen)
 				scsiDev.dataLen = allocationLength;
 		}
