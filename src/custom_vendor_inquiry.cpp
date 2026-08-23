@@ -607,3 +607,16 @@ bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length)
     return false;
 }
 
+#ifdef PLATFORM_AS400
+bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sectors)
+{
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (!g_as400_profile_info[id].loaded)
+        return false;
+
+    *blockSize = g_as400_profile_info[id].blockSize;
+    *sectors = g_as400_profile_info[id].sectors;
+    return true;
+}
+#endif
+

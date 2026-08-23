@@ -582,6 +582,80 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
   return true;
 }
 
+#ifdef PLATFORM_AS400
+// Config-driven auto-creation of correctly-sized AS/400 disk images.
+// findHDDImages()'s main scan below is entirely file-driven -- it only
+// learns about a SCSI ID once a matching image file already exists on the
+// card, and only then consults that ID's [SCSIn] config. This pass runs
+// after that scan and catches the opposite case: a SCSI ID names an
+// AS400_DiskProfile but has no backing image yet. The profile itself
+// already carries the drive's real captured capacity (BlockSize/Sectors,
+// see custom_vendor_inquiry.cpp), so the image can be created at the exact
+// right size instead of requiring a hand-crafted Create*.txt file.
+static bool autoCreateAS400ProfileImages()
+{
+  bool foundImage = false;
+  char imgdir[MAX_FILE_PATH];
+  ini_gets("SCSI", "Dir", "/", imgdir, sizeof(imgdir), CONFIGFILE);
+
+  for (int id = 0; id < S2S_MAX_TARGETS; id++)
+  {
+    if (s2s_getConfigById(id))
+      continue; // the scan below already found a real image for this ID
+
+    char section[6] = "SCSI0";
+    section[4] = scsiEncodeID(id);
+    char profileName[64];
+    ini_gets(section, "AS400_DiskProfile", "", profileName, sizeof(profileName), CONFIGFILE);
+    if (profileName[0] == '\0')
+      continue;
+
+    g_scsi_settings.initDevice(id, S2S_CFG_FIXED);
+    if (g_scsi_settings.getDevice(id)->blockSize == 0)
+    {
+      g_scsi_settings.getDevice(id)->blockSize = DEFAULT_BLOCKSIZE;
+    }
+    parseCustomInquiryData(id, S2S_CFG_FIXED);
+
+    uint32_t blockSize = 0, sectors = 0;
+    if (!getAS400ProfileCapacity(id, &blockSize, &sectors) || blockSize == 0 || sectors == 0)
+    {
+      logmsg("---- SCSI ID ", id, ": AS400_DiskProfile '", profileName,
+             "' has no usable BlockSize/Sectors, cannot auto-create image");
+      continue;
+    }
+
+    char fullname[MAX_FILE_PATH * 2 + 2] = {0};
+    strncpy(fullname, imgdir, MAX_FILE_PATH);
+    if (fullname[strlen(fullname) - 1] != '/') strcat(fullname, "/");
+    char namepart[16];
+    snprintf(namepart, sizeof(namepart), "HD%c0.hda", scsiEncodeID(id));
+    strcat(fullname, namepart);
+
+    uint64_t size = (uint64_t)sectors * blockSize;
+    logmsg("---- No image found for SCSI ID ", id, ", auto-creating ",
+           (int)(size / (1024 * 1024)), " MB per AS400_DiskProfile '", profileName, "'");
+
+    if (!createImageFile(fullname, size))
+    {
+      logmsg("---- Failed to auto-create image for SCSI ID ", id);
+      continue;
+    }
+
+    if (scsiDiskOpenHDDImage(id, fullname, 0, blockSize, S2S_CFG_FIXED, true))
+    {
+      foundImage = true;
+    }
+    else
+    {
+      logmsg("---- Failed to open auto-created image for SCSI ID ", id);
+    }
+  }
+
+  return foundImage;
+}
+#endif
+
 static bool typeIsRemovable(S2S_CFG_TYPE type)
 {
   switch (type)
@@ -963,6 +1037,14 @@ bool findHDDImages()
   if(usedDefaultId > 0) {
     logmsg("Some images did not specify a SCSI ID. Last file will be used at ID ", usedDefaultId);
   }
+
+#ifdef PLATFORM_AS400
+  if (autoCreateAS400ProfileImages())
+  {
+    foundImage = true;
+  }
+#endif
+
   root.close();
 
   g_romdrive_active = scsiDiskActivateRomDrive();
