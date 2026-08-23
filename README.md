@@ -50,7 +50,15 @@ For AS/400 `AS400_DiskProfile=` SCSI IDs (see below), a correctly-sized image is
 
 AS/400 disk profiles
 ---------------------
-For AS/400 (`System = "AS400_PPC"` or `"AS400_CISC"`), multiple SCSI IDs can each emulate a different real DASD unit by setting `AS400_DiskProfile = "<name>"` in that ID's `[SCSIn]` section, naming a section captured by `utils/extract_as400_disk_data.sh` into `as400_disk_definitions.txt` on the SD card.
+For AS/400 (`System = "AS400_PPC"` or `"AS400_CISC"`), multiple SCSI IDs can each emulate a different real DASD unit by setting `AS400_DiskProfile = "<name>"` in that ID's `[SCSIn]` section, naming a profile from `as400_disk_definitions.txt` on the SD card.
+
+To capture a profile from a real AS/400 disk, connect it to a Linux machine with `sg3_utils` installed and run [`utils/extract_as400_disk_data.sh`](utils/extract_as400_disk_data.sh):
+
+```
+./extract_as400_disk_data.sh /dev/sgN [Label] [outfile]
+```
+
+This appends one `[Label]` section to `as400_disk_definitions.txt` (or auto-derives the label from the drive's own FRU/part number if omitted) with its real INQUIRY, VPD, MODE SENSE, and capacity data. Copy the resulting file to the SD card root.
 
 If no image file exists yet for a profiled ID, one is created automatically at the profile's real captured size — see "Creating new image files" above.
 
