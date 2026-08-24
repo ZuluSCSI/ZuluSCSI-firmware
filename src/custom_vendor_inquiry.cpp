@@ -365,6 +365,51 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
                    " entries), some VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
         }
     }
+    else
+    {
+        // No VPD page 0x00 ("supported pages") in this capture -- some
+        // CISC-era drives (e.g. 45G9463/45G9463-1/86G9124/55F9806) genuinely
+        // don't support it as a discovery mechanism, even though they still
+        // carry real data on other pages (see as400_disk_definitions.txt).
+        // Without VPD00 the discovery loop above never runs at all, so
+        // VPD01/02/03/80/82 etc. were unreachable through AS400_DiskProfile=
+        // for these profiles even though the bytes are sitting right there
+        // in the file -- confirmed on real 9401-P02 hardware: a profile
+        // like this loaded its SPD fine but served zero VPD pages, and IPL
+        // halted early. Fall back to a small, curated list of page codes
+        // actually seen across the captured dataset, instead of the full
+        // 255-code brute force the VPD00 path exists specifically to avoid
+        // (~9s on real hardware against a 400+-line definitions file).
+        static const uint8_t curatedPages[] = {
+            0x01, 0x02, 0x03, 0x80, 0x81, 0x82, 0x83,
+            0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC7, 0xC8, 0xD1, 0xD2
+        };
+        size_t i;
+        for (i = 0; i < sizeof(curatedPages) && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; i++)
+        {
+            int page = curatedPages[i];
+            if (hasCustomVPD(scsiId, page))
+                continue; // already set via [SCSI<n>] vpdXX override
+
+            char field[8];
+            snprintf(field, sizeof(field), "VPD%02X", page);
+            len = readProfileHexField(profileName, field, tmpbuf, MAX_VPD_DATA_SIZE);
+            if (len > 0)
+            {
+                int idx = g_custom_vpd_count;
+                g_custom_vpd[idx].scsiId = scsiId;
+                g_custom_vpd[idx].pageCode = page;
+                g_custom_vpd[idx].length = len;
+                memcpy(g_custom_vpd[idx].data, tmpbuf, len);
+                g_custom_vpd_count++;
+            }
+        }
+        if (i < sizeof(curatedPages))
+        {
+            logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
+                   " entries), some VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
+        }
+    }
 
     if (g_custom_modesense[scsiId].length == 0)
     {
