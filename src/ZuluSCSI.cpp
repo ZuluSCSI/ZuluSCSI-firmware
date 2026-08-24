@@ -525,7 +525,16 @@ bool createImageFile(char *imgname, uint64_t size)
     if (file.truncate(size))
     {
       logmsg("---- Successfully recovered raw image without vhd footer, write speed was ", kb_per_s, " kB/s");
-      strncpy(imgname + namelen - 3, "raw", 3);
+      /*
+       * Replace the last three bytes of the image name with 'raw'.
+       * Yes, this assumes the string is at least 3 bytes long -and-
+       * its a DOS style file extension.  We really should be checking
+       * things here and handling overly short image names.
+       *
+       * Using strncpy() annoys the compiler because it really wants
+       * to copy the NUL pointer at the end.
+       */
+      memcpy(imgname + namelen - 3, "raw", 3);
       if (file.rename(imgname))
       {
         logmsg("---- Renamed image to \"", imgname, "\" to indicated the image is raw and doesn't contain a VHD footer");
@@ -1178,7 +1187,8 @@ static void reinitSCSI()
     }
     else
     {
-      snprintf(raw_filename, sizeof(raw_filename), "RAW:0x%X:0x%X", start, end);
+      snprintf(raw_filename, sizeof(raw_filename), "RAW:0x%lX:0x%lX",
+        (unsigned long int) start, (unsigned long int) end);
     }
 
     success = scsiDiskOpenHDDImage(scsiId, raw_filename, 0,

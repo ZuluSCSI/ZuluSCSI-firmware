@@ -836,8 +836,8 @@ static void scsiReset()
 		}
 		scsiDev.target->reservedId = -1;
 		scsiDev.target->reserverId = -1;
-		S2S_TargetCfg* config = scsiDev.target->cfg;
 #ifdef PLATFORM_AS400
+		const S2S_TargetCfg* config = scsiDev.target->cfg;
 		if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
 		{
 			scsiDev.target->sense.code = UNIT_ATTENTION;

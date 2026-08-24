@@ -4294,6 +4294,7 @@ void cdromLoadImage(image_config_t &img, const char* next_filename)
     }
 }
 
+#if defined(CONTROL_BOARD)
 // Eject and switch image
 static void genericLoadImage(image_config_t &img, const char* next_filename)
 {
@@ -4311,7 +4312,9 @@ static void genericLoadImage(image_config_t &img, const char* next_filename)
         scsiDiskCloseTray(img);
     }
 }
+#endif
 
+#if defined(CONTROL_BOARD)
 static void loadImageToggleEject(uint8_t id, const char* next_filename)
 {
     image_config_t &img = g_DiskImages[id];
@@ -4332,6 +4335,7 @@ static void loadImageToggleEject(uint8_t id, const char* next_filename)
         genericLoadImage(img, next_filename);
     }
 }
+#endif
 
 
 // TODO This forces a swap, the logic should use the deffered pattern

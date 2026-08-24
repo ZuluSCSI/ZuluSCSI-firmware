@@ -168,7 +168,6 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
 {
     bool loaded_default_data = false;
 
-    const S2S_TargetCfg *config = scsiDev.targets[scsiId].cfg;
     if (!((g_scsi_settings.getSystem()->quirks & S2S_CFG_QUIRKS_AS400) && type== S2S_CFG_FIXED))
         return;
 

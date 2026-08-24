@@ -295,12 +295,15 @@ static const uint8_t IomegaZip100VendorPage[] =
 	0x5c, 0xf, 0xff, 0xf
 };
 
+#if 0
+/* Note: not currently used anywhere */
 static const uint8_t IomegaZip250VendorPage[] =
 {
 	0x2f, // Page Code
 	4, // Page Length
 	0x5c, 0xf, 0x3c, 0xf
 };
+#endif
 
 static void pageIn(int pc, int dataIdx, const uint8_t* pageData, int pageLen)
 {
