@@ -495,7 +495,13 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
         if (pageCode == 0x80 && g_custom_vpd[idx].length >= 20)
             injectSerial(g_custom_vpd[idx].data, 12, scsiId); // offset 12 in page data
         else if (pageCode == 0x82 && g_custom_vpd[idx].length >= 24)
-            injectSerial(g_custom_vpd[idx].data, 16, scsiId);
+            // Offset 14, not 16 -- landmark-verified (search for the "IBM"
+            // string terminator, read the 8 bytes before it) across 7
+            // independently captured real drives (59H7001, 59H6611,
+            // 9V8006-041, 86G9124, 55F9806, 45G9463, 45G9463-1), spanning
+            // multiple product families. The shipped offset of 16 was off
+            // by 2 relative to every real drive checked.
+            injectSerial(g_custom_vpd[idx].data, 14, scsiId);
         else if (pageCode == 0x83 && g_custom_vpd[idx].length >= 42)
             injectSerial(g_custom_vpd[idx].data, 34, scsiId);
         else if (pageCode == 0xD1 && g_custom_vpd[idx].length >= 78)
