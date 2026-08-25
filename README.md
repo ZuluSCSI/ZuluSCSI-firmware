@@ -44,7 +44,7 @@ ZuluSCSI firmware can also create image files itself.
 To do this, create a text file with filename such as `Create 1024M HD40.txt`.
 The special filename must start with "Create" and be followed by file size and the name of resulting image file.
 The file will be created next time the SD card is inserted.
-The status LED will flash rapidly while image file generation is in progress.
+The status LED will flash rapidly while image file generation is in progress, and progress can be monitored in real-time via USB serial console.
 
 For AS/400 `AS400_DiskProfile=` SCSI IDs (see below), a correctly-sized image is created automatically the same way, with no `Create*.txt` file needed — the size comes from the profile's own captured capacity.
 
@@ -72,7 +72,7 @@ Normally only basic initialization information is stored, but switching the `DBG
 The indicator LED will normally report disk access.
 It also reports following status conditions:
 
-- 1 fast blink on boot: Image file loaded successfully
+- 1 fast blink on boot: One or more iImage files loaded successfully
 - 3 fast blinks: No images found on SD card
 - 5 fast blinks: SD card not detected
 - Continuous morse pattern: firmware crashed, morse code indicates crash location
