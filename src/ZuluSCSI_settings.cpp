@@ -129,7 +129,7 @@ void ZuluSCSISettings::deviceInitAS400(uint8_t scsiId)
 
 scsi_device_preset_t ZuluSCSISettings::getDevicePresetFromString(const char *presetName)
 {
-    for (int i = 0; i <  sizeof(devicePresetName[0]); i++)
+    for (int i = 0; i < (int)(sizeof(devicePresetName) / sizeof(devicePresetName[0])); i++)
     {
         if (strequals(presetName, devicePresetName[i]))
         {
