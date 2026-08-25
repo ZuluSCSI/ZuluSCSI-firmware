@@ -763,11 +763,11 @@ static void checkDiskGeometryDivisible(image_config_t &img)
         // normally devices will limit to 255 heads for DOS but 256 is used as a corner case
         if (img.scsiSectors <= 1024 * 256 * 63 && img.scsiSectors % sectorsPerHeadTrack != 0)
         {
-            logmsg("WARNING: Host used command ", scsiDev.cdb[0],
+            dbgmsg("WARNING: Host used command ", scsiDev.cdb[0],
                 " which is affected by drive geometry. Current settings are ",
                 (int)img.sectorsPerTrack, " sectors x ", (int)img.headsPerCylinder, " heads = ",
                 (int)sectorsPerHeadTrack, " but image size of ", (int)img.scsiSectors,
-                " sectors is not divisible. This can cause error messages in diagnostics tools.");
+                " sectors is not divisible. This can cause error messages in diagnostics tools, but is usually safe to ignore.");
             img.geometrywarningprinted = true;
         }
     }
