@@ -62,6 +62,11 @@ static int wifi_reconnect_attempts = 0;
 static bool g_wifi_scan_restore_connection = false;
 static bool g_wifi_scan_suspend_reconnect = false;
 
+// Whether the current association was made with a passphrase. The CYW43 driver
+// has no getter for the auth mode of a live association, so remember what was
+// asked for at join time.
+static bool g_wifi_join_secured = false;
+
 static void platform_network_wifi_store_reconnect_credentials(const char *ssid, const char *password)
 {
 	if (ssid != NULL)
@@ -182,6 +187,8 @@ bool platform_network_wifi_join(char *ssid, char *password, bool reconnect)
 		wifi_reconnect_interval = WIFI_RECONNECT_START_INTERVAL;
 		wifi_reconnect_time = millis();
 	}
+
+	g_wifi_join_secured = (password != NULL && password[0] != 0);
 
 	if (password == NULL || password[0] == 0)
 	{
@@ -540,6 +547,18 @@ char * platform_network_wifi_bssid()
 	/* TODO */
 
 	return bssid;
+}
+
+uint8_t platform_network_wifi_flags()
+{
+	if (!g_wifi_join_secured)
+		return 0;
+
+	// Only claim authentication for an association that actually happened
+	if (cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA) < CYW43_LINK_JOIN)
+		return 0;
+
+	return WIFI_NETWORK_FLAG_AUTH;
 }
 
 int platform_network_wifi_channel()
