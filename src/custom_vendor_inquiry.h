@@ -25,14 +25,22 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <scsi2sd.h>
+#include <ZuluSCSI_platform_config.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 
-// Parse custom inquiry data from zuluscsi.ini for all SCSI IDs.
-// Called once during initialization.
+// Clear all per-target custom inquiry/VPD/MODE SENSE state. Call once before
+// the per-SCSI-ID scan loop that calls parseCustomInquiryData() below -- the
+// per-ID call itself must NOT reset shared storage, or each ID's call wipes
+// every previously-processed ID's custom data.
+void resetCustomInquiryData();
+
+// Parse custom inquiry data from zuluscsi.ini for one SCSI ID.
+// Called once per discovered SCSI ID during initialization, after
+// resetCustomInquiryData() has been called once for the whole scan.
 // INI format: [SCSI<id>] vpd00=XX XX XX, spd=XX XX XX (hex values)
 void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type);
 
@@ -43,6 +51,18 @@ bool getCustomVPD(uint8_t scsiId, uint8_t pageCode, uint8_t *buf, uint8_t *lengt
 // Check if custom SPD (Standard Page Data / standard inquiry override) exists for a SCSI ID.
 // If found, copies data into buf and sets *length. Returns true if custom data exists.
 bool getCustomSPD(uint8_t scsiId, uint8_t *buf, uint16_t *length);
+
+// Check if a custom MODE SENSE page 0x3F (all pages) response exists for a SCSI ID.
+// If found, copies data into buf and sets *length. Returns true if custom data exists.
+bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length);
+
+#ifdef PLATFORM_AS400
+// Check if a loaded AS/400 disk profile (see AS400_DiskProfile=, parsed by
+// parseCustomInquiryData() above) supplied a capacity for this SCSI ID. If
+// so, fills *blockSize/*sectors and returns true -- used to auto-create a
+// correctly-sized image file when none exists yet for a profiled ID.
+bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sectors);
+#endif
 
 #ifdef __cplusplus
 }

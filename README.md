@@ -46,6 +46,24 @@ The special filename must start with "Create" and be followed by file size and t
 The file will be created next time the SD card is inserted.
 The status LED will flash rapidly while image file generation is in progress.
 
+For AS/400 `AS400_DiskProfile=` SCSI IDs (see below), a correctly-sized image is created automatically the same way, with no `Create*.txt` file needed — the size comes from the profile's own captured capacity.
+
+AS/400 disk profiles
+---------------------
+For AS/400 (`System = "AS400_PPC"` or `"AS400_CISC"`), multiple SCSI IDs can each emulate a different real DASD unit by setting `AS400_DiskProfile = "<name>"` in that ID's `[SCSIn]` section, naming a profile from [`as400_disk_definitions.txt`](as400_disk_definitions.txt) — copy it to the SD card root.
+
+This ships with real profiles already captured from several physical drives, so it's usable even without any AS/400 DASD hardware on hand. Capturing your own is optional, for drives not already in the list: connect one to a Linux machine with `sg3_utils` installed and run [`utils/extract_as400_disk_data.sh`](utils/extract_as400_disk_data.sh):
+
+```
+./extract_as400_disk_data.sh /dev/sgN [Label] [outfile]
+```
+
+This appends one `[Label]` section to `as400_disk_definitions.txt` (or auto-derives the label from the drive's own FRU/part number if omitted) with its real INQUIRY, VPD, MODE SENSE, and capacity data. Copy the resulting file to the SD card root.
+
+If no image file exists yet for a profiled ID, one is created automatically at the profile's real captured size — see "Creating new image files" above.
+
+Each profiled ID gets that drive's real INQUIRY/VPD/MODE SENSE identity. Using the **same** profile for more than one SCSI ID currently gives them identical serial numbers, with no way to override this yet — use a different profile per ID until this is resolved.
+
 Log files and error indications
 -------------------------------
 Log messages are stored in `zululog.txt`, which is cleared on every boot.
