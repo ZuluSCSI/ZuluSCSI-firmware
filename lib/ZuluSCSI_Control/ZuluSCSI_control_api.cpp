@@ -99,6 +99,19 @@ const char* controlGetDeviceTypeName(uint8_t scsi_id)
     }
 }
 
+// Copy the name reported to UIs for a loaded image.  A multi-bin/cue CD image
+// lives in a folder and img.current_image tracks whichever .bin file inside it
+// is currently open, so report the containing folder name instead - that is
+// also the entry controlListImages() surfaces for the set.
+static void copyDisplayName(image_config_t &img, char *buf, size_t buflen)
+{
+    if (img.is_multi_bin_cue() && img.bin_container.getName(buf, buflen) > 0)
+        return;
+
+    strncpy(buf, img.current_image, buflen - 1);
+    buf[buflen - 1] = '\0';
+}
+
 bool controlGetCurrentImage(uint8_t scsi_id, char *buf, size_t buflen)
 {
     if (!buf || buflen == 0) return false;
@@ -109,8 +122,7 @@ bool controlGetCurrentImage(uint8_t scsi_id, char *buf, size_t buflen)
     if (img.ejected || !img.file.isOpen() || img.current_image[0] == '\0')
         return false;
 
-    strncpy(buf, img.current_image, buflen - 1);
-    buf[buflen - 1] = '\0';
+    copyDisplayName(img, buf, buflen);
     return true;
 }
 
@@ -131,8 +143,7 @@ bool controlGetMediaStatus(uint8_t scsi_id, char *buf, size_t buflen, bool *ejec
 
     if (!has_file) return false;
 
-    strncpy(buf, img.current_image, buflen - 1);
-    buf[buflen - 1] = '\0';
+    copyDisplayName(img, buf, buflen);
     return true;
 }
 

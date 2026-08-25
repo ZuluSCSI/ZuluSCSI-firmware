@@ -41,12 +41,16 @@ const char* controlGetDeviceTypeName(uint8_t scsi_id);
 
 // Get the full path of the currently mounted image for a device.
 // Returns true if an image is loaded (not ejected); buf receives the path.
+// A multi-bin/cue CD image reports its containing folder name rather than the
+// .bin track file that happens to be open, matching controlListImages().
 // Returns false and sets buf[0]='\0' when ejected or device inactive.
 bool controlGetCurrentImage(uint8_t scsi_id, char *buf, size_t buflen);
 
 // UI-oriented media status: returns true and fills buf with the loaded image
 // path whenever a file is open, including during a SCSI media-change eject
 // (unlike controlGetCurrentImage which returns false when ejected).
+// A multi-bin/cue CD image reports its containing folder name rather than the
+// .bin track file that happens to be open, matching controlListImages().
 // ejected_out receives the actual SCSI ejected flag.
 bool controlGetMediaStatus(uint8_t scsi_id, char *buf, size_t buflen, bool *ejected_out);
 
