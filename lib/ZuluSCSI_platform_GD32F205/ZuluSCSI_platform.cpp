@@ -53,7 +53,7 @@ static bool g_led_blinking = false;
 
 // usb_log_poll() is called through function pointer to
 // avoid including USB in SD card bootloader.
-static void (*g_usb_log_poll_func)(void);
+static int32_t (*g_usb_log_poll_func)(void);
 static int32_t usb_log_poll();
 
 
@@ -583,23 +583,27 @@ static int32_t usb_log_poll()
 {
     static uint32_t logpos = 0;
 
+    if (g_log_lock)
+        return -1;
+
+    if (!usb_serial_ready())
+        return -1;
+
     // Retrieve pointer to log start and determine number of bytes available.
     uint32_t available = 0;
     const char *data = log_get_buffer(&logpos, &available);
-    if (usb_serial_ready())
-    {
-        // Limit to CDC packet size
-        uint32_t len = available;
-        if (len == 0) return;
-        if (len > USB_CDC_DATA_PACKET_SIZE) len = USB_CDC_DATA_PACKET_SIZE;
+    if (available == 0) return 0;
 
-        // Update log position by the actual number of bytes sent
-        // If USB CDC buffer is full, this may be 0
-        usb_serial_send((uint8_t*)data, len);
-        logpos -= available - len;
-        return available - len;
-    }
-    return available;
+    // Limit to CDC packet size
+    uint32_t len = available;
+    if (len > USB_CDC_DATA_PACKET_SIZE) len = USB_CDC_DATA_PACKET_SIZE;
+
+    usb_serial_send((uint8_t*)data, len);
+
+    // Rewind the read position by the number of bytes that were not sent,
+    // so that they are retried on the next poll instead of being dropped.
+    logpos -= available - len;
+    return available - len;
 }
 
 void platform_flush_usb_log()

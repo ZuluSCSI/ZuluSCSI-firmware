@@ -1097,24 +1097,28 @@ static int32_t usb_log_poll()
     if (g_log_lock)
         return -1;
 
+    // Retrieve pointer to log start and determine number of bytes available.
     uint32_t available = 0;
     const char *data = log_get_buffer(&logpos, &available);
+    if (available == 0) return 0;
+
+    // Limit to CDC packet size
+    uint32_t len = available;
+    if (len > CFG_TUD_CDC_EP_BUFSIZE) len = CFG_TUD_CDC_EP_BUFSIZE;
+
+    // If the USB CDC buffer is full this may write nothing at all
+    uint32_t actual = 0;
     if (Serial.availableForWrite())
     {
-        // Retrieve pointer to log start and determine number of bytes available.
-                // Limit to CDC packet size
-        uint32_t len = available;
-        if (len == 0) return 0;
-        if (len > CFG_TUD_CDC_EP_BUFSIZE) len = CFG_TUD_CDC_EP_BUFSIZE;
-
-        // Update log position by the actual number of bytes sent
-        // If USB CDC buffer is full, this may be 0
-        uint32_t actual = 0;
         actual = Serial.write(data, len);
-        logpos -= available - actual;
-        return available - actual;
     }
-    return available;
+
+    // Rewind the read position by the number of bytes that were not sent,
+    // so that they are retried on the next poll instead of being dropped.
+    logpos -= available - actual;
+    return available - actual;
+#else
+    return -1;
 #endif // PIO_FRAMEWORK_ARDUINO_NO_USB
 }
 
