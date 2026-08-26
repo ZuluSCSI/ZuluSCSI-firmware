@@ -37,6 +37,7 @@
 #endif
 #include "ZuluSCSI_cdrom.h"
 #include "ZuluSCSI_tape.h"
+#include "custom_vendor_inquiry.h"
 #include "ImageBackingStore.h"
 #include "ROMDrive.h"
 #include <new> // For placement new
@@ -1433,6 +1434,19 @@ void scsiDiskLoadConfig(int target_idx)
             }
             blocksize = getBlockSize(filename, target_idx);
         }
+
+        // Unlike findHDDImages() (ZuluSCSI.cpp), which handles images found
+        // by scanning the root SD directory, this function handles images
+        // found via the per-ID default subdirectory convention (TP0/, HD0/,
+        // etc., set up by scsiDiskSetConfig()/scsiDiskCheckDir() above) or an
+        // explicit ImgDir=. That path never used to call
+        // parseCustomInquiryData() at all, so any AS/400 (or generic custom
+        // vpdXX=/spd=) identity data for an ID configured this way was
+        // silently never loaded -- confirmed against a real boot log where
+        // an AS/400 tape drive in TP0/ served Zulu's generic identity
+        // instead of the compiled-in AS/400 tape defaults.
+        parseCustomInquiryData(target_idx, (S2S_CFG_TYPE) img.deviceType);
+
         logmsg("-- Opening '", filename, "' for id: ", target_idx);
         scsiDiskOpenHDDImage(target_idx, filename, 0, blocksize, (S2S_CFG_TYPE) img.deviceType, img.use_prefix);
     }
