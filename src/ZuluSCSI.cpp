@@ -96,7 +96,7 @@ void save_logfile(bool always = false)
     return;
 #endif
 
-  if (!g_log_to_sd)
+  if (!g_log_to_sd || g_log_lock)
     return;
   
   static uint32_t prev_log_pos = 0;

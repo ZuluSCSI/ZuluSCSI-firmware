@@ -35,6 +35,7 @@ extern "C" {
 #endif
 
 extern const char *g_platform_name;
+extern bool g_log_lock;
 
 #include "platform_hw_config.h"
 
@@ -56,6 +57,9 @@ extern bool g_moved_select_in;
 
 // Debug logging functions
 void platform_log(const char *s);
+inline void log_lock() {g_log_lock = true;}
+inline void log_unlock() {g_log_lock = false;} 
+void platform_flush_usb_log();
 
 // Minimal millis() implementation as GD32F205 does not
 // have an Arduino core yet.

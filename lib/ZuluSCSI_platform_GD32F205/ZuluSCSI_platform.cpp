@@ -44,6 +44,7 @@ extern "C" {
 const char *g_platform_name = PLATFORM_NAME;
 static bool g_enable_apple_quirks = false;
 bool g_direct_mode = false;
+bool g_log_lock = false;
 ZuluSCSIVersion_t g_zuluscsi_version = ZSVersion_unknown;
 bool g_moved_select_in = false;
 static bool g_led_blinking = false;
@@ -53,7 +54,7 @@ static bool g_led_blinking = false;
 // usb_log_poll() is called through function pointer to
 // avoid including USB in SD card bootloader.
 static void (*g_usb_log_poll_func)(void);
-static void usb_log_poll();
+static int32_t usb_log_poll();
 
 
 /*************************/
@@ -578,15 +579,15 @@ uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.
 
-static void usb_log_poll()
+static int32_t usb_log_poll()
 {
     static uint32_t logpos = 0;
 
+    // Retrieve pointer to log start and determine number of bytes available.
+    uint32_t available = 0;
+    const char *data = log_get_buffer(&logpos, &available);
     if (usb_serial_ready())
     {
-        // Retrieve pointer to log start and determine number of bytes available.
-        uint32_t available = 0;
-        const char *data = log_get_buffer(&logpos, &available);
         // Limit to CDC packet size
         uint32_t len = available;
         if (len == 0) return;
@@ -596,9 +597,19 @@ static void usb_log_poll()
         // If USB CDC buffer is full, this may be 0
         usb_serial_send((uint8_t*)data, len);
         logpos -= available - len;
+        return available - len;
     }
+    return available;
 }
 
+void platform_flush_usb_log()
+{
+    uint32_t flush_start = millis();
+    while (usb_log_poll() > 0 && (uint32_t)(millis() - flush_start) < 250)
+    {
+        platform_reset_watchdog();
+    }
+}
 /*****************************************/
 /* Crash handlers                        */
 /*****************************************/

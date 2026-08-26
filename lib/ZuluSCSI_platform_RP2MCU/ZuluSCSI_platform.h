@@ -72,6 +72,7 @@ extern "C" {
 /* These are used in debug output and default SCSI strings */
 extern const char *g_platform_name;
 extern bool g_i2c_claimed;
+extern bool g_log_lock;
 // NOTE: The driver supports synchronous speeds higher than 10MB/s, but this
 // has not been tested due to lack of fast enough SCSI adapter.
 // #define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_SYNC_20
@@ -79,6 +80,9 @@ extern bool g_i2c_claimed;
 // Debug logging function, can be used to print to e.g. serial port.
 // May get called from interrupt handlers.
 void platform_log(const char *s);
+inline void log_lock() {g_log_lock = true;}
+inline void log_unlock() {g_log_lock = false;} 
+void platform_flush_usb_log();
 bool platform_emergency_log_save();
 
 // Timing and delay functions.

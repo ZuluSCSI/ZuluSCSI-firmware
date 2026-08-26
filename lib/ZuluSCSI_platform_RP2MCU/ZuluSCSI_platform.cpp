@@ -102,6 +102,7 @@ static uint8_t g_console_buttons = 0;
 static uint8_t g_enabled_eject_buttons = 0;
 static uint8_t g_enabled_cow_buttons = 0;
 static uint8_t g_cow_button_state = 0;
+bool g_log_lock = false;
 bool g_i2c_claimed = false;
 #ifdef ZULUSCSI_WIDE
 static bool g_is_sca = false;
@@ -141,7 +142,7 @@ typedef enum
 }
 menu_context_t;
 
-static void usb_log_poll();
+static int32_t usb_log_poll();
 
 #ifdef PLATFORM_AUTH_CHECK_ENABLE
 #include <compact_ed25519.h>
@@ -911,7 +912,7 @@ bool platform_emergency_log_save()
 }
 
 
-static void usb_log_poll();
+static int32_t usb_log_poll();
 static void usb_input_poll();
 static usb_input_type_t serial_menu(menu_context_t context);
 
@@ -1082,25 +1083,28 @@ uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
 // also starts calling this after 2 seconds.
 // This ensures that log messages get passed even if code hangs,
 // but does not unnecessarily delay normal execution.
-static void usb_log_poll()
+static int32_t usb_log_poll()
 {
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
     static uint32_t logpos = 0;
 
-    if (!usb_serial_connected()) return;
+    if (!usb_serial_connected()) return -1;
 
 #ifdef PLATFORM_MASS_STORAGE
-    if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
+    if (platform_msc_lock_get()) return -1; // Avoid re-entrant USB events
 #endif
 
+    if (g_log_lock)
+        return -1;
+
+    uint32_t available = 0;
+    const char *data = log_get_buffer(&logpos, &available);
     if (Serial.availableForWrite())
     {
         // Retrieve pointer to log start and determine number of bytes available.
-        uint32_t available = 0;
-        const char *data = log_get_buffer(&logpos, &available);
                 // Limit to CDC packet size
         uint32_t len = available;
-        if (len == 0) return;
+        if (len == 0) return 0;
         if (len > CFG_TUD_CDC_EP_BUFSIZE) len = CFG_TUD_CDC_EP_BUFSIZE;
 
         // Update log position by the actual number of bytes sent
@@ -1108,9 +1112,19 @@ static void usb_log_poll()
         uint32_t actual = 0;
         actual = Serial.write(data, len);
         logpos -= available - actual;
+        return available - actual;
     }
-
+    return available;
 #endif // PIO_FRAMEWORK_ARDUINO_NO_USB
+}
+
+void platform_flush_usb_log()
+{
+    uint32_t flush_start = millis();
+    while (usb_log_poll() > 0 && (uint32_t)(millis() - flush_start) < 250)
+    {
+        platform_reset_watchdog();
+    }
 }
 
 // Grab input from USB Serial terminal
@@ -1937,7 +1951,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
             *scratch0 = 0;
             logmsg(
                 "\r\n"                
-                "  Available ZuluSCSI Console Commands:\r\n"
+                "  Available ZuluSCSI (",g_log_short_firmwareversion,") Console Commands:\r\n"
                 "  ===================================================\r\n"
                 , context == MENU_CONTEXT_TARGET_MSC ?
                 "    'x' - exit from mass storage mode, eject USB drive(s)\r\n" : 

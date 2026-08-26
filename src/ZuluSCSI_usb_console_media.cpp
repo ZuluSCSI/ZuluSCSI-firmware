@@ -22,6 +22,7 @@
 #include "ZuluSCSI_usb_console_media.h"
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI_config.h"
+#include <ZuluSCSI_log.h>
 #include <ZuluSCSI_control_api.h>
 #include <string.h>
 #include <stdlib.h>
@@ -103,9 +104,36 @@ static int  s_num_len = 0;
 // Display helpers
 // -----------------------------------------------------------------------
 
+// Print the media status of a device:
+//   "image.iso"            - media loaded and inserted
+//   "(ejected) image.iso"  - ejected, but this image is still the selected one
+//   "(ejected)"            - ejected with no image selected
+static void print_media_status(uint8_t id)
+{
+    char cur[MAX_FILE_PATH];
+    bool ejected = true;
+    bool has_img = controlGetMediaStatus(id, cur, sizeof(cur), &ejected);
+
+    if (!has_img)
+    {
+        serial_out("(no image) [ejected]");
+        return;
+    }
+
+    const char *slash = strrchr(cur, '/');
+    serial_out(slash ? slash + 1 : cur);
+
+
+    if (ejected)
+        serial_out(" [ejected]");
+
+}
+
 static void show_device_list()
 {
+    platform_flush_usb_log();
     serial_println("");
+    serial_out("  ZuluSCSI ("); serial_out(g_log_short_firmwareversion); serial_println(")");
     serial_println("  Media Management");
     serial_println("  ================================================");
     serial_println("  Removable devices:");
@@ -119,15 +147,6 @@ static void show_device_list()
         for (int i = 0; i < s_removable_count; i++)
         {
             uint8_t id = s_removable_ids[i];
-            char cur[MAX_FILE_PATH];
-            bool has_img = controlGetCurrentImage(id, cur, sizeof(cur));
-
-            const char *basename = "(ejected)";
-            if (has_img)
-            {
-                const char *slash = strrchr(cur, '/');
-                basename = slash ? slash + 1 : cur;
-            }
 
             serial_out("    ");
             serial_out_int(i);
@@ -136,7 +155,7 @@ static void show_device_list()
             serial_out("  ");
             serial_out(controlGetDeviceTypeName(id));
             serial_out("  [");
-            serial_out(basename);
+            print_media_status(id);
             serial_println("]");
         }
     }
@@ -150,22 +169,17 @@ static void show_device_list()
 static void show_device_actions()
 {
     uint8_t id = s_removable_ids[s_selected_idx];
-    char cur[MAX_FILE_PATH];
-    bool has_img = controlGetCurrentImage(id, cur, sizeof(cur));
-    const char *basename = "(ejected)";
-    if (has_img)
-    {
-        const char *slash = strrchr(cur, '/');
-        basename = slash ? slash + 1 : cur;
-    }
-
+    platform_flush_usb_log();
+    log_lock();
     serial_println("");
+    serial_out("  ZuluSCSI ("); serial_out(g_log_short_firmwareversion); serial_println(")");
     serial_out("  Device SCSI ID ");
     serial_out_int((int)id);
     serial_out(": ");
     serial_println(controlGetDeviceTypeName(id));
     serial_out("  Current: ");
-    serial_println(basename);
+    print_media_status(id);
+    serial_println("");
     serial_println("  ================================================");
     serial_println("    'l' - list and select image");
     serial_println("    'n' - load next image");
@@ -173,6 +187,7 @@ static void show_device_actions()
     serial_println("    'i' - insert");
     serial_println("    'b' - back to device list");
     serial_println("  Or enter image number + Enter to load directly:");
+    log_unlock();
 }
 
 // Callback used by controlListImages() to print each entry
@@ -194,7 +209,8 @@ static void print_image_cb(int idx, const char *filename,
 static void show_image_list()
 {
     uint8_t id = s_removable_ids[s_selected_idx];
-
+    platform_flush_usb_log();
+    log_lock();
     serial_println("");
     serial_out("  Available images for SCSI ID ");
     serial_out_int((int)id);
@@ -324,11 +340,13 @@ void serialMediaMenuProcess(char c)
                     serial_out("' on SCSI ID ");
                     serial_out_int((int)id);
                     serial_println(" ...");
-
+                    platform_flush_usb_log();
+                    log_lock();
                     if (controlLoadImage(id, s_findNth.path))
                         serial_println("  Image loaded. Host will see a media change.");
                     else
                         serial_println("  Failed to load image.");
+                    log_unlock();
                 }
                 show_device_actions();
                 break;
@@ -366,6 +384,8 @@ void serialMediaMenuProcess(char c)
                 case 'e':
                 case 'E':
                 {
+                    platform_flush_usb_log();
+                    log_lock();
                     char id_str[4];
                     snprintf(id_str, sizeof(id_str), "%d", (int)id);
                     if (controlEjectMedia(id))
@@ -378,6 +398,7 @@ void serialMediaMenuProcess(char c)
                     {
                         serial_println("  Eject failed.");
                     }
+                    log_unlock();
                     show_device_actions();
                     break;
                 }
@@ -387,6 +408,9 @@ void serialMediaMenuProcess(char c)
                 {
                     char id_str[4];
                     snprintf(id_str, sizeof(id_str), "%d", (int)id);
+                    platform_flush_usb_log();
+                    log_lock();
+
                     if (controlInsertMedia(id))
                     {
                         serial_out("  SCSI ID ");
@@ -397,6 +421,7 @@ void serialMediaMenuProcess(char c)
                     {
                         serial_println("  Insert failed.");
                     }
+                    log_unlock();
                     show_device_actions();
                     break;
                 }
