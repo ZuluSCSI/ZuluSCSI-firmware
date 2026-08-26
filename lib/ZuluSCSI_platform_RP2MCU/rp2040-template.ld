@@ -136,12 +136,17 @@ SECTIONS
          */
         *ZuluSCSI_log.cpp.o(.text .text*)
         *ZuluSCSI_log_trace.cpp.o(.text .text*)
+        /* logmsg<> instantiations land in whichever object used them first,
+         * so the rule above misses them */
+        *(.text*_Z6logmsgIJ*)
 
         /* ROM drive setup and FW upgrade that is done only during init */
         *(.text*romDriveClear*)
         *(.text*romDriveCheckPresent*)
         *(.text*zipparser*)
         *(.text*firmware_update*)
+        *(.text*verify_extracted_firmware*)
+        *(.text*crc32_update*)
 
         /* ZuluSCSI_disk functions that are only used during init */
         *ZuluSCSI_settings.cpp.o(.text .text*)

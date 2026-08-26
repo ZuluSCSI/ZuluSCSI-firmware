@@ -140,6 +140,8 @@ SECTIONS
         *(.text*romDriveCheckPresent*)
         *(.text*zipparser*)
         *(.text*firmware_update*)
+        *(.text*verify_extracted_firmware*)
+        *(.text*crc32_update*)
 
         /* ZuluSCSI_disk functions that are only used during init */
         *ZuluSCSI_settings.cpp.o(.text .text*)
