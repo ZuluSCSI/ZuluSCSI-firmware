@@ -48,6 +48,7 @@ extern "C" uint32_t g_scsi_log_mask;
 
 // Firmware version string
 extern const char *g_log_firmwareversion;
+extern const char *g_log_short_firmwareversion;
 
 // Log string
 void log_raw(const char *str);
