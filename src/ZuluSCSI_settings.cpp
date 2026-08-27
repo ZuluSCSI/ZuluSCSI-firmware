@@ -397,14 +397,43 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
         case DEV_PRESET_AS400_BS520: [[fallthrough]];
         case DEV_PRESET_AS400_CISC:
             deviceInitAS400(scsiId);
-            cfgDev.blockSize = 520;
-            driveinfo = as400_driveinfo_dgvs09u_fixed;
+            // blockSize/driveinfo below are disk-shaped defaults (520-byte
+            // CISC sectors, the DGVS09U disk identity strings) -- only
+            // meaningful for S2S_CFG_FIXED. A tape ID with this same
+            // Device= preset gets its own identity from
+            // loadAS400TapeDefaults() (custom_vendor_inquiry.cpp) instead;
+            // imposing a disk block size on it here would be wrong.
+            if (type == S2S_CFG_FIXED)
+            {
+                cfgDev.blockSize = 520;
+                driveinfo = as400_driveinfo_dgvs09u_fixed;
+            }
+            else
+            {
+                // driveinfo must never stay NULL here: it's dereferenced
+                // unconditionally below (driveinfo[0][0] etc.) regardless of
+                // preset -- that fallback only runs when m_devPreset is still
+                // DEV_PRESET_NONE, which it no longer is once this case
+                // matches. The real tape identity overwrites these strings
+                // via loadAS400TapeDefaults(), so the exact fallback content
+                // doesn't matter -- it just has to be non-null.
+                driveinfo = driveinfo_tape;
+            }
             break;
         case DEV_PRESET_AS400_BS522: [[fallthrough]];
         case DEV_PRESET_AS400_PPC:
             deviceInitAS400(scsiId);
-            cfgDev.blockSize = 522;
-            driveinfo = as400_driveinfo_dgvs09u_fixed;
+            if (type == S2S_CFG_FIXED)
+            {
+                cfgDev.blockSize = 522;
+                driveinfo = as400_driveinfo_dgvs09u_fixed;
+            }
+            else
+            {
+                // Same reasoning as the CISC case above: driveinfo must not
+                // stay NULL for a tape ID here.
+                driveinfo = driveinfo_tape;
+            }
             break;
 #endif
         default:

@@ -37,6 +37,7 @@
 #endif
 #include "ZuluSCSI_cdrom.h"
 #include "ZuluSCSI_tape.h"
+#include "custom_vendor_inquiry.h"
 #include "ImageBackingStore.h"
 #include "ROMDrive.h"
 #include <new> // For placement new
@@ -1433,6 +1434,19 @@ void scsiDiskLoadConfig(int target_idx)
             }
             blocksize = getBlockSize(filename, target_idx);
         }
+
+        // Unlike findHDDImages() (ZuluSCSI.cpp), which handles images found
+        // by scanning the root SD directory, this function handles images
+        // found via the per-ID default subdirectory convention (TP0/, HD0/,
+        // etc., set up by scsiDiskSetConfig()/scsiDiskCheckDir() above) or an
+        // explicit ImgDir=. That path never used to call
+        // parseCustomInquiryData() at all, so any AS/400 (or generic custom
+        // vpdXX=/spd=) identity data for an ID configured this way was
+        // silently never loaded -- confirmed against a real boot log where
+        // an AS/400 tape drive in TP0/ served Zulu's generic identity
+        // instead of the compiled-in AS/400 tape defaults.
+        parseCustomInquiryData(target_idx, (S2S_CFG_TYPE) img.deviceType);
+
         logmsg("-- Opening '", filename, "' for id: ", target_idx);
         scsiDiskOpenHDDImage(target_idx, filename, 0, blocksize, (S2S_CFG_TYPE) img.deviceType, img.use_prefix);
     }
@@ -4154,6 +4168,41 @@ int scsiDiskCommand()
             scsiDev.data[2] = as400_log_sense_page_31_page_length >> 8;
             scsiDev.data[3] = as400_log_sense_page_31_page_length & 0xFF;
             memcpy(&scsiDev.data[124], as400_serial, sizeof(as400_serial));
+            scsiDev.phase = DATA_IN;
+        }
+        else
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+    }
+    else if (unlikely(command == 0x4D)
+        && scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        // LOG SENSE page 0x02 (Write Error Counter) for tape. Unlike the
+        // AS/400-specific disk pages above (0x30/0x31 embed AS/400 serial
+        // and I/O-count data), this is a plain standard SCSI-2 page with no
+        // vendor-specific content, and real AS/400 hosts query it during
+        // routine tape operation regardless of whether this ID has the
+        // AS/400 quirk configured at all -- confirmed on real hardware even
+        // against a stock emulated tape drive with no AS/400-specific
+        // identity set up. So, unlike the block above, not gated on
+        // quirks == S2S_CFG_QUIRKS_AS400.
+        uint8_t page_code = scsiDev.cdb[2] & 0x3F;
+
+        if (page_code == 0x02)
+        {
+            // No real error-counter data is tracked, so report a valid,
+            // empty parameter list (zero page length) rather than
+            // fabricating counter values -- a technically valid LOG SENSE
+            // response, just with nothing logged yet.
+            scsiDev.data[0] = page_code;
+            scsiDev.data[1] = 0; // reserved / subpage code
+            scsiDev.data[2] = 0; // page length MSB
+            scsiDev.data[3] = 0; // page length LSB -- no parameters
+            scsiDev.dataLen = 4;
             scsiDev.phase = DATA_IN;
         }
         else

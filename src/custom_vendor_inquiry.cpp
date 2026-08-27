@@ -28,6 +28,7 @@
 #include <ZuluSCSI_platform_config.h>
 #ifdef PLATFORM_AS400
 # include "as400_values.h"
+# include "as400_tape_values.h"
 #endif
 
 #include <scsi.h>
@@ -43,7 +44,11 @@
 // guess: real AS/400 disk-profile captures declare up to ~13 VPD pages each
 // (see as400_disk_definitions.txt), so a flat 16-entry table -- fine for a
 // single profiled ID -- silently overflows with just 2-3 profiled IDs
-// loaded at once.
+// loaded at once. Adding the PPC tape identity (loadAS400TapeDefaults(), up
+// to 14 pages of its own, same shared pool) fits comfortably within this
+// same formula-based sizing -- the most ordinary combined config (one
+// AS/400 disk on its default identity plus one PPC tape unit) needs up to
+// 22 entries, well under the default's 96 on a board with no override.
 //
 // The multiplier is deliberately modest (6, not enough for every possible
 // SCSI ID to carry a full 13-page profile simultaneously) rather than a
@@ -69,7 +74,11 @@
 // not just its bus width, so a single S2S_MAX_TARGETS-scaled formula can't
 // fit every board -- overridable per-board via a build flag (see
 // ZuluSCSI_Blaster's build_flags in platformio.ini), same pattern already
-// used for PREFETCH_BUFFER_SIZE.
+// used for PREFETCH_BUFFER_SIZE. (This branch originally carried its own,
+// smaller, non-overridable literal here (32) to avoid a rebase collision
+// with the disk-profile-loader branch's independent, larger fix to this
+// same constant -- now that both are combined, the formula-based value
+// above supersedes it, since it already exceeds what tape alone needs.)
 //
 // MAX_VPD_DATA_SIZE is 255 -- the maximum representable in the `length`
 // field below (uint8_t). The largest AS/400 disk-profile capture in tree
@@ -524,6 +533,102 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
         logmsg("---- Loaded default AS/400 inquiry data for SCSI ID ", (int) scsiId);
     }
 }
+
+// Populate default AS/400 tape identity data (real captures from a real
+// CISC-era and a real PPC-era tape drive, see as400_tape_values.h). Kept
+// separate from loadAS400Defaults() above rather than folding tape branches
+// into it -- the data shape and injection semantics differ enough (no
+// per-page serial injection for tape; the CISC variant has no VPD at all)
+// that sharing the function would risk the disk path for no benefit. Only
+// fills in data that wasn't already provided via INI (mirrors
+// loadAS400Defaults()'s own precedence rules).
+static void loadAS400TapeDefaults(uint8_t scsiId, S2S_CFG_TYPE type)
+{
+    if (!((g_scsi_settings.getSystem()->quirks & S2S_CFG_QUIRKS_AS400) && type == S2S_CFG_SEQUENTIAL))
+        return;
+
+    scsi_device_preset_t preset = g_scsi_settings.getDevicePreset(scsiId);
+
+    const uint8_t *inquiry = nullptr; size_t inquiryLen = 0;
+    const uint8_t *modeSense = nullptr; size_t modeSenseLen = 0;
+    const uint8_t (*vitalPages)[255] = nullptr; size_t vitalPagesLen = 0;
+    const char *presetName = nullptr;
+
+    switch (preset)
+    {
+        case DEV_PRESET_AS400_BS520: [[fallthrough]];
+        case DEV_PRESET_AS400_CISC:
+            inquiry = AS400TapeCISCVendorInquiry; inquiryLen = AS400TapeCISCVendorInquiryLen;
+            modeSense = as400_tape_cisc_mode_sense_all_pages; modeSenseLen = as400_tape_cisc_mode_sense_all_pagesLen;
+            // No VPD table -- the real captured CISC drive doesn't support VPD/EVPD at all.
+            presetName = "CISC";
+            break;
+        case DEV_PRESET_AS400_BS522: [[fallthrough]];
+        case DEV_PRESET_AS400_PPC:
+            inquiry = AS400TapePPCVendorInquiry; inquiryLen = AS400TapePPCVendorInquiryLen;
+            modeSense = as400_tape_ppc_mode_sense_all_pages; modeSenseLen = as400_tape_ppc_mode_sense_all_pagesLen;
+            vitalPages = AS400TapePPCVitalPages; vitalPagesLen = AS400TapePPCVitalPagesLen;
+            presetName = "PPC";
+            break;
+        default:
+            logmsg("---- AS/400 tape quirk active for SCSI ID ", (int)scsiId,
+                   " but no Device=AS400_CISC/AS400_PPC set for this ID -- leaving generic tape identity");
+            return;
+    }
+
+    bool loaded_default_data = false;
+
+    if (g_custom_spd[scsiId].length == 0)
+    {
+        size_t len = inquiryLen;
+        if (len > MAX_SPD_SIZE) len = MAX_SPD_SIZE;
+        memcpy(g_custom_spd[scsiId].data, inquiry, len);
+        g_custom_spd[scsiId].length = len;
+        loaded_default_data = true;
+    }
+
+    if (g_custom_modesense[scsiId].length == 0)
+    {
+        size_t len = modeSenseLen;
+        if (len > MAX_MODESENSE_SIZE) len = MAX_MODESENSE_SIZE;
+        memcpy(g_custom_modesense[scsiId].data, modeSense, len);
+        g_custom_modesense[scsiId].length = len;
+        loaded_default_data = true;
+    }
+
+    if (vitalPages != nullptr)
+    {
+        size_t p;
+        for (p = 0; p < vitalPagesLen && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; p++)
+        {
+            uint8_t pageLen = vitalPages[p][0]; // first byte is length
+            if (pageLen < 2) continue;
+            uint8_t pageCode = vitalPages[p][2]; // page code at offset 2 in data
+
+            if (hasCustomVPD(scsiId, pageCode))
+                continue; // an explicit [SCSI<n>] vpdXX override takes precedence
+
+            loaded_default_data = true;
+            int idx = g_custom_vpd_count;
+            g_custom_vpd[idx].scsiId = scsiId;
+            g_custom_vpd[idx].pageCode = pageCode;
+            g_custom_vpd[idx].length = pageLen;
+            if (pageLen > MAX_VPD_DATA_SIZE) g_custom_vpd[idx].length = MAX_VPD_DATA_SIZE;
+            memcpy(g_custom_vpd[idx].data, &vitalPages[p][1], g_custom_vpd[idx].length);
+            g_custom_vpd_count++;
+        }
+        if (p < vitalPagesLen)
+        {
+            logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
+                   " entries), some default tape VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
+        }
+    }
+
+    if (loaded_default_data)
+    {
+        logmsg("---- Loaded default AS/400 ", presetName, " tape inquiry data for SCSI ID ", (int)scsiId);
+    }
+}
 #endif
 
 // Resets shared storage for ALL SCSI IDs. Must be called exactly once before
@@ -644,6 +749,7 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
 
     // Load AS/400 defaults for any IDs that don't have INI overrides
     loadAS400Defaults(scsiId, type);
+    loadAS400TapeDefaults(scsiId, type);
 #endif
 }
 
