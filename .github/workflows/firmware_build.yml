@@ -33,13 +33,15 @@ jobs:
           cd ZuluSCSI
           pio run -v -j8
 
-      - name: TEMPORARY diagnostic - upload partial map files on build failure
+      - name: TEMPORARY diagnostic - per-object .bss/.data size report on build failure
         if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          path: ZuluSCSI/.pio/build/*/firmware.map
-          name: firmware-map-on-failure
-          if-no-files-found: warn
+        run: |
+          cd ZuluSCSI
+          SIZE=$(find ~/.platformio/packages/toolchain-rp2040-earlephilhower -name arm-none-eabi-size | head -1)
+          echo "Using: $SIZE"
+          find .pio/build/ZuluSCSI_Blaster -name "*.o" -print0 | xargs -0 "$SIZE" -A -d 2>/dev/null | \
+            awk '/^\.pio/{fn=$1; bss=0; data=0} /^\.bss/{bss=$2} /^\.data/{data=$2} /^Total/{print bss+data, fn, "(bss="bss" data="data")"}' | \
+            sort -rn | head -40
 
       - name: Rename firmware files
         run: |
