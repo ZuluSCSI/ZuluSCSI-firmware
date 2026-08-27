@@ -133,7 +133,14 @@
 // Captures all SCSI signals except OUT_SEL, OUT_BSY, IN_RST, OUT_RST
 // Also captures I2C signals.
 // Default trigger is all SCSI pins, I2C trigger can be enabled from .ini
+// Unlike ENABLE_AUDIO_OUTPUT*/ZULUSCSI_NETWORK/ZULUSCSI_DAYNAPORT above,
+// this was unconditional -- baked into the board's own GPIO header instead
+// of a build_flags-controlled macro, so a build wanting the pins without
+// the sniffer's RAM/flash cost (e.g. env:ZuluSCSI_Blaster_AS400) had no way
+// to opt out. Guarded the same way as the others now.
+#ifndef PLATFORM_DISABLE_SNIFFER
 #define PLATFORM_HAS_SNIFFER
+#endif
 #define SNIFFER_PINCOUNT            26
 #define SNIFFER_FIRSTPIN            SCSI_OUT_ATN
 #define SNIFFER_MASK_TRIGPINS       0x03FFFFC3

@@ -31,7 +31,21 @@ jobs:
       - name: Build firmware
         run: |
           cd ZuluSCSI
-          pio run -v -j8
+          # TEMPORARY: restrict to ZuluSCSI_Blaster only, single-threaded, so
+          # --print-gc-sections output isn't interleaved with 5 other
+          # environments building in parallel (-j8). Revert once root-caused.
+          pio run -v -e ZuluSCSI_Blaster
+
+      - name: TEMPORARY diagnostic - full per-object .bss/.data size report on build failure
+        if: failure()
+        run: |
+          cd ZuluSCSI
+          SIZE=$(find ~/.platformio/packages/toolchain-rp2040-earlephilhower -name arm-none-eabi-size | head -1)
+          echo "Using: $SIZE"
+          find .pio/build/ZuluSCSI_Blaster -name "*.o" -print0 | xargs -0 "$SIZE" -A -d 2>/dev/null > /tmp/sizeraw.txt
+          awk '/^\.pio/{fn=$1; bss=0; data=0} /^\.bss/{bss=$2} /^\.data/{data=$2} /^Total/{print bss+data, fn, "(bss="bss" data="data")"}' /tmp/sizeraw.txt | sort -rn
+          echo "===================="
+          awk '/^\.bss/{bss=$2} /^\.data/{data=$2} /^Total/{sum+=bss+data} END{print "GRAND TOTAL bss+data:", sum}' /tmp/sizeraw.txt
 
       - name: Rename firmware files
         run: |

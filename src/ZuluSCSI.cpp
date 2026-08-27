@@ -777,10 +777,13 @@ bool findHDDImages()
   uint8_t eject_btn_set = 0;
   uint8_t last_removable_device = 255;
 
-  // Reset custom-inquiry state once for the whole scan below, not per ID --
-  // parseCustomInquiryData() is called once per discovered SCSI ID inside
-  // this loop, and its own reset would wipe every other ID's custom data.
-  resetCustomInquiryData();
+  // Custom-inquiry state is reset once per full config-load pass in
+  // readSCSIDeviceConfig() (which runs right before this function, see
+  // reinitSCSI()), not here -- scsiDiskLoadConfig() also calls
+  // parseCustomInquiryData() for SCSI IDs whose image lives in a per-ID
+  // default subdirectory (TP0/, HD0/, etc.) rather than being found by this
+  // function's own root-directory scan below, and a reset here would wipe
+  // out that data.
 
   while (1)
   {
@@ -1149,6 +1152,13 @@ bool findHDDImages()
 void readSCSIDeviceConfig()
 {
   s2s_configInit(&scsiDev.boardCfg);
+
+  // Reset custom-inquiry state once for this whole config-load pass, not per
+  // ID -- scsiDiskLoadConfig() below and findHDDImages() (called right after
+  // this function, see reinitSCSI()) both call parseCustomInquiryData() once
+  // per SCSI ID they discover an image for, and either one's own reset would
+  // wipe out custom data the other already set for a different ID.
+  resetCustomInquiryData();
 
   for (int i = 0; i < S2S_MAX_TARGETS; i++)
   {

@@ -337,6 +337,25 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		scsiDev.phase = DATA_IN;
 		return;
 	}
+
+	if (sixByteCmd && pageCode == 0x3F && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+	{
+		// A captured AS/400 tape identity (see
+		// custom_vendor_inquiry.cpp:loadAS400TapeDefaults()) supplies its
+		// own MODE SENSE response, selected by this ID's Device=AS400_CISC/
+		// AS400_PPC preset. Unlike the disk case above, there is no single
+		// built-in fallback blob to serve if nothing was loaded (e.g. this
+		// ID has the AS/400 quirk but no CISC/PPC preset set) -- fall
+		// through to the generic per-page MODE SENSE logic below instead,
+		// same as any other tape device.
+		uint16_t customLen = 0;
+		if (getCustomModeSense(scsiDev.target->cfg->scsiId, scsiDev.data, &customLen))
+		{
+			scsiDev.dataLen = customLen > allocLength ? allocLength : customLen;
+			scsiDev.phase = DATA_IN;
+			return;
+		}
+	}
 #endif
 
 	// Skip the Mode Data Length, we set that last.
