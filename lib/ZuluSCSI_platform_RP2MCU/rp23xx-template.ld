@@ -74,9 +74,19 @@ SECTIONS
         *(.init)
         *libgcc.a:cmse_nonsecure_call.o
 
+        *minIni.a*:(.text .text*)
+        *libZipParser.a*:(.text .text*)
+        *libZuluSCSI_audio_RP2MCU.a*:(.text .text*)
+        *libZuluSCSI_Control.a*:(.text .text*)
+        *libZuluSCSI_UI_RP2MCU.a*:(.text .text*)
+        *libZuluSCSI_WebUI_RP2MCU.a*:(.text .text*)
+        *libAdafruit*:(.text .text*)
+        *libRP2350_Logic_Sniffer.a*:(.text .text*)
+        *libCUEParser.a*:(.text .text*)
+
 /* =============================================================== */
     /* Exclude as much code from flash as possible as the RP2350 series has twice as much SRAM */
-        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *libZuluSCSI_platform_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *.cpp.o)  .text*)
+        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *libZuluSCSI_platform_RP2MCU.a: *libSdFat.a: *libZuluContainerFS.a: *libSCSI2SD.a: *.cpp.o)  .text*)
 
     /* ---------------------------------------------------------
     Uncomment the EXCLUDE_FILE line below and comment the EXCLUDE_FILE line above for debug to work properly,
@@ -90,6 +100,7 @@ SECTIONS
 /* =============================================================== */
 
         /* Manually pull in some of the larger functions into flash to leave more RAM free */
+
 
         /* Standard library floating point etc. functions */
         *libm*:(.text .text*)
