@@ -4178,6 +4178,41 @@ int scsiDiskCommand()
             scsiDev.phase = STATUS;
         }
     }
+    else if (unlikely(command == 0x4D)
+        && scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        // LOG SENSE page 0x02 (Write Error Counter) for tape. Unlike the
+        // AS/400-specific disk pages above (0x30/0x31 embed AS/400 serial
+        // and I/O-count data), this is a plain standard SCSI-2 page with no
+        // vendor-specific content, and real AS/400 hosts query it during
+        // routine tape operation regardless of whether this ID has the
+        // AS/400 quirk configured at all -- confirmed on real hardware even
+        // against a stock emulated tape drive with no AS/400-specific
+        // identity set up. So, unlike the block above, not gated on
+        // quirks == S2S_CFG_QUIRKS_AS400.
+        uint8_t page_code = scsiDev.cdb[2] & 0x3F;
+
+        if (page_code == 0x02)
+        {
+            // No real error-counter data is tracked, so report a valid,
+            // empty parameter list (zero page length) rather than
+            // fabricating counter values -- a technically valid LOG SENSE
+            // response, just with nothing logged yet.
+            scsiDev.data[0] = page_code;
+            scsiDev.data[1] = 0; // reserved / subpage code
+            scsiDev.data[2] = 0; // page length MSB
+            scsiDev.data[3] = 0; // page length LSB -- no parameters
+            scsiDev.dataLen = 4;
+            scsiDev.phase = DATA_IN;
+        }
+        else
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+    }
 #endif
     else
     {
