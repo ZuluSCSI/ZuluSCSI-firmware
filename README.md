@@ -57,7 +57,8 @@ type is used instead. The block size may also be set per-device in `zuluscsi.ini
 which takes effect when the filename does not specify one.
 
 **Example file names**
-
+| Example file name       | Result |
+|--------------------------|------------------------------------------ |
 |    `HD1.img`             | hard disk, ID 1, 512 byte blocks |
 |    `HD5.hda`             | hard disk, ID 5 |
 |    `HDA.hda`             | hard disk, ID 10 |
