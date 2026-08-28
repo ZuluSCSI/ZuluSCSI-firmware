@@ -1,19 +1,139 @@
 ZuluSCSI™ Firmware
 =================
 
-Hard Drive & ISO image files
----------------------
-ZuluSCSI uses raw hard drive image files, which are stored on a FAT32 or exFAT-formatted SD card. These are often referred to as "hda" files.
+ZuluSCSI is a family of hardware devices that emulates Small System Computer Interface storage devices. This repository contains the firmware source code for these devices, as well as precompiled firmware, available via the [releases](https://github.com/ZuluSCSI/ZuluSCSI-firmware/releases) page.  
 
-Examples of valid filenames:
-* `HD5.hda` or `HD5.img`: hard drive with SCSI ID 5
-* `HD20_512.hda`: hard drive with SCSI ID 2, LUN 0, block size 512. Currently, ZuluSCSI does not support multiple LUNs, only LUN 0.
-* `CD3.iso`: CD drive with SCSI ID 3. The default CD block size is 2048. This can be overridden by setting the block size manually, eg `CD3_512.iso`
 
-In addition to the simplified filenames style above, the ZuluSCSI firmware also looks for images using the BlueSCSI-style "HDxy_512.hda" filename formatting.
+Image files on the SD card
+--------------------------
+ZuluSCSI stores drive images as files on a FAT32 or exFAT formatted SD card.
+Use exFAT if any single image needs to exceed 4 GB — FAT32 cannot represent a file
+larger than 4,294,967,295 bytes.
 
-The media type can be set in `zuluscsi.ini`, or directly by the file name prefix.
-Supported prefixes are `HD` (hard drive), `CD` (cd-rom), `FD` (floppy), `MO` (magneto-optical), `RE` (generic removeable media), `TP` (sequential tape drive).
+By default the firmware scans the **root directory** of the card. This can be changed,
+and additional directories added, in `zuluscsi.ini`:
+
+    [SCSI]
+    Dir  = "/"        # directory scanned for images (default: root)
+    Dir1 = "/images"  # up to Dir1...Dir9 additional directories
+
+Directories and files whose "hidden" attribute is set are skipped. Files whose read-only attribute is set are exposed as write-protected SCSI devices.
+
+### Image filename format
+
+    <TT><ID>[<LUN>][_<BLOCKSIZE>][ any description ].<ext>
+     ^^   ^    ^      ^
+     |    |    |      +-- optional, decimal, after the first underscore
+     |    |    +--------- optional LUN digit (byte offset 3), can be omitted, only a single logical unit number, LUN 0 is currently supported.
+     |    +-------------- SCSI ID character (byte offset 2)
+     +------------------- two-character type prefix (case-insensitive)
+
+The type prefix, ID and LUN are read from **fixed byte offsets** in the filename, so
+their positions matter. The block size is read from the first `_` found anywhere in the name.
+The media type can also be set in `zuluscsi.ini`, or directly by the file name or directory prefix. 
+
+**Device type file name prefixes**
+
+| Prefix | Device type | Default block size | Notes |
+|--------|-------------|--------------------|-------|
+| `HD`   | Hard disk (fixed) | 512 | Default when no other prefix matches |
+| `CD`   | CD-ROM (optical) | 2048 | |
+| `FD`   | Floppy | 512 | |
+| `MO`   | Magneto-optical | 512 | |
+| `RE`   | Generic removable | 512 | |
+| `TP`   | Sequential / tape | 512 | See tape section |
+| `ZP`   | Iomega Zip 100 | 512 | Image should be exactly 100,663,296 bytes |
+| `NE`   | DaynaPORT network | — | Network-capable hardware only |
+| `AM`   | Amiga WiFi network | — | Network-capable hardware only |
+| `SN`   | PCM audio stream | — | Builds with audio streaming enabled only |
+
+A file whose name does not begin with one of these prefixes is ignored entirely.
+
+**Block size**
+
+Everything after the first  `_` underscore character is parsed as a decimal number. Accepted range is
+8 to 65536 bytes; values outside that range are ignored and the default for the device
+type is used instead. The block size may also be set per-device in `zuluscsi.ini`,
+which takes effect when the filename does not specify one.
+
+**Example file names**
+
+    `HD1.img`              hard disk, ID 1, 512 byte blocks
+    `HD5.hda`              hard disk, ID 5
+    `HDA.hda`              hard disk, ID 10
+    `HD20_512.hda`         hard disk, ID 2, LUN 0, 512 byte blocks
+    `CD3.iso`              CD-ROM, ID 3, 2048 byte blocks
+    `CD3_512.iso`          CD-ROM, ID 3, 512 byte blocks
+    `ZP4.img`              Iomega Zip 100, ID 4
+    `TP6 - backup.tap`     tape, ID 6, SIMH .tap format
+    `HDn.img`              hard disk on the SCA-supplied dynamic ID
+
+### File extensions
+
+For ordinary raw images the extension carries **no meaning** — `.hda`, `.img`, `.bin`,
+`.iso`, `.dsk` and so on are all read identically. The device type comes from the
+filename prefix, not the extension.
+
+A small set of extensions *is* significant:
+
+| Extension | Meaning |
+|-----------|---------|
+| `.rom` | Program this image into microcontroller flash as a ROM drive |
+| `.tap` | SIMH tape format — only honoured on `TP` (sequential) devices |
+| `.cue` | Marks a BIN/CUE disc set; see the BIN/CUE section |
+| `.cow` | Copy-on-write image (kiosk use); writes are diverted to a `.tmp` overlay |
+| `.ori` | Kiosk-mode pristine master; copied over the live image at boot |
+| `.vhd` | VHD container — read as a container on builds with container support |
+
+The following are skipped silently, so documentation and artwork can live alongside images:
+
+    .cue .txt .rtf .md .nfo .pdf .doc .ini .mid .midi .aiff .mp3 .m4a
+    .rom_loaded .rom_bkup .ori .tmp
+
+These are skipped with a note in the log, because they are almost always an unextracted
+download rather than an image:
+
+    .tar .tgz .gz .bz2 .tbz2 .xz .zst .z .zip .zipx .rar .lzh .lha
+    .lzo .lz4 .arj .dmg .hqx .cpt .7z .s7z .wav
+
+Files whose name does not begin with a letter or digit are ignored. This is what keeps
+macOS `._` resource forks and similar metadata from being mistaken for images.
+
+### Image directories (swappable media)
+
+Instead of a single file, a device can be pointed at a directory of images that are
+cycled through with the eject button or the Control Board browser.
+
+A directory in the scan root named with a type prefix and ID is picked up automatically:
+
+    HD0/  CD0/  RE0/  MO0/  TP0/  FD0/  ZP0/    ... through ID F
+
+and the `n` forms `HDn/`, `CDn/`, `REn/`, `MOn/`, `TPn/`, `FDn/`, `ZPn/` bind to the
+dynamic SCA ID.
+
+This can be overridden per device in `zuluscsi.ini`:
+
+    [SCSI0]
+    ImgDir = "MyDiscs"
+
+Resolution order is: `[SCSIn] ImgDir` → `[SCSI<ID>] ImgDir` → dynamic `HDn`-style
+directory → fixed `HD<ID>`-style directory. Only **one** image directory is used per
+SCSI ID; if several would match, the first wins and the rest are logged and ignored.
+
+Images inside the directory are ordered by case-insensitive name, and eject advances to
+the next name, wrapping at the end.
+
+Alternatively, images can be listed explicitly. These are cycled in the order given:
+
+    [SCSI1]
+    Type = 2
+    IMG0 = FirstCD.iso
+    IMG1 = SecondCD.iso
+    ...          # up to IMG99
+
+Note that the explicit `IMGx` form and the plain prefixed-filename form do not support
+the Control Board's browser-type selection or categories; `ImgDir` and the
+`HD0`-style directories do.
 
 CD-ROM images in BIN/CUE format
 -------------------------------
@@ -32,7 +152,7 @@ Supported track types are `AUDIO`, `MODE1/2048` and `MODE1/2352`.
 
 Creating new image files
 ------------------------
-Empty image files can be created using operating system tools:
+Alternatively, Empty image files can be created using operating system tools:
 
 * Windows: `fsutil file createnew HD1.img 1073741824` (1 GB)
 * Linux: `dd if=/dev/zero of=HD1.img bs=1G count=1 status=progress`
@@ -40,11 +160,8 @@ Empty image files can be created using operating system tools:
 
 If you need to use image files larger than 4GB, you _must_ use an exFAT-formatted SD card, as the FAT32 filesystem does not support files larger than 4,294,967,295 bytes (4GB-1 byte).
 
-ZuluSCSI firmware can also create image files itself.
-To do this, create a text file with filename such as `Create 1024M HD40.txt`.
-The special filename must start with "Create" and be followed by file size and the name of resulting image file.
-The file will be created next time the SD card is inserted.
-The status LED will flash rapidly while image file generation is in progress, and progress can be monitored in real-time via USB serial console.
+ZuluSCSI firmware can create image files itself. To do this, create an empty text file with filename beginning with `Create`, such as `Create 1024M HD40.txt`.
+The file will be created next time the SD card is inserted, and the status LED will flash rapidly while image file generation is in progress, the status of which can also be monitored in real-time via USB serial console.
 
 For AS/400 `AS400_DiskProfile=` SCSI IDs (see below), a correctly-sized image is created automatically the same way, with no `Create*.txt` file needed — the size comes from the profile's own captured capacity.
 
@@ -452,7 +569,7 @@ Once a drive is detected it will automatically go to the cloning screen:
 
 ![cloning](https://github.com/user-attachments/assets/b98c6b09-5f04-4126-a87b-37a148bdbbca)
 
-Note: this is similar to the other copy screens witht he exception that the file name is not displayed, but the total number of retires and errors (skipped sector) is displayed.
+Note: this is similar to the other copy screens with he exception that the file name is not displayed, but the total number of retires and errors (skipped sector) is displayed.
 
 Once the cloning is complete, it will return to the scanning screen and display the cloned drive:
 
@@ -487,7 +604,7 @@ ZuluControl-firmware
 ----------------------
 See [ZuluControl-firmware](https://github.com/rabbitholecomputing/ZuluControl-firmware) for the latest.
 
-This is firmware that runs on a separate wireless board and communicates with the ZuluSCSI over the I2C interface. It provides a simple HTTP webserver that allows controlling images on removable devices.
+This is firmware that runs on a separate Pico W or 2W, or our custom wireless board, and communicates with the ZuluSCSI over the I2C interface. It provides a simple HTTP webserver that allows controlling images on removable devices.
 
 The basic settings to get the HTTP webserver up and running are the following under the `[WebUI]` section in the `zuluscsi.ini` file.
 ```
@@ -500,7 +617,7 @@ StaticIP = "192.168.1.42"
 Netmask = "255.255.255.0"
 Gateway = "192.168.1.1"
 ```
-Goto the IP with your favorite web browser, and you should be able to control the ZuluSCSI over a web interface.
+Access the IP with your favorite web browser, where you are able to control the ZuluSCSI, and media selection, over a web interface.
 
 
 Project structure
