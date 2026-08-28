@@ -564,7 +564,7 @@ void platform_init()
      * copies of this software, in accordance to section 7b of GPLv3 license.
      */
     logmsg("=========================================================================");
-    logmsg(" Powered by Raspberry Pi(R), a trademark of Raspberry Pi Ltd");");
+    logmsg(" Powered by Raspberry Pi(R), a trademark of Raspberry Pi Ltd");
     logmsg(" ZuluSCSI RPi platform support is developed by Rabbit Hole Computing");
     logmsg(" and provided to you under GNU General Public License version 3.");
     logmsg("=========================================================================");
