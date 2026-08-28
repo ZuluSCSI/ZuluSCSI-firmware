@@ -58,15 +58,15 @@ which takes effect when the filename does not specify one.
 
 **Example file names**
 
-    `HD1.img`              hard disk, ID 1, 512 byte blocks
-    `HD5.hda`              hard disk, ID 5
-    `HDA.hda`              hard disk, ID 10
-    `HD20_512.hda`         hard disk, ID 2, LUN 0, 512 byte blocks
-    `CD3.iso`              CD-ROM, ID 3, 2048 byte blocks
-    `CD3_512.iso`          CD-ROM, ID 3, 512 byte blocks
-    `ZP4.img`              Iomega Zip 100, ID 4
-    `TP6 - backup.tap`     tape, ID 6, SIMH .tap format
-    `HDn.img`              hard disk on the SCA-supplied dynamic ID
+|    `HD1.img`             | hard disk, ID 1, 512 byte blocks |
+|    `HD5.hda`             | hard disk, ID 5 |
+|    `HDA.hda`             | hard disk, ID 10 |
+|    `HD20_512.hda`        | hard disk, ID 2, LUN 0, 512 byte blocks |
+|    `CD3.iso`             | CD-ROM, ID 3, 2048 byte blocks |
+|    `CD3_512.iso`         | CD-ROM, ID 3, 512 byte blocks |
+|    `ZP4.img`             | Iomega Zip 100, ID 4 |
+|    `TP6 - backup.tap`    | tape, ID 6, SIMH .tap format |
+|    `HDn.img`             | hard disk on the SCA-supplied dynamic ID |
 
 ### File extensions
 
