@@ -74,7 +74,7 @@ For ordinary raw images the extension carries **no meaning** — `.hda`, `.img`,
 `.iso`, `.dsk` and so on are all read identically. The device type comes from the
 filename prefix, not the extension.
 
-A small set of extensions *is* significant:
+The following file name extensions are treated as special by the firmware:
 
 | Extension | Meaning |
 |-----------|---------|
@@ -83,7 +83,7 @@ A small set of extensions *is* significant:
 | `.cue` | Marks a BIN/CUE disc set; see the BIN/CUE section |
 | `.cow` | Copy-on-write image (kiosk use); writes are diverted to a `.tmp` overlay |
 | `.ori` | Kiosk-mode pristine master; copied over the live image at boot |
-| `.vhd` | VHD container — read as a container on builds with container support |
+| `.vhd` | VHD container — read as a Virtual Hard Disk (V1 only) container |
 
 The following are skipped silently, so documentation and artwork can live alongside images:
 
@@ -302,7 +302,7 @@ This is necessary if the drives do not supply their own SCSI terminator power.
 
 ROM drive in microcontroller flash
 ----------------------------------
-The new ZuluSCSI Blaster model supports storing up to 15.8 **megabytes** in flash, which can be used as a read-only bootable ROM drive.
+The ZuluSCSI Blaster model supports storing up to 15.8 **megabytes** in flash, which can be used as a read-only bootable ROM drive.
 
 All older ZuluSCSI RP2040 models support storing up to 1660kB image as a read-only drive in the flash chip on the PCB itself. This can be used as e.g. a boot floppy that is available even without SD card.
 
