@@ -57,7 +57,43 @@ extern "C" bool scsiStatusBSY()
 
 static SCSI_PHASE g_scsi_phase;
 volatile uint8_t g_scsi_sts_selection;
+volatile uint8_t g_scsi_sts_selection_initiator;
 volatile uint8_t g_scsi_ctrl_bsy;
+
+static uint8_t pack_selection_status(uint32_t sel_bits)
+{
+    int sel_id = -1;
+
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        if (scsiDev.targets[i].targetId < S2S_MAX_TARGETS && scsiDev.targets[i].cfg)
+        {
+            if (sel_bits & (1u << scsiDev.targets[i].targetId))
+            {
+                sel_id = scsiDev.targets[i].targetId;
+                break;
+            }
+        }
+    }
+
+    if (sel_id < 0)
+    {
+        return 0;
+    }
+
+    g_scsi_sts_selection_initiator = 0xFF;
+    for (int id = 0; id < 8; id++)
+    {
+        if (id != sel_id && (sel_bits & (1u << id)))
+        {
+            g_scsi_sts_selection_initiator = id;
+            break;
+        }
+    }
+
+    // ATN is only reliably readable after BSY enables the bus transceiver.
+    return SCSI_STS_SELECTION_SUCCEEDED | SCSI_STS_SELECTION_ATN | sel_id;
+}
 
 void scsi_bsy_deassert_interrupt()
 {
@@ -67,24 +103,10 @@ void scsi_bsy_deassert_interrupt()
 
         // Check if any of the targets we simulate is selected
         uint32_t sel_bits = SCSI_IN_DATA();
-        int sel_id = -1;
-        for (int i = 0; i < S2S_MAX_TARGETS; i++)
+        uint8_t sel_status = pack_selection_status(sel_bits);
+        if (sel_status != 0)
         {
-            if (scsiDev.targets[i].targetId < S2S_MAX_TARGETS && scsiDev.targets[i].cfg)
-            {
-                if (sel_bits & (1 << scsiDev.targets[i].targetId))
-                {
-                    sel_id = scsiDev.targets[i].targetId;
-                    break;
-                }
-            }
-        }
-
-        if (sel_id >= 0)
-        {
-            // Set ATN flag here unconditionally, real value is only known after
-            // OUT_BSY is enabled in scsiStatusSEL() below.
-            g_scsi_sts_selection = SCSI_STS_SELECTION_SUCCEEDED | SCSI_STS_SELECTION_ATN | sel_id;
+            g_scsi_sts_selection = sel_status;
         }
 
         // selFlag is required for Philips P2000C which releases it after 600ns
@@ -125,6 +147,77 @@ extern "C" bool scsiStatusSEL()
     }
 
     return SCSI_IN(SEL);
+}
+
+extern "C" bool scsiPhyReselect(uint8_t targetId, uint8_t initiatorId)
+{
+    if (initiatorId > 7 || targetId >= S2S_MAX_TARGETS)
+    {
+        return false;
+    }
+
+    if (SCSI_IN(BSY) || SCSI_IN(SEL))
+    {
+        return false;
+    }
+
+    s2s_delay_us(1);
+    if (SCSI_IN(BSY) || SCSI_IN(SEL))
+    {
+        return false;
+    }
+
+    g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
+    scsiDev.selFlag = 0;
+    g_scsi_phase = RESELECTION;
+    scsiLogPhaseChange(RESELECTION);
+    // Match the existing initiator-mode simplified arbitration and yield if
+    // another initiator is already driving IDs on the bus.
+    SCSI_OUT(BSY, 1);
+    for (int wait = 0; wait < 10; wait++)
+    {
+        s2s_delay_us(1);
+        if (SCSI_IN_DATA() != 0)
+        {
+            SCSI_OUT(BSY, 0);
+            g_scsi_phase = BUS_FREE;
+            return false;
+        }
+    }
+
+    SCSI_OUT(IO, 1);
+    SCSI_OUT(SEL, 1);
+    s2s_delay_us(1);
+    SCSI_OUT_DATA((1u << targetId) | (1u << initiatorId));
+    s2s_delay_us(1);
+    SCSI_OUT(BSY, 0);
+
+    uint32_t waitStart_ms = s2s_getTime_ms();
+    while (!SCSI_IN(BSY) &&
+           !scsiDev.resetFlag &&
+           s2s_elapsedTime_ms(waitStart_ms) < 250)
+    {
+        platform_poll();
+    }
+
+    if (!SCSI_IN(BSY))
+    {
+        SCSI_RELEASE_DATA_REQ();
+        SCSI_OUT(SEL, 0);
+        SCSI_OUT(IO, 0);
+        g_scsi_phase = BUS_FREE;
+        return false;
+    }
+
+    SCSI_OUT(BSY, 1);
+    s2s_delay_us(1);
+    SCSI_RELEASE_DATA_REQ();
+    SCSI_OUT(SEL, 0);
+    g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
+    scsiDev.selFlag = 0;
+    return true;
 }
 
 /************************/
@@ -172,6 +265,7 @@ extern "C" void scsiPhyReset(void)
 {
     SCSI_RELEASE_OUTPUTS();
     g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
     g_scsi_ctrl_bsy = 0;
     g_scsi_phase = BUS_FREE;
 
@@ -301,6 +395,7 @@ void scsiEnterBusFree(void)
 {
     g_scsi_phase = BUS_FREE;
     g_scsi_sts_selection = 0;
+    g_scsi_sts_selection_initiator = 0xFF;
     g_scsi_ctrl_bsy = 0;
     scsiDev.cdbLen = 0;
 
