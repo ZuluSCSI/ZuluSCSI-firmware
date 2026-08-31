@@ -226,6 +226,7 @@ static void show_image_list()
 
     serial_println("  ------------------------------------------------");
     serial_println("  Enter image number then Enter, or 'b' to cancel:");
+    log_unlock();
 }
 
 // Callback to resolve the Nth image to a full path
