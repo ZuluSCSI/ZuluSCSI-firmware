@@ -20,6 +20,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 #pragma once
+#include <ZuluSCSI_platform_config.h>
 
 // must be in the same order as speed_grade_strings[]  in ZuluSCSI_settings.cpp
 typedef enum
@@ -32,8 +33,17 @@ typedef enum
     SPEED_GRADE_A,
     SPEED_GRADE_B,
     SPEED_GRADE_C,
-    SPEED_GRADE_WIFI_RM2
+    SPEED_GRADE_WIFI_RM2,
+    SPEED_GRADE_BASE_203MHZ,
+    SPEED_GRADE_BASE_155MHZ,
 } zuluscsi_speed_grade_t;
+
+
+typedef enum {
+    MASS_STORAGE_MODE_NONE,
+    MASS_STORAGE_MODE_SD,
+    MASS_STORAGE_MODE_IMAGES
+} mass_storage_mode;
 
 #ifdef __cplusplus
 
@@ -42,9 +52,9 @@ typedef enum
 #include <scsi2sd.h>
 
 
-// Index 8 is the system defaults
-// Index 0-7 represent device settings
-#define SCSI_SETTINGS_SYS_IDX 8
+// Index S2S_MAX_TARGETS is the system defaults
+// Index 0 to (S2S_MAX_TARGETS - 1) represent device settings
+#define SCSI_SETTINGS_SYS_IDX S2S_MAX_TARGETS
 
 typedef enum
 {
@@ -53,13 +63,32 @@ typedef enum
     SYS_PRESET_MACPLUS,
     SYS_PRESET_MPC3000,
     SYS_PRESET_MEGASTE,
-    SYS_PRESET_X68000
+    SYS_PRESET_X68000,
+    SYS_PRESET_X68000_SCSI,
+    SYS_PRESET_X68000_SASI,
+    SYS_PRESET_DOS,
+    SYS_PRESET_NeXT,
+    SYS_PRESET_PC_9801_55,
+#ifdef PLATFORM_AS400
+    SYS_PRESET_AS400,
+    SYS_PRESET_AS400_BS520,
+    SYS_PRESET_AS400_BS522,
+    SYS_PRESET_AS400_CISC,
+    SYS_PRESET_AS400_PPC,
+#endif
 } scsi_system_preset_t;
 
 typedef enum
 {
-    DEV_PRESET_NONE = 0,
-    DEV_PRESET_ST32430N
+    DEV_PRESET_UNKNOWN = -1,
+    DEV_PRESET_NONE,
+    DEV_PRESET_ST32430N,
+#ifdef PLATFORM_AS400
+    DEV_PRESET_AS400_BS520,
+    DEV_PRESET_AS400_BS522,
+    DEV_PRESET_AS400_CISC,
+    DEV_PRESET_AS400_PPC,
+#endif
 } scsi_device_preset_t;
 
 
@@ -91,6 +120,28 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     uint8_t speedGrade; // memory allocation for zuluscsi_speed_grade_t enum
 
+    bool controlBoardDisable; // Currently not implemented
+    bool controlBoardReverseRotary;
+    bool controlBoardFlipDisplay;
+    bool controlBoardCache;
+
+    bool controlBoardDimDisplay;
+    uint16_t controlBoardScreenSaverTimeSec;
+    uint16_t controlBoardScreenSaverStyle;
+
+    uint8_t maxBusWidth;
+
+    bool initiatorParity;
+
+    bool logToSDCard;
+
+    int logRotate;
+
+    uint32_t wifi_keep_alive_s;
+
+#if ENABLE_COW
+    uint16_t cowBufferSize;
+#endif
 } scsi_system_settings_t;
 
 // This struct should only have new setting added to the end
@@ -113,10 +164,16 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     uint8_t ejectButton;
     uint32_t ejectBlinkTimes;
     uint32_t ejectBlinkPeriod;
+    bool ejectFixedDiskEnable;
+    bool ejectFixedDiskReadOnly;
+    uint32_t ejectFixedDiskDelay;
     bool nameFromImage;
     bool rightAlignStrings;
     bool reinsertOnInquiry;
     bool reinsertAfterEject;
+    bool reinsertImmediately;
+    bool ejectOnStop;
+    bool keepCurrentImageOnBusReset;
     bool disableMacSanityCheck;
 
     uint32_t sectorSDBegin;
@@ -125,6 +182,15 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     uint32_t vendorExtensions;
 
     uint32_t blockSize;
+#if ENABLE_COW
+    uint32_t cowBitmapSize;
+    uint8_t cowButton;
+    bool cowButtonInvert;
+#endif
+    uint32_t tapeLengthMB;
+    int16_t mediumType;
+    uint8_t tapeDensity;
+    uint8_t tapeBufferedMode;
 } scsi_device_settings_t;
 
 
@@ -134,12 +200,12 @@ public:
     // Initialize settings for all devices with a preset configuration,
     //  or return the default config if unknown system type.
     // Then overwrite any settings with those in the CONFIGFILE
-    scsi_system_settings_t *initSystem(const char *presetName);
+    scsi_system_settings_t *initSystem(const char *presetName, bool disable_logging = false);
 
     // Copy any shared device setting done the initSystemSettings as default settings, 
     // or return the default config if unknown device type.
     // Then overwrite any settings with those in the CONFIGFILE
-    scsi_device_settings_t *initDevice(uint8_t scsiId, S2S_CFG_TYPE type);
+    scsi_device_settings_t *initDevice(uint8_t scsiId, S2S_CFG_TYPE type, bool disable_logging = false);
     // return the system settings struct to read values
     scsi_system_settings_t *getSystem();
 
@@ -166,13 +232,25 @@ public:
     // see if any SCSI devices have an eject button set
     const bool isEjectButtonSet();
 
+    // Apply [SCSIn] settings as overrides on top of already-loaded [SCSI<X>] settings
+    // for the device whose ID was read from the GPIO expander.
+    // Only modifies fields that are explicitly present in the [SCSIn] section.
+    // Pass disable_logging=true to suppress the section-header and per-key log lines.
+    scsi_device_settings_t* applyDynamicSectionOverrides(uint8_t scsiId, bool disable_logging = false);
+
 protected:
     // Set default drive vendor / product info after the image file
     // is loaded and the device type is known.
-    void setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type);
+    void setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type, bool log_settings);
 
     // Settings for the specific device
     const char **deviceInitST32430N(uint8_t scsiId);
+#ifdef PLATFORM_AS400
+    void deviceInitAS400(uint8_t scsiId);
+#endif
+
+    // Get the device preset enum based off of string, return DEV_PRESET_NONE if no match
+    scsi_device_preset_t getDevicePresetFromString(const char *presetName);
 
     // Informative name of the preset configuration, or NULL for defaults
     scsi_system_preset_t m_sysPreset;

@@ -1,8 +1,9 @@
 //	Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
 //  Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
 //  Copyright (C) 2019 Landon Rodgers <g.landon.rodgers@gmail.com>
-//	Copyright (c) 2024-2025 Rabbit Hole Computing™
+//	Copyright (c) 2024-2026 Rabbit Hole Computing™
 //	Copyright (C) 2024 jokker <jokker@gmail.com>
+//	Copyright (c) 2026 Eric Helgeson <erichelgeson@gmail.com>
 //	This file is part of SCSI2SD.
 //
 //	SCSI2SD is free software: you can redistribute it and/or modify
@@ -23,7 +24,13 @@
 #include "disk.h"
 #include "inquiry.h"
 #include "ZuluSCSI_mode.h"
+#include <ZuluSCSI_platform_config.h>
 #include "toolbox.h"
+
+#ifdef PLATFORM_AS400
+#include <as400_values.h>
+#include <custom_vendor_inquiry.h>
+#endif
 
 #include <string.h>
 
@@ -146,9 +153,9 @@ static const uint8_t FlexibleDiskDriveGeometry[] =
 0x05, // Page code
 0x1E, // Page length
 0x01, 0xF4, // Transfer Rate (500kbits)
-0x01, // heads
+0x02, // heads
 18, // sectors per track
-0x20,0x00, // bytes per sector
+0x02,0x00, // bytes per sector
 0x00, 80, // Cylinders
 0x00, 0x80, // Write-precomp
 0x00, 0x80, // reduced current,
@@ -223,6 +230,32 @@ static const uint8_t ControlModePage[] =
 0x00, 0x00 // AEN holdoff period.
 };
 
+// SCSI-2 section 9.3.3.8, Table 173
+static const uint8_t VerifyErrorRecoveryPage[] =
+{
+0x07, // Page code
+0x0A, // Page length
+0x00, // EER=0, PER=0, DTE=0, DCR=0
+0x01, // Verify retry count
+0x00, // Verify correction span
+0x00, 0x00, 0x00, 0x00, 0x00, // Reserved (bytes 5-9)
+0x00, 0x00  // Verify recovery time limit (MSB, LSB)
+};
+
+// SCSI-2 section 9.3.3.5, Table 167
+static const uint8_t NotchPage[] =
+{
+0x0C, // Page code
+0x16, // Page length
+0x00, 0x00, // ND=0 (not notched), LP=0
+0x00, 0x00, // Maximum number of notches
+0x00, 0x00, // Active notch
+0x00, 0x00, 0x00, 0x00, // Starting boundary
+0x00, 0x00, 0x00, 0x00, // Ending boundary
+0x00, 0x00, 0x00, 0x00, // Pages notched (MSB)
+0x00, 0x00, 0x00, 0x00  // Pages notched (LSB)
+};
+
 static const uint8_t SequentialDeviceConfigPage[] =
 {
 0x10, // page code
@@ -263,12 +296,15 @@ static const uint8_t IomegaZip100VendorPage[] =
 	0x5c, 0xf, 0xff, 0xf
 };
 
+#if 0
+/* Note: not currently used anywhere */
 static const uint8_t IomegaZip250VendorPage[] =
 {
 	0x2f, // Page Code
 	4, // Page Length
 	0x5c, 0xf, 0x3c, 0xf
 };
+#endif
 
 static void pageIn(int pc, int dataIdx, const uint8_t* pageData, int pageLen)
 {
@@ -280,11 +316,47 @@ static void pageIn(int pc, int dataIdx, const uint8_t* pageData, int pageLen)
 	}
 }
 
-static void doModeSense(
-	int sixByteCmd, int dbd, int pc, int pageCode, int allocLength)
+static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int allocLength)
 {
-	////////////// Mode Parameter Header
-	////////////////////////////////////
+#ifdef PLATFORM_AS400
+	if (sixByteCmd && pageCode == 0x3F && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
+	{
+		// A loaded AS/400 disk profile (see custom_vendor_inquiry.cpp) can
+		// supply its own captured MODE SENSE response; fall back to the
+		// single built-in capture if none is configured for this target.
+		uint16_t customLen = 0;
+		if (getCustomModeSense(scsiDev.target->cfg->scsiId, scsiDev.data, &customLen))
+		{
+			scsiDev.dataLen = customLen > allocLength ? allocLength : customLen;
+		}
+		else
+		{
+			scsiDev.dataLen = as400_mode_sense_all_pages_len > allocLength ? allocLength : as400_mode_sense_all_pages_len;
+			memcpy(scsiDev.data, as400_mode_sense_all_pages, scsiDev.dataLen);
+		}
+		scsiDev.phase = DATA_IN;
+		return;
+	}
+
+	if (sixByteCmd && pageCode == 0x3F && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+	{
+		// A captured AS/400 tape identity (see
+		// custom_vendor_inquiry.cpp:loadAS400TapeDefaults()) supplies its
+		// own MODE SENSE response, selected by this ID's Device=AS400_CISC/
+		// AS400_PPC preset. Unlike the disk case above, there is no single
+		// built-in fallback blob to serve if nothing was loaded (e.g. this
+		// ID has the AS/400 quirk but no CISC/PPC preset set) -- fall
+		// through to the generic per-page MODE SENSE logic below instead,
+		// same as any other tape device.
+		uint16_t customLen = 0;
+		if (getCustomModeSense(scsiDev.target->cfg->scsiId, scsiDev.data, &customLen))
+		{
+			scsiDev.dataLen = customLen > allocLength ? allocLength : customLen;
+			scsiDev.phase = DATA_IN;
+			return;
+		}
+	}
+#endif
 
 	// Skip the Mode Data Length, we set that last.
 	int idx = 1;
@@ -328,10 +400,11 @@ static void doModeSense(
 		break;
 
 	case S2S_CFG_SEQUENTIAL:
-		mediumType = 0; // reserved
+		mediumType = 0x00; // reserved
 		deviceSpecificParam =
-			(blockDev.state & DISK_WP) ? 0x80 : 0;
-		density = 0x13; // DAT Data Storage, X3B5/88-185A 
+			((blockDev.state & DISK_WP) ? 0x80 : 0) |
+			((scsiDev.target->liveCfg.tapeBufferedMode & 0x7) << 4);
+		density = scsiDev.target->liveCfg.tapeDensity;
 		break;
 
 	case S2S_CFG_MO:
@@ -342,6 +415,8 @@ static void doModeSense(
 		break;
 
 	};
+	if (scsiDev.target->cfg->mediumType >= 0)
+		mediumType = scsiDev.target->cfg->mediumType;
 
 	scsiDev.data[idx++] = mediumType;
 	scsiDev.data[idx++] = deviceSpecificParam;
@@ -375,6 +450,14 @@ static void doModeSense(
 		}
 	}
 
+	// The PC-9801-55 SCSI-1 controller, and its first party derivatives
+	// will ask for all pages (0x3F), expecting only these pages back:
+	// 0x01 - Read-write error recovery page
+	// 0x03 - Format device page
+	// 0x04 - Rigid disk geometry page
+	// This quirk is expected to be used with SCSI-1 mode only
+	int oldNecHddMode = scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_PC98_55;
+
 	////////////// Block Descriptor
 	////////////////////////////////////
 	if (!dbd)
@@ -383,9 +466,24 @@ static void doModeSense(
 		// Number of blocks
 		// Zero == all remaining blocks shall have the medium
 		// characteristics specified.
-		scsiDev.data[idx++] = 0;
-		scsiDev.data[idx++] = 0;
-		scsiDev.data[idx++] = 0;
+		uint32_t blocks = 0;
+		if (oldNecHddMode)
+		{
+			// NEC PC-9801-55 does not detect the drive without an
+			// explicit block count. Only 3 bytes are available, so
+			// clamp instead of truncating capacities above 8GB.
+			blocks = getScsiCapacity(
+				scsiDev.target->cfg->sdSectorStart,
+				scsiDev.target->liveCfg.bytesPerSector,
+				scsiDev.target->cfg->scsiSectors);
+			if (blocks > 0xFFFFFF)
+			{
+				blocks = 0xFFFFFF;
+			}
+		}
+		scsiDev.data[idx++] = blocks >> 16;
+		scsiDev.data[idx++] = blocks >> 8;
+		scsiDev.data[idx++] = blocks & 0xFF;
 
 		scsiDev.data[idx++] = 0; // reserved
 
@@ -413,7 +511,7 @@ static void doModeSense(
 		}
 	}
 
-	if (pageCode == 0x02 || pageCode == 0x3F)
+	if (!oldNecHddMode && (pageCode == 0x02 || pageCode == 0x3F))
 	{
 		pageFound = 1;
 		if ((scsiDev.compatMode >= COMPAT_SCSI2))
@@ -435,6 +533,18 @@ static void doModeSense(
 		pageIn(pc, idx, FormatDevicePage, sizeof(FormatDevicePage));
 		if (pc != 0x01)
 		{
+			if (oldNecHddMode)
+			{
+				// This mimics ArdSCSino-stm32 behavior, setting
+				// "Tracks per zone" to the heads per cylinder value.
+				// If left as 0, PC-9801FA doesn't detect the drive
+				// properly.
+				scsiDev.data[idx+2] = 0x00;
+				scsiDev.data[idx+3] = scsiDev.target->cfg->headsPerCylinder;
+				// Interleave field
+				scsiDev.data[idx+15] = 0x00;
+			}
+
 			uint16_t sectorsPerTrack = scsiDev.target->cfg->sectorsPerTrack;
 			scsiDev.data[idx+10] = sectorsPerTrack >> 8;
 			scsiDev.data[idx+11] = sectorsPerTrack & 0xFF;
@@ -509,6 +619,33 @@ static void doModeSense(
 	{
 		pageFound = 1;
 		pageIn(pc, idx, FlexibleDiskDriveGeometry, sizeof(FlexibleDiskDriveGeometry));
+		if (pc != 0x01)
+		{
+			uint16_t heads = scsiDev.target->cfg->headsPerCylinder;
+			uint16_t sectorsPerTrack = scsiDev.target->cfg->sectorsPerTrack;
+			uint16_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+
+			if (heads == 0) heads = 2;
+			if (heads > 0xFF) heads = 0xFF;
+			if (sectorsPerTrack == 0) sectorsPerTrack = 18;
+			if (sectorsPerTrack > 0xFF) sectorsPerTrack = 0xFF;
+
+			uint32_t sectorsPerCylinder = (uint32_t)heads * sectorsPerTrack;
+			uint32_t capacity = getScsiCapacity(
+				scsiDev.target->cfg->sdSectorStart,
+				bytesPerSector,
+				scsiDev.target->cfg->scsiSectors);
+			uint32_t cylinders = sectorsPerCylinder ?
+				(capacity + sectorsPerCylinder - 1) / sectorsPerCylinder : 0;
+			if (cylinders > 0xFFFF) cylinders = 0xFFFF;
+
+			scsiDev.data[idx+4] = heads;
+			scsiDev.data[idx+5] = sectorsPerTrack;
+			scsiDev.data[idx+6] = bytesPerSector >> 8;
+			scsiDev.data[idx+7] = bytesPerSector & 0xFF;
+			scsiDev.data[idx+8] = cylinders >> 8;
+			scsiDev.data[idx+9] = cylinders & 0xFF;
+		}
 		idx += sizeof(FlexibleDiskDriveGeometry);
 	}
 
@@ -516,6 +653,14 @@ static void doModeSense(
 	// we have more data to send than the allocation length provided.
 	// (ie. Try not to output any more pages below this comment)
 
+
+	if ((scsiDev.compatMode >= COMPAT_SCSI2) &&
+		(pageCode == 0x07 || pageCode == 0x3F))
+	{
+		pageFound = 1;
+		pageIn(pc, idx, VerifyErrorRecoveryPage, sizeof(VerifyErrorRecoveryPage));
+		idx += sizeof(VerifyErrorRecoveryPage);
+	}
 
 	if ((scsiDev.compatMode >= COMPAT_SCSI2) &&
 		(pageCode == 0x08 || pageCode == 0x3F))
@@ -531,6 +676,16 @@ static void doModeSense(
 		pageFound = 1;
 		pageIn(pc, idx, ControlModePage, sizeof(ControlModePage));
 		idx += sizeof(ControlModePage);
+	}
+
+	if ((scsiDev.compatMode >= COMPAT_SCSI2) &&
+		(pageCode == 0x0C || pageCode == 0x3F) &&
+		(scsiDev.target->cfg->deviceType != S2S_CFG_OPTICAL) &&
+		(scsiDev.target->cfg->deviceType != S2S_CFG_SEQUENTIAL))
+	{
+		pageFound = 1;
+		pageIn(pc, idx, NotchPage, sizeof(NotchPage));
+		idx += sizeof(NotchPage);
 	}
 
 	idx += modeSenseCDDevicePage(pc, idx, pageCode, &pageFound);
@@ -567,7 +722,10 @@ static void doModeSense(
 		idx += sizeof(AppleVendorPage);
 	}
 
-	if (scsiToolboxEnabled() && (pageCode == 0x31 || pageCode == 0x3F))
+	// Hide the toolbox vendor page from all-pages responses under the
+	// PC-9801-55 quirk, but still answer a client probing for it directly.
+	if (scsiToolboxEnabled() &&
+		(pageCode == 0x31 || (pageCode == 0x3F && !oldNecHddMode)))
 	{
 		pageFound = 1;
 		pageIn(pc, idx, ToolboxVendorPage, sizeof(ToolboxVendorPage));
@@ -582,18 +740,25 @@ static void doModeSense(
 	}
 
 	// SCSI 2 standard says page 0 is always last.
-	if (pageCode == 0x00 || pageCode == 0x3F)
+	if (!oldNecHddMode && (pageCode == 0x00 || pageCode == 0x3F))
 	{
 		pageFound = 1;
-		pageIn(pc, idx, OperatingPage, sizeof(OperatingPage));
+		if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+		{
+			// Don't use a operating page
+		}
+		else
+		{
+			pageIn(pc, idx, OperatingPage, sizeof(OperatingPage));
 
-		// Note inverted logic for the flag.
-		scsiDev.data[idx+2] =
-			(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) ? 0x80 : 0x90;
+			// Note inverted logic for the flag.
+			scsiDev.data[idx+2] =
+				(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) ? 0x80 : 0x90;
 
-		scsiDev.data[idx+3] = getDeviceTypeQualifier();
+			scsiDev.data[idx+3] = getDeviceTypeQualifier();
+			idx += sizeof(OperatingPage);
+		}
 
-		idx += sizeof(OperatingPage);
 	}
 
 	if (!pageFound)
@@ -634,6 +799,13 @@ static void doModeSelect(void)
 
 		int idx;
 		int blockDescLen;
+
+		// SCSI2 8.2.8: the command shall be terminated with CHECK CONDITION
+		// if the parameter list length truncates the mode parameter header,
+		// the block descriptor(s), or a mode page.
+		int headerLen = (scsiDev.cdb[0] == 0x55) ? 8 : 4;
+		if (scsiDev.dataLen < headerLen) goto badLength;
+
 		if (scsiDev.cdb[0] == 0x55)
 		{
 			blockDescLen =
@@ -646,26 +818,47 @@ static void doModeSelect(void)
 			idx = 4;
 		}
 
+		// The header check above guarantees dataLen >= idx.
+		if (blockDescLen > scsiDev.dataLen - idx) goto badLength;
+
+		// Store device-specific parameter byte (byte 2 for 6-byte, byte 3 for 10-byte)
+		// For sequential devices this contains buffered mode in bits 6-4
+		if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+		{
+			uint8_t devSpecific = (scsiDev.cdb[0] == 0x55) ? scsiDev.data[3] : scsiDev.data[2];
+			scsiDev.target->liveCfg.tapeBufferedMode = (devSpecific >> 4) & 0x7;
+		}
+
 		// The unwritten rule.  Blocksizes are normally set using the
 		// block descriptor value, not by changing page 0x03.
 		if (blockDescLen >= 8)
 		{
+			// Store density code for sequential devices
+			if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.target->liveCfg.tapeDensity = scsiDev.data[idx];
+			}
+
 			uint32_t bytesPerSector =
 				(((uint32_t)scsiDev.data[idx+5]) << 16) |
 				(((uint32_t)scsiDev.data[idx+6]) << 8) |
 				scsiDev.data[idx+7];
-			if ((bytesPerSector < MIN_SECTOR_SIZE) ||
-				(bytesPerSector > MAX_SECTOR_SIZE))
+
+			// Sane values only, ok ?
+			if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL && bytesPerSector == 0)
+			{
+				// value okay, setting to variable length transfers for tape
+			}
+			else if ((bytesPerSector < modeMinSectorSize()) ||
+					(bytesPerSector > modeMaxSectorSize()))
 			{
 				goto bad;
 			}
-			else
+
+			scsiDev.target->liveCfg.bytesPerSector = bytesPerSector;
+			if (bytesPerSector != scsiDev.target->cfg->bytesPerSector)
 			{
-				scsiDev.target->liveCfg.bytesPerSector = bytesPerSector;
-				if (bytesPerSector != scsiDev.target->cfg->bytesPerSector)
-				{
-					s2s_configSave(scsiDev.target->targetId, bytesPerSector);
-				}
+				s2s_configSave(scsiDev.target->targetId, bytesPerSector);
 			}
 		}
 		idx += blockDescLen;
@@ -679,8 +872,10 @@ static void doModeSelect(void)
 			int pageCode = scsiDev.data[idx] & 0x3F;
 			if (pageCode == 0) goto out;
 
+			if (idx + 2 > scsiDev.dataLen) goto badLength;
+
 			int pageLen = scsiDev.data[idx + 1];
-			if (idx + 2 + pageLen > scsiDev.dataLen) goto bad;
+			if (idx + 2 + pageLen > scsiDev.dataLen) goto badLength;
 
 			switch (pageCode)
 			{
@@ -694,8 +889,12 @@ static void doModeSelect(void)
 					scsiDev.data[idx+13];
 
 				// Sane values only, ok ?
-				if ((bytesPerSector < MIN_SECTOR_SIZE) ||
-					(bytesPerSector > MAX_SECTOR_SIZE))
+				if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL && bytesPerSector == 0)
+				{
+					// value okay, setting to variable length transfers for tape
+				}
+				else if ((bytesPerSector < modeMinSectorSize()) ||
+					(bytesPerSector > modeMaxSectorSize()))
 				{
 					goto bad;
 				}
@@ -722,6 +921,15 @@ static void doModeSelect(void)
 	}
 
 	goto out;
+
+// SCSI2 8.2.8 separates a parameter list that is too short for what it
+// describes (1Ah) from one whose contents are unsupported (26h).
+badLength:
+	scsiDev.status = CHECK_CONDITION;
+	scsiDev.target->sense.code = ILLEGAL_REQUEST;
+	scsiDev.target->sense.asc = PARAMETER_LIST_LENGTH_ERROR;
+	goto out;
+
 bad:
 	scsiDev.status = CHECK_CONDITION;
 	scsiDev.target->sense.code = ILLEGAL_REQUEST;
@@ -751,7 +959,20 @@ int scsiModeCommand()
 		// SCSI1 standard: (CCS X3T9.2/86-52)
 		// "An Allocation Length of zero indicates that no MODE SENSE data shall
 		// be transferred. This condition shall not be considered as an error."
-		doModeSense(1, dbd, pc, pageCode, allocLength);
+		
+		// SCSI-2 sections 8.2.10/8.2.11: CDB byte 3 is Reserved.
+		// SPC-3+ redefines it as SUBPAGE CODE. Reject non-zero.
+		if (scsiDev.cdb[3] != 0)
+		{
+			scsiDev.status = CHECK_CONDITION;
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+			scsiDev.phase = STATUS;
+		}
+		else
+		{
+			doModeSense(1, dbd, pc, pageCode, allocLength);
+		}
 	}
 	else if (command == 0x5A)
 	{
@@ -763,6 +984,17 @@ int scsiModeCommand()
 			(((uint16_t) scsiDev.cdb[7]) << 8) +
 			scsiDev.cdb[8];
 		doModeSense(0, dbd, pc, pageCode, allocLength);
+		if (scsiDev.cdb[3] != 0)
+		{
+			scsiDev.status = CHECK_CONDITION;
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+			scsiDev.phase = STATUS;
+		}
+		else
+		{
+			doModeSense(0, dbd, pc, pageCode, allocLength);
+		}
 	}
 	else if (command == 0x15)
 	{
@@ -809,4 +1041,3 @@ int scsiModeCommand()
 
 	return commandHandled;
 }
-

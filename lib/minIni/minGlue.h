@@ -1,4 +1,5 @@
 /*  Glue functions for the minIni library to the cache functions in minIni_cache.cpp */
+#pragma once
 
 #include <SdFat.h>
 

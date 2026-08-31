@@ -1,5 +1,6 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2026 Rabbit Hole Computing™
+ * BlueSCSI - Copyright (c) 2026 Eric Helgeson, Androda*
  *
  * ZuluSCSI™ firmware is licensed under the GPL version 3 or any later version. 
  *
@@ -23,7 +24,6 @@
 /*
  * Main program for initiator mode.
  */
-
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_log_trace.h"
@@ -33,6 +33,10 @@
 #include <ZuluSCSI_platform.h>
 #include <minIni.h>
 #include "SdFat.h"
+#include "vhd_support.h"
+#include "ui.h"
+#include "ZuluSCSI_disk.h"
+#include <numeric>
 
 #include <scsi2sd.h>
 extern "C" {
@@ -70,6 +74,9 @@ extern bool g_sdcard_present;
  * High level initiator mode logic   *
  *************************************/
 
+// Not in the SCSI_MESSAGE enum in scsi.h
+#define MSG_NO_OPERATION 0x08
+
 static struct {
     // Bitmap of all drives that have been imaged
     uint32_t drives_imaged;
@@ -78,6 +85,7 @@ static struct {
     uint8_t initiator_id;
     uint8_t max_retry_count;
     bool use_read10; // Always use read10 commands
+    bool use_identify; // Select with ATN and send IDENTIFY before each command
 
     // Is imaging a drive in progress, or are we scanning?
     bool imaging;
@@ -85,6 +93,7 @@ static struct {
     // Information about currently selected drive
     int target_id;
     uint32_t sectorsize;
+    uint32_t lcm_scsi_vs_sd_sectorsize;
     uint32_t sectorcount;
     uint32_t sectorcount_all;
     uint32_t sectors_done;
@@ -102,10 +111,17 @@ static struct {
 
     uint32_t removable_count[8];
 
+    // VHD output format (opt-in via InitiatorVHD=1)
+    bool use_vhd_format;
+
+    // Negotiated bus width for targets
+    int targetBusWidth[S2S_MAX_TARGETS];
+
     FsFile target_file;
 } g_initiator_state;
 
 extern SdFs SD;
+static bool g_pause = false;
 
 // Initialization of initiator mode
 void scsiInitiatorInit()
@@ -124,6 +140,8 @@ void scsiInitiatorInit()
     }
     g_initiator_state.max_retry_count = ini_getl("SCSI", "InitiatorMaxRetry", 5, CONFIGFILE);
     g_initiator_state.use_read10 = ini_getbool("SCSI", "InitiatorUseRead10", false, CONFIGFILE);
+    g_initiator_state.use_identify = ini_getbool("SCSI", "InitiatorIdentify", true, CONFIGFILE);
+    g_initiator_state.use_vhd_format = ini_getbool("SCSI", "InitiatorVHD", false, CONFIGFILE);
 
     // treat initiator id as already imaged drive so it gets skipped
     g_initiator_state.drives_imaged = 1 << g_initiator_state.initiator_id;
@@ -142,6 +160,7 @@ void scsiInitiatorInit()
     g_initiator_state.removable = false;
     g_initiator_state.eject_when_done = false;
     memset(g_initiator_state.removable_count, 0, sizeof(g_initiator_state.removable_count));
+    platform_led_breath(true, 0);
 
 }
 
@@ -172,38 +191,60 @@ static void scsiInitiatorUpdateLed()
     }
 }
 
+uint8_t ejectButtonUpdate()
+{
+    // treat '1' to '0' transitions as reset actions
+    static uint8_t previous = 0x00;
+    uint8_t bitmask = platform_get_buttons() & EJECT_BTN_MASK;
+    uint8_t ejectors = (previous ^ bitmask) & previous;
+    previous = bitmask;
+    return ejectors;
+}
+
+static void pollPauseOnEjectButton()
+{
+    if (ejectButtonUpdate() == 1)
+    {
+        logmsg("Eject button detected while in initiator mode, resetting state...");
+        g_pause = true;
+    }
+}
+
 void delay_with_poll(uint32_t ms)
 {
     uint32_t start = millis();
     while ((uint32_t)(millis() - start) < ms)
     {
+        pollPauseOnEjectButton();
         platform_poll();
         delay(1);
     }
 }
 
-static int scsiTypeToIniType(int scsi_type, bool removable)
+// Map a SCSI peripheral device type to a human-readable name.
+// Returns nullptr for unsupported (non-block) types — the initiator skips
+// those rather than attempting to clone them.
+static const char *initiatorPeripheralTypeName(uint8_t device_type, bool removable)
 {
-    int ini_type = -1;
-    switch (scsi_type)
+    switch (device_type)
     {
-        case SCSI_DEVICE_TYPE_DIRECT_ACCESS:
-            ini_type = removable ? S2S_CFG_REMOVABLE : S2S_CFG_FIXED;
-            break;
-        case 1:
-            ini_type = -1; // S2S_CFG_SEQUENTIAL
-            break;
-        case SCSI_DEVICE_TYPE_CD:
-            ini_type = S2S_CFG_OPTICAL;
-            break;
-        case SCSI_DEVICE_TYPE_MO:
-            ini_type = S2S_CFG_MO;
-            break;
-        default:
-            ini_type = -1;
-            break;
+        case SCSI_DEVICE_TYPE_DIRECT_ACCESS:  return removable ? "Removable " : "Disk";
+        case SCSI_DEVICE_TYPE_SEQUENTIAL:     return "Sequential (Tape)";
+        case SCSI_DEVICE_TYPE_WRITE_ONCE:     return "Write Once";
+        case SCSI_DEVICE_TYPE_CD:             return "Optical (CD/DVD)";
+        case SCSI_DEVICE_TYPE_MO:             return "Optical Memory (Magneto-optical)";
+        case SCSI_DEVICE_TYPE_MEDIA_CHANGER:  return "Media Changer";
+        case SCSI_DEVICE_TYPE_DISK_ARRAY:     return "Disk Array";
+        default:                              return nullptr;
     }
-    return ini_type;
+}
+
+// Check if VHD output should be used for the current target
+static bool initiatorShouldWriteVhd()
+{
+    return g_initiator_state.use_vhd_format &&
+           g_initiator_state.device_type == SCSI_DEVICE_TYPE_DIRECT_ACCESS &&
+           !g_initiator_state.removable;
 }
 
 // High level logic of the initiator mode
@@ -226,6 +267,14 @@ void scsiInitiatorMainLoop()
     {
         if (!g_sdcard_present || ini_getbool("SCSI", "InitiatorMSC", false, CONFIGFILE))
         {
+            // This delay allows the USB serial console to connect immediately to the host
+            // It also decreases the delay in callback processing of MSC commands
+            int32_t msc_init_delay = ini_getl("SCSI", "InitiatorMSCInitDelay", MSC_INIT_DELAY, CONFIGFILE);
+            if (msc_init_delay != MSC_INIT_DELAY)
+                logmsg("Initiator init delay set in ", CONFIGFILE ," to ", (int)msc_init_delay, " milliseconds");
+            delay(msc_init_delay);
+
+            // GT TODO
             logmsg("Entering USB MSC initiator mode");
             platform_enter_msc();
             setup_msc_initiator();
@@ -240,10 +289,30 @@ void scsiInitiatorMainLoop()
         return;
     }
 
+    pollPauseOnEjectButton();
+    if (g_pause)
+    {
+        g_initiator_state.target_file.close();
+        scsiInitiatorInit();
+        logmsg("Initiator reset, pausing. Press eject to start initiator...");
+        LED_OFF();
+        platform_set_blink_status(false);
+        platform_led_breath(true, PLATFORM_LED_PWM_BREATH_PERIOD_MS / 4);
+        while(ejectButtonUpdate() != 1)
+        {
+            platform_poll();
+            platform_reset_watchdog();
+        }
+
+        platform_led_breath(true, 0);
+        g_pause = false;
+        scsiHostPhyReset();
+    }
+
     if (!g_initiator_state.imaging)
     {
         // Scan for SCSI drives one at a time
-        g_initiator_state.target_id = (g_initiator_state.target_id + 1) % 8;
+        g_initiator_state.target_id = (g_initiator_state.target_id + 1) % S2S_MAX_TARGETS;
         g_initiator_state.sectorsize = 0;
         g_initiator_state.sectorcount = 0;
         g_initiator_state.sectors_done = 0;
@@ -257,6 +326,8 @@ void scsiInitiatorMainLoop()
         g_initiator_state.eject_when_done = false;
         g_initiator_state.use_read10 = false;
 
+        UIInitiatorScanning(g_initiator_state.target_id, g_initiator_state.initiator_id);
+        
         if (!(g_initiator_state.drives_imaged & (1 << g_initiator_state.target_id)))
         {
             delay_with_poll(1000);
@@ -264,9 +335,28 @@ void scsiInitiatorMainLoop()
             uint8_t inquiry_data[36] = {0};
 
             LED_ON();
+
             bool startstopok =
                 scsiTestUnitReady(g_initiator_state.target_id) &&
                 scsiStartStopUnit(g_initiator_state.target_id, true);
+
+#if defined(PLATFORM_MAX_BUS_WIDTH) && PLATFORM_MAX_BUS_WIDTH > 0
+            if (startstopok)
+            {
+                // Negotiate bus width
+                // This is done before other commands just in case the target
+                // happens to be in 16-bit mode. Only commands that have no
+                // data phase can be used before this.
+                int configBusWidth = ini_getl("SCSI", "InitiatorBusWidth", PLATFORM_MAX_BUS_WIDTH, CONFIGFILE);
+                bool busWidthSet = scsiInitiatorSetBusWidth(g_initiator_state.target_id, configBusWidth);
+                if (!busWidthSet && ini_haskey("SCSI", "InitiatorBusWidth", CONFIGFILE))
+                {
+                    logmsg("-- Failed to negotiate ", 8 << configBusWidth, " bit bus width that is forced in .ini file");
+                    logmsg("-- Refusing to connect at lower bus width");
+                    return;
+                }
+            }
+#endif
 
             bool readcapok = startstopok &&
                 scsiInitiatorReadCapacity(g_initiator_state.target_id,
@@ -285,12 +375,27 @@ void scsiInitiatorMainLoop()
                     " capacity ", (int)g_initiator_state.sectorcount,
                     " sectors x ", (int)g_initiator_state.sectorsize, " bytes");
 
+                // Calculate the LCM of the SCSI medium's sector size vs SD sector size for transfer optimization
+                uint32_t sectorsize = g_initiator_state.sectorsize;
+                g_initiator_state.lcm_scsi_vs_sd_sectorsize = 0;
+                if (sectorsize != SD_SECTOR_SIZE) 
+                {
+                    uint32_t gcd = std::gcd(sectorsize, SD_SECTOR_SIZE);
+                    uint32_t factor = sectorsize / gcd;
+                    uint32_t lcm_alignment = factor * SD_SECTOR_SIZE;
+                    if (factor <= UINT32_MAX / SD_SECTOR_SIZE)
+                        g_initiator_state.lcm_scsi_vs_sd_sectorsize = lcm_alignment;
+                }
+
+                UIInitiatorReadCapOk(g_initiator_state.target_id, (S2S_CFG_TYPE)g_initiator_state.device_type, g_initiator_state.sectorcount, g_initiator_state.sectorsize);
+                
                 g_initiator_state.sectorcount_all = g_initiator_state.sectorcount;
 
                 total_bytes = (uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize;
                 logmsg("Drive total size is ", (int)(total_bytes / (1024 * 1024)), " MiB");
                 if (total_bytes >= 0xFFFFFFFF && SD.fatType() != FAT_TYPE_EXFAT)
                 {
+                    // GT TODO
                     // Note: the FAT32 limit is 4 GiB - 1 byte
                     logmsg("Target SCSI ID ", g_initiator_state.target_id, " image size is equal or larger than 4 GiB.");
                     logmsg("This is larger than the max filesize supported by SD card's filesystem");
@@ -301,6 +406,7 @@ void scsiInitiatorMainLoop()
             }
             else if (startstopok)
             {
+                // GT TODO
                 logmsg("SCSI ID ", g_initiator_state.target_id, " responds but ReadCapacity command failed");
                 logmsg("Possibly SCSI-1 drive? Attempting to read up to 1 GB.");
                 g_initiator_state.sectorsize = 512;
@@ -309,9 +415,7 @@ void scsiInitiatorMainLoop()
             }
             else
             {
-#ifndef ZULUSCSI_NETWORK
                 dbgmsg("Failed to connect to SCSI ID ", g_initiator_state.target_id);
-#endif
                 g_initiator_state.sectorsize = 0;
                 g_initiator_state.sectorcount = g_initiator_state.sectorcount_all = 0;
             }
@@ -341,16 +445,32 @@ void scsiInitiatorMainLoop()
                     g_initiator_state.max_sector_per_transfer = 256;
                 }
 
-                int ini_type = scsiTypeToIniType(g_initiator_state.device_type, g_initiator_state.removable);
+                // Limit sectors per transfer based on buffer size
+                uint32_t max_by_buffer = sizeof(scsiDev.data) / g_initiator_state.sectorsize;
+                if (max_by_buffer < g_initiator_state.max_sector_per_transfer)
+                {
+                    g_initiator_state.max_sector_per_transfer = max_by_buffer;
+                }
+
+
                 logmsg("SCSI Version ", (int) g_initiator_state.ansi_version);
                 logmsg("[SCSI", g_initiator_state.target_id,"]");
                 logmsg("  Vendor = \"", vendor,"\"");
                 logmsg("  Product = \"", product,"\"");
                 logmsg("  Version = \"", revision,"\"");
-                if (ini_type == -1)
-                    logmsg("Type = Not Supported, trying direct access");
-                else
-                    logmsg("  Type = ", ini_type);
+
+
+                const char *typeName = initiatorPeripheralTypeName(
+                    g_initiator_state.device_type, g_initiator_state.removable);
+
+                if (typeName == nullptr)
+                {
+                    logmsg("  SCSI Peripheral device type id ", g_initiator_state.device_type, " unsupported. Skipping this device");
+                    g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
+                    return;
+                }
+
+                logmsg("  SCSI Device Type = ", typeName);
 
                 if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_CD)
                 {
@@ -364,7 +484,7 @@ void scsiInitiatorMainLoop()
                 }
                 else if (g_initiator_state.device_type != SCSI_DEVICE_TYPE_DIRECT_ACCESS)
                 {
-                    logmsg("Unhandled scsi device type: ", g_initiator_state.device_type, ". Handling it as Direct Access Device.");
+                    logmsg("  No specific handler for the device type, treating as Direct Access Device.");
                     g_initiator_state.device_type = SCSI_DEVICE_TYPE_DIRECT_ACCESS;
                 }
 
@@ -372,6 +492,12 @@ void scsiInitiatorMainLoop()
                 {
                     strncpy(filename_base, "RM00_imaged", sizeof(filename_base));
                     filename_extension = ".img";
+                }
+
+                if (initiatorShouldWriteVhd())
+                {
+                    filename_extension = ".vhd";
+                    logmsg("VHD output enabled for SCSI ID ", g_initiator_state.target_id);
                 }
             }
 
@@ -383,7 +509,7 @@ void scsiInitiatorMainLoop()
             if (g_initiator_state.sectorcount > 0)
             {
                 char filename[32] = {0};
-                filename_base[2] += g_initiator_state.target_id;
+                filename_base[2] = scsiEncodeID(g_initiator_state.target_id);
                 if (g_initiator_state.eject_when_done)
                 {
                     auto removable_count = g_initiator_state.removable_count[g_initiator_state.target_id];
@@ -403,6 +529,7 @@ void scsiInitiatorMainLoop()
                 {
                     if (SD.exists(filename))
                     {
+                        // GT TODO
                         logmsg("File, ", filename, ", already exists, InitiatorImageHandling set to stop if file exists.");
                         g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
                         return;
@@ -421,6 +548,7 @@ void scsiInitiatorMainLoop()
                         }
                         else if(i >= 1000)
                         {
+                            // GT TODO
                             logmsg("Max images created from SCSI ID ", g_initiator_state.target_id, ", skipping image creation");
                             g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
                             return;
@@ -447,6 +575,7 @@ void scsiInitiatorMainLoop()
                 {
                     if (SD.exists(filename))
                     {
+                        // GT TODO
                         logmsg("File, ",filename, " already exists, InitiatorImageHandling set to overwrite file");
                         SD.remove(filename);
                     }
@@ -463,9 +592,11 @@ void scsiInitiatorMainLoop()
                     return;
                 }
 
+                uint64_t vhd_overhead = initiatorShouldWriteVhd() ? VHD_FOOTER_SIZE : 0;
                 uint64_t sd_card_free_bytes = (uint64_t)SD.vol()->freeClusterCount() * SD.vol()->bytesPerCluster();
-                if (sd_card_free_bytes < total_bytes)
+                if (sd_card_free_bytes < total_bytes + vhd_overhead)
                 {
+                    // GT TODO
                     logmsg("SD Card only has ", (int)(sd_card_free_bytes / (1024 * 1024)),
                            " MiB - not enough free space to image SCSI ID ", g_initiator_state.target_id);
                     g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
@@ -484,8 +615,12 @@ void scsiInitiatorMainLoop()
                     // Only preallocate on exFAT, on FAT32 preallocating can result in false garbage data in the
                     // file if write is interrupted.
                     logmsg("Preallocating image file");
-                    g_initiator_state.target_file.preAllocate((uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize);
+                    g_initiator_state.target_file.preAllocate(
+                        (uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize + vhd_overhead
+                    );
                 }
+
+                UIInitiatorTargetFilename(g_initiator_state.target_id, filename);
 
                 logmsg("Starting to copy drive data to ", filename);
                 g_initiator_state.imaging = true;
@@ -501,22 +636,48 @@ void scsiInitiatorMainLoop()
             logmsg("Finished imaging drive with id ", g_initiator_state.target_id);
             LED_OFF();
 
+            UIInitiatorImagingComplete(g_initiator_state.target_id);
+            
             if (g_initiator_state.sectorcount != g_initiator_state.sectorcount_all)
             {
+
+                // GT TODO
                 logmsg("NOTE: Image size was limited to first 4 GiB due to SD card filesystem limit");
                 logmsg("Please reformat the SD card with exFAT format to image this drive fully");
             }
 
             if(g_initiator_state.bad_sector_count != 0)
             {
+                // GT TODO
                 logmsg("NOTE: There were ",  (int) g_initiator_state.bad_sector_count, " bad sectors that could not be read off this drive.");
             }
 
             if (!g_initiator_state.eject_when_done)
             {
+                // GT TODO
                 logmsg("Marking SCSI ID, ", g_initiator_state.target_id, ", as imaged, wont ask it again.");
                 g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
             }
+
+            // Write VHD footer if enabled for this target
+            if (initiatorShouldWriteVhd())
+            {
+                uint64_t raw_bytes = (uint64_t)g_initiator_state.sectorcount * g_initiator_state.sectorsize;
+                uint8_t vhd_footer[VHD_FOOTER_SIZE];
+                // Use 0 for timestamp — embedded device has no RTC epoch reference
+                vhd_build_fixed_footer(vhd_footer, raw_bytes,
+                                       g_initiator_state.sectorcount, 0,
+                                       g_initiator_state.target_id);
+                if (g_initiator_state.target_file.write(vhd_footer, VHD_FOOTER_SIZE) == VHD_FOOTER_SIZE)
+                {
+                    logmsg("VHD footer written successfully");
+                }
+                else
+                {
+                    logmsg("WARNING: Failed to write VHD footer");
+                }
+            }
+
 
             g_initiator_state.imaging = false;
             g_initiator_state.target_file.close();
@@ -543,6 +704,8 @@ void scsiInitiatorMainLoop()
         {
             logmsg("Failed to transfer ", numtoread, " sectors starting at ", (int)g_initiator_state.sectors_done);
 
+            UIInitiatorFailedToTransfer(g_initiator_state.target_id);          
+
             if (g_initiator_state.retrycount < g_initiator_state.max_retry_count)
             {
                 logmsg("Retrying.. ", g_initiator_state.retrycount + 1, "/", (int) g_initiator_state.max_retry_count);
@@ -556,9 +719,12 @@ void scsiInitiatorMainLoop()
 
                 if (g_initiator_state.retrycount > 1 && numtoread > 1)
                 {
+                    // GT TODO
                     logmsg("Multiple failures, retrying sector-by-sector");
                     g_initiator_state.failposition = g_initiator_state.sectors_done + numtoread;
                 }
+
+                UIInitiatorRetry(g_initiator_state.target_id);
             }
             else
             {
@@ -567,6 +733,8 @@ void scsiInitiatorMainLoop()
                 g_initiator_state.sectors_done++;
                 g_initiator_state.bad_sector_count++;
                 g_initiator_state.target_file.seek((uint64_t)g_initiator_state.sectors_done * g_initiator_state.sectorsize);
+
+                UIInitiatorSkippedSector(g_initiator_state.target_id);
             }
         }
         else
@@ -580,6 +748,8 @@ void scsiInitiatorMainLoop()
                   (int)g_initiator_state.sectors_done, " / ", (int)g_initiator_state.sectorcount,
                   " speed ", speed_kbps, " kB/s - ", 
                   (int)(100 * (int64_t)g_initiator_state.sectors_done / g_initiator_state.sectorcount), "%");
+
+            UIInitiatorProgress(g_initiator_state.target_id, millis() - time_start, g_initiator_state.sectors_done, numtoread);
         }
     }
 }
@@ -594,12 +764,21 @@ int scsiInitiatorRunCommand(int target_id,
                             const uint8_t *bufOut, size_t bufOutLen,
                             bool returnDataPhase, uint32_t timeout)
 {
+    // SCSI-3 targets take the LUN from the IDENTIFY message and reject
+    // anything selected without one (ILLEGAL REQUEST / LUN NOT SUPPORTED).
+    // The target only offers MESSAGE_OUT if we select with ATN asserted.
+    bool send_identify = g_initiator_state.use_identify;
+    bool identify_sent = false;
+
+    if (send_identify)
+    {
+        scsiHostPhySetATN(true);
+    }
 
     if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
     {
-#ifndef ZULUSCSI_NETWORK
+        scsiHostPhySetATN(false);
         dbgmsg("------ Target ", target_id, " did not respond");
-#endif
         scsiHostPhyRelease();
         return -1;
     }
@@ -629,11 +808,23 @@ int scsiInitiatorRunCommand(int target_id,
         }
         else if (phase == MESSAGE_OUT)
         {
-            uint8_t identify_msg = 0x80;
-            scsiHostWrite(&identify_msg, 1);
+            // Negate ATN before the byte is acknowledged, otherwise the target
+            // keeps asking for more messages.
+            scsiHostPhySetATN(false);
+
+            // IDENTIFY, LUN 0, no disconnect privilege. A target that asks
+            // again gets NO OPERATION rather than a second IDENTIFY.
+            uint8_t msg = identify_sent ? MSG_NO_OPERATION : 0x80;
+            identify_sent = true;
+            scsiHostWrite(&msg, 1);
         }
         else if (phase == COMMAND)
         {
+            if (send_identify && !identify_sent)
+            {
+                // Target went straight to COMMAND, it does not use messages
+                scsiHostPhySetATN(false);
+            }
             scsiHostWrite(command, cmdLen);
         }
         else if (phase == DATA_IN)
@@ -646,7 +837,9 @@ int scsiInitiatorRunCommand(int target_id,
                 break;
             }
 
+            scsiHostSetBusWidth(g_initiator_state.targetBusWidth[target_id]);
             uint32_t readCount = scsiHostRead(bufIn, bufInLen);
+            scsiHostSetBusWidth(0);
             if (readCount != bufInLen)
             {
                 logmsg("scsiHostRead failed, tried to read ", (int)bufInLen, " bytes, got ", (int)readCount);
@@ -664,7 +857,9 @@ int scsiInitiatorRunCommand(int target_id,
                 break;
             }
 
+            scsiHostSetBusWidth(g_initiator_state.targetBusWidth[target_id]);
             uint32_t writeCount = scsiHostWrite(bufOut, bufOutLen);
+            scsiHostSetBusWidth(0);
             if (writeCount != bufOutLen)
             {
                 logmsg("scsiHostWrite failed, was writing ", bytearray(bufOut, bufOutLen), " return value ", (int)writeCount);
@@ -677,9 +872,90 @@ int scsiInitiatorRunCommand(int target_id,
             uint8_t tmp = -1;
             scsiHostRead(&tmp, 1);
             status = tmp;
-#ifndef ZULUSCSI_NETWORK
             dbgmsg("------ STATUS: ", tmp);
-#endif
+        }
+    }
+
+    scsiHostPhySetATN(false);
+    scsiHostWaitBusFree();
+
+    return status;
+}
+
+int scsiInitiatorMessage(int target_id,
+    const uint8_t *msgOut, size_t msgOutLen,
+    uint8_t *msgIn, size_t msgInBufSize, size_t *msgInLen,
+    uint32_t timeout)
+{
+    uint8_t command[6] = {0x00, 0, 0, 0, 0, 0};
+
+    scsiHostPhySetATN(true);
+
+    if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
+    {
+        dbgmsg("------ Target ", target_id, " did not respond");
+        scsiHostPhyRelease();
+        return -1;
+    }
+
+    size_t dummy;
+    if (!msgInLen) msgInLen = &dummy;
+    *msgInLen = 0;
+
+    size_t msgOutSent = 0;
+
+    SCSI_PHASE phase;
+    int status = -1;
+    uint32_t start = millis();
+    while ((phase = (SCSI_PHASE)scsiHostPhyGetPhase()) != BUS_FREE)
+    {
+        // If explicit timeout is specified, prevent watchdog from triggering too early.
+        if ((uint32_t)(millis() - start) < timeout)
+        {
+            platform_reset_watchdog();
+        }
+
+        platform_poll();
+
+        if (phase == MESSAGE_IN)
+        {
+            uint8_t msg = 0;
+            scsiHostRead(&msg, 1);
+
+            if (*msgInLen < msgInBufSize)
+            {
+                msgIn[*msgInLen] = msg;
+                *msgInLen += 1;
+            }
+
+            if (status != -1 && msg == MSG_COMMAND_COMPLETE)
+            {
+                break;
+            }
+        }
+        else if (phase == MESSAGE_OUT)
+        {
+            if (msgOutSent < msgOutLen)
+            {
+                scsiHostWrite(&msgOut[msgOutSent++], 1);
+                if (msgOutSent >= msgOutLen)
+                {
+                    // End of MESSAGE_OUT phase
+                    // Note that target may switch to MESSAGE_IN earlier than this
+                    scsiHostPhySetATN(false);
+                }
+            }
+        }
+        else if (phase == COMMAND)
+        {
+            scsiHostWrite(command, sizeof(command));
+        }
+        else if (phase == STATUS)
+        {
+            uint8_t tmp = -1;
+            scsiHostRead(&tmp, 1);
+            status = tmp;
+            dbgmsg("------ STATUS: ", tmp);
         }
     }
 
@@ -879,6 +1155,100 @@ bool scsiTestUnitReady(int target_id)
     return false;
 }
 
+bool scsiInitiatorResetBusConfig(int target_id)
+{
+    uint8_t msgOut[] = {0x80, // Identify
+        0x01, 0x03, 0x01, 0x00, 0x00, // Disable synchronous mode
+        0x01, 0x02, 0x03, 0x00  // 8-bit mode
+    };
+
+    g_initiator_state.targetBusWidth[target_id] = 0;
+
+    int status = scsiInitiatorMessage(target_id, msgOut, sizeof(msgOut), nullptr, 0, nullptr);
+    return status == 0;
+}
+
+#if !defined(PLATFORM_MAX_BUS_WIDTH) || PLATFORM_MAX_BUS_WIDTH == 0
+bool scsiInitiatorSetBusWidth(int target_id, int busWidth)
+{
+    return false;
+}
+#else
+bool scsiInitiatorSetBusWidth(int target_id, int busWidth)
+{
+    uint8_t msgOut[] = {0x80, // Identify
+        0x01, 0x02, 0x03, (uint8_t)busWidth  // Bus width
+    };
+
+    uint8_t msgIn[16] = {0};
+    size_t msgInLen = 0;
+
+    dbgmsg("---- Negotiating bus width = ", (uint8_t)busWidth);
+    int status = scsiInitiatorMessage(target_id, msgOut, sizeof(msgOut), msgIn, sizeof(msgIn), &msgInLen);
+    if (status != 0)
+    {
+        scsiInitiatorResetBusConfig(target_id);
+        return false;
+    }
+
+    // Parse response message
+    int agreedMode = -1;
+    size_t parsed = 0;
+    while (parsed < msgInLen)
+    {
+        uint8_t msgByte = msgIn[parsed++];
+        if (msgByte == 0x01)
+        {
+            // Extended message
+            uint8_t extLen = msgIn[parsed++];
+            uint8_t *extMsg = &msgIn[parsed];
+            parsed += extLen;
+
+            if (extMsg[0] == 0x03)
+            {
+                dbgmsg("-- Target bus width response: ", extMsg[1]);
+                agreedMode = extMsg[1];
+            }
+        }
+        else if ((msgByte & 0xF0) == 0x20)
+        {
+            // Two-byte message, ignore
+            parsed++;
+        }
+    }
+
+    if (agreedMode < 0)
+    {
+        logmsg("-- Target did not respond to bus width negotiation, reverting to 8-bit");
+        scsiInitiatorResetBusConfig(target_id);
+        return false;
+    }
+    else if (agreedMode == busWidth)
+    {
+        dbgmsg("-- Negotiated bus width ", 8 << busWidth, " bits, testing with Inquiry command");
+        g_initiator_state.targetBusWidth[target_id] = busWidth;
+        uint8_t inquiryData[36];
+        if (!scsiInquiry(target_id, inquiryData))
+        {
+            logmsg("-- Bus width test failed, reverting to 8-bit");
+            scsiInitiatorResetBusConfig(target_id);
+            return false;
+        }
+        else
+        {
+            logmsg("-- Successfully negotiated ", 8 << busWidth, " bit bus mode");
+            return true;
+        }
+    }
+    else
+    {
+        logmsg("-- Target refused wide bus request, reverting to 8-bit");
+        scsiInitiatorResetBusConfig(target_id);
+        return false;
+    }
+}
+#endif
+
 // This uses callbacks to run SD and SCSI transfers in parallel
 static struct {
     uint32_t bytes_sd; // Number of bytes that have been transferred on SD card side
@@ -943,7 +1313,10 @@ static void initiatorReadSDCallback(uint32_t bytes_complete)
             return;
 
         // dbgmsg("SCSI read ", (int)start, " + ", (int)len, ", sd ready cnt ", (int)sd_ready_cnt, " ", (int)bytes_complete, ", scsi done ", (int)g_initiator_transfer.bytes_scsi_done);
-        if (scsiHostRead(&scsiDev.data[start], len) != len)
+        scsiHostSetBusWidth(g_initiator_state.targetBusWidth[g_initiator_state.target_id]);
+        uint32_t rxcount = scsiHostRead(&scsiDev.data[start], len);
+        scsiHostSetBusWidth(0);
+        if (rxcount != len)
         {
             logmsg("Read failed at byte ", (int)g_initiator_transfer.bytes_scsi_done);
             g_initiator_transfer.all_ok = false;
@@ -960,9 +1333,27 @@ static void scsiInitiatorWriteDataToSd(FsFile &file, bool use_callback)
     uint32_t len = g_initiator_transfer.bytes_scsi_done - g_initiator_transfer.bytes_sd;
     if (start + len > bufsize) len = bufsize - start;
 
-    // Try to do writes in multiple of 512 bytes
-    // This allows better performance for SD card access.
-    if (len >= 512) len &= ~511;
+
+    // Try to do writes in multiples that align to both SCSI sectors and SD card sectors.
+    // SD cards use 512-byte sectors, so writes should be 512-byte aligned for performance.
+    // LCM(512, 520) = 33280 bytes = 64 SCSI sectors = 65 SD sectors.
+    uint32_t lcm_alignment = g_initiator_state.lcm_scsi_vs_sd_sectorsize;
+    uint32_t sectorsize = g_initiator_state.sectorsize;
+    if (sectorsize == SD_SECTOR_SIZE)
+    {
+        if (len >= SD_SECTOR_SIZE) {
+            len &= ~(SD_SECTOR_SIZE - 1);
+        }
+    }
+    else if (lcm_alignment > 0 && len >= lcm_alignment)
+    {
+        len -= len % lcm_alignment;
+    }
+    else if (len >= sectorsize)
+    {
+        // not enough for LCM alignment, but write complete sectors
+        len -= len % sectorsize;
+    }
 
     // Start writing to SD card and simultaneously reading more from SCSI bus
     uint8_t *buf = &scsiDev.data[start];

@@ -26,16 +26,27 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
+#include <ZuluSCSI_platform_config.h>
 #include "ZuluSCSI_platform.h"
 #include <strings.h>
 #include <minIni.h>
 #include <minIni_cache.h>
 
+#include "ui.h"
+
 // SCSI system and device settings
 ZuluSCSISettings g_scsi_settings;
 
-const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000"};
-const char *devicePresetName[] = {"", "ST32430N"};
+const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "X68000-SCSI","X68000-SASI", "DOS", "NeXT", "PC-9801-55",
+#ifdef PLATFORM_AS400
+    "AS400", "AS400_BS520", "AS400_BS522", "AS400_CISC", "AS400_PPC",
+#endif
+};
+const char *devicePresetName[] = {"", "ST32430N", 
+#ifdef PLATFORM_AS400
+    "AS400_BS520", "AS400_BS522", "AS400_CISC", "AS400_PPC",
+#endif
+};
 
 // must be in the same order as zuluscsi_speed_grade_t in ZuluSCSI_settings.h
 const char * const speed_grade_strings[] =
@@ -108,11 +119,199 @@ const char **ZuluSCSISettings::deviceInitST32430N(uint8_t scsiId)
     return st32430n;
 }
 
+#ifdef PLATFORM_AS400
+void ZuluSCSISettings::deviceInitAS400(uint8_t scsiId)
+{
+        m_sys.quirks |= S2S_CFG_QUIRKS_AS400;
+        m_sys.enableUnitAttention = true;
+}
+#endif
 
-void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type)
+scsi_device_preset_t ZuluSCSISettings::getDevicePresetFromString(const char *presetName)
+{
+    for (int i = 0; i < (int)(sizeof(devicePresetName) / sizeof(devicePresetName[0])); i++)
+    {
+        if (strequals(presetName, devicePresetName[i]))
+        {
+            return (scsi_device_preset_t)i;
+        }
+    }
+    return DEV_PRESET_UNKNOWN;
+}
+
+// Acts just like ini_getbool but logs the setting if enabled is true
+static long log_ini_getbool(const char *Section, const char *Key, int DefValue, const char *Filename, bool enabled, void (*custom_message)(const char *Key, int value) = nullptr)
+{
+    if (enabled)
+    {
+        if (ini_haskey(Section, Key, Filename))
+        {
+            int value = ini_getbool(Section, Key, DefValue, Filename);
+            if (custom_message)
+            {
+                custom_message(Key, value);
+            }
+            else
+            {
+                logmsg("---- ", Key, " = ", value == 0 ? "No": "Yes");
+            }
+            return value;
+        }
+        else
+        {
+            return DefValue;
+        }
+    }
+    return ini_getbool(Section, Key, DefValue, Filename);
+}
+
+// Acts just like ini_getl but logs the setting if enabled is true
+static long log_ini_getl(const char *Section, const char *Key, long DefValue, const char *Filename, bool enabled, void (*custom_message)(const char *Key, long value) = nullptr)
+{
+    if (enabled)
+    {
+        if (ini_haskey(Section, Key, Filename))
+        {
+            long value = ini_getl(Section, Key, DefValue, Filename);
+            if (custom_message)
+            {
+                custom_message(Key, value);
+            }
+            else
+            {
+                logmsg("---- ", Key, " = ", (int) value);
+            }
+            return value;
+        }
+        else
+        {
+            return DefValue;
+        }
+    }
+    return ini_getl(Section, Key, DefValue, Filename);
+}
+
+void log_getl_device_type(const char *Key, long value)
+{
+    logmsg("---- ", Key, " = ", (int) value, ": ",
+          value == 0 ? "Fixed"
+        : value == 1 ? "Removable"
+        : value == 2 ? "Optical"
+        : value == 3 ? "Floppy"
+        : value == 4 ? "Mag-optical"
+        : value == 5 ? "Tape"
+        : value == 6 ? "Network"
+        : value == 7 ? "Zip100"
+        : value == 8 ? "AmigaWiFi"
+        : value == 9 ? "Audio"
+        : "Unknown"
+    );
+}
+
+void log_getl_8bit_hex(const char *Key, long value)
+{
+    logmsg("---- ", Key, " = ", (uint8_t) value);
+}
+
+void log_getl_8bit_hex_with_negative(const char *Key, long value)
+{
+    if (value < 0)
+    {
+        logmsg("---- ", Key, " = ", (int) value);
+    }
+    else
+    {
+        logmsg("---- ", Key, " = ", (uint8_t) value);
+    }
+}
+
+void log_getl_quirks(const char *Key, long value)
+{
+    if (value == 0)
+    {
+        logmsg("---- ", Key, " = ", (int) value, ": Standard");
+    }
+    else
+    {
+        logmsg("---- ", Key, " = ", (int) value, ": "
+            , (value & 0x01) ? " 1-Apple"       : ""
+            , (value & 0x02) ? " 2-OMTI "       : ""
+            , (value & 0x04) ? " 4-Xebec "      : ""
+            , (value & 0x08) ? " 8-VMS "        : ""
+            , (value & 0x10) ? " 16-X68000 "    : ""
+            , (value & 0x20) ? " 32-EWSD "      : ""
+            , (value & 0x40) ? " 64-AS400 "     : ""
+        );
+    }
+}
+
+void log_getl_initiator_img_handling(const char *Key, long value)
+{
+    logmsg("---- ", Key, " = ", (int) value, ": ",
+           value == 0 ? "Skip"
+         : value == 1 ? "Increment"
+         : value == 2 ? "Overwrite"
+         : "invalid"
+         );
+}
+
+void log_getl_bus_width(const char *Key, long value)
+{
+        logmsg("---- ", Key, " = ", (int) value, ": ",
+           value == 0 ? "8-bit"
+         : value == 1 ? "16-bit"
+         : "invalid"
+         );
+}
+
+
+void log_getl_log_rotate(const char *Key, long value)
+{
+        logmsg("---- ", Key, " = ", (int) value, ": ",
+           value == 0 ? "Log rotation disabled"
+         : value == 1 ? "Rotate log to zululog_prev.txt"
+         : value == 2 ? "Save all rotations in /zuluscsi_log/"
+         : "invalid"
+         );
+}
+
+
+// Acts just like ini_gets but logs the setting if enabled is true
+static int log_ini_gets(const char *Section, const char *Key, const char *DefValue, char *Buffer, int BufferSize, const char *Filename, bool enabled, void (*custom_message)(const char *Key, char *buffer, int BufferSize) = nullptr)
+{
+    if (enabled)
+    {
+        if (ini_haskey(Section, Key, Filename))
+        {
+            int len = ini_gets(Section, Key, DefValue, Buffer, BufferSize, Filename);
+            if (custom_message)
+            {
+                custom_message(Key, Buffer, BufferSize);
+            }
+            else
+            {
+                logmsg("---- ", Key, " = ", Buffer);
+            }
+            return len;
+        }
+        else
+        {
+            strncpy(Buffer, DefValue, BufferSize);
+            return std::min<int>(BufferSize, strlen(DefValue));
+        }
+    }
+    return ini_gets(Section, Key, DefValue, Buffer, BufferSize, Filename);
+}
+
+void log_gets_password(const char *Key, char *buffer, int BufferSize)
+{
+    logmsg("---- ", Key, (BufferSize > 1 && buffer && buffer[0] != '\0' ) ? " is set" : " is empty");
+}
+
+void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type, bool log_settings)
 {
     char section[6] = "SCSI0";
-    section[4] += scsiId;
+    section[4] = scsiEncodeID(scsiId);
 
     scsi_device_settings_t &cfgDev = m_dev[scsiId];
     scsi_device_settings_t &cfgDefault = m_dev[SCSI_SETTINGS_SYS_IDX];
@@ -126,6 +325,8 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
     static const char * const driveinfo_magopt[4]    = DRIVEINFO_MAGOPT;
     static const char * const driveinfo_network[4]   = DRIVEINFO_NETWORK;
     static const char * const driveinfo_tape[4]      = DRIVEINFO_TAPE;
+    static const char * const driveinfo_amigawifi[4] = DRIVEINFO_AMIGAWIFI;
+    static const char * const driveinfo_audio[4]     = DRIVEINFO_AUDIO;
 
     static const char * const apl_driveinfo_fixed[4]     = APPLE_DRIVEINFO_FIXED;
     static const char * const apl_driveinfo_removable[4] = APPLE_DRIVEINFO_REMOVABLE;
@@ -135,51 +336,114 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
     static const char * const apl_driveinfo_network[4]   = APPLE_DRIVEINFO_NETWORK;
     static const char * const apl_driveinfo_tape[4]      = APPLE_DRIVEINFO_TAPE;
 
+#ifdef PLATFORM_AS400
+    static const char * const as400_driveinfo_dgvs09u_fixed[4] = AS400_DRIVEINFO_DGVS09U_FIXED;
+    static const char * const as400_driveinfo_optical[4] = AS400_DRIVEINFO_OPTICAL;
+#endif
+
     static const char * const iomega_driveinfo_removeable[4] = IOMEGA_DRIVEINFO_ZIP100;
     
     const char * const * driveinfo = NULL;
-    bool known_preset = false;
     scsi_system_settings_t& cfgSys = m_sys;
 
+    m_devPreset[scsiId] = getDevicePresetFromString(presetName);
 
 #ifdef ZULUSCSI_HARDWARE_CONFIG
     if (g_hw_config.is_active() && g_hw_config.device_preset() ==  DEV_PRESET_NONE)
     {
         // empty preset, use default
-        known_preset = true;
         m_devPreset[scsiId] = DEV_PRESET_NONE;
     }
     else if (g_hw_config.is_active() && g_hw_config.device_preset() ==  DEV_PRESET_ST32430N)
     {
-        driveinfo = deviceInitST32430N(scsiId);
         m_devPreset[scsiId] = DEV_PRESET_ST32430N;
-        known_preset = true;
     }
-    else
 #endif //ZULUSCSI_HARDWARE_CONFIG
-    if (strequals(devicePresetName[DEV_PRESET_NONE], presetName))
-    {
-        // empty preset, use default
-        known_preset = true;
-        m_devPreset[scsiId] = DEV_PRESET_NONE;
-    }
-    else if (strequals(devicePresetName[DEV_PRESET_ST32430N], presetName))
-    {
-        driveinfo = deviceInitST32430N(scsiId);
-        known_preset = true;
-    }
 
-    if (!known_preset)
+#ifdef PLATFORM_AS400
+    if (type == S2S_CFG_FIXED && m_devPreset[scsiId] == DEV_PRESET_NONE)
     {
-        m_devPreset[scsiId] = DEV_PRESET_NONE;
-        logmsg("Unknown Device preset name ", presetName, ", using default settings");
+        switch (m_sysPreset)
+        {
+            case SYS_PRESET_AS400:
+            // For the AS400 preset, we want to set the device preset to the block size 520
+                [[fallthrough]];
+            case SYS_PRESET_AS400_BS520: [[fallthrough]];
+            case SYS_PRESET_AS400_CISC:
+                m_devPreset[scsiId] = DEV_PRESET_AS400_CISC;
+                break;
+            case SYS_PRESET_AS400_BS522: [[fallthrough]];
+            case SYS_PRESET_AS400_PPC:
+                m_devPreset[scsiId] = DEV_PRESET_AS400_PPC;
+                break;
+            default:
+                break;  
+        }
+    }
+#endif  
+
+    cfgDev.deviceType = type;
+    cfgDev.deviceType = log_ini_getl(section, "Type", cfgDev.deviceType, CONFIGFILE, log_settings, &log_getl_device_type);
+
+    switch (m_devPreset[scsiId])
+    {
+        case DEV_PRESET_NONE:
+            // empty preset, use default
+            break;
+        case DEV_PRESET_ST32430N:
+            driveinfo = deviceInitST32430N(scsiId);
+            break;
+#ifdef PLATFORM_AS400
+        case DEV_PRESET_AS400_BS520: [[fallthrough]];
+        case DEV_PRESET_AS400_CISC:
+            deviceInitAS400(scsiId);
+            // blockSize/driveinfo below are disk-shaped defaults (520-byte
+            // CISC sectors, the DGVS09U disk identity strings) -- only
+            // meaningful for S2S_CFG_FIXED. A tape ID with this same
+            // Device= preset gets its own identity from
+            // loadAS400TapeDefaults() (custom_vendor_inquiry.cpp) instead;
+            // imposing a disk block size on it here would be wrong.
+            if (type == S2S_CFG_FIXED)
+            {
+                cfgDev.blockSize = 520;
+                driveinfo = as400_driveinfo_dgvs09u_fixed;
+            }
+            else
+            {
+                // driveinfo must never stay NULL here: it's dereferenced
+                // unconditionally below (driveinfo[0][0] etc.) regardless of
+                // preset -- that fallback only runs when m_devPreset is still
+                // DEV_PRESET_NONE, which it no longer is once this case
+                // matches. The real tape identity overwrites these strings
+                // via loadAS400TapeDefaults(), so the exact fallback content
+                // doesn't matter -- it just has to be non-null.
+                driveinfo = driveinfo_tape;
+            }
+            break;
+        case DEV_PRESET_AS400_BS522: [[fallthrough]];
+        case DEV_PRESET_AS400_PPC:
+            deviceInitAS400(scsiId);
+            if (type == S2S_CFG_FIXED)
+            {
+                cfgDev.blockSize = 522;
+                driveinfo = as400_driveinfo_dgvs09u_fixed;
+            }
+            else
+            {
+                // Same reasoning as the CISC case above: driveinfo must not
+                // stay NULL for a tape ID here.
+                driveinfo = driveinfo_tape;
+            }
+            break;
+#endif
+        default:
+            m_devPreset[scsiId] = DEV_PRESET_NONE;
+            logmsg("---- Unknown Device preset name ", presetName, ", using default settings");
+            break;
     }
 
     if (m_devPreset[scsiId] == DEV_PRESET_NONE)
     {
-        cfgDev.deviceType = type;
-        cfgDev.deviceType = ini_getl(section, "Type", cfgDev.deviceType, CONFIGFILE);
-        
         if (cfgSys.quirks == S2S_CFG_QUIRKS_APPLE)
         {
             // Use default drive IDs that are recognized by Apple machines
@@ -193,6 +457,8 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
                 case S2S_CFG_NETWORK:       driveinfo = apl_driveinfo_network; break;
                 case S2S_CFG_SEQUENTIAL:    driveinfo = apl_driveinfo_tape; break;
                 case S2S_CFG_ZIP100:        driveinfo = iomega_driveinfo_removeable; break;
+                case S2S_CFG_AMIGAWIFI:     driveinfo = driveinfo_amigawifi; break;
+                case S2S_CFG_AUDIO:         driveinfo = driveinfo_audio; break;
                 default:                    driveinfo = apl_driveinfo_fixed; break;
             }
         }
@@ -207,52 +473,39 @@ void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetNam
                 case S2S_CFG_FLOPPY_14MB:   driveinfo = driveinfo_floppy; break;
                 case S2S_CFG_MO:            driveinfo = driveinfo_magopt; break;
                 case S2S_CFG_NETWORK:       driveinfo = driveinfo_network; break;
+                case S2S_CFG_AMIGAWIFI:     driveinfo = driveinfo_amigawifi; break;
+                case S2S_CFG_AUDIO:         driveinfo = driveinfo_audio; break;
                 case S2S_CFG_SEQUENTIAL:    driveinfo = driveinfo_tape; break;
                 case S2S_CFG_ZIP100:        driveinfo = iomega_driveinfo_removeable; break;
                 default:                    driveinfo = driveinfo_fixed; break;
             }
         }
+
+        #ifdef PLATFORM_AS400
+        if ((cfgSys.quirks & S2S_CFG_QUIRKS_AS400) && type == S2S_CFG_OPTICAL)
+        {
+            driveinfo = as400_driveinfo_optical;
+        }
+        #endif
     }
 
     // If the scsi string has not been set system wide use default scsi string
-    if (!cfgDefault.vendor[0] && driveinfo[0][0])
+    // and do not set Network scsi strings to system wide ini settings
+    if ((!cfgDefault.vendor[0] || type == S2S_CFG_NETWORK) && driveinfo[0][0])
         strncpy(cfgDev.vendor, driveinfo[0], sizeof(cfgDev.vendor));
-    if (!cfgDefault.prodId[0] && driveinfo[1][0])
+    if ((!cfgDefault.prodId[0] || type == S2S_CFG_NETWORK) && driveinfo[1][0])
         strncpy(cfgDev.prodId, driveinfo[1], sizeof(cfgDev.prodId));
-    if (!cfgDefault.revision[0] && driveinfo[2][0])
+    if ((!cfgDefault.revision[0] || type == S2S_CFG_NETWORK) && driveinfo[2][0])
         strncpy(cfgDev.revision, driveinfo[2], sizeof(cfgDev.revision));
     if (!cfgDefault.serial[0] && driveinfo[3][0])
         strncpy(cfgDev.serial, driveinfo[3], sizeof(cfgDev.serial));
 }
 
 // Read device settings
-static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *section)
+static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *section, bool log_settings = false)
 {
-    cfg.deviceTypeModifier = ini_getl(section, "TypeModifier", cfg.deviceTypeModifier, CONFIGFILE);
-    cfg.sectorsPerTrack = ini_getl(section, "SectorsPerTrack", cfg.sectorsPerTrack, CONFIGFILE);
-    cfg.headsPerCylinder = ini_getl(section, "HeadsPerCylinder", cfg.headsPerCylinder, CONFIGFILE);
-    cfg.prefetchBytes = ini_getl(section, "PrefetchBytes", cfg.prefetchBytes, CONFIGFILE);
-    cfg.ejectButton = ini_getl(section, "EjectButton", cfg.ejectButton, CONFIGFILE);
-    cfg.ejectBlinkTimes = ini_getl(section, "EjectBlinkTimes", cfg.ejectBlinkTimes, CONFIGFILE);
-    cfg.ejectBlinkPeriod = ini_getl(section, "EjectBlinkPeriod", cfg.ejectBlinkPeriod, CONFIGFILE);
-
-    cfg.vol = ini_getl(section, "CDAVolume", cfg.vol, CONFIGFILE) & 0xFF;
-
-    cfg.nameFromImage = ini_getbool(section, "NameFromImage", cfg.nameFromImage, CONFIGFILE);
-    cfg.rightAlignStrings = ini_getbool(section, "RightAlignStrings", cfg.rightAlignStrings , CONFIGFILE);
-    cfg.reinsertOnInquiry = ini_getbool(section, "ReinsertCDOnInquiry", cfg.reinsertOnInquiry, CONFIGFILE);
-    cfg.reinsertAfterEject = ini_getbool(section, "ReinsertAfterEject", cfg.reinsertAfterEject, CONFIGFILE);
-    cfg.disableMacSanityCheck = ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE);
-
-    cfg.sectorSDBegin = ini_getl(section, "SectorSDBegin", cfg.sectorSDBegin, CONFIGFILE);
-    cfg.sectorSDEnd = ini_getl(section, "SectorSDEnd", cfg.sectorSDEnd, CONFIGFILE);
-
-    cfg.vendorExtensions = ini_getl(section, "VendorExtensions", cfg.vendorExtensions, CONFIGFILE);
-
-    cfg.blockSize = ini_getl(section, "BlockSize", cfg.blockSize, CONFIGFILE);
-
     char tmp[32];
-    ini_gets(section, "Vendor", "", tmp, sizeof(tmp), CONFIGFILE);
+     log_ini_gets(section, "Vendor", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     if (tmp[0])
     {
         memset(cfg.vendor, 0, sizeof(cfg.vendor));
@@ -260,7 +513,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     }
     memset(tmp, 0, sizeof(tmp));
 
-    ini_gets(section, "Product", "", tmp, sizeof(tmp), CONFIGFILE);
+     log_ini_gets(section, "Product", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     if (tmp[0])
     {
         memset(cfg.prodId, 0, sizeof(cfg.prodId));
@@ -269,7 +522,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     }
     memset(tmp, 0, sizeof(tmp));
 
-    ini_gets(section, "Version", "", tmp, sizeof(tmp), CONFIGFILE);
+     log_ini_gets(section, "Version", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     if (tmp[0])
     {
         memset(cfg.revision, 0, sizeof(cfg.revision));
@@ -277,21 +530,88 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     }
     memset(tmp, 0, sizeof(tmp));
 
-    ini_gets(section, "Serial", "", tmp, sizeof(tmp), CONFIGFILE);
+     log_ini_gets(section, "Serial", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     if (tmp[0])
     {
         memset(cfg.serial, 0, sizeof(cfg.serial));
         strncpy(cfg.serial, tmp, sizeof(cfg.serial));
     }
 
+    cfg.deviceTypeModifier = log_ini_getl(section, "TypeModifier", cfg.deviceTypeModifier, CONFIGFILE, log_settings);
+    cfg.sectorsPerTrack =  log_ini_getl(section, "SectorsPerTrack", cfg.sectorsPerTrack, CONFIGFILE, log_settings);
+    cfg.headsPerCylinder =  log_ini_getl(section, "HeadsPerCylinder", cfg.headsPerCylinder, CONFIGFILE, log_settings);
+    cfg.prefetchBytes =  log_ini_getl(section, "PrefetchBytes", cfg.prefetchBytes, CONFIGFILE, log_settings);
+    cfg.ejectButton =  log_ini_getl(section, "EjectButton", cfg.ejectButton, CONFIGFILE, log_settings);
+    cfg.ejectBlinkTimes =  log_ini_getl(section, "EjectBlinkTimes", cfg.ejectBlinkTimes, CONFIGFILE, log_settings);
+    cfg.ejectBlinkPeriod =  log_ini_getl(section, "EjectBlinkPeriod", cfg.ejectBlinkPeriod, CONFIGFILE, log_settings);
+    cfg.ejectFixedDiskEnable =  log_ini_getl(section, "EnableEjectFixedDisk", cfg.ejectFixedDiskEnable, CONFIGFILE, log_settings);
+    cfg.ejectFixedDiskReadOnly =  log_ini_getl(section, "EjectFixedDiskReadOnly", cfg.ejectFixedDiskReadOnly, CONFIGFILE, log_settings);
+    cfg.ejectFixedDiskDelay =  log_ini_getl(section, "EjectFixedDiskDelay", cfg.ejectFixedDiskDelay, CONFIGFILE, log_settings);
+
+    cfg.vol =  log_ini_getl(section, "CDAVolume", cfg.vol, CONFIGFILE, log_settings) & 0xFF;
+
+    cfg.nameFromImage =  log_ini_getbool(section, "NameFromImage", cfg.nameFromImage, CONFIGFILE, log_settings);
+    cfg.rightAlignStrings =  log_ini_getbool(section, "RightAlignStrings", cfg.rightAlignStrings , CONFIGFILE, log_settings);
+    cfg.reinsertOnInquiry =  log_ini_getbool(section, "ReinsertCDOnInquiry", cfg.reinsertOnInquiry, CONFIGFILE, log_settings);
+    cfg.reinsertAfterEject =  log_ini_getbool(section, "ReinsertAfterEject", cfg.reinsertAfterEject, CONFIGFILE, log_settings);
+    cfg.reinsertImmediately =  log_ini_getbool(section, "ReinsertImmediately", cfg.reinsertImmediately, CONFIGFILE, log_settings);
+    cfg.ejectOnStop =  log_ini_getbool(section, "EjectOnStop", cfg.ejectOnStop, CONFIGFILE, log_settings);
+    cfg.keepCurrentImageOnBusReset =  log_ini_getbool(section, "KeepCurrentImageOnBusReset", cfg.keepCurrentImageOnBusReset, CONFIGFILE, log_settings);
+    cfg.disableMacSanityCheck =  log_ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE, log_settings);
+
+    cfg.sectorSDBegin =  log_ini_getl(section, "SectorSDBegin", cfg.sectorSDBegin, CONFIGFILE, log_settings);
+    cfg.sectorSDEnd =  log_ini_getl(section, "SectorSDEnd", cfg.sectorSDEnd, CONFIGFILE, log_settings);
+
+    cfg.vendorExtensions =  log_ini_getl(section, "VendorExtensions", cfg.vendorExtensions, CONFIGFILE, log_settings);
+
+    cfg.blockSize = log_ini_getl(section, "BlockSize", cfg.blockSize, CONFIGFILE, log_settings);
+    cfg.mediumType = log_ini_getl(section, "MediumType", cfg.mediumType, CONFIGFILE, log_settings, &log_getl_8bit_hex_with_negative);
+    cfg.tapeLengthMB = log_ini_getl(section, "TapeLengthMB", cfg.tapeLengthMB, CONFIGFILE, log_settings);
+    cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings, &log_getl_8bit_hex);
+    cfg.tapeBufferedMode = log_ini_getl(section, "TapeBufferedMode", cfg.tapeBufferedMode, CONFIGFILE, log_settings, &log_getl_8bit_hex);
+
+
+#if ENABLE_COW
+    cfg.cowBitmapSize =  log_ini_getl(section, "CowBitmapSize", cfg.cowBitmapSize, CONFIGFILE, log_settings);
+    cfg.cowButton =  log_ini_getl(section, "CowButton", cfg.cowButton, CONFIGFILE, log_settings);
+    cfg.cowButtonInvert =  log_ini_getl(section, "CowButtonInvert", cfg.cowButtonInvert, CONFIGFILE, log_settings);
+#endif
+
+
+
+    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE) & ZULUSCSI_DEFAULT_LOG_MASK;
+    if (g_scsi_log_mask == 0)
+    {
+      dbgmsg("DebugLogMask set to 0x00, this will silence all debug messages when a SCSI ID has been selected");
+    }
+    else if (g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK)
+    {
+      dbgmsg("DebugLogMask set to ", (uint8_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
+    }
+
+    g_log_ignore_busy_free = ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE);
+
 }
 
-scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
+scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, bool disable_logging)
 {
     scsi_system_settings_t &cfgSys = m_sys;
     scsi_device_settings_t &cfgDev = m_dev[SCSI_SETTINGS_SYS_IDX];
     // This is a hack to figure out if apple quirks is on via a dip switch
     S2S_TargetCfg img;
+    bool log_settings = false;
+    if (!disable_logging)
+    {
+        log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
+        if (log_settings)
+        {
+            logmsg("-- [SCSI] settings in ", CONFIGFILE, ":");
+            if (presetName && presetName[0])
+            {
+                logmsg("---- System = ", presetName);
+            }
+        }
+    }
 
     img.quirks = S2S_CFG_QUIRKS_NONE;
     #ifdef PLATFORM_CONFIG_HOOK
@@ -311,8 +631,19 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgSys.enableSelLatch = false;
     cfgSys.mapLunsToIDs = false;
     cfgSys.enableParity = true;
+    cfgSys.controlBoardDisable = false;
+    cfgSys.controlBoardCache = false;
+    cfgSys.controlBoardReverseRotary = false;
+    cfgSys.controlBoardFlipDisplay = false;
+    cfgSys.controlBoardDimDisplay = false;
+    cfgSys.controlBoardScreenSaverTimeSec = 300; // 5 mins
+    cfgSys.controlBoardScreenSaverStyle = 2; // Slow Random ZuluSCSI logo. Very low load.
     cfgSys.useFATAllocSize = false;
+#ifdef ZULUSCSI_MCU_RP20XX
     cfgSys.enableCDAudio = false;
+#else
+    cfgSys.enableCDAudio = true;
+#endif
     cfgSys.maxVolume = 100;
     cfgSys.enableUSBMassStorage = false;
     cfgSys.usbMassStorageWaitPeriod = 1000;
@@ -321,7 +652,25 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
 
     cfgSys.speedGrade = zuluscsi_speed_grade_t::SPEED_GRADE_DEFAULT;
 
-    // setting set for all or specific devices
+#ifdef PLATFORM_MAX_BUS_WIDTH
+    cfgSys.maxBusWidth = PLATFORM_MAX_BUS_WIDTH;
+#else
+    cfgSys.maxBusWidth = 0;
+#endif
+
+    cfgSys.logToSDCard = true;
+
+    cfgSys.logRotate = 1;
+
+    cfgSys.initiatorParity = true;
+
+    cfgSys.wifi_keep_alive_s = WIFI_KEEPALIVE_INTERVAL;
+
+#ifdef ENABLE_COW
+    cfgSys.cowBufferSize = DEFAULT_COW_BUFFER_SIZE;
+#endif
+
+// setting set for all or specific devices
     cfgDev.deviceType = S2S_CFG_NOT_SET;
     cfgDev.deviceTypeModifier = 0;
     cfgDev.sectorsPerTrack = 0;
@@ -330,12 +679,18 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgDev.ejectButton = 0;
     cfgDev.ejectBlinkTimes = 20;
     cfgDev.ejectBlinkPeriod = 50;
+    cfgDev.ejectFixedDiskEnable = false;
+    cfgDev.ejectFixedDiskDelay = 0;
+    cfgDev.ejectFixedDiskReadOnly = false;
     cfgDev.vol = DEFAULT_VOLUME_LEVEL;
     
     cfgDev.nameFromImage = false;
     cfgDev.rightAlignStrings = false;
     cfgDev.reinsertOnInquiry = true;
     cfgDev.reinsertAfterEject = true;
+    cfgDev.reinsertImmediately = false;
+    cfgDev.ejectOnStop = false;
+    cfgDev.keepCurrentImageOnBusReset = false;
     cfgDev.disableMacSanityCheck = false;
 
     cfgDev.sectorSDBegin = 0;
@@ -344,6 +699,18 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     cfgDev.vendorExtensions = 0;
 
     cfgDev.blockSize = 0;
+
+#if ENABLE_COW
+    cfgDev.cowBitmapSize = DEFAULT_COW_BUFFER_SIZE;
+    cfgDev.cowButton = 0;
+    cfgDev.cowButtonInvert = false;
+#endif
+
+    cfgDev.mediumType = -1;
+    cfgDev.tapeLengthMB = 0; // Default tape length in MB is unlimited
+    cfgDev.tapeDensity = 0x10; // Default density: QIC-150
+    cfgDev.tapeBufferedMode = 0x00; // Write Good status only after all data has been written to tape
+
 
     // System-specific defaults
 
@@ -377,14 +744,66 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
         cfgSys.mapLunsToIDs = true;
         cfgSys.enableParity = false;
     }
-    else if (strequals(systemPresetName[SYS_PRESET_X68000], presetName))
+    else if (strequals(systemPresetName[SYS_PRESET_X68000], presetName)
+            || strequals(systemPresetName[SYS_PRESET_X68000_SCSI], presetName))
     {
-        m_sysPreset = SYS_PRESET_X68000;
+        m_sysPreset = SYS_PRESET_X68000_SCSI;
         cfgSys.selectionDelay = 0;
         cfgSys.quirks = S2S_CFG_QUIRKS_X68000;
         cfgSys.enableSCSI2 = false;
         cfgSys.maxSyncSpeed = 5;
     }
+
+    else if (strequals(systemPresetName[SYS_PRESET_X68000_SASI], presetName))
+    {
+        m_sysPreset = SYS_PRESET_X68000_SASI;
+        cfgSys.selectionDelay = 0;
+        cfgSys.quirks = S2S_CFG_QUIRKS_X68000;
+        cfgSys.enableSCSI2 = false;
+        cfgSys.enableParity = false;
+        cfgSys.maxSyncSpeed = 5;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_PC_9801_55], presetName))
+    {
+        m_sysPreset = SYS_PRESET_PC_9801_55;
+        cfgSys.quirks = S2S_CFG_QUIRKS_PC98_55;
+        cfgSys.enableSCSI2 = false;
+        cfgDev.sectorsPerTrack = 25;
+        cfgDev.headsPerCylinder = 8;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_DOS], presetName))
+    {
+        m_sysPreset = SYS_PRESET_DOS;
+        cfgSys.enableUnitAttention = true;
+        cfgDev.reinsertImmediately = true;
+        cfgDev.keepCurrentImageOnBusReset = true;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_NeXT], presetName))
+    {
+        m_sysPreset = SYS_PRESET_NeXT;
+        cfgDev.sectorsPerTrack = 139;
+        cfgDev.headsPerCylinder= 4;
+    }
+#ifdef PLATFORM_AS400
+    else if (strequals(systemPresetName[SYS_PRESET_AS400], presetName))
+    {
+        deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
+        m_sysPreset = SYS_PRESET_AS400;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS520], presetName)
+            || strequals(systemPresetName[SYS_PRESET_AS400_CISC], presetName))
+    {
+        deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
+        m_sysPreset = SYS_PRESET_AS400_CISC;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_AS400_BS522], presetName)
+            || strequals(systemPresetName[SYS_PRESET_AS400_PPC], presetName))
+    {
+
+        deviceInitAS400(SCSI_SETTINGS_SYS_IDX);
+        m_sysPreset = SYS_PRESET_AS400_PPC;
+    }
+#endif 
     else
     {
         m_sysPreset = SYS_PRESET_NONE;
@@ -397,34 +816,51 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
     memset(cfgDev.revision, 0, sizeof(cfgDev.revision));
     memset(cfgDev.serial, 0, sizeof(cfgDev.serial));
 
+    if (m_sysPreset == SYS_PRESET_PC_9801_55)
+    {
+        // The controller requires that Vendor starts with "NEC"; the
+        // remaining characters are ignored by the host
+        strncpy(cfgDev.vendor, "NECSCSI", sizeof(cfgDev.vendor));
+    }
+
+
+    
     // Read default setting overrides from ini file for each SCSI device
-    readIniSCSIDeviceSetting(cfgDev, "SCSI");
+    readIniSCSIDeviceSetting(cfgDev, "SCSI", log_settings);
 
     // Read settings from ini file that apply to all SCSI device
-    cfgSys.quirks = ini_getl("SCSI", "Quirks", cfgSys.quirks, CONFIGFILE);
-    cfgSys.selectionDelay = ini_getl("SCSI", "SelectionDelay", cfgSys.selectionDelay, CONFIGFILE);
-    cfgSys.maxSyncSpeed = ini_getl("SCSI", "MaxSyncSpeed", cfgSys.maxSyncSpeed, CONFIGFILE);
-    cfgSys.initPreDelay = ini_getl("SCSI", "InitPreDelay", cfgSys.initPreDelay, CONFIGFILE);
-    cfgSys.initPostDelay = ini_getl("SCSI", "InitPostDelay", cfgSys.initPostDelay, CONFIGFILE);
-    cfgSys.phyMode = ini_getl("SCSI", "PhyMode", cfgSys.phyMode, CONFIGFILE);
+    cfgSys.quirks = log_ini_getl("SCSI", "Quirks", cfgSys.quirks, CONFIGFILE, log_settings, log_getl_quirks);
+    cfgSys.selectionDelay = log_ini_getl("SCSI", "SelectionDelay", cfgSys.selectionDelay, CONFIGFILE, log_settings);
+    cfgSys.maxSyncSpeed = log_ini_getl("SCSI", "MaxSyncSpeed", cfgSys.maxSyncSpeed, CONFIGFILE, log_settings);
+    cfgSys.initPreDelay = log_ini_getl("SCSI", "InitPreDelay", cfgSys.initPreDelay, CONFIGFILE, log_settings);
+    cfgSys.initPostDelay = log_ini_getl("SCSI", "InitPostDelay", cfgSys.initPostDelay, CONFIGFILE, log_settings);
+    cfgSys.phyMode = log_ini_getl("SCSI", "PhyMode", cfgSys.phyMode, CONFIGFILE, log_settings);
 
-    cfgSys.enableUnitAttention = ini_getbool("SCSI", "EnableUnitAttention", cfgSys.enableUnitAttention, CONFIGFILE);
-    cfgSys.enableSCSI2 = ini_getbool("SCSI", "EnableSCSI2", cfgSys.enableSCSI2, CONFIGFILE);
-    cfgSys.enableSelLatch = ini_getbool("SCSI", "EnableSelLatch", cfgSys.enableSelLatch, CONFIGFILE);
-    cfgSys.mapLunsToIDs = ini_getbool("SCSI", "MapLunsToIDs", cfgSys.mapLunsToIDs, CONFIGFILE);
-    cfgSys.enableParity =  ini_getbool("SCSI", "EnableParity", cfgSys.enableParity, CONFIGFILE);
-    cfgSys.useFATAllocSize = ini_getbool("SCSI", "UseFATAllocSize", cfgSys.useFATAllocSize, CONFIGFILE);
-    cfgSys.enableCDAudio = ini_getbool("SCSI", "EnableCDAudio", cfgSys.enableCDAudio, CONFIGFILE);
-    cfgSys.maxVolume =  ini_getl("SCSI", "MaxVolume", cfgSys.maxVolume, CONFIGFILE);
+    cfgSys.enableUnitAttention = log_ini_getbool("SCSI", "EnableUnitAttention", cfgSys.enableUnitAttention, CONFIGFILE, log_settings);
+    cfgSys.enableSCSI2 = log_ini_getbool("SCSI", "EnableSCSI2", cfgSys.enableSCSI2, CONFIGFILE, log_settings);
+    cfgSys.enableSelLatch = log_ini_getbool("SCSI", "EnableSelLatch", cfgSys.enableSelLatch, CONFIGFILE, log_settings);
+    cfgSys.mapLunsToIDs = log_ini_getbool("SCSI", "MapLunsToIDs", cfgSys.mapLunsToIDs, CONFIGFILE, log_settings);
+    cfgSys.enableParity =  log_ini_getbool("SCSI", "EnableParity", cfgSys.enableParity, CONFIGFILE, log_settings);
+    cfgSys.controlBoardDisable =  log_ini_getbool("SCSI", "ControlBoardDisable", cfgSys.controlBoardDisable, CONFIGFILE, log_settings);
+    cfgSys.controlBoardCache =  log_ini_getbool("SCSI", "ControlBoardCache", cfgSys.controlBoardCache, CONFIGFILE, log_settings);
+    cfgSys.controlBoardReverseRotary =  log_ini_getbool("SCSI", "ControlBoardReverseRotary", cfgSys.controlBoardReverseRotary, CONFIGFILE, log_settings);
+    cfgSys.controlBoardFlipDisplay =  log_ini_getbool("SCSI", "ControlBoardFlipDisplay", cfgSys.controlBoardFlipDisplay, CONFIGFILE, log_settings);
+    cfgSys.controlBoardDimDisplay =  log_ini_getbool("SCSI", "ControlBoardDimDisplay", cfgSys.controlBoardDimDisplay, CONFIGFILE, log_settings);
+    cfgSys.controlBoardScreenSaverTimeSec =  log_ini_getl("SCSI", "ControlBoardScreenSaverTimeSec", cfgSys.controlBoardScreenSaverTimeSec, CONFIGFILE, log_settings);
+    cfgSys.controlBoardScreenSaverStyle =  log_ini_getl("SCSI", "ControlBoardScreenSaverStyle", cfgSys.controlBoardScreenSaverStyle, CONFIGFILE, log_settings);   
 
-    cfgSys.enableUSBMassStorage = ini_getbool("SCSI", "EnableUSBMassStorage", cfgSys.enableUSBMassStorage, CONFIGFILE);
-    cfgSys.usbMassStorageWaitPeriod = ini_getl("SCSI", "USBMassStorageWaitPeriod", cfgSys.usbMassStorageWaitPeriod, CONFIGFILE);
-    cfgSys.usbMassStoragePresentImages = ini_getbool("SCSI", "USBMassStoragePresentImages", cfgSys.usbMassStoragePresentImages, CONFIGFILE);
+    cfgSys.useFATAllocSize = log_ini_getbool("SCSI", "UseFATAllocSize", cfgSys.useFATAllocSize, CONFIGFILE, log_settings);
+    cfgSys.enableCDAudio = log_ini_getbool("SCSI", "EnableCDAudio", cfgSys.enableCDAudio, CONFIGFILE, log_settings);
+    cfgSys.maxVolume =  log_ini_getl("SCSI", "MaxVolume", cfgSys.maxVolume, CONFIGFILE, log_settings);
 
-    cfgSys.invertStatusLed = ini_getbool("SCSI", "InvertStatusLED", cfgSys.invertStatusLed, CONFIGFILE);
-    
-    char tmp[32];
-    ini_gets("SCSI", "SpeedGrade", "", tmp, sizeof(tmp), CONFIGFILE);
+    cfgSys.enableUSBMassStorage = log_ini_getbool("SCSI", "EnableUSBMassStorage", cfgSys.enableUSBMassStorage, CONFIGFILE, log_settings);
+    cfgSys.usbMassStorageWaitPeriod = log_ini_getl("SCSI", "USBMassStorageWaitPeriod", cfgSys.usbMassStorageWaitPeriod, CONFIGFILE, log_settings);
+    cfgSys.usbMassStoragePresentImages = log_ini_getbool("SCSI", "USBMassStoragePresentImages", cfgSys.usbMassStoragePresentImages, CONFIGFILE, log_settings);
+
+    cfgSys.invertStatusLed = log_ini_getbool("SCSI", "InvertStatusLED", cfgSys.invertStatusLed, CONFIGFILE, log_settings);
+
+    char tmp[64];
+    log_ini_gets("SCSI", "SpeedGrade", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     if (tmp[0] != '\0')
     {
         if (platform_reclock_supported())
@@ -437,15 +873,48 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName)
         }
     }
 
+    cfgSys.maxBusWidth = log_ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE, log_settings, log_getl_bus_width);
+    cfgSys.logToSDCard = log_ini_getbool("SCSI", "LogToSDCard", cfgSys.logToSDCard, CONFIGFILE, log_settings);
+    cfgSys.logRotate = log_ini_getl("SCSI", "LogRotate", cfgSys.logRotate, CONFIGFILE, log_settings, log_getl_log_rotate);
+    
+    cfgSys.wifi_keep_alive_s = log_ini_getl("SCSI", "WiFiKeepAliveSecs", cfgSys.wifi_keep_alive_s, CONFIGFILE, log_settings);
+
+    cfgSys.initiatorParity = log_ini_getbool("SCSI", "InitiatorParity", cfgSys.initiatorParity, CONFIGFILE, log_settings);
+
+#if ENABLE_COW
+    cfgSys.cowBufferSize = log_ini_getl("SCSI", "CowBufferSize", cfgSys.cowBufferSize, CONFIGFILE, log_settings);
+#endif
+
+// Setting not stored m_sys or m_dev but should be printed out
+    log_ini_getbool("SCSI", "Debug", 0, CONFIGFILE, log_settings);
+    log_ini_getl("SCSI", "DebugLogMask", 0xFF, CONFIGFILE, log_settings, &log_getl_8bit_hex);
+    log_ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE, log_settings);
+    log_ini_getbool("SCSI", "DisableStatusLED", false, CONFIGFILE, log_settings);
+
+    log_ini_getl("SCSI", "InitiatorImageHandling", 0, CONFIGFILE, log_settings, &log_getl_initiator_img_handling);
+    log_ini_getl("SCSI", "InitiatorID", 7, CONFIGFILE, log_settings);
+    log_ini_getl("SCSI", "InitiatorMaxRetry", 5, CONFIGFILE, log_settings);
+    log_ini_getbool("SCSI", "InitiatorMSC", false, CONFIGFILE, log_settings);
+    log_ini_getl("SCSI", "InitiatorMSCInitDelay", 0, CONFIGFILE, log_settings);
+    log_ini_getl("SCSI", "InitiatorBusWidth", PLATFORM_MAX_BUS_WIDTH, CONFIGFILE, log_settings, &log_getl_bus_width);
+    log_ini_getbool("SCSI", "InitiatorUseRead10", false, CONFIGFILE, log_settings);
+
+    log_ini_gets("SCSI", "WiFiMACAddress", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
+    log_ini_gets("SCSI", "WiFiSSID", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
+    log_ini_gets("SCSI", "WiFiPassword", "", tmp, sizeof(tmp), CONFIGFILE, log_settings, &log_gets_password);
+
+    log_ini_getbool("SCSI", "DisableROMDrive", 0, CONFIGFILE, log_settings);
+    log_ini_getl("SCSI", "ROMDriveSCSIID", -1, CONFIGFILE, log_settings);
     return &cfgSys;
 }
 
-scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYPE type)
+scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYPE type, bool disable_logging)
 {
     scsi_device_settings_t& cfg = m_dev[scsiId];
     char presetName[32] = {};
     char section[6] = "SCSI0";
-    section[4] = '0' + scsiId;
+    section[4] = scsiEncodeID(scsiId);
+    bool log_settings = false; 
 
 #ifdef ZULUSCSI_HARDWARE_CONFIG
     const char *hwDevicePresetName = g_scsi_settings.getDevicePresetName(scsiId);
@@ -459,14 +928,22 @@ scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYP
     else
 #endif
     {
-        ini_gets(section, "Device", "", presetName, sizeof(presetName), CONFIGFILE);
+        if (!disable_logging)
+        {
+            log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
+            if (log_settings)
+            {
+                logmsg("-- [", section,"] settings in ", CONFIGFILE,":");
+            }
+        }
+        log_ini_gets(section, "Device", "", presetName, sizeof(presetName), CONFIGFILE, log_settings);
     }
 
 
     // Write default configuration from system setting initialization
     memcpy(&cfg, &m_dev[SCSI_SETTINGS_SYS_IDX], sizeof(cfg));
-    setDefaultDriveInfo(scsiId, presetName, type);
-    readIniSCSIDeviceSetting(cfg, section);
+    setDefaultDriveInfo(scsiId, presetName, type, log_settings);
+    readIniSCSIDeviceSetting(cfg, section, log_settings);
 
     if (cfg.serial[0] == '\0')
     {
@@ -496,6 +973,24 @@ scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYP
     formatDriveInfoField(cfg.revision, sizeof(cfg.revision), cfg.rightAlignStrings);
     formatDriveInfoField(cfg.serial, sizeof(cfg.serial), true);
 
+    return &cfg;
+}
+
+scsi_device_settings_t* ZuluSCSISettings::applyDynamicSectionOverrides(uint8_t scsiId, bool disable_logging)
+{
+    scsi_device_settings_t& cfg = m_dev[scsiId];
+    bool log_settings = false;
+    if (!disable_logging)
+    {
+        log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
+        if (log_settings)
+            logmsg("-- [" DYNAMIC_SCSI_INI_SECTION "] settings in ", CONFIGFILE, ":");
+    }
+    readIniSCSIDeviceSetting(cfg, DYNAMIC_SCSI_INI_SECTION, log_settings);
+    formatDriveInfoField(cfg.vendor, sizeof(cfg.vendor), cfg.rightAlignStrings);
+    formatDriveInfoField(cfg.prodId, sizeof(cfg.prodId), cfg.rightAlignStrings);
+    formatDriveInfoField(cfg.revision, sizeof(cfg.revision), cfg.rightAlignStrings);
+    formatDriveInfoField(cfg.serial, sizeof(cfg.serial), true);
     return &cfg;
 }
 
@@ -565,7 +1060,8 @@ const bool ZuluSCSISettings::isEjectButtonSet()
     bool is_set = false;
     for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
-        if (m_dev[i].ejectButton != 0)
+        if (
+            (m_dev[i].ejectButton & EJECT_BTN_MASK) != 0)
         {
             is_set = true;
             break;

@@ -61,7 +61,7 @@ static struct {
     uint32_t sectorsize;
     uint32_t sectorcount;
     bool use_read10; // Always use read10/write10 commands for this target
-} g_msc_initiator_targets[NUM_SCSIID];
+} g_msc_initiator_targets[S2S_MAX_TARGETS];
 static int g_msc_initiator_target_count;
 
 // Prefetch next sector in main loop while USB is transferring previous one.
@@ -95,7 +95,7 @@ static void scan_targets()
     int initiator_id = scsiInitiatorGetOwnID();
     uint8_t inquiry_data[36] = {0};
     g_msc_initiator_target_count = 0;
-    for (int target_id = 0; target_id < NUM_SCSIID; target_id++)
+    for (int target_id = 0; target_id < S2S_MAX_TARGETS; target_id++)
     {
         if (target_id == initiator_id) continue;
 
@@ -153,6 +153,7 @@ bool setup_msc_initiator()
     logmsg("SCSI Initiator: activating USB MSC mode");
     g_msc_initiator = true;
 
+
     if (!ini_getbool("SCSI", "InitiatorMSCDisablePrefetch", false, CONFIGFILE))
     {
         // We can use the device mode buffer for prefetching data in initiator mode
@@ -169,7 +170,7 @@ bool setup_msc_initiator()
     }
 
     scsiInitiatorInit();
-
+    platform_led_breath(true, 600);
     // Scan for targets
     scan_targets();
 

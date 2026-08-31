@@ -19,6 +19,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
+#include "ui.h"
+
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI_log.h"
 #include <SdFat.h>
@@ -32,6 +34,7 @@
 #include <hardware/clocks.h>
 #include <hardware/spi.h>
 #include <hardware/adc.h>
+#include <hardware/pwm.h>
 #include <hardware/flash.h>
 #include <hardware/structs/xip_ctrl.h>
 #include <hardware/structs/usb.h>
@@ -39,6 +42,15 @@
 #include "scsi_accel_target.h"
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
+#include "ZuluSCSI_usb_console_media.h"
+#ifdef ZULUCONTROL_FIRMWARE 
+#include <ZuluSCSI_WebUI.h>
+#include <ZuluSCSI_WebUI_I2CServer.h>
+#endif
+
+#ifdef ZULUSCSI_MCU_RP23XX
+# include <hardware/structs/scb.h>
+#endif
 
 #ifdef SD_USE_RP2350_SDIO
 #include <sdio_rp2350.h>
@@ -48,7 +60,7 @@
 
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
 # include <SerialUSB.h>
-# include <class/cdc/cdc_device.h>
+# include <USB.h>
 #endif
 
 #include <pico/multicore.h>
@@ -73,16 +85,69 @@ extern "C" {
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
 
 extern bool g_rawdrive_active;
+extern bool g_log_to_sd;
+uint32_t g_i2c_bus_speed = 0;
 
 extern "C" {
 #include "timings_RP2MCU.h"
+extern bool g_rebooting;
+static bool g_uf2_mode = false;
 const char *g_platform_name = PLATFORM_NAME;
-static bool g_scsi_initiator = false;
+bool g_scsi_initiator = false;
 static uint32_t g_flash_chip_size = 0;
 static bool g_uart_initialized = false;
 static bool g_led_blinking = false;
+static bool g_led_state = false;
+static uint8_t g_console_buttons = 0;
+static uint8_t g_enabled_eject_buttons = 0;
+static uint8_t g_enabled_cow_buttons = 0;
+static uint8_t g_cow_button_state = 0;
+bool g_log_lock = false;
+bool g_i2c_claimed = false;
+#ifdef ZULUSCSI_WIDE
+static bool g_is_sca = false;
+#endif
 
-static void usb_log_poll();
+static struct {
+    uint32_t slice;
+    uint32_t chan;
+    uint16_t level_off;
+    uint16_t breath_level;
+    bool breathing;
+    uint32_t period;
+} g_led_pwm = {0};
+
+typedef enum
+{
+    USB_INPUT_NONE,
+    USB_INPUT_EXIT_MSC,
+    USB_INPUT_REBOOT_MSC,
+    USB_INPUT_REBOOT_IMAGES_MSC,
+    USB_INPUT_REBOOT_UF2,
+    USB_INPUT_REBOOT,
+    USB_INPUT_TOGGLE_DEBUG,
+    USB_INPUT_LOG_TO_SD,
+    USB_INPUT_BUTTON_1,
+    USB_INPUT_BUTTON_2,
+    USB_INPUT_BUTTON_3,
+    USB_INPUT_BUTTON_4,
+    USB_INPUT_MEDIA_SUBMENU
+}
+usb_input_type_t;
+
+typedef enum 
+{
+    MENU_CONTEXT_TARGET_MAIN,
+    MENU_CONTEXT_TARGET_MSC
+}
+menu_context_t;
+
+static int32_t usb_log_poll();
+
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+#include <compact_ed25519.h>
+static void platform_auth_check();
+#endif
 
 /***************/
 /* GPIO init   */
@@ -99,6 +164,14 @@ static void gpio_conf(uint gpio, gpio_function_t fn, bool pullup, bool pulldown,
     if (fast_slew)
     {
         pads_bank0_hw->io[gpio] |= PADS_BANK0_GPIO0_SLEWFAST_BITS;
+
+#ifdef FAST_IO_DRIVE_STRENGTH
+        gpio_set_drive_strength(gpio, FAST_IO_DRIVE_STRENGTH);
+#endif
+
+#ifdef FAST_IO_DRIVE_STRENGTH
+        gpio_set_drive_strength(gpio, FAST_IO_DRIVE_STRENGTH);
+#endif
     }
 }
 
@@ -193,15 +266,23 @@ bool platform_reclock(zuluscsi_speed_grade_t speed_grade)
     return do_reclock;
 }
 
-bool platform_rebooted_into_mass_storage()
+// reads the mode from the scratch0 location and then clears it, keeping the set value for later calls 
+mass_storage_mode platform_rebooted_into_mass_storage()
 {
+    static mass_storage_mode mode = MASS_STORAGE_MODE_NONE;
+    if (mode != MASS_STORAGE_MODE_NONE)
+        return mode;
     volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
-    if (*scratch0 == REBOOT_INTO_MASS_STORAGE_MAGIC_NUM)
+    if ((*scratch0 & REBOOT_PURPOSE_MASK) == REBOOT_INTO_MASS_STORAGE_MAGIC_NUM)
     {
-        *scratch0 = 0;
-        return true;
+        mode = MASS_STORAGE_MODE_SD;
     }
-    return false;
+    else if ((*scratch0 & REBOOT_PURPOSE_MASK) == REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM)
+    {
+        mode = MASS_STORAGE_MODE_IMAGES;
+    }   
+    *scratch0 = 0;
+    return mode;
 }
 
 #ifdef HAS_DIP_SWITCHES
@@ -247,10 +328,99 @@ static pin_setup_state_t read_setup_ack_pin()
 }
 #endif
 
+// Allows execution on Core1 via function pointers. Each function can take
+// no parameters and should return nothing, operating via side-effects only.
+mutex g_core1_mutex;
+__attribute__((section(".time_critical.core1_handler")))
+static void core1_handler() {
+#ifdef ZULUSCSI_MCU_RP23XX
+    // Set stack overflow limit for the second core, with space reserved for exception entry
+    extern uint32_t __StackOneBottom; // From rp23xx-template.ld
+    __asm__("msr msplim, %0": : "r"((uint32_t)&__StackOneBottom + 32) : "memory");
+#endif
+    while (1) {
+        void (*function)() = (void (*)()) multicore_fifo_pop_blocking();
+
+        mutex_enter_blocking(&g_core1_mutex);
+        (*function)();
+        mutex_exit(&g_core1_mutex);
+    }
+}
+
+#ifdef ZULUSCSI_MCU_RP23XX
+static void __no_inline_not_in_flash_func(set_flash_clock)()
+{
+    // Ensure that high performance 4-bit flash mode is used for code fetches.
+    // This is normally the default but if coming through rom_chain_image() the
+    // flash may be in 1-bit mode after flash_do_cmd() call.
+    // See https://github.com/raspberrypi/pico-bootrom-rp2350/issues/10
+    //
+    // Flash clock divider 3 gives 50 MHz clock for 150 MHz, and 83 for 250 MHz.
+    // The W25Q16JV maximum is 133 MHz.
+    //
+    // In practice most of the code is in cache or RAM, so the performance effect
+    // of higher clocks is not huge.
+    uint32_t saved_interrupts = save_and_disable_interrupts();
+    rom_flash_exit_xip();
+    rom_flash_select_xip_read_mode(BOOTROM_XIP_MODE_EBH_QUAD, 3);
+    restore_interrupts(saved_interrupts);
+}
+#endif
+
+#ifdef ZULUSCSI_BLASTER
+static int platform_get_led_pin()
+{
+    // Workaround for LED pin connection issue on PCB revision 2026c.
+    // The normal LED pin GPIO33 is shorted to GND, and LED is connected to GPIO5 instead.
+    // Use a short pulse at low drive strength to detect the misconnection.
+    // GPIO pull-up itself is too weak to overcome 74LVTH125 hold current.
+
+    int led_pin = LED_PIN;
+    gpio_put(led_pin, false);
+    gpio_set_function(led_pin, GPIO_FUNC_SIO);
+    gpio_set_pulls(led_pin, true, false);
+    gpio_set_drive_strength(led_pin, GPIO_DRIVE_STRENGTH_2MA);
+    gpio_set_dir(led_pin, true);
+
+    gpio_put(led_pin, true);
+    delayMicroseconds(10);
+    bool state = gpio_get(led_pin);
+    gpio_put(led_pin, false);
+
+    if (state)
+    {
+        // Normal LED pin works
+        gpio_set_drive_strength(led_pin, GPIO_DRIVE_STRENGTH_8MA);
+        return led_pin;
+    }
+    else
+    {
+        // Normal LED pin is shorted to GND
+        // Use alternate LED pin, disable main pin
+        gpio_set_dir(led_pin, false);
+        gpio_set_oeover(led_pin, GPIO_OVERRIDE_LOW);
+
+        gpio_set_drive_strength(LED_PIN_ALTERNATE, GPIO_DRIVE_STRENGTH_8MA);
+        return LED_PIN_ALTERNATE;
+    }
+}
+#else
+static int platform_get_led_pin()
+{
+    return LED_PIN;
+}
+#endif
+
 void platform_init()
 {
     // Make sure second core is stopped
     multicore_reset_core1();
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    // Set stack overflow limit, with space reserved for exception entry
+    extern uint32_t __StackBottom; // From rp23xx-template.ld
+    __asm__("msr msplim, %0": : "r"((uint32_t)&__StackBottom + 32) : "memory");
+#endif
 
     pio_clear_instruction_memory(pio0);
     pio_clear_instruction_memory(pio1);
@@ -258,18 +428,54 @@ void platform_init()
     /* First configure the pins that affect external buffer directions.
      * RP2040 defaults to pulldowns, while these pins have external pull-ups.
      */
-    //        pin             function       pup   pdown  out    state fast
-    gpio_conf(SCSI_DATA_DIR,  GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_RST,   GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_BSY,   GPIO_FUNC_SIO, false,false, true,  true, true);
-    gpio_conf(SCSI_OUT_SEL,   GPIO_FUNC_SIO, false,false, true,  true, true);
+#ifdef SCSI_DATA_DIR_ACTIVE_HIGH
+    bool data_dir_state = false;
+#else
+    bool data_dir_state = true;
+#endif
+
+#if defined(ZULUSCSI_WIDE) && defined(GPIO_SCA_TEST)
+    gpio_conf(GPIO_SCA_TEST, GPIO_FUNC_SIO, false, false, false, false, false);
+    g_is_sca = !gpio_get(GPIO_SCA_TEST);
+
+#endif
+
+    //        pin             function       pup   pdown  out   state           fast
+    gpio_conf(SCSI_DATA_DIR,  GPIO_FUNC_SIO, false,false, true, data_dir_state, true);
+    gpio_conf(SCSI_OUT_RST,   GPIO_FUNC_SIO, false,false, true, true,           true);
+    gpio_conf(SCSI_OUT_BSY,   GPIO_FUNC_SIO, false,false, true, true,           true);
+    gpio_conf(SCSI_OUT_SEL,   GPIO_FUNC_SIO, false,false, true, true,           true);
 
     /* Check dip switch settings */
 #ifdef HAS_DIP_SWITCHES
     gpio_conf(DIP_INITIATOR,  GPIO_FUNC_SIO, false, false, false, false, false);
     gpio_conf(DIP_DBGLOG,     GPIO_FUNC_SIO, false, false, false, false, false);
     gpio_conf(DIP_TERM,       GPIO_FUNC_SIO, false, false, false, false, false);
-    delay(10); // 10 ms delay to let pull-ups do their work
+
+#if defined(ZULUSCSI_BLASTER) 
+    gpio_conf(GPIO_INT,       GPIO_FUNC_SIO, true,  false, false, false, false);
+#endif
+    
+#ifdef ZULUSCSI_MCU_RP23XX
+    /* RP2350-E9 errata workaround for excessive input pin leakage */
+    gpio_set_input_enabled(DIP_INITIATOR, false);
+    gpio_set_input_enabled(DIP_DBGLOG, false);
+    gpio_set_input_enabled(DIP_TERM, false);
+
+#if defined(ZULUSCSI_BLASTER) 
+    gpio_set_input_enabled(GPIO_INT, false);
+#endif
+
+    delay(10);
+    gpio_set_input_enabled(DIP_INITIATOR, true);
+    gpio_set_input_enabled(DIP_DBGLOG, true);
+    gpio_set_input_enabled(DIP_TERM, true);
+
+#if defined(ZULUSCSI_BLASTER) 
+    gpio_set_input_enabled(GPIO_INT, true);
+#endif
+#endif
+
     bool working_dip = true;
     bool dbglog = false;
     bool termination = false;
@@ -284,7 +490,7 @@ void platform_init()
         termination = !gpio_get(DIP_TERM);
 
     }
-# elif defined(ZULUSCSI_V2_0)
+# elif defined(ZULUSCSI_RP2040)
     pin_setup_state_t dip_state = read_setup_ack_pin();
     if (dip_state == SETUP_UNDETERMINED)
     {
@@ -354,10 +560,14 @@ void platform_init()
     logmsg ("SCSI termination is handled by a hardware jumper");
 #endif  // HAS_DIP_SWITCHES
 
-        logmsg("===========================================================");
-        logmsg(" Powered by Raspberry Pi");
-        logmsg("            Raspberry Pi is a trademark of Raspberry Pi Ltd");
-        logmsg("===========================================================");
+    /* Note: the below notice and attribution is required to be preserved and displayed by
+     * copies of this software, in accordance to section 7b of GPLv3 license.
+     */
+    logmsg("=========================================================================");
+    logmsg(" Powered by Raspberry Pi(R), a trademark of Raspberry Pi Ltd");
+    logmsg(" ZuluSCSI RPi platform support is developed by Rabbit Hole Computing");
+    logmsg(" and provided to you under GNU General Public License version 3.");
+    logmsg("=========================================================================");
 
     // Get flash chip size
     uint8_t cmd_read_jedec_id[4] = {0x9f, 0, 0, 0};
@@ -367,6 +577,10 @@ void platform_init()
     restore_interrupts(saved_irq);
     g_flash_chip_size = (1 << response_jedec[3]);
     logmsg("Flash chip size: ", (int)(g_flash_chip_size / 1024), " kB");
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    set_flash_clock();
+#endif
 
     // SD card pins
     // Card is used in SDIO mode for main program, and in SPI mode for crash handler & bootloader.
@@ -379,25 +593,34 @@ void platform_init()
     gpio_conf(SDIO_D2,        GPIO_FUNC_SIO, true, false, false, true, true);
 
     // LED pin
-    gpio_conf(LED_PIN,        GPIO_FUNC_SIO, false,false, true,  false, false);
+    int led_pin = platform_get_led_pin();
+    gpio_conf(led_pin,        GPIO_FUNC_PWM, false,false, true,  false, false);
+    g_led_pwm.slice = pwm_gpio_to_slice_num(led_pin);
+    g_led_pwm.chan = pwm_gpio_to_channel(led_pin);
+    pwm_config led_pwm_config = pwm_get_default_config();
+    pwm_config_set_wrap(&led_pwm_config, PLATFORM_LED_PWM_WRAP);
+    pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, g_led_pwm.level_off);
+    pwm_init(g_led_pwm.slice, &led_pwm_config, true);
 
-#ifndef ENABLE_AUDIO_OUTPUT_SPDIF
 #ifdef GPIO_I2C_SDA
     // I2C pins
     //        pin             function       pup   pdown  out    state fast
     gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_I2C, true,false, false,  true, true);
     gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_I2C, true,false, false,  true, true);
 #endif  // GPIO_I2C_SDA
-#else
-    //        pin             function       pup   pdown  out    state fast
-    gpio_conf(GPIO_EXP_AUDIO, GPIO_FUNC_SPI, true,false, false,  true, true);
-    gpio_conf(GPIO_EXP_SPARE, GPIO_FUNC_SIO, true,false, false,  true, false);
-    // configuration of corresponding SPI unit occurs in audio_setup()
-#endif  // ENABLE_AUDIO_OUTPUT_SPDIF
 
 #ifdef GPIO_USB_POWER
     gpio_conf(GPIO_USB_POWER, GPIO_FUNC_SIO, false, false, false,  false, false);
 #endif
+
+#ifdef GPIO_EJECT_BTN
+# ifdef GPIO_EJECT_BTN_INTERNAL_PULL_UP
+    gpio_conf(GPIO_EJECT_BTN, GPIO_FUNC_SIO,  true,false, false,  false, false);
+# else
+    gpio_conf(GPIO_EJECT_BTN, GPIO_FUNC_SIO, false,false, false,  false, false);
+# endif
+#endif
+
 
 }
 
@@ -407,9 +630,10 @@ void platform_late_init()
 #if defined(HAS_DIP_SWITCHES) && defined(PLATFORM_HAS_INITIATOR_MODE)
     if (g_scsi_initiator == true)
     {
-        logmsg("***************************************************************************");
-        logmsg("        SCSI initiator mode enabled, expecting SCSI disks on the bus       ");
-        logmsg("***************************************************************************");
+        logmsg("*************************************************************************");
+        logmsg("     SCSI initiator mode enabled, expecting SCSI disks on the bus        ");
+        logmsg("*************************************************************************");
+        g_led_pwm.level_off = PLATFORM_LED_PWM_WRAP / PLATFORM_LED_PWM_INITIATOR_DIV;
     }
     else
     {
@@ -437,6 +661,26 @@ void platform_late_init()
     gpio_conf(SCSI_IO_DB7,    GPIO_FUNC_SIO, true, false, false, true, true);
     gpio_conf(SCSI_IO_DBP,    GPIO_FUNC_SIO, true, false, false, true, true);
 
+#ifdef SCSI_IO_DB8
+    gpio_conf(SCSI_IO_DB8,    GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB9,    GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB10,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB11,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB12,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB13,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB14,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DB15,   GPIO_FUNC_SIO, true, false, false, true, true);
+    gpio_conf(SCSI_IO_DBP1,   GPIO_FUNC_SIO, true, false, false, true, true);
+#endif
+
+    dbgmsg("Starting Core1 dispatcher");
+    mutex_init(&g_core1_mutex);
+    multicore_launch_core1(core1_handler);
+
+    initUIDisplay();
+#ifdef ZULUCONTROL_FIRMWARE
+    webuiI2CDetectClient();
+#endif
     if (!g_scsi_initiator)
     {
         // Act as SCSI device / target
@@ -468,6 +712,28 @@ void platform_late_init()
         gpio_conf(SCSI_IN_ATN,    GPIO_FUNC_SIO, true, false, false, true, false);
         gpio_conf(SCSI_IN_RST,    GPIO_FUNC_SIO, true, false, false, true, false);
 
+#if defined(ZULUSCSI_WIDE)
+    logmsg("Reclock Wide based boards to standardized speed");
+    platform_reclock(SPEED_GRADE_BASE_155MHZ);
+#elif defined(ZULUSCSI_BLASTER)
+    logmsg("Reclock Blaster based boards to standardized speed");
+    platform_reclock(SPEED_GRADE_BASE_155MHZ);
+#elif defined(ZULUSCSI_PICO_2)
+    logmsg("Reclock Pico 2/2W based boards to standardized speed");
+    platform_reclock(SPEED_GRADE_BASE_155MHZ);
+#elif defined(ZULUSCSI_MCU_RP20XX)
+    logmsg("Reclock RP2040 & Pico 1/1W based boards to standardized speed");
+    platform_reclock(SPEED_GRADE_BASE_203MHZ);
+#endif
+
+#ifdef ENABLE_AUDIO_OUTPUT_I2S
+    if (!g_scsi_initiator)
+    {
+        logmsg("ZuluSCSI CD Audio enabled - requires DAC");
+        audio_setup();
+    }
+#endif
+
 #ifdef ZULUSCSI_RM2
     uint rm2_pins[CYW43_PIN_INDEX_WL_COUNT] = {0};
     rm2_pins[CYW43_PIN_INDEX_WL_REG_ON] = GPIO_RM2_ON;
@@ -477,45 +743,23 @@ void platform_late_init()
     rm2_pins[CYW43_PIN_INDEX_WL_CLOCK] = GPIO_RM2_CLK;
     rm2_pins[CYW43_PIN_INDEX_WL_CS] = GPIO_RM2_CS;
     assert(PICO_OK == cyw43_set_pins_wl(rm2_pins));
-    if (platform_reclock(SPEED_GRADE_WIFI_RM2))
+    
+    // The iface check turns on the LED on the RM2 early in the init process
+    // Should tell the user that the RM2 is working
+    if(platform_network_iface_check())
     {
-        // The iface check turns on the LED on the RM2 early in the init process
-        // Should tell the user that the RM2 is working
-        if(platform_network_iface_check())
-        {
-            logmsg("RM2 found");
-        }
-        else
-        {
-# ifdef ZULUSCSI_BLASTER
+        logmsg("RM2 found");
+    }
+    else
+    {
+#  if ZULUSCSI_BLASTER
             logmsg("RM2 not found, upclocking");
-            platform_reclock(SPEED_GRADE_AUDIO_I2S);
-# else
+            platform_reclock(SPEED_GRADE_BASE_203MHZ);
+#  else
             logmsg("RM2 not found");
-# endif
-        }
+#  endif
     }
-    else
-    {
-        logmsg("WiFi RM2 timings not found");
-    }
-#elif defined(ENABLE_AUDIO_OUTPUT_I2S)
-    logmsg("I2S audio to expansion header enabled");
-    if (!platform_reclock(SPEED_GRADE_AUDIO_I2S))
-    {
-        logmsg("Audio output timings not found");
-    }
-#elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-    logmsg("S/PDIF audio to expansion header enabled");
-    if (platform_reclock(SPEED_GRADE_AUDIO_SPDIF))
-    {
-        logmsg("Reclocked for Audio Ouput at ", (int) platform_sys_clock_in_hz(), "Hz");
-    }
-    else
-    {
-        logmsg("Audio Output timings not found");
-    }
-#endif // ENABLE_AUDIO_OUTPUT_SPDIF
+#endif 
 
 // This should turn on the LED for Pico 1/2 W devices early in the init process
 // It should help indicate to the user that interface is working and the board is ready for DaynaPORT
@@ -523,11 +767,6 @@ void platform_late_init()
     platform_network_iface_check();
 #endif
 
-
-#ifdef ENABLE_AUDIO_OUTPUT
-        // one-time control setup for DMA channels and second core
-        audio_setup();
-#endif // ENABLE_AUDIO_OUTPUT_SPDIF
     }
     else
     {
@@ -551,13 +790,39 @@ void platform_late_init()
 #endif  // PLATFORM_HAS_INITIATOR_MODE
     }
 
+// Restore COW state after reboot
+    volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+    volatile uint32_t* scratch1 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH1_OFFSET);
+    if (*scratch0 & REBOOT_ENABLE_COW_BIT)
+    {
+        g_cow_button_state = REBOOT_COW_BUTTON_STATE_MASK & *scratch1;
+    }
+
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
     Serial.begin();
 #endif
     scsi_accel_rp2040_init();
+
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+    multicore_fifo_push_blocking((uintptr_t) &platform_auth_check);
+#endif
 }
 
-void platform_post_sd_card_init() {}
+void platform_post_sd_card_init() 
+{
+#if defined(ENABLE_AUDIO_OUTPUT)
+    if (!g_scsi_initiator)
+    {
+# ifdef ENABLE_AUDIO_OUTPUT_I2S
+        audio_reclock();
+# elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+        // one-time control setup for DMA channels and second core
+        audio_setup();
+# endif
+    }
+#endif // ENABLE_AUDIO_OUTPUT
+
+}
 
 bool platform_is_initiator_mode_enabled()
 {
@@ -568,9 +833,11 @@ void platform_write_led(bool state)
 {
     if (g_led_blinking) return;
 
+    g_led_state = state;
+
     if (g_scsi_settings.getSystem()->invertStatusLed)
         state = !state;
-    gpio_put(LED_PIN, state);
+    pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, state ? PLATFORM_LED_PWM_WRAP : g_led_pwm.level_off);
 }
 
 void platform_set_blink_status(bool status)
@@ -580,16 +847,24 @@ void platform_set_blink_status(bool status)
 
 void platform_write_led_override(bool state)
 {
+    g_led_state = state;
     if (g_scsi_settings.getSystem()->invertStatusLed)
         state = !state;
-    gpio_put(LED_PIN, state);
+    pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, state ? PLATFORM_LED_PWM_WRAP : g_led_pwm.level_off);
 
+}
+
+void platform_led_breath(bool breath, uint32_t period_ms)
+{
+    g_led_pwm.period = period_ms == 0 ? PLATFORM_LED_PWM_BREATH_PERIOD_MS : period_ms;
+    g_led_pwm.breathing = breath;
 }
 
 void platform_disable_led(void)
 {
     //        pin      function       pup   pdown  out    state fast
-    gpio_conf(LED_PIN, GPIO_FUNC_SIO, false,false, false, false, false);
+    int led_pin = platform_get_led_pin();
+    gpio_conf(led_pin, GPIO_FUNC_SIO, false,false, false, false, false);
     logmsg("Disabling status LED");
 }
 
@@ -605,10 +880,10 @@ uint8_t platform_no_sd_card_on_init_error_code()
 extern SdFs SD;
 extern uint32_t __StackTop;
 
-void platform_emergency_log_save()
+bool platform_emergency_log_save()
 {
     if (g_rawdrive_active)
-        return;
+        return false;
     platform_set_sd_callback(NULL, NULL);
     SD.begin(SD_CONFIG_CRASH);
     FsFile crashfile = SD.open(CRASHFILE, O_WRONLY | O_CREAT | O_TRUNC);
@@ -622,19 +897,44 @@ void platform_emergency_log_save()
         crashfile = SD.open(CRASHFILE, O_WRONLY | O_CREAT | O_TRUNC);
     }
 
-    uint32_t startpos = 0;
-    crashfile.write(log_get_buffer(&startpos));
-    crashfile.write(log_get_buffer(&startpos));
-    crashfile.flush();
-    crashfile.close();
+    if (crashfile.isOpen())
+    {
+        uint32_t startpos = 0;
+        crashfile.write(log_get_buffer(&startpos));
+        crashfile.write(log_get_buffer(&startpos));
+        crashfile.flush();
+        crashfile.close();
+        return true;
+    }
+    return false;
 }
 
 
-static void usb_log_poll();
+static int32_t usb_log_poll();
 static void usb_input_poll();
+static usb_input_type_t serial_menu(menu_context_t context);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+static const char *cfsr_desc(uint32_t cfsr)
+{
+    if (cfsr & 0x000000FF) return "MemManage";
+    if (cfsr & 0x0000FF00) return "BusFault";
+    if (cfsr & 0x00010000) return "UndefInstr";
+    if (cfsr & 0x00100000) return "StackOverflow";
+    if (cfsr & 0x01000000) return "Unaligned";
+    if (cfsr & 0x02000000) return "DivByZero";
+    if (cfsr) return "Fault";
+    return "No fault";
+}
+#endif
 
 __attribute__((noinline))
+#ifdef ZULUSCSI_MCU_RP20XX
 void show_hardfault(uint32_t *sp)
+#elif defined(ZULUSCSI_MCU_RP23XX)
+void show_hardfault(uint32_t *sp, uint32_t r4, uint32_t r5, uint32_t r6,
+    uint32_t r7, uint32_t r8, uint32_t r9, uint32_t r10, uint32_t r11)
+#endif
 {
     uint32_t pc = sp[6];
     uint32_t lr = sp[5];
@@ -645,6 +945,11 @@ void show_hardfault(uint32_t *sp)
     logmsg("FW Version: ", g_log_firmwareversion);
     logmsg("scsiDev.cdb: ", bytearray(scsiDev.cdb, 12));
     logmsg("scsiDev.phase: ", (int)scsiDev.phase);
+#ifdef ZULUSCSI_MCU_RP23XX
+    logmsg("CFSR: ", (uint32_t)scb_hw->cfsr, " ", cfsr_desc(scb_hw->cfsr));
+    logmsg("BFAR: ", (uint32_t)scb_hw->bfar, (scb_hw->cfsr & (1 << 15)) ? " valid" : " not valid");
+    logmsg("MMFAR: ", (uint32_t)scb_hw->mmfar, (scb_hw->cfsr & (1 << 7)) ? " valid" : " not valid");
+#endif
     logmsg("SP: ", (uint32_t)sp);
     logmsg("PC: ", pc);
     logmsg("LR: ", lr);
@@ -652,7 +957,17 @@ void show_hardfault(uint32_t *sp)
     logmsg("R1: ", sp[1]);
     logmsg("R2: ", sp[2]);
     logmsg("R3: ", sp[3]);
-
+#ifdef ZULUSCSI_MCU_RP23XX
+    logmsg("R4: ", r4);
+    logmsg("R5: ", r5);
+    logmsg("R6: ", r6);
+    logmsg("R7: ", r7);
+    logmsg("R8: ", r8);
+    logmsg("R9: ", r9);
+    logmsg("R10: ", r10);
+    logmsg("R11: ", r11);
+    logmsg("R12: ", sp[4]);
+#endif
     uint32_t *p = (uint32_t*)((uint32_t)sp & ~3);
 
     for (int i = 0; i < 8; i++)
@@ -663,10 +978,15 @@ void show_hardfault(uint32_t *sp)
         p += 4;
     }
 
-    platform_emergency_log_save();
+    bool log_saved = platform_emergency_log_save();
 
     while (1)
     {
+        if (!log_saved)
+        {
+            log_saved = platform_emergency_log_save();
+        }
+
         usb_log_poll();
         // Flash the crash address on the LED
         // Short pulse means 0, long pulse means 1
@@ -689,9 +1009,24 @@ void show_hardfault(uint32_t *sp)
 __attribute__((naked, interrupt))
 void isr_hardfault(void)
 {
+#ifdef ZULUSCSI_MCU_RP20XX
     // Copies stack pointer into first argument
     asm("mrs r0, msp\n"
         "bl show_hardfault": : : "r0");
+#elif defined(ZULUSCSI_MCU_RP23XX)
+    // Copies stack pointer and R4..R7 into function arguments
+    // Copies stack pointer and R4..R11 into function arguments
+    // Reuses stack from beginning in case we have overflowed it (we don't need to return)
+    extern uint32_t __StackTop; // From rp2350.ld
+    register uint32_t stacktop asm("r1") = (uint32_t)&__StackTop;
+    asm("mrs r0, msp\n"
+        "msr msp, %0\n"
+        "mov r1, r4\n"
+        "mov r2, r5\n"
+        "mov r3, r6\n"
+        "stmdb sp!, {r7, r8, r9, r10, r11}\n"
+        "bl show_hardfault": : "r"(stacktop) : "r0");
+#endif
 }
 
 
@@ -721,6 +1056,22 @@ static bool usb_serial_connected()
     return connected;
 }
 
+bool platform_serial_connected()
+{
+    return usb_serial_connected();
+}
+
+uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
+{
+    if (len > 0 && usb_serial_connected() && Serial.availableForWrite())
+    {
+        if (len > CFG_TUD_CDC_EP_BUFSIZE) len = CFG_TUD_CDC_EP_BUFSIZE;
+        return Serial.write(data, len);
+    }
+    return 0;
+}
+
+
 // Send log data to USB UART if USB is connected.
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.
@@ -730,91 +1081,60 @@ static bool usb_serial_connected()
 // also starts calling this after 2 seconds.
 // This ensures that log messages get passed even if code hangs,
 // but does not unnecessarily delay normal execution.
-static void usb_log_poll()
+static int32_t usb_log_poll()
 {
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
     static uint32_t logpos = 0;
 
-    if (!usb_serial_connected()) return;
+    if (!usb_serial_connected()) return -1;
 
 #ifdef PLATFORM_MASS_STORAGE
-    if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
+    if (platform_msc_lock_get()) return -1; // Avoid re-entrant USB events
 #endif
 
+    if (g_log_lock)
+        return -1;
+
+    // Retrieve pointer to log start and determine number of bytes available.
+    uint32_t available = 0;
+    const char *data = log_get_buffer(&logpos, &available);
+    if (available == 0) return 0;
+
+    // Limit to CDC packet size
+    uint32_t len = available;
+    if (len > CFG_TUD_CDC_EP_BUFSIZE) len = CFG_TUD_CDC_EP_BUFSIZE;
+
+    // If the USB CDC buffer is full this may write nothing at all
+    uint32_t actual = 0;
     if (Serial.availableForWrite())
     {
-        // Retrieve pointer to log start and determine number of bytes available.
-        uint32_t available = 0;
-        const char *data = log_get_buffer(&logpos, &available);
-                // Limit to CDC packet size
-        uint32_t len = available;
-        if (len == 0) return;
-        if (len > CFG_TUD_CDC_EP_BUFSIZE) len = CFG_TUD_CDC_EP_BUFSIZE;
-
-        // Update log position by the actual number of bytes sent
-        // If USB CDC buffer is full, this may be 0
-        uint32_t actual = 0;
         actual = Serial.write(data, len);
-        logpos -= available - actual;
     }
 
+    // Rewind the read position by the number of bytes that were not sent,
+    // so that they are retried on the next poll instead of being dropped.
+    logpos -= available - actual;
+    return available - actual;
+#else
+    return -1;
 #endif // PIO_FRAMEWORK_ARDUINO_NO_USB
+}
+
+void platform_flush_usb_log()
+{
+    uint32_t flush_start = millis();
+    while (usb_log_poll() > 0 && (uint32_t)(millis() - flush_start) < 250)
+    {
+        platform_reset_watchdog();
+    }
 }
 
 // Grab input from USB Serial terminal
 static void usb_input_poll()
 {
-#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
-
-    if (!usb_serial_connected()) return;
-
-#ifdef PLATFORM_MASS_STORAGE
-    if (platform_msc_lock_get()) return; // Avoid re-entrant USB events
-#endif
-
-    // Caputure reboot key sequence
-    static bool mass_storage_reboot_keyed = false;
-    static bool basic_reboot_keyed = false;
-    volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
-    int32_t available = Serial.available();
-    if(available > 0)
-    {
-        int32_t read = Serial.read();
-        switch((char) read)
-        {
-            case 'R':
-            case 'r':
-                basic_reboot_keyed = true;
-                mass_storage_reboot_keyed = false;
-                logmsg("Basic reboot requested, press 'y' to engage or any key to clear");
-                break;
-            case 'M':
-            case 'm':
-                mass_storage_reboot_keyed = true;
-                basic_reboot_keyed = false;
-                logmsg("Boot into mass storage requested, press 'y' to engage or any key to clear");
-                *scratch0 = REBOOT_INTO_MASS_STORAGE_MAGIC_NUM;
-                break;
-            case 'Y':
-            case 'y':
-                if (basic_reboot_keyed || mass_storage_reboot_keyed)
-                {
-                    logmsg("Rebooting", mass_storage_reboot_keyed ? " into mass storage": "");
-                    watchdog_reboot(0, 0, 2000);
-                }
-                break;
-            case '\n':
-                break;
-
-            default:
-                if (basic_reboot_keyed || mass_storage_reboot_keyed)
-                    logmsg("Cleared reboot setting");
-                mass_storage_reboot_keyed = false;
-                basic_reboot_keyed = false;
-        }
-    }
-#endif // PIO_FRAMEWORK_ARDUINO_NO_USB
+    serial_menu(MENU_CONTEXT_TARGET_MAIN);
 }
+
 // Use ADC to implement supply voltage monitoring for the +3.0V rail.
 // This works by sampling the temperature sensor channel, which has
 // a voltage of 0.7 V, allowing to calculate the VDD voltage.
@@ -823,13 +1143,14 @@ static void adc_poll()
 #if PLATFORM_VDD_WARNING_LIMIT_mV > 0
     static bool initialized = false;
     static int lowest_vdd_seen = PLATFORM_VDD_WARNING_LIMIT_mV;
+    static uint32_t pending_warning_time = 0;
 
     if (!initialized)
     {
         adc_init();
         adc_set_temp_sensor_enabled(true);
         adc_set_clkdiv(65535); // Lowest samplerate, about 2 kHz
-#ifdef ZULUSCSI_BLASTER
+#if defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
         adc_select_input(8);
 #else
         adc_select_input(4);
@@ -864,20 +1185,141 @@ static void adc_poll()
     const int limit = (700 * 4096) / PLATFORM_VDD_WARNING_LIMIT_mV;
     if (adc_value_max > limit)
     {
-        // Warn once, and then again if we detect even a lower drop.
+        // Keep track of the lowest Vdd, but log only after a delay.
+        // This avoids spurious warnings on power-off.
         int vdd_mV = (700 * 4096) / adc_value_max;
-        if (vdd_mV < lowest_vdd_seen)
+        if (vdd_mV < lowest_vdd_seen - 50)
         {
-            logmsg("WARNING: Detected supply voltage drop to ", vdd_mV, "mV. Verify power supply is adequate.");
-            lowest_vdd_seen = vdd_mV - 50; // Small hysteresis to avoid excessive warnings
+            pending_warning_time = millis();
+            lowest_vdd_seen = vdd_mV;
         }
+    }
+
+    if (pending_warning_time > 0 && (uint32_t)(millis() - pending_warning_time) > PLATFORM_VDD_WARNING_DELAY_ms)
+    {
+        logmsg("WARNING: Detected supply voltage drop to ", lowest_vdd_seen, "mV. Verify power supply is adequate.");
+        pending_warning_time = 0;
     }
 #endif // PLATFORM_VDD_WARNING_LIMIT_mV > 0
 }
 
+static void led_pwm_breath_poll()
+{
+    if (!g_led_pwm.breathing) return;
+
+    // The pwm level when it reaches half way of the total breath period
+    const uint32_t breath_level_mark = PLATFORM_LED_PWM_WRAP / PLATFORM_LED_PWM_BREATH_DIV;
+    const int32_t increment_diff = (int32_t)g_led_pwm.level_off - breath_level_mark;
+
+    // The period between pwm level changes
+    const uint32_t increment_period =  g_led_pwm.period / 2 / abs(increment_diff);
+
+    static uint32_t tick = 0;
+    static uint32_t start_time = millis();
+    if ((uint32_t)(millis() - start_time) > increment_period)
+    {
+        start_time = millis();
+
+        if (tick == 0)
+        {
+            g_led_pwm.breath_level = g_led_pwm.level_off;
+        }
+        else if (tick < g_led_pwm.period / 2)
+        {
+            g_led_pwm.breath_level = g_led_pwm.level_off - ((int32_t)tick * increment_diff / (g_led_pwm.period / 2));
+
+        }
+        else if(tick == g_led_pwm.period / 2)
+        {
+            g_led_pwm.breath_level = breath_level_mark;
+        }
+        else
+        {
+            g_led_pwm.breath_level = breath_level_mark + ((int32_t)(tick - g_led_pwm.period / 2) * increment_diff / (g_led_pwm.period / 2));
+
+        }
+        // only set the led level if the LED is in the off state
+        if (g_led_state == false)
+        {
+            // trim g_led_pwm.breath_level
+            if (breath_level_mark > g_led_pwm.level_off)
+            {
+                if (g_led_pwm.breath_level < g_led_pwm.level_off)
+                    g_led_pwm.breath_level = g_led_pwm.level_off;
+                else if (g_led_pwm.breath_level > breath_level_mark )
+                    g_led_pwm.breath_level = breath_level_mark;
+            }
+            else
+            {
+                if (g_led_pwm.breath_level < breath_level_mark)
+                    g_led_pwm.breath_level = breath_level_mark;
+                else if (g_led_pwm.breath_level > g_led_pwm.level_off)
+                    g_led_pwm.breath_level = g_led_pwm.level_off;
+            }
+            pwm_set_chan_level(g_led_pwm.slice, g_led_pwm.chan, g_led_pwm.breath_level);
+
+        }
+        
+        if (tick < g_led_pwm.period)
+            tick++;
+        else
+            tick = 0;
+    }
+}
+
+#ifdef G_LOGGER
+
+bool firstLog = true;
+
+extern "C" void WriteGLog(const char *str)
+{
+    FsFile fileHandle;
+    FsVolume *vol = SD.vol();
+    char p[64];
+    strcpy(p, "glog_run.txt");
+
+    if (SD.exists(p) && firstLog)
+    {
+        firstLog = false;
+        SD.remove(p);
+    }
+    if (SD.exists(p))
+    {
+        fileHandle= vol->open(p, O_RDWR | O_APPEND | O_AT_END);
+    }
+    else
+    {
+        fileHandle= vol->open(p, O_WRONLY | O_CREAT);
+    }
+
+    fileHandle.write(str, strlen(str));
+    fileHandle.flush();
+    fileHandle.close();
+
+    strcpy(p, "glog_all.txt");
+
+    if (SD.exists(p))
+    {
+        fileHandle= vol->open(p, O_RDWR | O_APPEND | O_AT_END);
+    }
+    else
+    {
+        fileHandle= vol->open(p, O_WRONLY | O_CREAT);
+    }
+
+    fileHandle.write(str, strlen(str));
+    fileHandle.flush();
+    fileHandle.close();
+}
+#endif
+
 // This function is called for every log message.
 void platform_log(const char *s)
 {
+#ifdef G_LOGGER
+    WriteGLog(s);
+#endif
+
     if (g_uart_initialized)
     {
         uart_puts(uart0, s);
@@ -1001,29 +1443,102 @@ void platform_poll()
     usb_input_poll();
     usb_log_poll();
     adc_poll();
+    led_pwm_breath_poll();
 
 #if defined(ENABLE_AUDIO_OUTPUT_SPDIF) || defined(ENABLE_AUDIO_OUTPUT_I2S)
-    audio_poll();
+    if (!g_scsi_initiator)
+    {
+        audio_poll();
+    }
 #endif // ENABLE_AUDIO_OUTPUT_SPDIF
+
+#ifdef PLATFORM_HAS_SNIFFER
+    // This does nothing if the sniffer is not enabled
+    platform_sniffer_poll();
+#endif
+
+#ifdef ZULUCONTROL_FIRMWARE
+    if (scsiDev.phase == BUS_FREE)
+        zuluWebUITask();
+#endif
 }
 
-void platform_reset_mcu()
+void platform_reset_mcu(uint32_t reset_in_ms)
 {
-    watchdog_reboot(0, 0, 2000);
+    if (g_uf2_mode)
+        reset_usb_boot(0, 0);
+    else
+        watchdog_reboot(0, 0, reset_in_ms);
 }
+
+const uint8_t* platform_get_8byte_mcu_id()
+{
+    static uint8_t mcu_id[8] = {0};
+    static bool filled = false;
+    if (!filled)
+    {
+        pico_unique_board_id_t board_id;
+        pico_get_unique_board_id(&board_id);
+        memcpy(mcu_id, board_id.id, sizeof(mcu_id));
+        filled = true;
+    }
+    return mcu_id;
+}
+
+#if defined(ENABLE_AUDIO_OUTPUT_SPDIF) || defined(GPIO_I2C_SDA)
+static void
+platform_init_buttons()
+{
+    static bool init_buttons = false;
+
+    if (!init_buttons) {
+        // SDA = button 1, SCL = button 2
+        init_buttons = true;
+        //        pin             function       pup   pdown  out    state  fast
+        gpio_conf(GPIO_I2C_SDA,   GPIO_FUNC_SIO, true, false, false, false, false);
+        gpio_conf(GPIO_I2C_SCL,   GPIO_FUNC_SIO, true, false, false, false, false);
+    }
+}
+#endif
 
 uint8_t platform_get_buttons()
 {
     uint8_t buttons = 0;
 
 #if defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-    // pulled to VCC via resistor, sinking when pressed
-    if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+    if (g_scsi_settings.getSystem()->enableCDAudio)
+    {   // pulled to VCC via resistor, sinking when pressed
+        if (!gpio_get(GPIO_EXP_SPARE)) buttons |= 1;
+    }
+    else if (!g_i2c_claimed)
+    {
+        platform_init_buttons();
+        // SDA = button 1, SCL = button 2
+        if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
+        if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
+    }
+#elif defined(ZULUSCSI_WIDE) && defined(GPIO_EJECT_BTN)
+    // EJECT_BTN = 1
+    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 1;
 #elif defined(GPIO_I2C_SDA)
-    // SDA = button 1, SCL = button 2
-    if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
-    if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
+    if (!g_i2c_claimed)
+    {
+        platform_init_buttons();
+        // SDA = button 1, SCL = button 2
+        if (!gpio_get(GPIO_I2C_SDA)) buttons |= 1;
+        if (!gpio_get(GPIO_I2C_SCL)) buttons |= 2;
+    }
+#  ifdef GPIO_EJECT_BTN
+    // EJECT_BTN = 4
+    if (!gpio_get(GPIO_EJECT_BTN)) buttons |= 4;
+#  endif
 #endif // defined(ENABLE_AUDIO_OUTPUT_SPDIF)
+    // Virtual buttons from console
+    if (g_console_buttons != 0)
+    {
+        buttons |= g_console_buttons;
+        g_console_buttons = 0;
+    }
 
     // Simple debouncing logic: handle button releases after 100 ms delay.
     static uint32_t debounce;
@@ -1042,10 +1557,43 @@ uint8_t platform_get_buttons()
     return buttons_debounced;
 }
 
-bool platform_has_phy_eject_button()
+uint8_t platform_phy_eject_button()
 {
-    return false;
+#ifdef GPIO_EJECT_BTN
+#  ifdef ZULUSCSI_BLASTER
+    return 3;
+#  else
+    return 1;
+#  endif
+#else
+    return 0;
+#endif
 }
+
+void platform_set_eject_button(uint8_t eject_button)
+{
+    if (eject_button == 0) return;
+    uint8_t eject_btn_bit = 1 << (eject_button - 1);
+    g_enabled_eject_buttons |= eject_btn_bit;
+}
+
+void platform_set_cow_button(uint8_t cow_button)
+{
+    g_enabled_cow_buttons |= cow_button & ((EJECT_BTN_MASK << 1) | 1);
+}
+
+uint8_t platform_get_cow_buttons_override()
+{
+    return g_cow_button_state;
+}
+
+
+#if defined(ZULUSCSI_WIDE) && defined(DYNAMIC_SCSI_ID)
+bool platform_is_sca()
+{
+    return g_is_sca;
+}
+#endif
 
 /************************************/
 /* ROM drive in extra flash space   */
@@ -1107,14 +1655,80 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
     assert(start < platform_get_romdrive_maxsize());
     assert((count % PLATFORM_ROMDRIVE_PAGE_SIZE) == 0);
 
+    // XIP is disabled during flashing so interrupts and
+    // core1 handlers must be blocked.
+    mutex_enter_blocking(&g_core1_mutex);
     uint32_t saved_irq = save_and_disable_interrupts();
+
     flash_range_erase(start + ROMDRIVE_OFFSET, count);
     flash_range_program(start + ROMDRIVE_OFFSET, data, count);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    set_flash_clock();
+#endif
+
     restore_interrupts(saved_irq);
+    mutex_exit(&g_core1_mutex);
     return true;
 }
 
 #endif // PLATFORM_HAS_ROM_DRIVE
+
+#ifdef PLATFORM_AUTH_CHECK_ENABLE
+
+/*************************************************/
+/* Public key check to distinguish 1st party devices */
+/*************************************************/
+
+static uint32_t adler32(const uint8_t *buf, size_t len)
+{
+    uint32_t s1 = 1, s2 = 0;
+    for (size_t n = 0; n < len; n++) {
+       s1 = (s1 + buf[n]) % 65521;
+       s2 = (s2 + s1) % 65521;
+    }
+    return (s2 << 16) | s1;
+}
+
+static void format_hexstring(const uint8_t *buf, size_t len, char *dest, size_t destlen)
+{
+    assert(destlen >= len * 2 + 1);
+    const char *nibble = "0123456789ABCDEF";
+    for (size_t i = 0; i < len; i++)
+    {
+        dest[i * 2] = nibble[buf[i] >> 4];
+        dest[i * 2 + 1] = nibble[buf[i] & 0x0F];
+    }
+    dest[len * 2] = '\0';
+}
+
+static void platform_auth_check()
+{
+    const uint8_t *randid = PLATFORM_AUTH_CHECK_RANDID_ADDR;
+    const uint8_t *signature = PLATFORM_AUTH_CHECK_SIGNATURE_ADDR;
+    const uint8_t pubkey[] = PLATFORM_AUTH_CHECK_PUBKEY;
+    if (compact_ed25519_verify(signature, pubkey, randid, PLATFORM_AUTH_CHECK_RANDID_SIZE))
+    {
+        // Signature is valid, print it in log to permit offline validation
+        char serial[33];
+        char sighashstr[9];
+        uint32_t sighash = __builtin_bswap32(adler32(signature, ED25519_SIGNATURE_SIZE));
+        format_hexstring(randid, PLATFORM_AUTH_CHECK_RANDID_SIZE, serial, sizeof(serial));
+        format_hexstring((uint8_t*)&sighash, 4, sighashstr, sizeof(sighashstr));
+        logmsg("Running on genuine ", g_platform_name);
+        logmsg("Signature: ", serial, " ", sighashstr);
+    }
+    else
+    {
+        logmsg("Hardware not produced by Rabbit Hole Computing or its associates");
+        logmsg("Hardware support provided on a best-effort basis only");
+        logmsg("Please support the open-source ZuluSCSI Firmware project! See https://github.com/ZuluSCSI");
+    }
+}
+
+#endif
+
+#ifndef RP2MCU_USE_CPU_PARITY
 
 /**********************************************/
 /* Mapping from data bytes to GPIO BOP values */
@@ -1222,7 +1836,324 @@ const uint16_t g_scsi_parity_check_lookup[512] __attribute__((aligned(1024), sec
 
 #undef X
 
+#endif
+
+#ifdef PLATFORM_MASS_STORAGE
+static inline uint32_t get_cow_enabled_bit()
+{
+    return g_cow_button_state ? REBOOT_ENABLE_COW_BIT : 0;
+}
+static usb_input_type_t serial_menu(menu_context_t context)
+{
+#ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+
+    if (!usb_serial_connected()) return USB_INPUT_NONE;
+
+    if (platform_msc_lock_get()) return USB_INPUT_NONE; // Avoid re-entrant USB events
+
+    // Capture reboot key sequence
+    static usb_input_type_t input_type = USB_INPUT_NONE;
+    
+    volatile uint32_t* scratch0 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH0_OFFSET);
+    volatile uint32_t* scratch1 = (uint32_t *)(WATCHDOG_BASE + WATCHDOG_SCRATCH1_OFFSET);
+    
+    int32_t available = Serial.available();
+    bool yes_keyed = false;
+    bool match_keyed = true;
+    bool ignore_key = false;
+    if(available > 0)
+    {
+        int32_t read = Serial.read();
+
+        // Route to the media submenu while it is active
+        if (serialMediaMenuActive())
+        {
+            serialMediaMenuProcess((char)read);
+            return USB_INPUT_NONE;
+        }
+
+        switch((char) read)
+        {
+            case 'X':
+            case 'x':
+                if (context ==  MENU_CONTEXT_TARGET_MSC)
+                    input_type = USB_INPUT_EXIT_MSC;
+                else
+                    ignore_key = true;
+                break;
+            case 'R':
+            case 'r':
+                input_type = USB_INPUT_REBOOT;
+                break;
+            case 'S':
+            case 's':
+                input_type = USB_INPUT_REBOOT_MSC;
+                break;
+            case 'I':
+            case 'i':
+                input_type = USB_INPUT_REBOOT_IMAGES_MSC;
+                break;
+            case 'U':
+            case 'u':
+                input_type = USB_INPUT_REBOOT_UF2;
+                break;
+            case 'D':
+            case 'd':
+                input_type = USB_INPUT_TOGGLE_DEBUG;
+                break;
+            case 'L':
+            case 'l':
+                input_type = USB_INPUT_LOG_TO_SD;
+                break;
+            case '1':
+                if (g_enabled_eject_buttons & 1 || g_enabled_cow_buttons & 1)
+                    input_type = USB_INPUT_BUTTON_1;
+                else
+                    ignore_key = true;
+                break;
+            case '2':
+                if (g_enabled_eject_buttons & 2 || g_enabled_cow_buttons & 2)
+                    input_type = USB_INPUT_BUTTON_2;
+                else
+                    ignore_key = true;
+                break;
+                break;
+            case '3':
+                if (g_enabled_eject_buttons & 4 || g_enabled_cow_buttons & 4)
+                    input_type = USB_INPUT_BUTTON_3;
+                else
+                    ignore_key = true;
+                break;
+            case '4':
+                if (g_enabled_eject_buttons & 8 || g_enabled_cow_buttons & 8)
+                    input_type = USB_INPUT_BUTTON_4;
+                else
+                    ignore_key = true;
+                break;
+            case 'M':
+            case 'm':
+                input_type = USB_INPUT_MEDIA_SUBMENU;
+                break;
+            case 'Y':
+            case 'y':
+                yes_keyed = true;
+                break;
+            case '\n':
+                ignore_key = true;
+                break;
+            default:
+                match_keyed = false;
+        }
+        if (ignore_key)
+            return USB_INPUT_NONE;
+
+        if (!match_keyed)
+        {
+            input_type = USB_INPUT_NONE;
+            *scratch0 = 0;
+            logmsg(
+                "\r\n"                
+                "  Available ZuluSCSI (",g_log_short_firmwareversion,") Console Commands:\r\n"
+                "  ===================================================\r\n"
+                , context == MENU_CONTEXT_TARGET_MSC ?
+                "    'x' - exit from mass storage mode, eject USB drive(s)\r\n" : 
+                ""
+                ,
+                "    'r' - reboot device normally\r\n"
+                "    's' - reboot with SD card as USB drive\r\n"
+                "    'i' - reboot with images presented as USB drives\r\n"
+                "    'u' - reboot into the UF2 bootloader\r\n"
+                "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
+                "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
+                (g_enabled_eject_buttons & 1)   ? "    '1' - push function button 1 (eject, switch image)\r\n" : "",
+                (g_enabled_cow_buttons & 1)     ? "    '1' - push function button 1 (cow init, currently " : "", (g_enabled_cow_buttons & 1) ? ((g_cow_button_state & 1) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (g_enabled_eject_buttons & 2)   ? "    '2' - push function button 2 (eject, switch image)\r\n" : "",
+                (g_enabled_cow_buttons & 2)     ? "    '2' - push function button 2 (cow init, currently ": "",  (g_enabled_cow_buttons & 2) ? ((g_cow_button_state & 2) ? "enabled)\r\n)\r\n" : "disabled)\r\n") : "",
+                (g_enabled_eject_buttons & 4)   ? "    '3' - push function button 3 (eject, switch image)\r\n" : "",
+                (g_enabled_cow_buttons & 4)     ? "    '3' - push function button 3 (cow init, currently ": "", (g_enabled_cow_buttons & 4) ? ((g_cow_button_state & 4) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (g_enabled_eject_buttons & 8)   ? "    '4' - push function button 4 (eject, switch image)\r\n" : "",
+                (g_enabled_cow_buttons & 8)     ? "    '4' - push function button 4 (cow init, currently ": "", (g_enabled_cow_buttons & 8) ? ((g_cow_button_state & 8) ? "enabled)\r\n" : "disabled)\r\n") : "",
+
+                "    'm' - media management (image select, eject, insert)\r\n"
+                "  press 'y' after a command to confirm and execute"
+            );
+        }
+        else if (yes_keyed)
+        {
+            *scratch0 = 0;
+            switch (input_type)
+            {
+                case USB_INPUT_REBOOT:
+                    logmsg("Rebooting");
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_REBOOT_MSC:
+                    logmsg("Rebooting and exposing SD card as a USB drive");
+                    *scratch0 = REBOOT_INTO_MASS_STORAGE_MAGIC_NUM;
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_REBOOT_IMAGES_MSC:
+                    logmsg("Rebooting and exposing image files as USB drives");
+                    *scratch0 = REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM;
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_REBOOT_UF2:
+                    logmsg("Rebooting into UF2 mode");
+                    g_uf2_mode = true;
+                    g_rebooting = true;
+                    break;
+                case USB_INPUT_TOGGLE_DEBUG:
+                    g_log_debug = !g_log_debug;
+                    logmsg("Turning debug logging ", g_log_debug ? "on" : "off");
+                    break;
+                case USB_INPUT_LOG_TO_SD:
+                    g_log_to_sd = !g_log_to_sd;
+                    logmsg("Turning logging to SD card ", g_log_to_sd ? "on" : "off");
+                    break;
+                case USB_INPUT_EXIT_MSC:
+                    logmsg("Exiting mass storage");
+                    break;
+                case USB_INPUT_BUTTON_1:
+                    if (g_enabled_eject_buttons & 1)
+                    {
+                        logmsg("Ejecting/switching image for function button 1");
+                        g_console_buttons |= 1;
+                    }
+                    else if (g_enabled_cow_buttons & 1)
+                    {
+                        logmsg((g_cow_button_state & 1) ? "Disabling" : "Enabling", " cow init on function button 1");
+                        g_cow_button_state ^= 1;
+                    }
+                    break;
+                case USB_INPUT_BUTTON_2:
+                    if (g_enabled_eject_buttons & 2)
+                    {
+                        logmsg("Ejecting/switching image for function button 2");
+                        g_console_buttons |= 2;
+                    }
+                    else if (g_enabled_cow_buttons & 2)
+                    {
+                        logmsg((g_cow_button_state & 2) ? "Disabling" : "Enabling", " cow init on function button 2");
+                        g_cow_button_state ^= 2;
+                    }
+                    break;
+                case USB_INPUT_BUTTON_3:
+                    if (g_enabled_eject_buttons & 4)
+                    {
+                        logmsg("Ejecting/switching image for function button 3");
+                        g_console_buttons |= 4;
+                    }
+                    else if (g_enabled_cow_buttons & 4)
+                    {
+                        logmsg((g_cow_button_state & 4) ? "Disabling" : "Enabling", " cow init on function button 3");
+                        g_cow_button_state ^= 4;
+                    }
+                    break;
+                case USB_INPUT_BUTTON_4:
+                    if (g_enabled_eject_buttons & 8)
+                    {
+                        logmsg("Ejecting/switching image for function button 4");
+                        g_console_buttons |= 8;
+                    }
+                    else if (g_enabled_cow_buttons & 8)
+                    {
+                        logmsg((g_cow_button_state & 8) ? "Disabling" : "Enabling", " cow init on function button 4");
+                        g_cow_button_state ^= 8;
+                    }
+                    break;
+                case USB_INPUT_MEDIA_SUBMENU:
+                    serialMediaMenuEnter();
+                    break;
+                default:
+                    input_type = USB_INPUT_NONE;
+            }
+
+            if (get_cow_enabled_bit())
+            {
+                *scratch0 |= get_cow_enabled_bit();
+                *scratch1 &= ~REBOOT_COW_BUTTON_STATE_MASK;
+                *scratch1 |= g_cow_button_state; 
+            }
+
+            usb_input_type_t return_type = input_type;
+            input_type = USB_INPUT_NONE;
+            return return_type;
+        }
+        else
+        {
+            switch (input_type)
+            {
+                case USB_INPUT_REBOOT:
+                    logmsg("Basic reboot requested, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_REBOOT_MSC:
+                    logmsg("Boot into SD card as USB drive requested, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_REBOOT_IMAGES_MSC:
+                    logmsg("Boot into all images as USB drives requested, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_REBOOT_UF2:
+                    logmsg("Boot into the UF2 bootloader, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_TOGGLE_DEBUG:
+                    logmsg("Turn debug ", g_log_debug ? "off" : "on", ", press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_LOG_TO_SD:
+                    logmsg("Turn logging to SD Card ", g_log_to_sd ? "off" : "on", ", press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_EXIT_MSC:
+                    logmsg("Exit mass storage mode, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_BUTTON_1:
+                    if (g_enabled_eject_buttons & 1)
+                    {
+                        logmsg("Push function button 1, press 'y' to engage or any key to clear");
+                    }
+                    else if (g_enabled_cow_buttons & 1)
+                    {
+                        logmsg(g_cow_button_state & 1 ? "Disable" : "Enable", " cow init on function button 1, press 'y' to engage or any key to clear");
+                    }
+                    break;
+                case USB_INPUT_BUTTON_2:
+                    if (g_enabled_eject_buttons & 2)
+                    {
+                        logmsg("Push function button 2, press 'y' to engage or any key to clear");
+                    }
+                    else if (g_enabled_cow_buttons & 2)
+                    {
+                        logmsg(g_cow_button_state & 2 ? "Disable" : "Enable", " cow init on function button 2, press 'y' to engage or any key to clear");
+                    }
+                    break;
+                case USB_INPUT_BUTTON_3:
+                    if (g_enabled_eject_buttons & 4)
+                    {
+                        logmsg("Push function button 3, press 'y' to engage or any key to clear");
+                    }
+                    else if (g_enabled_cow_buttons & 4)
+                    {
+                        logmsg(g_cow_button_state & 4 ? "Disable" : "Enable", " cow init on function button 3, press 'y' to engage or any key to clear");
+                    }
+                    break;
+                case USB_INPUT_MEDIA_SUBMENU:
+                    logmsg("Enter media management submenu, press 'y' to engage or any key to clear");
+                    break;
+                default:
+                    input_type = USB_INPUT_NONE;
+            }
+        }
+    }
+    #endif // PIO_FRAMEWORK_ARDUINO_NO_USB
+    return USB_INPUT_NONE;
+}
+#endif // PLATFORM_MASS_STORAGE
 } /* extern "C" */
+
+#ifdef PLATFORM_MASS_STORAGE
+bool platform_stop_msc()
+{
+    return serial_menu(MENU_CONTEXT_TARGET_MSC) == USB_INPUT_EXIT_MSC;
+}
+#endif // PLATFORM_MASS_STORAGE
 
 
 #ifdef SD_USE_SDIO

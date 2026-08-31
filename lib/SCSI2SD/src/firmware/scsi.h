@@ -1,4 +1,6 @@
 //	Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
+//	Copyright (c) 2025 Kevin Moonlight <me@yyzkevin.com>
+//	Copyright (c) 2025 Rabbit Hole Computing™
 //
 //	This file is part of SCSI2SD.
 //
@@ -21,6 +23,7 @@
 #include "sense.h"
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef enum
 {
@@ -56,7 +59,10 @@ typedef enum
 	MSG_COMMAND_COMPLETE = 0,
 	MSG_REJECT = 0x7,
 	MSG_LINKED_COMMAND_COMPLETE = 0x0A,
-	MSG_LINKED_COMMAND_COMPLETE_WITH_FLAG = 0x0B
+	MSG_LINKED_COMMAND_COMPLETE_WITH_FLAG = 0x0B,
+	MSG_SIMPLE_QUEUE_TAG = 0x20,
+	MSG_HEAD_OF_QUEUE_TAG = 0x21,
+	MSG_ORDERED_QUEUE_TAG = 0x22
 } SCSI_MESSAGE;
 
 typedef enum
@@ -73,7 +79,7 @@ typedef enum
 
 // Maximum value for bytes-per-sector.
 #ifndef MAX_SECTOR_SIZE
-#define MAX_SECTOR_SIZE 8192
+#define MAX_SECTOR_SIZE (8 * 1024)
 #endif
 
 #ifndef MIN_SECTOR_SIZE
@@ -89,7 +95,19 @@ typedef enum
 typedef struct
 {
 	uint16_t bytesPerSector;
+	uint8_t tapeDensity;
+	uint8_t tapeBufferedMode; // Buffered mode field from MODE SELECT byte 2
 } LiveCfg;
+
+typedef struct {
+    uint8_t *buffer;
+    uint32_t bytes_sd; // Number of bytes that have been scheduled for transfer on SD card side
+    uint32_t bytes_scsi; // Number of bytes that have been scheduled for transfer on SCSI side
+    uint32_t bytes_scsi_started;
+    uint32_t sd_transfer_start;
+    int parityError;
+} DiskTransfer ;
+
 
 typedef struct
 {
@@ -101,6 +119,8 @@ typedef struct
 
 	ScsiSense sense;
 
+	DiskTransfer transfer;
+
 	uint16_t unitAttention; // Set to the sense qualifier key to be returned.
 	uint8_t unitAttentionStop; // Indicates if unit attention has to be stopped.
 
@@ -108,11 +128,17 @@ typedef struct
 	// A 3rd party may be sending the RESERVE/RELEASE commands
 	int reservedId; // 0 -> 7 if reserved. -1 if not reserved.
 	int reserverId; // 0 -> 7 if reserved. -1 if not reserved.
+	// -1 for default medium type, 0x00 - 0xFF for custom type
 
 	uint8_t syncOffset;
 	uint8_t syncPeriod;
 
+	bool initial_check; // to keep track of startup
 	uint8_t started; // Controlled by START STOP UNIT
+
+	uint8_t busWidth; // 0: 8-bit, 1: 16-bit, 2: 32-bit
+
+	uint8_t tapeBOM; // Beginning of Medium flag (tape at position 0)
 } TargetState;
 
 typedef struct

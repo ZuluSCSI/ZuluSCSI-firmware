@@ -2,6 +2,8 @@
 //	Copyright (C) 2019 Landon Rodgers  <g.landon.rodgers@gmail.com>
 //	Copyright (c) 2023 joshua stein <jcs@jcs.org>
 //	Copyright (c) 2024 Eric Helgeson <erichelgeson@gmail.com>
+//	Copyright (c) 2025 Kevin Moonlight <me@yyzkevin.com>
+//	Copyright (c) 2025 Rabbit Hole Computing™
 //
 //	This file is part of SCSI2SD.
 //
@@ -24,9 +26,14 @@
 #include "scsi.h"
 #include "config.h"
 #include "inquiry.h"
-#include "ZuluSCSI_config.h"
-
+#include <ZuluSCSI_config.h>
+#include <custom_vendor_inquiry.h>
 #include <string.h>
+#include <ZuluSCSI_platform_config.h>
+#include <ZuluSCSI_platform.h>
+#ifdef PLATFORM_AS400
+#include <as400_values.h>
+#endif
 
 static uint8_t StandardResponse[] =
 {
@@ -38,9 +45,7 @@ static uint8_t StandardResponse[] =
 0, 0, // Reserved
 0x18 // Enable sync and linked commands
 };
-// Vendor set by config 'c','o','d','e','s','r','c',' ',
-// prodId set by config'S','C','S','I','2','S','D',' ',' ',' ',' ',' ',' ',' ',' ',' ',
-// Revision set by config'2','.','0','a'
+// Vendor, Product ID and Revision set by config
 
 
 static const uint8_t SupportedVitalPages[] =
@@ -119,58 +124,109 @@ void s2s_scsiInquiry()
 			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
 			scsiDev.phase = STATUS;
 		}
+
 		else
 		{
 			const S2S_TargetCfg* config = scsiDev.target->cfg;
-			scsiDev.dataLen =
-				s2s_getStandardInquiry(
-					config,
-					scsiDev.data,
-					sizeof(scsiDev.data));
+			uint16_t customInquiryLen = 0;
+			if (getCustomSPD(config->scsiId, scsiDev.data, &customInquiryLen))
+			{
+				scsiDev.dataLen = customInquiryLen;
+			}
+			else
+			{
+				scsiDev.dataLen =
+					s2s_getStandardInquiry(
+						config,
+						scsiDev.data,
+						sizeof(scsiDev.data));
+
+				// Set removable bit
+				switch (scsiDev.target->cfg->deviceType)
+				{
+				case S2S_CFG_OPTICAL:
+					scsiDev.data[1] |= 0x80; // Removable bit.
+					break;
+
+				case S2S_CFG_SEQUENTIAL:
+					scsiDev.data[1] |= 0x80; // Removable bit.
+					break;
+
+				case S2S_CFG_MO:
+					scsiDev.data[1] |= 0x80; // Removable bit.
+					break;
+
+				case S2S_CFG_FLOPPY_14MB:
+				case S2S_CFG_REMOVABLE:
+				case S2S_CFG_ZIP100:
+					scsiDev.data[1] |= 0x80; // Removable bit.
+					break;
+
+				case S2S_CFG_NETWORK:
+				case S2S_CFG_AMIGAWIFI:
+					scsiDev.data[2] = 0x01;  // ANSI SCSI version is SCSI 1.
+					break;
+				
+				default:
+					// Accept defaults for a fixed disk.
+					break;
+				}
+
+			}
 			scsiDev.phase = DATA_IN;
 		}
-	}
-	else if (pageCode == 0x00)
-	{
-		memcpy(scsiDev.data, SupportedVitalPages, sizeof(SupportedVitalPages));
-		scsiDev.dataLen = sizeof(SupportedVitalPages);
-		scsiDev.phase = DATA_IN;
-	}
-	else if (pageCode == 0x80)
-	{
-		memcpy(scsiDev.data, UnitSerialNumber, sizeof(UnitSerialNumber));
-		scsiDev.dataLen = sizeof(UnitSerialNumber);
-		const S2S_TargetCfg* config = scsiDev.target->cfg;
-		memcpy(&scsiDev.data[4], config->serial, sizeof(config->serial));
-		scsiDev.phase = DATA_IN;
-	}
-	else if (pageCode == 0x81)
-	{
-		memcpy(
-			scsiDev.data,
-			ImpOperatingDefinition,
-			sizeof(ImpOperatingDefinition));
-		scsiDev.dataLen = sizeof(ImpOperatingDefinition);
-		scsiDev.phase = DATA_IN;
-	}
-	else if (pageCode == 0x82)
-	{
-		memcpy(
-			scsiDev.data,
-			AscImpOperatingDefinition,
-			sizeof(AscImpOperatingDefinition));
-		scsiDev.dataLen = sizeof(AscImpOperatingDefinition);
-		scsiDev.phase = DATA_IN;
+
 	}
 	else
 	{
-		// error.
-		scsiDev.status = CHECK_CONDITION;
-		scsiDev.target->sense.code = ILLEGAL_REQUEST;
-		scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-		scsiDev.phase = STATUS;
+		// Check for custom VPD page data from INI configuration
+		uint8_t customVpdLen = 0;
+		if (getCustomVPD(scsiDev.target->cfg->scsiId, pageCode, scsiDev.data, &customVpdLen))
+		{
+			scsiDev.dataLen = customVpdLen;
+			scsiDev.phase = DATA_IN;
+		}
+		else if (pageCode == 0x00)
+		{
+			memcpy(scsiDev.data, SupportedVitalPages, sizeof(SupportedVitalPages));
+			scsiDev.dataLen = sizeof(SupportedVitalPages);
+			scsiDev.phase = DATA_IN;
+		}
+		else if (pageCode == 0x80)
+		{
+			memcpy(scsiDev.data, UnitSerialNumber, sizeof(UnitSerialNumber));
+			scsiDev.dataLen = sizeof(UnitSerialNumber);
+			const S2S_TargetCfg* config = scsiDev.target->cfg;
+			memcpy(&scsiDev.data[4], config->serial, sizeof(config->serial));
+			scsiDev.phase = DATA_IN;
+		}
+		else if (pageCode == 0x81)
+		{
+			memcpy(
+				scsiDev.data,
+				ImpOperatingDefinition,
+				sizeof(ImpOperatingDefinition));
+			scsiDev.dataLen = sizeof(ImpOperatingDefinition);
+			scsiDev.phase = DATA_IN;
+		}
+		else if (pageCode == 0x82)
+		{
+			memcpy(
+				scsiDev.data,
+				AscImpOperatingDefinition,
+				sizeof(AscImpOperatingDefinition));
+			scsiDev.dataLen = sizeof(AscImpOperatingDefinition);
+			scsiDev.phase = DATA_IN;
+		}
+		else
+		{
+			// error.
+			scsiDev.status = CHECK_CONDITION;
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+			scsiDev.phase = STATUS;
+		}
 	}
-
 
 	if (scsiDev.phase == DATA_IN)
 	{
@@ -180,54 +236,39 @@ void s2s_scsiInquiry()
 		{
 			allocationLength = 254;
 		}
-
-		// "real" hard drives send back exactly allocationLenth bytes, padded
-		// with zeroes. This only seems to happen for Inquiry responses, and not
-		// other commands that also supply an allocation length such as Mode Sense or
-		// Request Sense.
-		// (See below for exception to this rule when 0 allocation length)
-		if (scsiDev.dataLen < allocationLength)
+#ifdef PLATFORM_AS400
+		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 &&
+			(scsiDev.target->cfg->deviceType == S2S_CFG_FIXED || scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL))
 		{
-			memset(
-				&scsiDev.data[scsiDev.dataLen],
-				0,
-				allocationLength - scsiDev.dataLen);
+			// AS400 send the exact number of byte in data length if it fits in
+			// the allocationLength and does not send padded zeros. Applies to
+			// tape too now (S2S_CFG_SEQUENTIAL) -- real captured AS/400 tape
+			// drives respond this way as well, matching disk.
+			if (allocationLength < scsiDev.dataLen)
+				scsiDev.dataLen = allocationLength;
 		}
-		// Spec 8.2.5 requires us to simply truncate the response if it's
-		// too big.
-		scsiDev.dataLen = allocationLength;
-
+		else
+#endif
+		{
+			// "real" hard drives send back exactly allocationLength bytes, padded
+			// with zeroes. This only seems to happen for Inquiry responses, and not
+			// other commands that also supply an allocation length such as Mode Sense or
+			// Request Sense.
+			// (See below for exception to this rule when 0 allocation length)
+			if (scsiDev.dataLen < allocationLength)
+			{
+				memset(
+					&scsiDev.data[scsiDev.dataLen],
+					0,
+					allocationLength - scsiDev.dataLen);
+			}
+			// Spec 8.2.5 requires us to simply truncate the response if it's
+			// too big.
+			scsiDev.dataLen = allocationLength;
+		}
 		// Set the device type as needed.
 		scsiDev.data[0] = getDeviceTypeQualifier();
 
-		switch (scsiDev.target->cfg->deviceType)
-		{
-		case S2S_CFG_OPTICAL:
-			scsiDev.data[1] |= 0x80; // Removable bit.
-			break;
-
-		case S2S_CFG_SEQUENTIAL:
-			scsiDev.data[1] |= 0x80; // Removable bit.
-			break;
-
-		case S2S_CFG_MO:
-			scsiDev.data[1] |= 0x80; // Removable bit.
-			break;
-
-		case S2S_CFG_FLOPPY_14MB:
-		case S2S_CFG_REMOVABLE:
-		case S2S_CFG_ZIP100:
-			scsiDev.data[1] |= 0x80; // Removable bit.
-			break;
-
-		case S2S_CFG_NETWORK:
-			scsiDev.data[2] = 0x01;  // Page code.
-			break;
-		
-		default:
-			// Accept defaults for a fixed disk.
-			break;
-		}
 	}
 
 	// Set the first byte to indicate LUN presence.
@@ -265,6 +306,15 @@ uint32_t s2s_getStandardInquiry(
 		sizeof(cfg->prodId) +
 		sizeof(cfg->revision);
 
+	if (scsiDev.boardCfg.busWidth == 2)
+	{
+		out[7] |= 0x60;
+	}
+	else if (scsiDev.boardCfg.busWidth == 1)
+	{
+		out[7] |= 0x20;
+	}
+
 	if(cfg->deviceType == S2S_CFG_ZIP100)
 	{
 		memcpy(&out[size], IomegaVendorInquiry, sizeof(IomegaVendorInquiry));
@@ -274,10 +324,11 @@ uint32_t s2s_getStandardInquiry(
 	}
 	// Iomega already has a vendor inquiry
 	if(cfg->deviceType != S2S_CFG_NETWORK && cfg->deviceType != S2S_CFG_ZIP100) {
-		memcpy(&out[size], INQUIRY_NAME, sizeof(INQUIRY_NAME));
-		size += sizeof(INQUIRY_NAME);
-		out[size] = TOOLBOX_API;
-		size += 1;
+		memcpy(&out[size], INQUIRY_NAME, sizeof(INQUIRY_NAME) - 1);
+		size += sizeof(INQUIRY_NAME) - 1;
+		out[size++] = TOOLBOX_API;
+		out[4] = 0x1f + (sizeof(INQUIRY_NAME) - 1)
+		              + 1; // PLATFORM_TOOLBOX_API
 	}
 	return size;
 }
@@ -306,6 +357,8 @@ uint8_t getDeviceTypeQualifier()
 		break;
 
 	case S2S_CFG_NETWORK:
+	case S2S_CFG_AMIGAWIFI:
+	case S2S_CFG_AUDIO:
 		// processor device
 		return 0x03;
 		break;
@@ -315,4 +368,3 @@ uint8_t getDeviceTypeQualifier()
 		return 0;
 	}
 }
-

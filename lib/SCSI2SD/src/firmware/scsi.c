@@ -2,6 +2,7 @@
 //	Copyright (c) 2023 joshua stein <jcs@jcs.org>
 //	Copyright (c) 2023 Andrea Ottaviani <andrea.ottaviani.69@gmail.com>
 //	Copyright (c) 2024-2025 Rabbit Hole Computing™
+//	Copyright (c) 2025 Kevin Moonlight <me@yyzkevin.com>
 //
 //	This file is part of SCSI2SD.
 //
@@ -37,6 +38,12 @@
 #include "vendor.h"
 #include <string.h>
 #include "toolbox.h"
+#include <ZuluSCSI_platform_config.h>
+
+#ifdef ENABLE_AUDIO_STREAM
+// Host PCM audio streaming handler (ZuluSCSI_audio_stream.cpp, C++ extern "C").
+int scsiAudioCommand(void);
+#endif
 
 // Global SCSI device state.
 ScsiDevice scsiDev S2S_DMA_ALIGN;
@@ -249,7 +256,7 @@ static void process_DataIn()
 	if ((scsiDev.dataPtr >= scsiDev.dataLen) &&
 		(transfer.currentBlock == transfer.blocks))
 	{
-		enter_Status(GOOD);
+		enter_Status(scsiDev.status);
 	}
 }
 
@@ -528,6 +535,47 @@ static void process_Command()
 					scsiDev.data[4] = 0x81; // File Mark detected
 			}
 		}
+#ifdef PLATFORM_AS400
+		else if (cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
+		{
+			// As specified by the SASI and SCSI1 standard.
+			// Newer initiators won't be specifying 0 anyway.
+			if (allocLength == 0) allocLength = 4;
+
+			// If we receive a stand-alone REQUEST SENSE to a bad LUN we still need to respond
+			// with LUN not supported. SCSI-2 Spec 7.5.3.
+			if (scsiDev.lun && scsiDev.lastStatus != CHECK_CONDITION)
+			{
+				scsiDev.target->sense.code = ILLEGAL_REQUEST;
+				scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_SUPPORTED;
+				transfer.lba = 0;
+			}
+			memset(scsiDev.data, 0, 256); // Max possible alloc length
+			scsiDev.data[0] = 0x70;
+			scsiDev.data[2] = scsiDev.target->sense.code & 0x0F;
+
+			// LBA is Valid Information for direct access devices.
+			scsiDev.data[3] = transfer.lba >> 24;
+			scsiDev.data[4] = transfer.lba >> 16;
+			scsiDev.data[5] = transfer.lba >> 8;
+			scsiDev.data[6] = transfer.lba;
+
+
+			// Additional bytes if there are errors to report
+			scsiDev.data[7] = 0x18; // additional length
+			scsiDev.data[12] = scsiDev.target->sense.asc >> 8;
+			scsiDev.data[13] = scsiDev.target->sense.asc;
+
+			if(scsiDev.target->sense.code == NOT_READY && scsiDev.target->sense.asc == LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED) {
+				scsiDev.data[20]=1;
+				scsiDev.data[21]=1;
+			}
+			if(scsiDev.target->sense.code == UNIT_ATTENTION && scsiDev.target->sense.asc == POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED) {
+				scsiDev.data[20]=1;
+				scsiDev.data[21]=0x41;
+			}
+		}
+#endif
 		else
 		{
 			// As specified by the SASI and SCSI1 standard.
@@ -535,22 +583,28 @@ static void process_Command()
 			if (allocLength == 0) allocLength = 4;
 
 			memset(scsiDev.data, 0, 256); // Max possible alloc length
-			scsiDev.data[0] = 0xF0;
+			scsiDev.data[0] = 0x70; // error code, Valid=0 by default
 			scsiDev.data[2] = scsiDev.target->sense.code & 0x0F;
 			if (cfg->deviceType == S2S_CFG_SEQUENTIAL)
 			{
+				scsiDev.data[0] = 0xF0; // Valid=1, tape always has meaningful info
 				scsiDev.data[2] |= scsiDev.target->sense.filemark ? 1 << 7 : 0;
-				scsiDev.data[3] |= scsiDev.target->sense.eom ? 1 << 6 : 0;
-			}
-			if (cfg->deviceType == S2S_CFG_SEQUENTIAL)
-			{
+				scsiDev.data[2] |= scsiDev.target->sense.eom ? 1 << 6 : 0;
+				scsiDev.data[2] |= scsiDev.target->sense.ili ? 1 << 5 : 0;
 				scsiDev.data[3] = scsiDev.target->sense.info >> 24;
 				scsiDev.data[4] = scsiDev.target->sense.info >> 16;
 				scsiDev.data[5] = scsiDev.target->sense.info >> 8;
 				scsiDev.data[6] = scsiDev.target->sense.info;
+				// QIC drive vendor-specific sense bytes (Caliper/Sankyo/Wangtek)
+				// Byte 9 bit 3: BOM (Beginning of Medium)
+				scsiDev.data[9] = scsiDev.target->tapeBOM ? (1 << 3) : 0;
 			}
-			else
+			else if (scsiDev.target->sense.code == MEDIUM_ERROR
+				|| scsiDev.target->sense.code == HARDWARE_ERROR
+				|| scsiDev.target->sense.code == ABORTED_COMMAND)
 			{
+			// Valid=1 + LBA only for block-related errors
+				scsiDev.data[0] = 0xF0;
 				scsiDev.data[3] = transfer.lba >> 24;
 				scsiDev.data[4] = transfer.lba >> 16;
 				scsiDev.data[5] = transfer.lba >> 8;
@@ -572,8 +626,12 @@ static void process_Command()
 		enter_DataIn(allocLength);
 
 		// This is a good time to clear out old sense information.
-		scsiDev.target->sense.code = NO_SENSE;
-		scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+		memset(&scsiDev.target->sense, 0, sizeof(ScsiSense));
+	}
+	else if (command == 0xA0)
+	{
+		// Report LUNs
+		scsiDiskReportLUNs();
 	}
 	// Some old SCSI drivers do NOT properly support
 	// unitAttention. eg. the Mac Plus would trigger a SCSI reset
@@ -625,8 +683,12 @@ static void process_Command()
 	else if (((cfg->deviceType == S2S_CFG_OPTICAL) && scsiCDRomCommand()) ||
 		((cfg->deviceType == S2S_CFG_SEQUENTIAL) && scsiTapeCommand()) ||
 #ifdef ZULUSCSI_NETWORK
+		((cfg->deviceType == S2S_CFG_AMIGAWIFI && amigaWifiCommand())) ||
 		((cfg->deviceType == S2S_CFG_NETWORK && scsiNetworkCommand())) ||
 #endif // ZULUSCSI_NETWORK
+#ifdef ENABLE_AUDIO_STREAM
+		((cfg->deviceType == S2S_CFG_AUDIO) && scsiAudioCommand()) ||
+#endif // ENABLE_AUDIO_STREAM
 		((cfg->deviceType == S2S_CFG_MO) && scsiMOCommand()))
 	{
 		// Already handled.
@@ -702,10 +764,19 @@ static void doReserveRelease()
 
 	if (extentReservation)
 	{
-		// Not supported.
-		scsiDev.target->sense.code = ILLEGAL_REQUEST;
-		scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-		enter_Status(CHECK_CONDITION);
+#ifdef PLATFORM_AS400
+		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
+		{
+			enter_Status(GOOD);
+		}	
+		else
+#endif
+		{
+			// Not supported.
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+			enter_Status(CHECK_CONDITION);
+		}
 	}
 	else if (command == 0x17) // release
 	{
@@ -765,8 +836,19 @@ static void scsiReset()
 		}
 		scsiDev.target->reservedId = -1;
 		scsiDev.target->reserverId = -1;
-		scsiDev.target->sense.code = NO_SENSE;
-		scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+#ifdef PLATFORM_AS400
+		const S2S_TargetCfg* config = scsiDev.target->cfg;
+		if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
+		{
+			scsiDev.target->sense.code = UNIT_ATTENTION;
+			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+		}
+		else
+#endif
+		{
+			scsiDev.target->sense.code = NO_SENSE;
+			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+		}
 	}
 	scsiDev.target = NULL;
 
@@ -782,6 +864,8 @@ static void scsiReset()
 			scsiDev.targets[i].syncOffset = 0;
 			scsiDev.targets[i].syncPeriod = 0;
 		}
+
+		scsiDev.targets[i].busWidth = 0;
 	}
 	scsiDev.minSyncPeriod = 0;
 
@@ -859,7 +943,7 @@ static void process_SelectionPhase()
 	TargetState* target = NULL;
 	for (tgtIndex = 0; tgtIndex < S2S_MAX_TARGETS; ++tgtIndex)
 	{
-		if (scsiDev.targets[tgtIndex].targetId == (selStatus & 7))
+		if (scsiDev.targets[tgtIndex].targetId == (selStatus & S2S_CFG_TARGET_ID_BITS))
 		{
 			target = &scsiDev.targets[tgtIndex];
 			break;
@@ -1055,11 +1139,28 @@ static void process_MessageOut()
 	}
 	else if (scsiDev.msgOut >= 0x20 && scsiDev.msgOut <= 0x2F)
 	{
-		// Two byte message. We don't support these. read and discard.
-		scsiReadByte();
+		// Two byte message. Read the parameter byte either way so we stay in
+		// sync with the initiator regardless of whether we accept the message.
+		uint8_t param = scsiReadByte();
+		(void)param;
 
 		if (scsiDev.msgOut == 0x23) {
 			// Ignore Wide Residue. We're only 8 bit anyway.
+		} else if (scsiDev.msgOut == MSG_SIMPLE_QUEUE_TAG ||
+		           scsiDev.msgOut == MSG_HEAD_OF_QUEUE_TAG ||
+		           scsiDev.msgOut == MSG_ORDERED_QUEUE_TAG) {
+			// Tagged command queueing. SCSI2SD is non-disconnecting today
+			// (scsiDisconnect() / scsiReconnect() further down in this file
+			// are commented out), so the SPC-3 §6.5 tag-echo path -- which
+			// the spec only specifies at RESELECTION immediately following a
+			// disconnect -- is unreachable. Accepting the tag here without
+			// rejecting the message is sufficient for compliant initiators
+			// (notably AS/400 9406-class IOAs that issue every command
+			// tagged once CmdQue=1 is advertised in std INQUIRY). The tag
+			// value is intentionally discarded; if this firmware ever gains
+			// disconnect support, store it on the TargetState here and echo
+			// `MSG_SIMPLE_QUEUE_TAG + tag` in the MESSAGE_IN that follows
+			// the RESELECTION phase.
 		} else {
 			messageReject();
 		}
@@ -1080,9 +1181,16 @@ static void process_MessageOut()
 
 		if (extmsg[0] == 3 && msgLen == 2) // Wide Data Request
 		{
-			// Negotiate down to 8bit
+			uint8_t width = extmsg[1]; // Transfer width exponent, 0: 8-bit, 1: 16-bit, 2: 32-bit
+			if (width > scsiDev.boardCfg.busWidth)
+			{
+				width = scsiDev.boardCfg.busWidth;
+			}
+			scsiDev.target->busWidth = width;
+
+			// Reply with the width we support
 			scsiEnterPhase(MESSAGE_IN);
-			static const uint8_t WDTR[] = {0x01, 0x02, 0x03, 0x00};
+			uint8_t WDTR[] = {0x01, 0x02, 0x03, width};
 			scsiWrite(WDTR, sizeof(WDTR));
 
 			// SDTR becomes invalidated.
@@ -1342,6 +1450,8 @@ void scsiInit()
 			scsiDev.targets[i].cfg = cfg;
 
 			scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;
+			scsiDev.targets[i].liveCfg.tapeDensity = cfg->tapeDensity;
+			scsiDev.targets[i].liveCfg.tapeBufferedMode = cfg->tapeBufferedMode;
 		}
 		else
 		{
@@ -1364,8 +1474,8 @@ void scsiInit()
 		{
 			scsiDev.targets[i].unitAttention = PARAMETERS_CHANGED;
 		}
-		scsiDev.targets[i].sense.code = NO_SENSE;
-		scsiDev.targets[i].sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+		// reset sense
+		memset(&scsiDev.targets[i].sense, 0, sizeof(scsiDev.targets[i].sense));
 
 		if (g_force_sync > 0)
 		{
@@ -1378,11 +1488,24 @@ void scsiInit()
 			scsiDev.targets[i].syncPeriod = 0;
 		}
 
-		// Always "start" the device. Many systems (eg. Apple System 7)
-		// won't respond properly to
-		// LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED sense
-		// code
-		scsiDev.targets[i].started = 1;
+#ifdef PLATFORM_AS400
+		if (cfg && cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
+		{
+			scsiDev.target->sense.code = UNIT_ATTENTION;
+			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			scsiDev.targets[i].started = 0;
+		}
+		else
+#endif
+		{
+			scsiDev.target->sense.code = NO_SENSE;
+			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+			// Always "start" the device. Many systems (eg. Apple System 7)
+			// won't respond properly to
+			// LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED sense
+			// code
+			scsiDev.targets[i].started = 1;
+		}
 	}
 	firstInit = 0;
 }

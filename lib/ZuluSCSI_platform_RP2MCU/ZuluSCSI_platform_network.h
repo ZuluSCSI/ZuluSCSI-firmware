@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2023 joshua stein <jcs@jcs.org>
+ * Copyright (c) 2026 Eric Helgeson <eric@bluescsi.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -26,15 +27,17 @@ extern "C" {
 
 bool platform_network_supported();
 void platform_network_poll();
-int platform_network_init(char *mac);
+bool platform_network_init(char *mac);
 void platform_network_add_multicast_address(uint8_t *mac);
-bool platform_network_wifi_join(char *ssid, char *password);
+bool platform_network_wifi_join(char *ssid, char *password, bool reconnect);
 int platform_network_wifi_start_scan();
 int platform_network_wifi_scan_finished();
 void platform_network_wifi_dump_scan_list();
 int platform_network_wifi_rssi();
 char * platform_network_wifi_ssid();
 char * platform_network_wifi_bssid();
+// WIFI_NETWORK_FLAG_* bits describing the current association
+uint8_t platform_network_wifi_flags();
 int platform_network_wifi_channel();
 int platform_network_send(uint8_t *buf, size_t len);
 // Test if the communication between the network device and the ZuluIDE works

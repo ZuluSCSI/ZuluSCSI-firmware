@@ -26,9 +26,22 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define SCSI_DEVICE_TYPE_CD 0x5
-#define SCSI_DEVICE_TYPE_MO 0x7
-#define SCSI_DEVICE_TYPE_DIRECT_ACCESS 0x0
+enum scsi_device_type_t {
+    SCSI_DEVICE_TYPE_DIRECT_ACCESS = 0x00,
+    SCSI_DEVICE_TYPE_SEQUENTIAL = 0x01,
+    SCSI_DEVICE_TYPE_PRINTER = 0x02,
+    SCSI_DEVICE_TYPE_PROCESSOR = 0x03,
+    SCSI_DEVICE_TYPE_WRITE_ONCE = 0x04,
+    SCSI_DEVICE_TYPE_CD = 0x05,
+    SCSI_DEVICE_TYPE_SCANNER = 0x06,
+    SCSI_DEVICE_TYPE_MO = 0x07,
+    SCSI_DEVICE_TYPE_MEDIA_CHANGER = 0x08,
+    SCSI_DEVICE_TYPE_COMMUNICATION = 0x09,
+    SCSI_DEVICE_TYPE_ASC_IT8_A = 0x0A,
+    SCSI_DEVICE_TYPE_ASC_IT8_B = 0x0B,
+    SCSI_DEVICE_TYPE_DISK_ARRAY = 0x0C,
+    SCSI_DEVICE_TYPE_UNKNOWN = 0x1F
+};
 
 void scsiInitiatorInit();
 
@@ -45,6 +58,12 @@ int scsiInitiatorRunCommand(int target_id,
                             const uint8_t *bufOut, size_t bufOutLen,
                             bool returnDataPhase = false,
                             uint32_t timeout = 30000);
+
+// Run TestUnitReady command and exchange messages
+int scsiInitiatorMessage(int target_id,
+                         const uint8_t *msgOut, size_t msgOutLen,
+                         uint8_t *msgIn, size_t msgInBufSize, size_t *msgInLen,
+                         uint32_t timeout = 30000);
 
 // Detect support of read10 commands.
 // Returns true if supported.
@@ -65,6 +84,13 @@ bool scsiInquiry(int target_id, uint8_t inquiry_data[36]);
 
 // Execute TEST UNIT READY command and handle unit attention state
 bool scsiTestUnitReady(int target_id);
+
+// Reset bus configuration to default (async 8-bit)
+bool scsiInitiatorResetBusConfig(int target_id);
+
+// Enable/disable wide bus mode and test communication
+// Reverts to 8-bit on failure
+bool scsiInitiatorSetBusWidth(int target_id, int busWidth);
 
 // Read a block of data from SCSI device and write to file on SD card
 class FsFile;

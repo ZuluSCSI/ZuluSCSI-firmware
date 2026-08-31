@@ -41,10 +41,26 @@
 #elif defined(ZULUSCSI_BLASTER)
 // RP2350B variant, using mcu chip directly
 #include "ZuluSCSI_platform_gpio_Blaster.h"
+#elif defined(ZULUSCSI_WIDE)
+// RP2350B variant, support for 16-bit SCSI bus
+#include "ZuluSCSI_platform_gpio_Wide.h"
 #else
 // Normal RP2040 variant, using RP2040 chip directly
 #include "ZuluSCSI_platform_gpio_RP2040.h"
 #endif
+
+// Masks for buttons
+#ifdef ZULUSCSI_WIDE
+#  define EJECT_BTN_MAX  (1)
+#elif defined(ZULUSCSI_BLASTER)
+#  define EJECT_BTN_MAX  (3)
+#elif defined(ZULUSCSI_RP2040)
+#  define EJECT_BTN_MAX  (2)
+#else
+#  define EJECT_BTN_MAX (0)
+#endif
+#define EJECT_BTN_MASK ((1 << EJECT_BTN_MAX) - 1)
+#define USER_BTN_MASK  (0)
 
 #include "scsiHostPhy.h"
 
@@ -55,7 +71,8 @@ extern "C" {
 
 /* These are used in debug output and default SCSI strings */
 extern const char *g_platform_name;
-
+extern bool g_i2c_claimed;
+extern bool g_log_lock;
 // NOTE: The driver supports synchronous speeds higher than 10MB/s, but this
 // has not been tested due to lack of fast enough SCSI adapter.
 // #define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_SYNC_20
@@ -63,7 +80,10 @@ extern const char *g_platform_name;
 // Debug logging function, can be used to print to e.g. serial port.
 // May get called from interrupt handlers.
 void platform_log(const char *s);
-void platform_emergency_log_save();
+inline void log_lock() {g_log_lock = true;}
+inline void log_unlock() {g_log_lock = false;} 
+void platform_flush_usb_log();
+bool platform_emergency_log_save();
 
 // Timing and delay functions.
 // Arduino platform already provides these
@@ -102,6 +122,13 @@ void platform_write_led_override(bool state);
 #define LED_ON_OVERRIDE()  platform_write_led_override(true)
 #define LED_OFF_OVERRIDE()  platform_write_led_override(false)
 
+/**
+ *  LED will "breath" when LED is in the off state
+ *  \param breath true LED will breath, false will turn off breathing
+ *  \param period_ms will cycle in that amount of milliseconds, 0 will breath the standard defined amount
+ **/
+void platform_led_breath(bool breath, uint32_t period_ms);
+
 // Disable the status LED
 void platform_disable_led(void);
 
@@ -115,8 +142,10 @@ bool platform_is_initiator_mode_enabled();
 void platform_reset_watchdog();
 
 // Reset MCU
-void platform_reset_mcu();
+void platform_reset_mcu(uint32_t reset_in_ms);
 
+// Returns an 8-byte (64bit) mcu id as an 8-byte array
+const uint8_t* platform_get_8byte_mcu_id();
 
 // Poll function that is called every few milliseconds.
 // The SD card is free to access during this time, and pauses up to
@@ -140,13 +169,24 @@ inline bool platform_reclock_supported(){return true;}
 bool platform_reclock(zuluscsi_speed_grade_t speed_grade);
 #endif
 
+#ifdef PLATFORM_HAS_SNIFFER
+bool platform_init_sniffer();
+void platform_sniffer_poll();
+#endif
+
 // Returns true if reboot was for mass storage
-bool platform_rebooted_into_mass_storage();
+mass_storage_mode platform_rebooted_into_mass_storage();
 
 // Set callback that will be called during data transfer to/from SD card.
 // This can be used to implement simultaneous transfer to SCSI bus.
 typedef void (*sd_callback_t)(uint32_t bytes_complete);
 void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer);
+
+// Check if there is a serial interface connected
+bool platform_serial_connected();
+
+// Write to the serial interface, 0 may returned if the serial interface is not ready
+uint32_t platform_write_to_serial(uint8_t* data, uint32_t len);
 
 // Reprogram firmware in main program area.
 #ifndef RP2040_DISABLE_BOOTLOADER
@@ -171,13 +211,49 @@ bool platform_read_romdrive(uint8_t *dest, uint32_t start, uint32_t count);
 bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count);
 #endif
 
+#ifndef RP2MCU_USE_CPU_PARITY
+
 // Parity lookup tables for write and read from SCSI bus.
 // These are used by macros below and the code in scsi_accel_rp2040.cpp
 extern const uint16_t g_scsi_parity_lookup[256];
 extern const uint16_t g_scsi_parity_check_lookup[512];
 
-// Returns true if the board has a physical eject button 
-bool platform_has_phy_eject_button();
+// Generate parity for bytes. This is only used for slow control & command transfers.
+// Returns the GPIO value without SCSI_IO_SHIFT.
+static inline uint32_t scsi_generate_parity(uint8_t w)
+{
+    return g_scsi_parity_lookup[w];
+}
+
+// Check parity of a byte.
+// Argument is the return value from SCSI_IN_DATA().
+// Return true if parity is valid.
+static inline bool scsi_check_parity(uint32_t w)
+{
+    return g_scsi_parity_check_lookup[(w ^ 0x1FF) & 0x1FF] & 0x100;
+}
+
+#endif
+
+// Returns the default eject button number if the board has a physical eject button 
+uint8_t platform_phy_eject_button();
+
+// Track which eject buttons are enabled
+void platform_set_eject_button(uint8_t eject_button);
+
+// Track which COW buttons are enabled
+// Allow cow button to be 1 outside the allowable button numbers for eject
+// This is so it can be used in the USB serial menu system with boards without two physical eject buttons
+void platform_set_cow_button(uint8_t cow_button);
+
+// Get the current state of COW buttons override,
+// This can be tested to see if a cow button is overridden on, if not the current platform_get_buttons() state should be used
+uint8_t platform_get_cow_buttons_override();
+
+#ifdef ZULUSCSI_WIDE
+// Returns true if the SCSI connector is SCA
+bool platform_is_sca();
+#endif
 
 #ifdef __cplusplus
 }

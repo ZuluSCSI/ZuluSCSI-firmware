@@ -1,19 +1,140 @@
 ZuluSCSI™ Firmware
 =================
 
-Hard Drive & ISO image files
----------------------
-ZuluSCSI uses raw hard drive image files, which are stored on a FAT32 or exFAT-formatted SD card. These are often referred to as "hda" files.
+ZuluSCSI is a family of hardware devices that emulates Small System Computer Interface storage devices. This repository contains the firmware source code for these devices, as well as precompiled firmware, available via the [releases](https://github.com/ZuluSCSI/ZuluSCSI-firmware/releases) page.  
 
-Examples of valid filenames:
-* `HD5.hda` or `HD5.img`: hard drive with SCSI ID 5
-* `HD20_512.hda`: hard drive with SCSI ID 2, LUN 0, block size 512. Currently, ZuluSCSI does not support multiple LUNs, only LUN 0.
-* `CD3.iso`: CD drive with SCSI ID 3
 
-In addition to the simplified filenames style above, the ZuluSCSI firmware also looks for images using the BlueSCSI-style "HDxy_512.hda" filename formatting.
+Image files on the SD card
+--------------------------
+ZuluSCSI stores drive images as files on a FAT32 or exFAT formatted SD card.
+Use exFAT if any single image needs to exceed 4 GB — FAT32 cannot represent a file
+larger than 4,294,967,295 bytes.
 
-The media type can be set in `zuluscsi.ini`, or directly by the file name prefix.
-Supported prefixes are `HD` (hard drive), `CD` (cd-rom), `FD` (floppy), `MO` (magneto-optical), `RE` (generic removeable media), `TP` (sequential tape drive).
+By default the firmware scans the **root directory** of the card. This can be changed,
+and additional directories added, in `zuluscsi.ini`:
+
+    [SCSI]
+    Dir  = "/"        # directory scanned for images (default: root)
+    Dir1 = "/images"  # up to Dir1...Dir9 additional directories
+
+Directories and files whose "hidden" attribute is set are skipped. Files whose read-only attribute is set are exposed as write-protected SCSI devices.
+
+### Image filename format
+
+    <TT><ID>[<LUN>][_<BLOCKSIZE>][ any description ].<ext>
+     ^^   ^    ^      ^
+     |    |    |      +-- optional, decimal, after the first underscore
+     |    |    +--------- optional LUN digit (byte offset 3), can be omitted, only a single logical unit number, LUN 0 is currently supported.
+     |    +-------------- SCSI ID character (byte offset 2)
+     +------------------- two-character type prefix (case-insensitive)
+
+The type prefix, ID and LUN are read from **fixed byte offsets** in the filename, so
+their positions matter. The block size is read from the first `_` found anywhere in the name.
+The media type can also be set in `zuluscsi.ini`, or directly by the file name or directory prefix. 
+
+**Device type file name prefixes**
+
+| Prefix | Device type | Default block size | Notes |
+|--------|-------------|--------------------|-------|
+| `HD`   | Hard disk (fixed) | 512 | Default when no other prefix matches |
+| `CD`   | CD-ROM (optical) | 2048 | |
+| `FD`   | Floppy | 512 | |
+| `MO`   | Magneto-optical | 512 | |
+| `RE`   | Generic removable | 512 | |
+| `TP`   | Sequential / tape | 512 | See tape section |
+| `ZP`   | Iomega Zip 100 | 512 | Image should be exactly 100,663,296 bytes |
+| `NE`   | DaynaPORT network | — | Network-capable hardware only |
+| `AM`   | Amiga WiFi network | — | Network-capable hardware only |
+| `SN`   | PCM audio stream | — | Builds with audio streaming enabled only |
+
+A file whose name does not begin with one of these prefixes is ignored entirely.
+
+**Block size**
+
+Everything after the first  `_` underscore character is parsed as a decimal number. Accepted range is
+8 to 65536 bytes; values outside that range are ignored and the default for the device
+type is used instead. The block size may also be set per-device in `zuluscsi.ini`,
+which takes effect when the filename does not specify one.
+
+**Example file names**
+| Example file name       | Result |
+|--------------------------|------------------------------------------ |
+|    `HD1.img`             | hard disk, ID 1, 512 byte blocks |
+|    `HD5.hda`             | hard disk, ID 5 |
+|    `HDA.hda`             | hard disk, ID 10 |
+|    `HD20_512.hda`        | hard disk, ID 2, LUN 0, 512 byte blocks |
+|    `CD3.iso`             | CD-ROM, ID 3, 2048 byte blocks |
+|    `CD3_512.iso`         | CD-ROM, ID 3, 512 byte blocks |
+|    `ZP4.img`             | Iomega Zip 100, ID 4 |
+|    `TP6 - backup.tap`    | tape, ID 6, SIMH .tap format |
+|    `HDn.img`             | hard disk on the SCA-supplied dynamic ID |
+
+### File extensions
+
+For ordinary raw images the extension carries **no meaning** — `.hda`, `.img`, `.bin`,
+`.iso`, `.dsk` and so on are all read identically. The device type comes from the
+filename prefix, not the extension.
+
+The following file name extensions are treated as special by the firmware:
+
+| Extension | Meaning |
+|-----------|---------|
+| `.rom` | Program this image into microcontroller flash as a ROM drive |
+| `.tap` | SIMH tape format — only honoured on `TP` (sequential) devices |
+| `.cue` | Marks a BIN/CUE disc set; see the BIN/CUE section |
+| `.cow` | Copy-on-write image (kiosk use); writes are diverted to a `.tmp` overlay |
+| `.ori` | Kiosk-mode pristine master; copied over the live image at boot |
+| `.vhd` | VHD container — read as a Virtual Hard Disk (V1 only) container |
+
+The following are skipped silently, so documentation and artwork can live alongside images:
+
+    .cue .txt .rtf .md .nfo .pdf .doc .ini .mid .midi .aiff .mp3 .m4a
+    .rom_loaded .rom_bkup .ori .tmp
+
+These are skipped with a note in the log, because they are almost always an unextracted
+download rather than an image:
+
+    .tar .tgz .gz .bz2 .tbz2 .xz .zst .z .zip .zipx .rar .lzh .lha
+    .lzo .lz4 .arj .dmg .hqx .cpt .7z .s7z .wav
+
+Files whose name does not begin with a letter or digit are ignored. This is what keeps
+macOS `._` resource forks and similar metadata from being mistaken for images.
+
+### Image directories (swappable media)
+
+Instead of a single file, a device can be pointed at a directory of images that are
+cycled through with the eject button or the Control Board browser.
+
+A directory in the scan root named with a type prefix and ID is picked up automatically:
+
+    HD0/  CD0/  RE0/  MO0/  TP0/  FD0/  ZP0/    ... through ID F
+
+and the `n` forms `HDn/`, `CDn/`, `REn/`, `MOn/`, `TPn/`, `FDn/`, `ZPn/` bind to the
+dynamic SCA ID.
+
+This can be overridden per device in `zuluscsi.ini`:
+
+    [SCSI0]
+    ImgDir = "MyDiscs"
+
+Resolution order is: `[SCSIn] ImgDir` → `[SCSI<ID>] ImgDir` → dynamic `HDn`-style
+directory → fixed `HD<ID>`-style directory. Only **one** image directory is used per
+SCSI ID; if several would match, the first wins and the rest are logged and ignored.
+
+Images inside the directory are ordered by case-insensitive name, and eject advances to
+the next name, wrapping at the end.
+
+Alternatively, images can be listed explicitly. These are cycled in the order given:
+
+    [SCSI1]
+    Type = 2
+    IMG0 = FirstCD.iso
+    IMG1 = SecondCD.iso
+    ...          # up to IMG99
+
+Note that the explicit `IMGx` form and the plain prefixed-filename form do not support
+the Control Board's browser-type selection or categories; `ImgDir` and the
+`HD0`-style directories do.
 
 CD-ROM images in BIN/CUE format
 -------------------------------
@@ -32,19 +153,34 @@ Supported track types are `AUDIO`, `MODE1/2048` and `MODE1/2352`.
 
 Creating new image files
 ------------------------
-Empty image files can be created using operating system tools:
+Alternatively, Empty image files can be created using operating system tools:
 
 * Windows: `fsutil file createnew HD1.img 1073741824` (1 GB)
-* Linux: `truncate -s 1G HD1.img`
+* Linux: `dd if=/dev/zero of=HD1.img bs=1G count=1 status=progress`
 * Mac OS X: `mkfile -n 1g HD1.img`
 
 If you need to use image files larger than 4GB, you _must_ use an exFAT-formatted SD card, as the FAT32 filesystem does not support files larger than 4,294,967,295 bytes (4GB-1 byte).
 
-ZuluSCSI firmware can also create image files itself.
-To do this, create a text file with filename such as `Create 1024M HD40.txt`.
-The special filename must start with "Create" and be followed by file size and the name of resulting image file.
-The file will be created next time the SD card is inserted.
-The status LED will flash rapidly while image file generation is in progress.
+ZuluSCSI firmware can create image files itself. To do this, create an empty text file with filename beginning with `Create`, such as `Create 1024M HD40.txt`.
+The file will be created next time the SD card is inserted, and the status LED will flash rapidly while image file generation is in progress, the status of which can also be monitored in real-time via USB serial console.
+
+For AS/400 `AS400_DiskProfile=` SCSI IDs (see below), a correctly-sized image is created automatically the same way, with no `Create*.txt` file needed — the size comes from the profile's own captured capacity.
+
+AS/400 disk profiles
+---------------------
+For AS/400 (`System = "AS400_PPC"` or `"AS400_CISC"`), multiple SCSI IDs can each emulate a different real DASD unit by setting `AS400_DiskProfile = "<name>"` in that ID's `[SCSIn]` section, naming a profile from [`as400_disk_definitions.txt`](as400_disk_definitions.txt) — copy it to the SD card root.
+
+This ships with real profiles already captured from several physical drives, so it's usable even without any AS/400 DASD hardware on hand. Capturing your own is optional, for drives not already in the list: connect one to a Linux machine with `sg3_utils` installed and run [`utils/extract_as400_disk_data.sh`](utils/extract_as400_disk_data.sh):
+
+```
+./extract_as400_disk_data.sh /dev/sgN [Label] [outfile]
+```
+
+This appends one `[Label]` section to `as400_disk_definitions.txt` (or auto-derives the label from the drive's own FRU/part number if omitted) with its real INQUIRY, VPD, MODE SENSE, and capacity data. Copy the resulting file to the SD card root.
+
+If no image file exists yet for a profiled ID, one is created automatically at the profile's real captured size — see "Creating new image files" above.
+
+Each profiled ID gets that drive's real INQUIRY/VPD/MODE SENSE identity. Using the **same** profile for more than one SCSI ID currently gives them identical serial numbers, with no way to override this yet — use a different profile per ID until this is resolved.
 
 Log files and error indications
 -------------------------------
@@ -54,7 +190,7 @@ Normally only basic initialization information is stored, but switching the `DBG
 The indicator LED will normally report disk access.
 It also reports following status conditions:
 
-- 1 fast blink on boot: Image file loaded successfully
+- 1 fast blink on boot: One or more iImage files loaded successfully
 - 3 fast blinks: No images found on SD card
 - 5 fast blinks: SD card not detected
 - Continuous morse pattern: firmware crashed, morse code indicates crash location
@@ -167,7 +303,7 @@ This is necessary if the drives do not supply their own SCSI terminator power.
 
 ROM drive in microcontroller flash
 ----------------------------------
-The new ZuluSCSI Blaster model supports storing up to 15.8 **megabytes** in flash, which can be used as a read-only bootable ROM drive.
+The ZuluSCSI Blaster model supports storing up to 15.8 **megabytes** in flash, which can be used as a read-only bootable ROM drive.
 
 All older ZuluSCSI RP2040 models support storing up to 1660kB image as a read-only drive in the flash chip on the PCB itself. This can be used as e.g. a boot floppy that is available even without SD card.
 
@@ -180,6 +316,310 @@ The status and maximum size of ROM drive are reported in `zululog.txt`.
 To disable a previously programmed ROM drive, create empty file called `HD0.rom`.
 If there is a `.bin` file with the same ID as the programmed ROM drive, it overrides the ROM drive.
 There can be at most one ROM drive enabled at a time.
+
+The ROM drive can be removed by creating a file without an extension and in all caps called `CLEAR_ROM` in the root directory of the SD card.
+On successful removal the `CLEAR_ROM` file will be deleted, the ROM drive will no longer be enumerated on the SCSI bus, and the data zeroed out in flash.
+
+Kiosk mode for museums or demonstration setups
+----------------------------------------------
+The Kiosk mode is designed for vintage computer museums or other demonstration setups, where machines can be used by visitors but need to be easily restored to a pristine state.
+
+At startup, all files with `.ori` extensions are copied to new volumes. For instance, `HD10_512.hda.ori` would be copied to `HD10_512.hda`.
+
+Restoration takes a significant amount of time, so it should be used with small drives (it takes between 5 and 20 seconds to restore a 40MB hard drive depending on hardware). During the copy, the LED will blink with the pattern ON-OFF-ON-OFF-OFF. Each cycle corresponds to 5MB restored.
+
+Alternatively, you can use the '.cow' extension (short for "Copy-On-Write"). With this option, there will be no copy at startup, but the write speed can suffer a bit, which is typically not an issue in museum setups. The '.cow' feature is not available for the ZuluSCSIv1_1_plus platform due to memory constraints. See [Copy-On-Write documentation](docs/CopyOnWrite.md) for more information and configuration options.
+
+Rebooting the machine will not restore the files - you need to physically power-cycle the ZuluSCSI device.
+
+Zulu Control Board
+-------------------
+The Zulu Control Board is a small device which plugs into the I2C connector of the ZuluSCSI Blaster (Currently, that is the only supported board)
+It features an OLED screen, a rotary encoder, and two push buttons.
+This allows you to both control and visualize various aspects of the ZuluSCSI.
+Note: There are no error screens. Error must still be inspected in the log files.
+
+On power up a splash screen will display the current firmware version:
+
+![Splash](https://github.com/user-attachments/assets/64c03fdc-526e-461a-85c0-4f947cb282be)
+
+Then, depending on whether the initiator switch is on or off, it will go into either normal mode or initiator mode.
+
+Start Up
+---------
+There are various settings which can cause the ZuluSCSI to do tasks during startup. These are all long running and have dedicated progress screens.
+
+If there is .rom image on the SD, then the image will be copied into ROM, this is what the progress screen will look like:
+
+![ROM Copy](https://github.com/user-attachments/assets/aba70c61-24f7-4f89-a631-846f25ac0c7f)
+
+If there is a special create file on the SD, then an image will be created, this is what the progress screen will look like:
+
+![create](https://github.com/user-attachments/assets/d03cc8ca-aa89-4202-8680-a06d40a7b38e)
+
+If there are images with the .ori extension for Kiosk mode, then they will be copied, this is what the progress screen will look like:
+
+![kiosk](https://github.com/user-attachments/assets/d6c376d6-95dd-4f4b-9774-5c654451dd07)
+
+All these screen share common elements (from top to bottom)
+- Title showing the operation, for Kiosk mode it shows how many files are to be copied
+- The progress bar with % complete
+- The filename being copied
+- The rate of copy and the elapsed time
+- The remaining bytes and remaining time
+
+Once these have finished, the normal boot sequence will resume
+
+Normal Mode
+-----------
+Assuming the initiator switch is off, then the splash screen will display the mode:
+
+![SplashNormal](https://github.com/user-attachments/assets/90b22cfe-5f58-4377-80ba-a0667d50badf)
+
+and assuming caching is turned on, for a few seconds, the caching building screen will appear
+
+![Build Cache](https://github.com/user-attachments/assets/494e6e3b-dc4d-4628-b167-fbb48e2b5e3f)
+
+Once that is complete, the main screen will be displayed
+
+Main Screen
+----------
+
+![Main](https://github.com/user-attachments/assets/6ce8386b-d671-43f4-95f7-f2fe6e81e5d0)
+
+(TODO: update image)
+
+This screen displays an overview of the SCSI devices.
+
+Top righr will show an SD card icon. (if the card is removed, the icon will have a little cross in it)
+
+Each item displays:
+- The SCSI ID
+- An empty circle represents nothing is loaded, a solid circle represents a loaded image
+- If an image is loaded, the type is displayed as an icon. e.g. ID 0 is a CD, IDs 1-3 and 5 are Hard Drives, and ID 6 is a Magneto-optical Disk in the picture above
+- If the image is stored in the ZuluSCSI's ROM, then chip icon is displayed (ID 6 in the picture above)
+
+Turning the `rotary wheel` will select a loaded image (a little arrow will be visible next to the image, in the above picture it's on ID 0)
+
+If a device is not browsable and the `eject` button is pressed trying to browse it, the following pop up will be displayed:
+
+![WarningBrowseNotSupported](https://github.com/user-attachments/assets/14f0b488-361d-4831-b198-d0b588976bd0)
+
+
+Info Screen
+-----------
+Clicking the `rotary button` will display info about the selected device:
+
+![Info](https://github.com/user-attachments/assets/4d8be5b4-379b-4d89-b3a5-928d1a66fbd3)
+
+The following is on the screen:
+- The type of the image is displayed as an icon, and the SCSI ID is in the top right.
+- The file name (it scrolls if it's too long for the display)
+- the folder name (it scrolls if it's too long for the display)
+- Whether it can be browsed
+- The filesize of the image
+
+Pressing the `User` button will return to the Main Screen
+
+Browser Type Screen
+-------------------
+Depending on the way images are set up for browsing, some styles can have different browse modes.
+If images are set up in config, either as:
+- An ImgDir path is specified
+- Use the standard folder naming of Device Type / SCSI ID. e.g.  CD0 for cd images for SCSI ID 0
+  
+Then the browsing type can be selected. To do this, long-press the `eject` button
+
+Other image browsing modes, i.e. `IMGx` and naming file with the Device Type / SCSI ID prefix e.g. CD0 cannot access the browser type screen or use categories
+
+![BrowserType](https://github.com/user-attachments/assets/c6b3a59b-1f2b-42bd-8a88-9944fe68d10e)
+
+The first option is for the Folder-based Browser, which displays files and folders just like the structure on the SD card
+
+The second option is for the Flat Browser, which flattens all files into a single list, removing the need to go into and out of folders (folder names are still displayed)
+
+The remaining options are also Flat browser-based, but perform filtering based on the category (see category section)
+
+Clicking either the `eject` or `rotary button` will go to the browser screen
+
+Clicking `user` will return to the main menu
+
+NOTE: The selected browse type is remembered for each SCSI ID. So, going to the browsing screen directly from the main menu will use the last selected browser type
+
+Folder-based Browser
+--------------------
+![Browser](https://github.com/user-attachments/assets/ccb18e68-2d56-43b0-b8bf-5856cebf2f13)
+
+The following is on the screen:
+- The type of the image is displayed as an icon, and the SCSI ID is in the top right.
+- The file/folder name (it scrolls if it's too long for the display)
+- the folder name (it scrolls if it's too long for the display)
+- The filesize of the image
+- The type (File or Folder) and which item number and total it is in this folder
+
+Turning the `rotary dial` with select files and folders, the last item in the list for nested folders is a folder called ".." which, if selected, goes back a folder
+
+Clicking either the `eject` or `rotary button` on a folder will go to the browser screen
+
+Clicking either the `eject`  on a file will load the image
+
+Clicking `user` or long-pressing the `rotary button` in a nested folder will go back a directory, in the root folder, it will return to the main menu
+
+During image loading, the following pop up will be displayed:
+
+![Loading Image](https://github.com/user-attachments/assets/d2fd792e-b54c-49b3-a0ed-d327937597e5)
+
+Flat Browser
+------------
+The flat browser is very similar to the Folder Browser, but without:
+- any of the folders displayed as selectable items
+- the .. folder
+
+Turning the `rotary dial` with select files
+
+Clicking  `eject` will load the image
+
+Clicking `user` will return to the main menu
+
+Categories
+----------
+Categories provide a way of filtering images, this can be useful for large image sets.
+There can be up to 10 categories per SCSI ID and are specifc to that SCSI ID.
+
+Assume that there are images for a sampler, and that they can be divided into various categories, eg. Drums, Synths, Vocals and Guitars.
+
+To set the categories, the following config should be added to the SCSI device (assume this is for SCSI ID 0 and the images will be in a folder called ISO1)
+
+    [SCSI0]
+    Type=2 # CDROM drive
+    ImgDir = "ISO1"
+    Cat0 = "dDrums"
+    Cat1 = "sSynths"
+    Cat2 = "vVocals"
+    Cat3 = "gGuitars"
+
+The 4 categories are defined, and the first letter of the name is the code which represents that category (i.e `Cat0`, has a code of 'd' and a name of 'Drums')
+
+Next, assume the following files are in the ISO1 folder:
+
+    Sample Disk {v}.iso
+    Drums 1 {d}.iso
+    Drums 2 {d}.iso
+    Licks {g}.iso
+    Various Samples {dsvg}.iso
+
+The letters in the {} brackets represent which categories each file belongs to. so:
+
+    Sample Disk {v}.iso - is in the vocal category
+    Drums 1 {d}.iso - is in the drums category
+    Various Samples {dsvg}.iso - is in all 4 categories
+
+So if you go to the Browser Type screen and select 'cat: drums', then the following 3 files would be browsable:
+
+    Drums 1 {d}.iso
+    Drums 2 {d}.iso
+    Various Samples {dsvg}.iso
+
+Controls Summary
+--------------
+Main Screen:
+- turning the `rotary dial` will select a SCSI device
+- click on `eject` - this loads the browser screen
+- click on the `rotary button` - this goes to the info screen
+- long click on `User` - this will display the splash screen (same as on boot)
+- long click on `eject` - this loads the browser type screen
+
+Info Screen:
+- click on `user` - returns to main screen
+
+Browse Type Screen:
+- click on `user` - returns to main screen
+- click on `eject` or `rotary button` - go to the selected Browser screen
+  
+Browser Screen (Folder Mode):
+- turning the `rotary dial` will select a folder or file
+- click on `user` in a nested folder will go back a directory, in the root folder it will return to the main menu
+- click on `eject` or `rotary button` on the folder to navigate into that folder
+- click on `eject` on a file to load the image 
+  
+Browser Screen (Flat  Mode):
+- turning the `rotary dial` will select a file
+- click on `user` - returns to main screen
+- click on `eject` on a file to load the image 
+
+No SD screen:
+- This screen has no controls.
+
+Initiator Mode
+--------------
+Assuming the initiator switch is on, then the splash screen will display the mode:
+
+![InitiatorSplash](https://github.com/user-attachments/assets/146e65af-9647-4f2d-ab39-c448f4e05191)
+
+and will the go to the scanning screen:
+
+![scanning](https://github.com/user-attachments/assets/15f79ace-d881-479d-8023-f11c0efac276)
+
+A circle with an X through it is the SCSI ID currently being scanned
+
+Question marks are SCSI IDs which have no been checked yet
+
+The empty circles are SCSI IDs which have been scanned
+
+Once a drive is detected it will automatically go to the cloning screen:
+
+![cloning](https://github.com/user-attachments/assets/b98c6b09-5f04-4126-a87b-37a148bdbbca)
+
+Note: this is similar to the other copy screens with he exception that the file name is not displayed, but the total number of retires and errors (skipped sector) is displayed.
+
+Once the cloning is complete, it will return to the scanning screen and display the cloned drive:
+
+![resultaftercloning](https://github.com/user-attachments/assets/58ae95b1-6ad6-458e-8d0c-d90e0a23204d)
+
+NOTE: There are no controls in Initiator mode, it is a viewing-only mode
+
+Control Board Config
+--------------------
+- `ControlBoardCache` - Enables caching of images. This will greatly improve performance when there are many images. set this to 1 to enable. Enabling will cause some wear on the SD card as the cache is built every time the card is inserted, and there is a slight delay on load (generally 1-2secs for large file sets). So if browsing is laggy, enable this
+
+- `ControlBoardReverseRotary` - Some encoders work in the opposite direction, if you experience that, set this to 1
+
+- `ControlBoardFlipDisplay` - Rotates the screen 180 degrees. set this to 1 to flip
+
+- `ControlBoardDimDisplay` - if set to 1, then the screen will be a bit dimmer
+
+- `ControlBoardScreenSaverTimeSec` - Sets the seconds before the screen savers starts. 0 means screen saver is disabled
+
+- `ControlBoardScreenSaverStyle` - There are several screen savers, each ones uses more resources, so if you see a performance drop try a lower numbered one:
+
+- 0 - Random selection (each time the screen saver starts, a random one will be selected)
+- 1 - Blank screen
+- 2 - DVD Style Random ZuluSCSI logo
+- 3 - DVD Style Bouncing ZuluSCSI logo
+- 4 - Horizontal Scrolling Icons
+- 5 - Vertical Raining Icons
+- 6 - Light speed
+
+
+ZuluControl-firmware
+----------------------
+See [ZuluControl-firmware](https://github.com/rabbitholecomputing/ZuluControl-firmware) for the latest.
+
+This is firmware that runs on a separate Pico W or 2W, or our custom wireless board, and communicates with the ZuluSCSI over the I2C interface. It provides a simple HTTP webserver that allows controlling images on removable devices.
+
+The basic settings to get the HTTP webserver up and running are the following under the `[WebUI]` section in the `zuluscsi.ini` file.
+```
+[WebUI]
+WiFiSSID = "your_ssid" # SSID for the WIFI network
+WiFiPassword = "your_password" # Password for the WIFI network.
+
+#Optional Static IPv4 Settings - fill in with your network settings
+StaticIP = "192.168.1.42"
+Netmask = "255.255.255.0"
+Gateway = "192.168.1.1"
+```
+Access the IP with your favorite web browser, where you are able to control the ZuluSCSI, and media selection, over a web interface.
+
 
 Project structure
 -----------------

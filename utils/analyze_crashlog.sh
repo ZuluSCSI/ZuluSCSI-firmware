@@ -24,14 +24,14 @@ fwtime=$(grep 'FW Version' $logfile | tail -n 1 | egrep -o '[A-Z][a-z][a-z]\s+[0
 # Check if the firmware file is available locally
 echo "Searching for firmware compiled at $fwtime"
 scriptdir=$( dirname -- "${BASH_SOURCE[0]}" )
-fwfile=$(find $scriptdir/.. $2 -name '*.elf' -exec grep -q "$fwtime" {} \; -print -quit)
+fwfile=$(find $scriptdir/.. $2 -name '*.elf' ! -name 'bootloader.elf' -exec grep -q "$fwtime" {} \; -print -quit)
 
 # Search Github for artifacts uploaded within few minutes of the compilation time
 if [ "x$fwfile" = "x" ]; then
     echo "Searching on Github"
     enddate=$(date "+%Y-%m-%dT%H:%M" -d "$fwtime 600 seconds")
     runid=$(gh api repos/$repo/actions/artifacts \
-        --jq ".artifacts[] | select(.created_at <= \"$enddate\") | .workflow_run.id" | head -n 1)
+        --jq ".artifacts[] | select(.name == \"ZuluSCSI ELFs\") | select(.created_at <= \"$enddate\") | .workflow_run.id" | head -n 1)
     if [ "x$runid" != "x" ]; then
         tmpdir=$(mktemp -d /tmp/crashlog-XXXXXXX)
         echo "Workflow run: https://github.com/$repo/actions/runs/$runid"

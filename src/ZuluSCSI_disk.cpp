@@ -2,7 +2,7 @@
  * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
  * Portions Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
  * Portions Copyright (C) 2023 Eric Helgeson
- * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2026 Rabbit Hole Computing™
  *
  * This file is licensed under the GPL version 3 or any later version. 
  * It is derived from disk.c in SCSI2SD V6
@@ -36,8 +36,11 @@
 #  include "ZuluSCSI_audio.h"
 #endif
 #include "ZuluSCSI_cdrom.h"
+#include "ZuluSCSI_tape.h"
+#include "custom_vendor_inquiry.h"
 #include "ImageBackingStore.h"
 #include "ROMDrive.h"
+#include <new> // For placement new
 #include "QuirksCheck.h"
 #include <minIni.h>
 #include <string.h>
@@ -45,11 +48,19 @@
 #include <assert.h>
 #include <SdFat.h>
 
+#include "ui.h"
+
 extern "C" {
 #include <scsi2sd_time.h>
 #include <sd.h>
 #include <mode.h>
 }
+
+#include "SDNavigator.h"
+#include <ZuluSCSI_platform_config.h>
+#ifdef PLATFORM_AS400
+#include "as400_values.h"
+#endif
 
 #ifndef PLATFORM_MAX_SCSI_SPEED
 #define PLATFORM_MAX_SCSI_SPEED S2S_CFG_SPEED_ASYNC_50
@@ -74,32 +85,53 @@ extern "C" {
 #define PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE 512
 #endif
 
-// Optimal size for read block from SCSI bus
-// For platforms with nonblocking transfer, this can be large.
-// For Akai MPC60 compatibility this has to be at least 5120
-#ifndef PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE
-#ifdef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
-#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 65536
-#else
-#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 8192
-#endif
+int8_t scsiParseId(const char scsi_id_text)
+{
+    if (scsi_id_text >= '0' && scsi_id_text <= '9')
+        return scsi_id_text - '0';
+    if (scsi_id_text >= 'A' && scsi_id_text <= 'F')
+        return scsi_id_text - 'A' + 10;
+    return -1;
+}
+
+#ifdef  DYNAMIC_SCSI_ID
+// SCSI ID read from the GPIO I2C expander at boot. -1 = not available.
+static int8_t g_dynamic_scsi_id = -1;
+
+void scsiDiskSetDynamicId(int8_t id)
+{
+    g_dynamic_scsi_id = (id >= 0 && id < S2S_MAX_TARGETS) ? id : -1;
+    if (g_dynamic_scsi_id >= 0)
+        logmsg("Dynamic SCSI ID: ", (int)g_dynamic_scsi_id);
+}
+
+int8_t scsiDiskGetDynamicId()
+{
+    return g_dynamic_scsi_id;
+}
+
+bool scsiDiskHasDynamicDirs()
+{
+    static const char * const dirs[] = {
+        "HDn", "CDn", "REn", "MOn", "TPn", "FDn", "ZPn"
+    };
+    for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++)
+    {
+        if (SD.exists(dirs[i]))
+            return true;
+    }
+    return false;
+}
 #endif
 
-#ifndef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
-// For platforms that do not have non-blocking read from SCSI bus
-void scsiStartRead(uint8_t* data, uint32_t count, int *parityError)
+char scsiEncodeID(const uint8_t scsi_id)
 {
-    scsiRead(data, count, parityError);
+    if (scsi_id >= 0xA && scsi_id <= 0xF)
+        return 'A' + (scsi_id - 0xA);
+    else if (scsi_id >= 0 && scsi_id <= 9)
+        return '0' + scsi_id;
+    return '\0';
 }
-void scsiFinishRead(uint8_t* data, uint32_t count, int *parityError)
-{
-
-}
-bool scsiIsReadFinished(const uint8_t *data)
-{
-    return true;
-}
-#endif
 
 /************************************************/
 /* ROM drive support (in microcontroller flash) */
@@ -129,7 +161,7 @@ bool scsiDiskActivateRomDrive()
     }
 
     long rom_scsi_id = ini_getl("SCSI", "ROMDriveSCSIID", -1, CONFIGFILE);
-    if (rom_scsi_id >= 0 && rom_scsi_id <= 7)
+    if (rom_scsi_id >= 0 && rom_scsi_id <= S2S_MAX_TARGETS)
     {
         hdr.scsi_id = rom_scsi_id;
         logmsg("---- ROM drive SCSI id overriden in ini file, changed to ", (int)hdr.scsi_id);
@@ -176,10 +208,24 @@ void scsiDiskResetImages()
     }
 }
 
+void image_config_t::setDeviceType(S2S_CFG_TYPE device_type)
+{
+    deviceType = device_type;
+    if (deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        tapeInit(scsiId & S2S_CFG_TARGET_ID_BITS);
+    }
+}
+
 void image_config_t::clear()
 {
-    static const image_config_t empty; // Statically zero-initialized
-    *this = empty;
+    if (deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        tapeDeinit(S2S_CFG_TARGET_ID_BITS & scsiId);
+    }
+    this->~image_config_t();
+    new (this) image_config_t();
+    memset((S2S_TargetCfg*)this, 0, sizeof(image_config_t));
 }
 
 uint32_t image_config_t::get_capacity_lba()
@@ -238,9 +284,10 @@ void scsiDiskCloseSDCardImages()
         if (!g_DiskImages[i].file.isRom())
         {
             g_DiskImages[i].file.close();
+            g_DiskImages[i].image_directory = false;
+            g_DiskImages[i].bin_container.close();
+            g_DiskImages[i].cuesheetfile.close();
         }
-
-        g_DiskImages[i].cuesheetfile.close();
     }
 }
 
@@ -289,7 +336,8 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     memset(img.revision, 0, sizeof(img.revision));
     memset(img.serial, 0, sizeof(img.serial));
 
-    img.deviceType = devCfg->deviceType;
+    img.setDeviceType((S2S_CFG_TYPE)devCfg->deviceType);
+    img.mediumType = devCfg->mediumType;
     img.deviceTypeModifier = devCfg->deviceTypeModifier;
     img.sectorsPerTrack = devCfg->sectorsPerTrack;
     img.headsPerCylinder = devCfg->headsPerCylinder;
@@ -299,7 +347,29 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     img.prefetchbytes = devCfg->prefetchBytes;
     img.reinsert_on_inquiry = devCfg->reinsertOnInquiry;
     img.reinsert_after_eject = devCfg->reinsertAfterEject;
-    img.ejectButton = devCfg->ejectButton;
+    img.eject_on_stop = devCfg->ejectOnStop;
+    if (devCfg->ejectButton > 0)
+    {
+        uint8_t eject_button_bit = 1 << (devCfg->ejectButton - 1);
+        if ((eject_button_bit & EJECT_BTN_MASK) == 0)
+        {
+            logmsg("---- For SCSI target ", (int)target_idx, ": EjectButton=", (int)devCfg->ejectButton," is over the usable button number(s) ", (int)EJECT_BTN_MAX);
+        }
+        else
+        {
+            setEjectButton(target_idx, devCfg->ejectButton);
+        }
+    }
+    uint8_t cow_button_bit = 1 << (devCfg->cowButton - 1);
+    if ((devCfg->cowButton > 0) && (cow_button_bit & (((EJECT_BTN_MASK | USER_BTN_MASK) << 1) | 1)))
+    {
+        platform_set_cow_button(cow_button_bit);
+    }
+    img.ejectFixedDiskEnable = devCfg->ejectFixedDiskEnable;
+    img.ejectFixedDiskDelay = devCfg->ejectFixedDiskDelay;
+    img.ejectFixedDiskReadOnly = devCfg->ejectFixedDiskReadOnly;
+    img.ejectFixedDiskPending = false;
+    img.ejectFixedDiskWriteBlocked = false;
     img.vendorExtensions = devCfg->vendorExtensions;
 
 #ifdef ENABLE_AUDIO_OUTPUT
@@ -356,7 +426,8 @@ static void autoConfigGeometry(image_config_t &img)
         {
             method = "device type floppy";
             sect = 18;
-            head = 80;
+            head = 2;
+            found_chs = true;
         }
         else if (img.scsiSectors <= 1032192)
         {
@@ -383,14 +454,16 @@ static void autoConfigGeometry(image_config_t &img)
         img.sectorsPerTrack = sect;
         img.headsPerCylinder = head;
     }
-
-    bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
-    logmsg("---- Drive geometry from ", method,
-        ": SectorsPerTrack=", (int)img.sectorsPerTrack,
-        " HeadsPerCylinder=", (int)img.headsPerCylinder,
-        " total sectors ", (int)img.scsiSectors,
-        divisible ? " (divisible)" : " (not divisible)"
-        );
+    if (img.bytesPerSector == DEFAULT_BLOCKSIZE)
+    {
+        bool divisible = (img.scsiSectors % ((uint32_t)img.sectorsPerTrack * img.headsPerCylinder)) == 0;
+        logmsg("---- Drive geometry from ", method,
+            ": SectorsPerTrack=", (int)img.sectorsPerTrack,
+            " HeadsPerCylinder=", (int)img.headsPerCylinder,
+            " total sectors ", (int)img.scsiSectors,
+            divisible ? " (divisible)" : " (not divisible)"
+            );
+        }
 }
 
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)
@@ -399,8 +472,14 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
     img.cuesheetfile.close();
     img.bin_container.close();
     img.cdrom_binfile_index = -1;
+    img.cdrom_track_end_lba = 0;
     scsiDiskSetImageConfig(target_idx);
-    img.file = ImageBackingStore(filename, blocksize);
+
+    auto device_config = g_scsi_settings.getDevice(target_idx);
+
+    // Close existing file and construct new one in-place
+    img.file.~ImageBackingStore();
+    new (&img.file) ImageBackingStore(filename, blocksize, device_config);
 
     if (img.file.isOpen())
     {
@@ -408,17 +487,33 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         img.scsiSectors = img.file.size() / blocksize;
         img.scsiId = target_idx | S2S_CFG_TARGET_ENABLED;
         img.sdSectorStart = 0;
+        bool tape_is_tap_format = false;
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && !img.file.isFolder())
+        S2S_CFG_TYPE setting_type = (S2S_CFG_TYPE) g_scsi_settings.getDevice(target_idx)->deviceType;
+        if ( setting_type != S2S_CFG_NOT_SET)
+        {
+            type = setting_type;
+        }
+
+        // Detect SIMH .tap format with filename extension
+        char *extension = strrchr(filename, '.');
+        if (type == S2S_CFG_SEQUENTIAL && extension && strcasecmp(extension, ".tap") == 0)
+        {
+            logmsg("---- SIMH simulated tape drive format detected with extension ", extension);
+            tape_is_tap_format = true;
+        }
+
+        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && type != S2S_CFG_AUDIO && !img.file.isFolder() && !tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
             return false;
         }
+
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || img.file.isFolder())
+        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO || img.file.isFolder() || tape_is_tap_format)
         {
-            // ROM is always contiguous, no need to log
+            // Contiguous file doesn't matter for these types
         }
         else if (img.file.isContiguous() && img.file.contiguousRange(&sector_begin, &sector_end))
         {
@@ -438,21 +533,22 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- WARNING: file ", filename, " is not contiguous. This will increase read latency.");
         }
 
-        S2S_CFG_TYPE setting_type = (S2S_CFG_TYPE) g_scsi_settings.getDevice(target_idx)->deviceType;
-        if ( setting_type != S2S_CFG_NOT_SET)
-        {
-            type = setting_type;
-        }
-
         if (type == S2S_CFG_FIXED)
         {
             logmsg("---- Configuring as disk drive drive");
-            img.deviceType = S2S_CFG_FIXED;
+            img.setDeviceType(S2S_CFG_FIXED);
+            autoConfigGeometry(img);
+#ifdef CONTAINER_IMAGE_SUPPORT
+            if (img.file.isContainer())
+            {
+                logmsg("---- Image is inside a ", img.file.containerTypeName(), " container");
+            }
+#endif
         }
         else if (type == S2S_CFG_OPTICAL)
         {
             logmsg("---- Configuring as CD-ROM drive");
-            img.deviceType = S2S_CFG_OPTICAL;
+            img.setDeviceType(S2S_CFG_OPTICAL);
             if (g_scsi_settings.getDevice(target_idx)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
             {
                 logmsg("---- Plextor 0xD8 vendor extension enabled");
@@ -461,46 +557,59 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         else if (type == S2S_CFG_FLOPPY_14MB)
         {
             logmsg("---- Configuring as floppy drive");
-            img.deviceType = S2S_CFG_FLOPPY_14MB;
+            img.setDeviceType(S2S_CFG_FLOPPY_14MB);
+            autoConfigGeometry(img);
         }
         else if (type == S2S_CFG_MO)
         {
             logmsg("---- Configuring as magneto-optical");
-            img.deviceType = S2S_CFG_MO;
+            img.setDeviceType(S2S_CFG_MO);
         }
 #ifdef ZULUSCSI_NETWORK
         else if (type == S2S_CFG_NETWORK)
         {
             logmsg("---- Configuring as network based on image name");
-            img.deviceType = S2S_CFG_NETWORK;
+            img.setDeviceType(S2S_CFG_NETWORK);
+        }
+        else if (type == S2S_CFG_AMIGAWIFI)
+        {
+            if (!platform_network_supported())
+            {
+                logmsg("---- Error: network not supported on this device, ignoring ", filename);
+                img.file.close();
+                return false;
+            }
+            logmsg("---- Configuring as network based on image name");
+            img.deviceType = S2S_CFG_AMIGAWIFI;
         }
 #endif // ZULUSCSI_NETWORK
+#ifdef ENABLE_AUDIO_STREAM
+        else if (type == S2S_CFG_AUDIO)
+        {
+            logmsg("---- Configuring as PCM audio device based on image name");
+            img.setDeviceType(S2S_CFG_AUDIO);
+        }
+#endif // ENABLE_AUDIO_STREAM
         else if (type == S2S_CFG_REMOVABLE)
         {
             logmsg("---- Configuring as removable drive");
-            img.deviceType = S2S_CFG_REMOVABLE;
+            img.setDeviceType(S2S_CFG_REMOVABLE);
         }
         else if (type == S2S_CFG_SEQUENTIAL)
         {
             logmsg("---- Configuring as tape drive");
-            img.deviceType = S2S_CFG_SEQUENTIAL;
-            img.tape_mark_count = 0;
-            scsiDev.target->sense.filemark = false;
-            scsiDev.target->sense.eom = false;
+            img.setDeviceType(S2S_CFG_SEQUENTIAL);
+            tapeSetIsTap(target_idx, tape_is_tap_format);
+            logmsg("---- Medium block size max is ", tape_is_tap_format ? TAPE_TAP_BLOCK_SIZE_MAX : TAPE_BLOCK_SIZE_MAX);
         }
         else if (type == S2S_CFG_ZIP100)
         {
             logmsg("---- Configuration as Iomega Zip100");
-            img.deviceType = S2S_CFG_ZIP100;
+            img.setDeviceType(S2S_CFG_ZIP100);
             if(img.file.size() != ZIP100_DISK_SIZE)
             {
                 logmsg("---- Zip 100 disk (", (int)img.file.size(), " bytes) is not exactly ", ZIP100_DISK_SIZE, " bytes, may not work correctly");
             }
-        }
-
-        if (type != S2S_CFG_OPTICAL && type != S2S_CFG_NETWORK)
-        {
-            autoConfigGeometry(img);
         }
 
         quirksCheck(&img);
@@ -511,7 +620,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Vendor / product id set from image file name");
         }
 
-        if (type == S2S_CFG_NETWORK)
+        if (type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO)
         {
             // prefetch not used, skip emitting log message
         }
@@ -547,7 +656,19 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                     img.bin_container.open(filename);
                     // If bin container is a directory close the file
                     if (img.bin_container.isDir())
+                    {
                         img.bin_container.close();
+                    }
+
+                    else
+                    {
+                        // CD image is valid, reset audio and clear last track info
+#ifdef ENABLE_AUDIO_OUTPUT
+                        audio_reset(target_idx);
+#endif
+                        memset(&img.cdrom_trackinfo, 0, sizeof(img.cdrom_trackinfo));
+                        img.cdrom_track_end_lba = 0;
+                    }
                 }
             }
             else
@@ -567,15 +688,25 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             while (!valid && img.cuesheetfile.openNext(&folder, O_RDONLY))
             {
                 img.cuesheetfile.getName(cuesheetname, sizeof(cuesheetname));
+
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
                     valid = cdromValidateCueSheet(img);
+                    if (valid)
+                    {
+                        binCueInUse(target_idx, foldername);
+                    }
                 }
             }
 
             if (valid)
             {
                 img.bin_container.open(foldername);
+                memset(&img.cdrom_trackinfo, 0, sizeof(img.cdrom_trackinfo));
+                img.cdrom_track_end_lba = 0;
+#ifdef ENABLE_AUDIO_OUTPUT                
+                audio_reset(target_idx);
+#endif
             }
             else
             {
@@ -591,25 +722,26 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             img.bin_container.open(name);
             FsFile file;
             bool valid = false;
-
+            uint32_t tape_mark_count = 0;
             while(file.openNext(&img.bin_container))
             {
                 file.getName(name, sizeof(name));
                 if(!file.isDir() && !file.isHidden() && scsiDiskFilenameValid(name))
                 {
                     valid = true;
-                    img.tape_mark_count++;
+                    tape_mark_count++;
                 }
             }
+
+            setTapeMarkCount(target_idx, tape_mark_count);
+            
             if (!valid)
             {
                 // if there are no valid image files, create one
                 file.open(&img.bin_container, TAPE_DEFAULT_NAME, O_CREAT);
                 file.close();
             }
-            img.tape_mark_index = 0;
-            img.tape_mark_block_offset = 0;
-            img.tape_load_next_file = false;
+
         }
 
         img.use_prefix = use_prefix;
@@ -628,13 +760,15 @@ static void checkDiskGeometryDivisible(image_config_t &img)
     if (!img.geometrywarningprinted)
     {
         uint32_t sectorsPerHeadTrack = img.sectorsPerTrack * img.headsPerCylinder;
-        if (img.scsiSectors % sectorsPerHeadTrack != 0)
+        // max CHS in sectors is 1024 cyls * 256 heads * 63 sectors/track
+        // normally devices will limit to 255 heads for DOS but 256 is used as a corner case
+        if (img.scsiSectors <= 1024 * 256 * 63 && img.scsiSectors % sectorsPerHeadTrack != 0)
         {
-            logmsg("WARNING: Host used command ", scsiDev.cdb[0],
+            dbgmsg("WARNING: Host used command ", scsiDev.cdb[0],
                 " which is affected by drive geometry. Current settings are ",
                 (int)img.sectorsPerTrack, " sectors x ", (int)img.headsPerCylinder, " heads = ",
                 (int)sectorsPerHeadTrack, " but image size of ", (int)img.scsiSectors,
-                " sectors is not divisible. This can cause error messages in diagnostics tools.");
+                " sectors is not divisible. This can cause error messages in diagnostics tools, but is usually safe to ignore.");
             img.geometrywarningprinted = true;
         }
     }
@@ -647,8 +781,18 @@ bool scsiDiskFilenameValid(const char* name)
     if (extension)
     {
         const char *ignore_exts[] = {
-            ".rom_loaded", ".cue", ".txt", ".rtf", ".md", ".nfo", ".pdf", ".doc", 
+            ".rom_loaded", ".rom_bkup", ".cue", ".txt", ".rtf", ".md", ".nfo", ".pdf", ".doc", 
 	    ".ini", ".mid", ".midi", ".aiff", ".mp3", ".m4a",
+            ".ori", // Kiosk mode original images
+            ".tmp", // COW dirty files (contains only the writes)
+#if ENABLE_COW==0
+            ".cow", // If COW is not enabled, we ignore .cow files
+#endif
+#ifndef CONTAINER_IMAGE_SUPPORT
+            // to avoid container corruption, skip container formats
+            // that would be supported if CONTAINER_IMAGE_SUPPORT was enabled
+            ".vhd",
+#endif
             NULL
         };
         const char *archive_exts[] = {
@@ -704,17 +848,17 @@ bool scsiDiskFolderIsTapeFolder(FsFile *dir)
 {
     char filename[MAX_FILE_PATH + 1];
     dir->getName(filename, sizeof(filename));
-    // string starts with 'tp', the 3rd character is a SCSI ID, and it has more 3 charters
-    // e.g. "tp0 - tape 01"
-    if (strlen(filename) > 3 && strncasecmp("tp", filename, 2) == 0 
-        && filename[2] >= '0' && filename[2] - '0' < NUM_SCSIID)
+    // string starts with 'tp', the 3rd character is a SCSI ID or the dynamic ID char,
+    // and the name has more than 3 characters — e.g. "tp0 - tape 01" or "tpn - tape"
+    if (strlen(filename) > 3 && strncasecmp("tp", filename, 2) == 0
+        && (scsiParseId(filename[2]) > 0 || tolower(filename[2]) == DYNAMIC_SCSI_ID_CHAR))
     {
         return true;
     }
     return false;
 }
 
-static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* img, S2S_CFG_TYPE type, const char* type_name)
+static void scsiDiskCheckDir(const char * dir_name, int target_idx, image_config_t* img, S2S_CFG_TYPE type, const char* type_name)
 {
     if (SD.exists(dir_name))
     {
@@ -727,6 +871,9 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
             img->deviceType = type;
             img->image_directory = true;
             logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
+
+            setRootFolder(target_idx, false, dir_name);
+            g_scsi_settings.initDevice(target_idx, type);
         }
     }
 }
@@ -736,54 +883,102 @@ static void scsiDiskCheckDir(char * dir_name, int target_idx, image_config_t* im
 // Otherwise keep current settings.
 static void scsiDiskSetConfig(int target_idx)
 {
-  
+
     image_config_t &img = g_DiskImages[target_idx];
     img.scsiId = target_idx;
 
     scsiDiskSetImageConfig(target_idx);
 
     char section[6] = "SCSI0";
-    section[4] += target_idx;
+    section[4] = scsiEncodeID(target_idx);
     char tmp[32];
+#ifdef DYNAMIC_SCSI_ID
+    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id);
+#endif
 
-    ini_gets(section, "ImgDir", "", tmp, sizeof(tmp), CONFIGFILE);
+
+    tmp[0] = '\0';
+#ifdef DYNAMIC_SCSI_ID
+    // [SCSIn] ImgDir takes priority over [SCSI<X>] ImgDir for the dynamic target.
+    if (is_dynamic)
+        ini_gets(DYNAMIC_SCSI_INI_SECTION, "ImgDir", "", tmp, sizeof(tmp), CONFIGFILE);
+#endif
+    if (!tmp[0])
+        ini_gets(section, "ImgDir", "", tmp, sizeof(tmp), CONFIGFILE);
+
     if (tmp[0])
     {
         logmsg("SCSI", target_idx, " using image directory '", tmp, "'");
         img.image_directory = true;
+
+        setRootFolder(target_idx, true, tmp);
     }
     else
     {
+#ifdef DYNAMIC_SCSI_ID
+        // For the dynamic target, check HDn/CDn/etc. directories first.
+        // These take priority over the hardcoded HD<X>/CD<X>/etc. directories.
+        if (is_dynamic)
+        {
+            scsiDiskCheckDir("HDn", target_idx, &img, S2S_CFG_FIXED, "disk");
+            scsiDiskCheckDir("CDn", target_idx, &img, S2S_CFG_OPTICAL, "optical");
+            scsiDiskCheckDir("REn", target_idx, &img, S2S_CFG_REMOVABLE, "removable");
+            scsiDiskCheckDir("MOn", target_idx, &img, S2S_CFG_MO, "magneto-optical");
+            scsiDiskCheckDir("TPn", target_idx, &img, S2S_CFG_SEQUENTIAL, "tape");
+            scsiDiskCheckDir("FDn", target_idx, &img, S2S_CFG_FLOPPY_14MB, "floppy");
+            scsiDiskCheckDir("ZPn", target_idx, &img, S2S_CFG_ZIP100, "Iomega Zip 100");
+        }
+#endif
         strcpy(tmp, "HD0");
-        tmp[2] += target_idx;
+        tmp[2] = scsiEncodeID(target_idx);
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_FIXED, "disk");
 
         strcpy(tmp, "CD0");
-        tmp[2] += target_idx;
+        tmp[2] = scsiEncodeID(target_idx);
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_OPTICAL, "optical");
 
         strcpy(tmp, "RE0");
-        tmp[2] += target_idx;
+        tmp[2] = scsiEncodeID(target_idx);
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_REMOVABLE, "removable");
 
         strcpy(tmp, "MO0");
-        tmp[2] += target_idx;
+        tmp[2] = scsiEncodeID(target_idx);
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_MO, "magneto-optical");
 
         strcpy(tmp, "TP0");
-        tmp[2] += target_idx;
+        tmp[2] = scsiEncodeID(target_idx);
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_SEQUENTIAL, "tape");
 
         strcpy(tmp, "FD0");
-        tmp[2] += target_idx;
+        tmp[2] = scsiEncodeID(target_idx);
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_FLOPPY_14MB, "floppy");
 
         strcpy(tmp, "ZP0");
-        tmp[2] += target_idx;
+        tmp[2] = scsiEncodeID(target_idx);
         scsiDiskCheckDir(tmp, target_idx, &img, S2S_CFG_ZIP100, "Iomega Zip 100");
 
     }
-    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType);
+
+#if defined(CONTROL_BOARD)
+    g_totalCategories[target_idx] = 0;
+    
+    int i;
+    for (i=0;i<MAX_CATEGORIES;i++)
+    {
+        char key[5] = "Cat0";
+        key[3] = '0' + i;
+
+        ini_gets(section, key, "", tmp, sizeof(tmp), CONFIGFILE);
+
+        if (tmp[0] != '\0')
+        {
+            strcpy(g_categoryCodeAndNames[target_idx][g_totalCategories[target_idx]++], tmp);
+            logmsg("Found cat '", tmp, "' for ID ", target_idx);
+        }
+    }
+#endif
+    g_scsi_settings.initDevice(target_idx, (S2S_CFG_TYPE)img.deviceType, true);
+
 }
 
 // Compares the prefix of both files and the scsi ID
@@ -804,13 +999,17 @@ static bool compare_prefix(const char* name, const char* compare)
 /***********************/
 /* Start/stop commands */
 /***********************/
-static void doCloseTray(image_config_t &img)
+void scsiDiskCloseTray(image_config_t &img)
 {
     if (img.ejected)
     {
-        uint8_t target = img.scsiId & 7;
+        uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         dbgmsg("------ Device close tray on ID ", (int)target);
         img.ejected = false;
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
+        {
+            tapeRewind(img, target);
+        }
 
         if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
         {
@@ -822,20 +1021,58 @@ static void doCloseTray(image_config_t &img)
 
  
 // Eject and switch image
-static void doPerformEject(image_config_t &img)
+void doPerformEject(image_config_t &img)
 {
-    uint8_t target = img.scsiId & 7;
-    if (!img.ejected)
+    uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (img.deviceType == S2S_CFG_FIXED)
     {
-        blink_cancel();
-        blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
-        dbgmsg("------ Device open tray on ID ", (int)target);
-        img.ejected = true;
-        switchNextImage(img); // Switch media for next time
+        if (img.ejectFixedDiskReadOnly)
+        {
+            // Set drive to read-only
+            dbgmsg("------ Setting fixed disk read-only on ID ", (int)target);
+            img.ejectFixedDiskWriteBlocked = true;
+            blink_cancel();
+            blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);
+
+            if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
+            {
+                dbgmsg("------ Posting UNIT ATTENTION after read-only change");
+                scsiDev.targets[target].unitAttention = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+            }
+        }
+        else if (switchNextImage(img))
+        {
+            // Image switch successful
+            scsiDiskCloseTray(img);
+            img.reinsert_after_eject = false;
+            blink_cancel();
+            blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);
+
+            if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
+            {
+                dbgmsg("------ Posting UNIT ATTENTION after disk image change");
+                scsiDev.targets[target].unitAttention = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+            }
+        }
     }
     else
     {
-        doCloseTray(img);
+        if (!img.ejected)
+        {
+            blink_cancel();
+            blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
+            dbgmsg("------ Device open tray on ID ", (int)target);
+            img.ejected = true;
+            switchNextImage(img); // Switch media for next time
+            if (g_scsi_settings.getDevice(target)->reinsertImmediately)
+            {
+                scsiDiskCloseTray(img);
+            }
+        }
+        else
+        {
+            scsiDiskCloseTray(img);
+        }
     }
 }
 
@@ -927,13 +1164,44 @@ int findNextImageAfter(image_config_t &img,
     }
 }
 
+int scsiDiskReadImgX(const char *section, int index, char *buf, size_t buflen)
+{
+    buf[0] = '\0';
+    if (index < 0 || index > IMAGE_INDEX_MAX)
+        return 0;
+
+    char key[6] = "IMG00";
+    if (index < 10)
+    {
+        key[3] = '0' + index;
+        key[4] = '\0';
+    }
+    else
+    {
+        key[3] = '0' + index / 10;
+        key[4] = '0' + index % 10;
+    }
+
+    buf[0] = '\0';
+    int ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+    if (buf[0] == '\0' && index < 10)
+    {
+        key[3] = '0';
+        key[4] = '0' + index;
+        ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
+    }
+    return ret;
+}
+
 int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 {
     int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     char section[6] = "SCSI0";
-    section[4] = '0' + target_idx;
-
+    section[4] = scsiEncodeID(target_idx);
+#ifdef DYNAMIC_SCSI_ID
+    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id);
+#endif
     // sanity check: is provided buffer is long enough to store a filename?
     assert(buflen >= MAX_FILE_PATH);
 
@@ -941,56 +1209,110 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
     char nextname[MAX_FILE_PATH];
     int nextlen;
 
+    char currentname[MAX_FILE_PATH];
+    // Test to see if we have a multi bin/cue file in a directory. Use the directory name instead
+    if (img.is_multi_bin_cue())
+    {
+        img.bin_container.getName(currentname, sizeof(currentname));
+    }
+    else
+    {
+        strcpy(currentname, img.current_image);
+    }
+
     if (img.image_directory)
     {
         // image directory was found during startup
         char dirname[MAX_FILE_PATH];
         char key[] = "ImgDir";
-        int dirlen = ini_gets(section, key, "", dirname, sizeof(dirname), CONFIGFILE);
+        int dirlen = 0;
+#ifdef DYNAMIC_SCSI_ID
+        // For the dynamic target, check [SCSIn] ImgDir first, then [SCSI<X>].
+        if (is_dynamic)
+            dirlen = ini_gets(DYNAMIC_SCSI_INI_SECTION, key, "", dirname, sizeof(dirname), CONFIGFILE);
+#endif
+        if (!dirlen)
+            dirlen = ini_gets(section, key, "", dirname, sizeof(dirname), CONFIGFILE);
         if (!dirlen)
         {
+            // Reconstruct the default directory name from the device type.
+            // Dynamic targets use the 'n' suffix (HDn, CDn, …); others use the hex ID.
             switch (img.deviceType)
             {
                 case S2S_CFG_FIXED:
-                    strcpy(dirname ,"HD0");
+                    strcpy(dirname, "HD0");
                     break;
                 case S2S_CFG_OPTICAL:
                     strcpy(dirname, "CD0");
-                break;
+                    break;
                 case S2S_CFG_REMOVABLE:
                     strcpy(dirname, "RE0");
-                break;
+                    break;
                 case S2S_CFG_MO:
                     strcpy(dirname, "MO0");
-                break;
+                    break;
                 case S2S_CFG_SEQUENTIAL:
-                    strcpy(dirname ,"TP0");
-                break;
+                    strcpy(dirname, "TP0");
+                    break;
                 case S2S_CFG_FLOPPY_14MB:
                     strcpy(dirname, "FD0");
-                break;
+                    break;
                 case S2S_CFG_ZIP100:
                     strcpy(dirname, "ZP0");
-                break;
+                    break;
                 default:
-                    dbgmsg("No matching device type for default directory found");
+                    logmsg("No matching device type for default directory found");
                     return 0;
             }
-            dirname[2] += target_idx;
+#ifdef DYNAMIC_SCSI_ID
+            dirname[2] = is_dynamic ? DYNAMIC_SCSI_ID_CHAR : scsiEncodeID(target_idx);
+#else
+            dirname[2] = scsiEncodeID(target_idx);
+#endif
             if (!SD.exists(dirname))
             {
-                dbgmsg("Default image directory, ", dirname, " does not exist");
+                logmsg("Default image directory, ", dirname, " does not exist");
                 return 0;
             }
         }
 
         // find the next filename
-        nextlen = findNextImageAfter(img, dirname, img.current_image, nextname, sizeof(nextname));
+
+        nextlen = findNextImageAfter(img, dirname, currentname, nextname, sizeof(nextname));
 
         if (nextlen == 0)
         {
-            logmsg("Image directory was empty for ID", target_idx);
-            return 0;
+#if defined(CONTROL_BOARD)
+            logmsg("Couldn't find file in root. Looking in subfolders");
+
+            char path[MAX_PATH_LEN];
+            char file[MAX_PATH_LEN];
+            if (SDNavGetFirstFileRecursive.GetFirstFileRecursive(dirname, file, path))
+            {
+                strcpy(buf, path);
+                if ( (strlen(path) + strlen(file)+  2) >= MAX_FILE_PATH)
+                {
+                    logmsg("Error. Path too long. Trying to join '", path, "' with '", file, '"');
+                    return 0;
+                }
+                        
+                strcat(buf, "/");
+                strcat(buf, file);
+
+                setFolder(target_idx, path);
+
+                logmsg("Found file: ", buf);
+                img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
+                return strlen(buf);
+            }
+            else
+            {
+#endif
+                logmsg("Image directory was empty for ID", target_idx);
+                return 0;
+#if defined(CONTROL_BOARD)
+            }
+#endif
         }
         else if (buflen < nextlen + dirlen + 2)
         {
@@ -1008,10 +1330,10 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
     }
     else if (img.use_prefix)
     {
-        nextlen = findNextImageAfter(img, "/", img.current_image, nextname, sizeof(nextname));
+        nextlen = findNextImageAfter(img, "/", currentname, nextname, sizeof(nextname));
         if (nextlen == 0)
         {
-            logmsg("Next file with the same prefix as ", img.current_image," not found for ID", target_idx);
+            logmsg("Next file with the same prefix as ", currentname," not found for ID", target_idx);
         }
         else if (buflen < nextlen + 1)
         {
@@ -1028,33 +1350,41 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
     }
     else
     {
-        img.image_index++;
-        if (img.image_index > IMAGE_INDEX_MAX || img.image_index < 0)
+        while (1)
         {
-            img.image_index = 0;
-        }
+            img.image_index++;
+            if (img.image_index > IMAGE_INDEX_MAX || img.image_index < 0)
+            {
+                img.image_index = 0;
+            }
 
-        char key[5] = "IMG0";
-        key[3] = '0' + img.image_index;
+            // For the dynamic target, check [SCSIn] IMG keys first, then [SCSI<X>].
+            int ret = 0;
+            buf[0] = '\0';
+#ifdef DYNAMIC_SCSI_ID
+            if (is_dynamic)
+                ret = scsiDiskReadImgX(DYNAMIC_SCSI_INI_SECTION, img.image_index, buf, buflen);
+#endif
+            if (!ret || buf[0] == '\0')
+                ret = scsiDiskReadImgX(section, img.image_index, buf, buflen);
 
-        int ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
-        if (buf[0] != '\0')
-        {
-            img.deviceType = g_scsi_settings.getDevice(target_idx)->deviceType;
-            return ret;
-        }
-        else if (img.image_index > 0)
-        {
-            // there may be more than one image but we've ran out of new ones
-            // wrap back to the first image
-            img.image_index = -1;
-            return scsiDiskGetNextImageName(img, buf, buflen);
-        }
-        else
-        {
-
-            img.image_index = -1;
-            return 0;
+            if (buf[0] != '\0')
+            {
+                img.deviceType = g_scsi_settings.getDevice(target_idx)->deviceType;
+                return ret;
+            }
+            else if (img.image_index > 0)
+            {
+                // there may be more than one image but we've ran out of new ones
+                // wrap back to the first image
+                img.image_index = -1;
+                // Rerun loop
+            }
+            else
+            {
+                img.image_index = -1;
+                return 0;
+            }
         }
     }
 }
@@ -1064,24 +1394,65 @@ void scsiDiskLoadConfig(int target_idx)
     // Then settings specific to target ID
     scsiDiskSetConfig(target_idx);
 
+#ifdef DYNAMIC_SCSI_ID
+    // Apply [SCSIn] on top of the [SCSI<X>] settings that scsiDiskSetConfig loaded,
+    // then immediately sync g_scsi_settings → g_DiskImages so that scsiDiskGetNextImageName
+    // reads the final device type and settings (not the pre-override values).
+    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id && scsiDiskHasDynamicDirs());
+    if (is_dynamic)
+    {
+        g_scsi_settings.applyDynamicSectionOverrides(target_idx);
+        scsiDiskSetImageConfig(target_idx);
+    }
+#endif
     // Check if we have image specified by name
     char filename[MAX_FILE_PATH];
     image_config_t &img = g_DiskImages[target_idx];
     img.image_index = IMAGE_INDEX_MAX;
+    int blocksize = 0;
     if (scsiDiskGetNextImageName(img, filename, sizeof(filename)))
     {
-        // set the default block size now that we know the device type
-        if (g_scsi_settings.getDevice(target_idx)->blockSize == 0)
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
-          g_scsi_settings.getDevice(target_idx)->blockSize = img.deviceType == S2S_CFG_OPTICAL ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
+            // set custom tape density
+            img.tapeDensity = g_scsi_settings.getDevice(target_idx)->tapeDensity;
+            img.tapeBufferedMode = g_scsi_settings.getDevice(target_idx)->tapeBufferedMode;
+
+            if (scsiDev.targets[target_idx].liveCfg.bytesPerSector != 0)
+            {
+                // For tape drives, keep byte per sector between SD card reinserts as it can be set by the OS
+                blocksize = scsiDev.targets[target_idx].liveCfg.bytesPerSector;
+                g_scsi_settings.getDevice(target_idx)->blockSize = blocksize;
+            }
         }
-        int blocksize = getBlockSize(filename, target_idx);
+        else
+        {
+            if (g_scsi_settings.getDevice(target_idx)->blockSize == 0)
+            {
+                // set the default block size now that we know the device type
+                g_scsi_settings.getDevice(target_idx)->blockSize = img.deviceType == S2S_CFG_OPTICAL ?  DEFAULT_BLOCKSIZE_OPTICAL : DEFAULT_BLOCKSIZE;
+            }
+            blocksize = getBlockSize(filename, target_idx);
+        }
+
+        // Unlike findHDDImages() (ZuluSCSI.cpp), which handles images found
+        // by scanning the root SD directory, this function handles images
+        // found via the per-ID default subdirectory convention (TP0/, HD0/,
+        // etc., set up by scsiDiskSetConfig()/scsiDiskCheckDir() above) or an
+        // explicit ImgDir=. That path never used to call
+        // parseCustomInquiryData() at all, so any AS/400 (or generic custom
+        // vpdXX=/spd=) identity data for an ID configured this way was
+        // silently never loaded -- confirmed against a real boot log where
+        // an AS/400 tape drive in TP0/ served Zulu's generic identity
+        // instead of the compiled-in AS/400 tape defaults.
+        parseCustomInquiryData(target_idx, (S2S_CFG_TYPE) img.deviceType);
+
         logmsg("-- Opening '", filename, "' for id: ", target_idx);
         scsiDiskOpenHDDImage(target_idx, filename, 0, blocksize, (S2S_CFG_TYPE) img.deviceType, img.use_prefix);
     }
 }
 
-uint32_t getBlockSize(char *filename, uint8_t scsi_id)
+uint32_t getBlockSize(const char *filename, uint8_t scsi_id)
 {
     // Parse block size (HD00_NNNN)
     uint32_t block_size = g_scsi_settings.getDevice(scsi_id)->blockSize;
@@ -1107,6 +1478,8 @@ void setEjectButton(uint8_t idx, int8_t eject_button)
 {
     g_DiskImages[idx].ejectButton = eject_button;
     g_scsi_settings.getDevice(idx)->ejectButton = eject_button;
+    platform_set_eject_button(eject_button);
+
 }
 
 // Check if we have multiple drive images to cycle when drive is ejected.
@@ -1114,7 +1487,7 @@ bool switchNextImage(image_config_t &img, const char* next_filename)
 {
     // Check if we have a next image to load, so that drive is closed next time the host asks.
     
-    int target_idx = img.scsiId & 7;
+    int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     char filename[MAX_FILE_PATH];
     if (next_filename == nullptr)
     {
@@ -1188,12 +1561,14 @@ static void diskEjectAction(uint8_t buttonId)
     for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
     {
         image_config_t &img = g_DiskImages[i];
-        if (img.ejectButton & buttonId)
+        if (img.ejectButton == 0) continue;
+        uint8_t eject_button_bit = 1 << (img.ejectButton - 1);
+        if (eject_button_bit & buttonId)
         {
             if (img.deviceType == S2S_CFG_OPTICAL)
             {
                 found = true;
-                logmsg("Eject button ", (int)buttonId, " pressed, passing to CD drive SCSI", (int)i);
+                logmsg("Eject button ", (int)img.ejectButton, " pressed, passing to CD drive SCSI ID: ", (int)i);
                 cdromPerformEject(img);
             }
             else if (img.deviceType == S2S_CFG_ZIP100 
@@ -1203,15 +1578,43 @@ static void diskEjectAction(uint8_t buttonId)
                     || img.deviceType == S2S_CFG_SEQUENTIAL)
             {
                 found = true;
-                logmsg("Eject button ", (int)buttonId, " pressed, passing to SCSI device", (int)i);
+                logmsg("Eject button ", (int)img.ejectButton, " pressed, passing to device SCSI ID: ", (int)i);
                 doPerformEject(img);
+            }
+            else if (img.deviceType == S2S_CFG_FIXED
+                    && img.ejectFixedDiskEnable)
+            {
+                found = true;
+                uint8_t target = img.scsiId & 7;
+                if (!img.ejectFixedDiskPending && !img.ejectFixedDiskWriteBlocked)
+                {
+                    logmsg("Eject button ", (int)img.ejectButton, " pressed, scheduling eject for fixed disk SCSI ID: ", (int)i);
+                    img.ejectFixedDiskPending = true;
+                    img.ejectFixedDiskTimer = millis();
+                    blink_cancel();
+                    // Blink with f/4 until eject completed
+                    blinkStatus((uint32_t)(-1), g_scsi_settings.getDevice(target)->ejectBlinkPeriod * 4);
+                }
+                else
+                {
+                    logmsg("Eject button ", (int)img.ejectButton, " pressed, but eject in progress or already ejected for SCSI ID: ", (int)i);
+                }
             }
         }
     }
 
     if (!found)
     {
-        logmsg("Eject button ", (int)buttonId, " pressed, but no drives with EjectButton=", (int)buttonId, " setting found!");
+        uint8_t button_num = 0;
+        for (uint8_t i = 0; i < 8; i++)
+        {
+            if (buttonId & (1 << i))
+            {
+                button_num = i + 1;
+                break;
+            }
+        }
+        logmsg("Eject button ", (int)button_num, " pressed, but no drives with EjectButton=", (int)button_num, " setting found!");
     }
 }
 
@@ -1244,7 +1647,27 @@ uint8_t diskEjectButtonUpdate(bool immediate)
                 mask = mask << 1;
             }
         }
+
+        diskEjectDelayCheck();
+
         return ejectors;
+    }
+}
+
+void diskEjectDelayCheck(void)
+{
+    for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        image_config_t &img = g_DiskImages[i];
+        if (img.ejectFixedDiskPending)
+        {
+            if ((uint32_t)(millis() - img.ejectFixedDiskTimer) > img.ejectFixedDiskDelay) {
+                logmsg("Eject delay with no write activity expired, performing eject for SCSI ID: ", (int)i);
+                img.ejectFixedDiskPending = false;
+                blink_cancel();
+                doPerformEject(img);
+            }
+        }
     }
 }
 
@@ -1252,7 +1675,7 @@ bool scsiDiskCheckAnyNetworkDevicesConfigured()
 {
     for (int i = 0; i < S2S_MAX_TARGETS; i++)
     {
-        if (g_DiskImages[i].file.isOpen() && (g_DiskImages[i].scsiId & S2S_CFG_TARGET_ENABLED) && g_DiskImages[i].deviceType == S2S_CFG_NETWORK)
+        if (g_DiskImages[i].file.isOpen() && (g_DiskImages[i].scsiId & S2S_CFG_TARGET_ENABLED) && (g_DiskImages[i].deviceType == S2S_CFG_NETWORK || g_DiskImages[i].deviceType == S2S_CFG_AMIGAWIFI))
         {
             return true;
         }
@@ -1282,7 +1705,7 @@ void s2s_configInit(S2S_BoardCfg* config)
     // Get default values from system preset, if any
     ini_gets("SCSI", "System", "", tmp, sizeof(tmp), CONFIGFILE);
     scsi_system_settings_t *sysCfg = g_scsi_settings.initSystem(tmp);
-
+    initUIPostSDInit(true);
     if (g_scsi_settings.getSystemPreset() != SYS_PRESET_NONE)
     {
         logmsg("Active configuration (using system preset \"", g_scsi_settings.getSystemPresetName(), "\"):");
@@ -1360,6 +1783,14 @@ void s2s_configInit(S2S_BoardCfg* config)
         logmsg("-- EnableParity = No");
     }
 #endif
+
+#if defined(PLATFORM_MAX_BUS_WIDTH) && PLATFORM_MAX_BUS_WIDTH > 0
+    uint8_t busWidth = sysCfg->maxBusWidth;
+    if (busWidth > PLATFORM_MAX_BUS_WIDTH) busWidth = PLATFORM_MAX_BUS_WIDTH;
+    logmsg("-- Bus width = ", (int)busWidth, " (", (int)(8 << busWidth), " bits)");
+    config->busWidth = busWidth;
+#endif
+
     memset(tmp, 0, sizeof(tmp));
     ini_gets("SCSI", "WiFiMACAddress", "", tmp, sizeof(tmp), CONFIGFILE);
     if (tmp[0])
@@ -1385,6 +1816,7 @@ void s2s_configInit(S2S_BoardCfg* config)
     memset(tmp, 0, sizeof(tmp));
     ini_gets("SCSI", "WiFiSSID", "", tmp, sizeof(tmp), CONFIGFILE);
     if (tmp[0]) memcpy(config->wifiSSID, tmp, sizeof(config->wifiSSID));
+
 
     memset(tmp, 0, sizeof(tmp));
     ini_gets("SCSI", "WiFiPassword", "", tmp, sizeof(tmp), CONFIGFILE);
@@ -1511,6 +1943,36 @@ static void doFormatUnitHeader(void)
 /* ReadCapacity command */
 /************************/
 
+static uint64_t getCapacityBlocks(image_config_t &img, uint32_t bytesPerSector)
+{
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI)
+        || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AUDIO))
+    {
+        return 1;
+    }
+    return img.file.size() / bytesPerSector;
+}
+
+static void storeBe32(uint8_t *dest, uint32_t value)
+{
+    dest[0] = value >> 24;
+    dest[1] = value >> 16;
+    dest[2] = value >> 8;
+    dest[3] = value;
+}
+
+static void storeBe64(uint8_t *dest, uint64_t value)
+{
+    dest[0] = value >> 56;
+    dest[1] = value >> 48;
+    dest[2] = value >> 40;
+    dest[3] = value >> 32;
+    dest[4] = value >> 24;
+    dest[5] = value >> 16;
+    dest[6] = value >> 8;
+    dest[7] = value;
+}
+
 static void doReadCapacity()
 {
     uint32_t lba = (((uint32_t) scsiDev.cdb[2]) << 24) +
@@ -1521,16 +1983,7 @@ static void doReadCapacity()
 
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-    uint32_t capacity;
-
-    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK))
-    {
-        capacity = 1;
-    }
-    else
-    {
-        capacity = img.file.size() / bytesPerSector;
-    }
+    uint64_t capacity = getCapacityBlocks(img, bytesPerSector);
 
     if (!pmi && lba)
     {
@@ -1545,22 +1998,14 @@ static void doReadCapacity()
     }
     else if (capacity > 0)
     {
-        uint32_t highestBlock = capacity - 1;
+        uint32_t highestBlock = capacity - 1 > UINT32_MAX ? UINT32_MAX : (uint32_t)(capacity - 1);
 
 	if (pmi && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD)
 	{
 		highestBlock = 0x00001053;
 	}
-        scsiDev.data[0] = highestBlock >> 24;
-        scsiDev.data[1] = highestBlock >> 16;
-        scsiDev.data[2] = highestBlock >> 8;
-        scsiDev.data[3] = highestBlock;
-
-        uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-        scsiDev.data[4] = bytesPerSector >> 24;
-        scsiDev.data[5] = bytesPerSector >> 16;
-        scsiDev.data[6] = bytesPerSector >> 8;
-        scsiDev.data[7] = bytesPerSector;
+        storeBe32(scsiDev.data, highestBlock);
+        storeBe32(scsiDev.data + 4, bytesPerSector);
         scsiDev.dataLen = 8;
         scsiDev.phase = DATA_IN;
     }
@@ -1571,6 +2016,59 @@ static void doReadCapacity()
         scsiDev.target->sense.asc = MEDIUM_NOT_PRESENT;
         scsiDev.phase = STATUS;
     }
+}
+
+static void doReadCapacity16()
+{
+    uint64_t lba =
+        (((uint64_t) scsiDev.cdb[2]) << 56) +
+        (((uint64_t) scsiDev.cdb[3]) << 48) +
+        (((uint64_t) scsiDev.cdb[4]) << 40) +
+        (((uint64_t) scsiDev.cdb[5]) << 32) +
+        (((uint64_t) scsiDev.cdb[6]) << 24) +
+        (((uint64_t) scsiDev.cdb[7]) << 16) +
+        (((uint64_t) scsiDev.cdb[8]) << 8) +
+        scsiDev.cdb[9];
+    uint32_t allocationLength =
+        (((uint32_t) scsiDev.cdb[10]) << 24) +
+        (((uint32_t) scsiDev.cdb[11]) << 16) +
+        (((uint32_t) scsiDev.cdb[12]) << 8) +
+        scsiDev.cdb[13];
+    int pmi = scsiDev.cdb[14] & 1;
+
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint64_t capacity = getCapacityBlocks(img, bytesPerSector);
+
+    if (!pmi && lba)
+    {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+        scsiDev.phase = STATUS;
+    }
+    else if (capacity > 0)
+    {
+        uint64_t highestBlock = capacity - 1;
+
+        if (pmi && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD)
+        {
+            highestBlock = 0x00001053;
+        }
+
+        memset(scsiDev.data, 0, 32);
+        storeBe64(scsiDev.data, highestBlock);
+        storeBe32(scsiDev.data + 8, bytesPerSector);
+        scsiDev.dataLen = allocationLength < 32 ? allocationLength : 32;
+        scsiDev.phase = DATA_IN;
+        }
+        else
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = NOT_READY;
+            scsiDev.target->sense.asc = MEDIUM_NOT_PRESENT;
+            scsiDev.phase = STATUS;
+        }
 }
 
 /*************************/
@@ -1585,8 +2083,13 @@ int doTestUnitReady()
     {
         ready = 0;
         scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = NOT_READY;
-        scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED;
+         // AS/400: preserve pending sense (e.g. UNIT ATTENTION / POWER ON RESET)
+        // so the host sees it before we overwrite with NOT_READY
+        if (scsiDev.target->sense.code == NO_SENSE)
+        {
+            scsiDev.target->sense.code = NOT_READY;
+            scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED;
+        }
         scsiDev.phase = STATUS;
     }
     else if (img.ejected)
@@ -1602,7 +2105,7 @@ int doTestUnitReady()
             // We are now reporting to host that the drive is open.
             // Simulate a "close" for next time the host polls.
             if (img.deviceType == S2S_CFG_OPTICAL) cdromCloseTray(img);
-            else doCloseTray(img);
+            else scsiDiskCloseTray(img);
 
         }
     }
@@ -1655,7 +2158,7 @@ static void doSeek(uint32_t lba)
             {
                 // Uses audio play with a length of 0. CD audio won't actually play,
                 // but Read Subchannel will report the proper LBA location 
-                if (!audio_play(scsiDev.target->targetId, &img, lba, 0, false))
+                if (!img.bin_container.isOpen() || !audio_play(scsiDev.target->targetId, &img, lba, 0, false))
                     dbgmsg("Failed to seek to audio track lba position ", (int) lba);
             }
 #endif
@@ -1676,19 +2179,125 @@ static struct {
     uint32_t bytes_sd; // Number of bytes that have been scheduled for transfer on SD card side
     uint32_t bytes_scsi; // Number of bytes that have been scheduled for transfer on SCSI side
 
+#ifdef PLATFORM_AS400
+    // For linked command, developed for the AS400
+    uint32_t writesame_count; 
+    uint8_t  skip_mask[256];
+    uint16_t skip_mask_length;
+    uint32_t skip_lba;
+    uint16_t skip_blocks;    
+    uint32_t skip_position;
+    uint8_t  skip_command; // Operation code from CDB. This is needed to verify correct follow up linked command.
+#endif
     uint32_t bytes_scsi_started;
     uint32_t sd_transfer_start;
     int parityError;
 } g_disk_transfer;
 
+static struct {
+    bool verify;
+    bool write_and_verify;
+} g_disk_data_out;
+
+/***********************************/
+/* Prefetch buffer for read access */
+/***********************************/
+
 #ifdef PREFETCH_BUFFER_SIZE
 static struct {
     uint8_t buffer[PREFETCH_BUFFER_SIZE];
-    uint32_t sector;
-    uint32_t bytes;
+    uint32_t firstSector;
+    uint32_t bytesPerSector;
+    uint32_t numSectors;
     uint8_t scsiId;
 } g_scsi_prefetch;
 #endif
+
+// Begin writing to prefetch buffer.
+// If the buffer is not available, returns NULL.
+// Otherwise returns pointer to which caller can write up to maxSectors sectors.
+uint8_t *scsiDiskPrefetchBeginWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *maxSectors)
+{
+#ifdef PREFETCH_BUFFER_SIZE
+    // Verify that there is no current SCSI transfer out of the prefetch buffer
+    if (g_scsi_prefetch.numSectors > 0 && !scsiIsWriteFinished(NULL))
+    {
+        // Check each sector separately
+        for (uint32_t i = 0; i < g_scsi_prefetch.numSectors; i++)
+        {
+            const uint8_t *sector = g_scsi_prefetch.buffer + g_scsi_prefetch.bytesPerSector * i;
+            if (!scsiIsWriteFinished(sector + g_scsi_prefetch.bytesPerSector - 1))
+            {
+                *maxSectors = 0;
+                return nullptr;
+            }
+        }
+    }
+
+    g_scsi_prefetch.scsiId = scsiId;
+    g_scsi_prefetch.firstSector = firstSector;
+    g_scsi_prefetch.bytesPerSector = bytesPerSector;
+    g_scsi_prefetch.numSectors = 0;
+
+    *maxSectors = sizeof(g_scsi_prefetch.buffer) / bytesPerSector;
+    return g_scsi_prefetch.buffer;
+#else
+    *maxSectors = 0;
+    return NULL;
+#endif
+}
+
+// Mark prefetch sectors in buffer as valid.
+// Should be called after scsiDiskPrefetchBeginWrite().
+void scsiDiskPrefetchFinishWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t numSectors)
+{
+#ifdef PREFETCH_BUFFER_SIZE
+    if (scsiId == g_scsi_prefetch.scsiId &&
+        bytesPerSector == g_scsi_prefetch.bytesPerSector &&
+        firstSector == g_scsi_prefetch.firstSector + g_scsi_prefetch.numSectors)
+    {
+        g_scsi_prefetch.numSectors += numSectors;
+    }
+#endif
+}
+
+// Check if data is available from prefetch buffer.
+// If data is not found, returns NULL.
+// Otherwise returns pointer for reading up to numSectors sectors of data, beginning at firstSector.
+const uint8_t *scsiDiskPrefetchRead(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *numSectors)
+{
+#ifdef PREFETCH_BUFFER_SIZE
+    if (scsiId == g_scsi_prefetch.scsiId &&
+        bytesPerSector == g_scsi_prefetch.bytesPerSector &&
+        firstSector >= g_scsi_prefetch.firstSector &&
+        firstSector < g_scsi_prefetch.firstSector + g_scsi_prefetch.numSectors)
+    {
+        // At least one sector found in prefetch
+        uint32_t offset = firstSector - g_scsi_prefetch.firstSector;
+        *numSectors = g_scsi_prefetch.numSectors - offset;
+        return g_scsi_prefetch.buffer + offset * bytesPerSector;
+    }
+#endif
+
+    // No sectors in prefetch
+    *numSectors = 0;
+    return nullptr;
+}
+
+// Invalidate SCSI prefetch buffer.
+// If scsiId is given, only invalidate if that device has data in buffer.
+// If scsiId is not given (value -1), invalidate for all devices.
+void scsiDiskPrefetchInvalidate(uint8_t scsiId)
+{
+#ifdef PREFETCH_BUFFER_SIZE
+    if (scsiId == (uint8_t)-1 ||
+        (g_scsi_prefetch.scsiId & S2S_CFG_TARGET_ID_BITS) == (scsiId & S2S_CFG_TARGET_ID_BITS))
+    {
+        g_scsi_prefetch.numSectors = 0;
+        g_scsi_prefetch.firstSector = 0;
+    }
+#endif
+}
 
 /*****************/
 /* Write command */
@@ -1701,7 +2310,23 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
         // without an access time
         s2s_delay_ms(10);
     }
-
+#ifdef PLATFORM_AS400
+    if(g_disk_transfer.skip_command) {
+        if (g_disk_transfer.skip_command == 0xEA)
+        {
+            if ((lba != g_disk_transfer.skip_lba) || (blocks != g_disk_transfer.skip_blocks)) 
+            {
+                dbgmsg("Skip Write LBA/block mismatch");
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+                scsiDev.phase = STATUS;
+                g_disk_transfer.skip_command = 0;
+                return;
+            }
+        }        
+    }
+#endif
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
     uint32_t capacity = img.file.size() / bytesPerSector;
@@ -1710,12 +2335,14 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
 
     if (unlikely(blockDev.state & DISK_WP) ||
         unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_OPTICAL) ||
-        unlikely(!img.file.isWritable()))
-
+        unlikely(!img.file.isWritable()) ||
+        unlikely(img.ejectFixedDiskWriteBlocked))
     {
         logmsg("WARNING: Host attempted write to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
         scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        // SCSI-2 §9.1.12: WRITE PROTECTED (ASC 0x2700) pairs with sense key
+        // DATA PROTECT (0x07), not ILLEGAL REQUEST.
+        scsiDev.target->sense.code = DATA_PROTECT;
         scsiDev.target->sense.asc = WRITE_PROTECTED;
         scsiDev.phase = STATUS;
     }
@@ -1739,11 +2366,13 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
         scsiDev.dataLen = 0;
         scsiDev.dataPtr = 0;
 
-#ifdef PREFETCH_BUFFER_SIZE
-        // Invalidate prefetch buffer
-        g_scsi_prefetch.bytes = 0;
-        g_scsi_prefetch.sector = 0;
-#endif
+        scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
+
+        if (img.ejectFixedDiskPending)
+        {
+            // Reset timer due to write access
+            img.ejectFixedDiskTimer = millis();
+        }
 
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
         if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
@@ -1757,6 +2386,389 @@ void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
     }
 }
 
+static void diskSpecialDataOutStop()
+{
+    g_disk_data_out.verify = false;
+    g_disk_data_out.write_and_verify = false;
+    scsiDev.dataPtr = 0;
+    scsiDev.dataLen = 0;
+}
+
+static void diskSpecialDataOutError(uint8_t sense_code, uint16_t asc)
+{
+    diskSpecialDataOutStop();
+    scsiDev.status = CHECK_CONDITION;
+    scsiDev.target->sense.code = sense_code;
+    scsiDev.target->sense.asc = asc;
+    scsiDev.phase = STATUS;
+}
+
+static void scsiDiskStartVerify(uint32_t lba, uint32_t blocks)
+{
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
+        // Floppies are supposed to be slow. Some systems can't handle a floppy
+        // without an access time
+        s2s_delay_ms(10);
+    }
+
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t capacity = img.file.size() / bytesPerSector;
+
+    dbgmsg("------ Verify ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+    if (unlikely(((uint64_t) lba) + blocks > capacity))
+    {
+        logmsg("WARNING: Host attempted verify at sector ", (int)lba, "+", (int)blocks,
+              ", exceeding image size ", (int)capacity, " sectors (",
+              (int)bytesPerSector, "B/sector)");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+    }
+    else if (blocks == 0)
+    {
+        // No data phase and no medium access are required.
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+    else
+    {
+        transfer.multiBlock = true;
+        transfer.lba = lba;
+        transfer.blocks = blocks;
+        transfer.currentBlock = 0;
+        scsiDev.phase = DATA_OUT;
+        scsiDev.dataLen = 0;
+        scsiDev.dataPtr = 0;
+        g_disk_data_out.verify = true;
+        g_disk_data_out.write_and_verify = false;
+
+        if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
+        {
+            logmsg("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
+            diskSpecialDataOutError(MEDIUM_ERROR, NO_SEEK_COMPLETE);
+        }
+    }
+}
+
+static void scsiDiskStartWriteAndVerify(uint32_t lba, uint32_t blocks)
+{
+    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
+        // Floppies are supposed to be slow. Some systems can't handle a floppy
+        // without an access time
+        s2s_delay_ms(10);
+    }
+
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t capacity = img.file.size() / bytesPerSector;
+
+    dbgmsg("------ Write and verify ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+    if (unlikely(blockDev.state & DISK_WP) ||
+        unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_OPTICAL) ||
+        unlikely(!img.file.isWritable()) ||
+        unlikely(img.ejectFixedDiskWriteBlocked))
+    {
+        logmsg("WARNING: Host attempted WRITE AND VERIFY to read-only drive ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        scsiDev.status = CHECK_CONDITION;
+        // SCSI-2 §9.1.12: WRITE PROTECTED pairs with sense key DATA PROTECT.
+        scsiDev.target->sense.code = DATA_PROTECT;
+        scsiDev.target->sense.asc = WRITE_PROTECTED;
+        scsiDev.phase = STATUS;
+    }
+    else if (unlikely(((uint64_t) lba) + blocks > capacity))
+    {
+        logmsg("WARNING: Host attempted WRITE AND VERIFY at sector ", (int)lba, "+", (int)blocks,
+              ", exceeding image size ", (int)capacity, " sectors (",
+              (int)bytesPerSector, "B/sector)");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+    }
+    else if (blocks == 0)
+    {
+        // No data phase and no medium access are required.
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+    else
+    {
+        transfer.multiBlock = true;
+        transfer.lba = lba;
+        transfer.blocks = blocks;
+        transfer.currentBlock = 0;
+        scsiDev.phase = DATA_OUT;
+        scsiDev.dataLen = 0;
+        scsiDev.dataPtr = 0;
+        g_disk_data_out.verify = false;
+        g_disk_data_out.write_and_verify = true;
+
+        scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
+
+        if (img.ejectFixedDiskPending)
+        {
+            // Reset timer due to write access
+            img.ejectFixedDiskTimer = millis();
+        }
+
+        if (!img.file.seek((uint64_t)transfer.lba * bytesPerSector))
+        {
+            logmsg("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
+            diskSpecialDataOutError(MEDIUM_ERROR, NO_SEEK_COMPLETE);
+        }
+    }
+}
+
+static void scsiDiskVerifyMedium(uint32_t lba, uint32_t blocks)
+{
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t capacity = img.file.size() / bytesPerSector;
+
+    dbgmsg("------ Verify medium ", (int)blocks, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+    if (unlikely(((uint64_t) lba) + blocks > capacity))
+    {
+        logmsg("WARNING: Host attempted verify at sector ", (int)lba, "+", (int)blocks,
+              ", exceeding image size ", (int)capacity, " sectors (",
+              (int)bytesPerSector, "B/sector)");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+    }
+    else if (blocks == 0)
+    {
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+    else
+    {
+        uint32_t maxBlocksPerChunk = sizeof(scsiDev.data) / bytesPerSector;
+        if (maxBlocksPerChunk == 0)
+        {
+            maxBlocksPerChunk = 1;
+        }
+
+        transfer.lba = lba;
+        if (!img.file.seek((uint64_t)lba * bytesPerSector))
+        {
+            logmsg("Seek to ", lba, " failed during VERIFY for SCSI ID ", (int)scsiDev.target->targetId);
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = NO_SEEK_COMPLETE;
+            scsiDev.phase = STATUS;
+            return;
+        }
+
+        for (uint32_t verifiedBlocks = 0; verifiedBlocks < blocks; )
+        {
+            platform_poll();
+            diskEjectButtonUpdate(false);
+            if (scsiDev.resetFlag)
+            {
+                return;
+            }
+
+            uint32_t chunkBlocks = blocks - verifiedBlocks;
+            if (chunkBlocks > maxBlocksPerChunk)
+            {
+                chunkBlocks = maxBlocksPerChunk;
+            }
+            uint32_t chunkBytes = chunkBlocks * bytesPerSector;
+            if (img.file.read(scsiDev.data, chunkBytes) != chunkBytes)
+            {
+                uint32_t failingLba = lba + verifiedBlocks;
+                transfer.lba = failingLba;
+                scsiDev.target->sense.info = failingLba;
+                logmsg("SD card read failed during VERIFY at sector ", (int)failingLba,
+                      " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = MEDIUM_ERROR;
+                scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
+                scsiDev.phase = STATUS;
+                return;
+            }
+
+            verifiedBlocks += chunkBlocks;
+            transfer.lba = lba + verifiedBlocks;
+            platform_reset_watchdog();
+        }
+
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+}
+
+static void scsiDiskHandleVerify(uint64_t lba, uint32_t blocks, bool compareData)
+{
+    if (lba > UINT32_MAX)
+    {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+        return;
+    }
+
+    if (compareData)
+    {
+        scsiDiskStartVerify((uint32_t)lba, blocks);
+        return;
+    }
+
+    scsiDiskVerifyMedium((uint32_t)lba, blocks);
+}
+
+static void diskVerifyDataOut()
+{
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t compareBufferSize = sizeof(scsiDev.data) / 2;
+    uint32_t remainingBlocks = transfer.blocks - transfer.currentBlock;
+    uint32_t maxBlocksPerChunk = compareBufferSize / bytesPerSector;
+    if (maxBlocksPerChunk == 0)
+    {
+        maxBlocksPerChunk = 1;
+    }
+    uint32_t chunkBlocks = remainingBlocks;
+    if (chunkBlocks > maxBlocksPerChunk)
+    {
+        chunkBlocks = maxBlocksPerChunk;
+    }
+    uint32_t chunkBytes = chunkBlocks * bytesPerSector;
+    uint8_t *compareBuffer = scsiDev.data;
+    uint8_t *diskBuffer = scsiDev.data + compareBufferSize;
+
+    scsiEnterPhase(DATA_OUT);
+
+    int parityError = 0;
+    scsiRead(compareBuffer, chunkBytes, &parityError);
+    if (parityError && (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
+    {
+        diskSpecialDataOutError(ABORTED_COMMAND, SCSI_PARITY_ERROR);
+        return;
+    }
+
+    if (img.file.read(diskBuffer, chunkBytes) != chunkBytes)
+    {
+        logmsg("SD card read failed during VERIFY at sector ", (int)(transfer.lba + transfer.currentBlock),
+              " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
+        diskSpecialDataOutError(MEDIUM_ERROR, UNRECOVERED_READ_ERROR);
+        return;
+    }
+
+    for (uint32_t block = 0; block < chunkBlocks; block++)
+    {
+        uint8_t *compareSector = compareBuffer + block * bytesPerSector;
+        uint8_t *diskSector = diskBuffer + block * bytesPerSector;
+        if (memcmp(compareSector, diskSector, bytesPerSector) != 0)
+        {
+            uint32_t failingLba = transfer.lba + transfer.currentBlock + block;
+            transfer.lba = failingLba;
+            scsiDev.target->sense.info = failingLba;
+            diskSpecialDataOutError(MISCOMPARE, MISCOMPARE_DURING_VERIFY_OPERATION);
+            return;
+        }
+    }
+
+    transfer.currentBlock += chunkBlocks;
+    platform_reset_watchdog();
+
+    if (transfer.currentBlock == transfer.blocks)
+    {
+        diskSpecialDataOutStop();
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+}
+
+static void diskWriteVerifyDataOut()
+{
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t halfBufferSize = sizeof(scsiDev.data) / 2;
+    uint32_t remainingBlocks = transfer.blocks - transfer.currentBlock;
+    uint32_t maxBlocksPerChunk = halfBufferSize / bytesPerSector;
+    if (maxBlocksPerChunk == 0)
+    {
+        maxBlocksPerChunk = 1;
+    }
+    uint32_t chunkBlocks = remainingBlocks;
+    if (chunkBlocks > maxBlocksPerChunk)
+    {
+        chunkBlocks = maxBlocksPerChunk;
+    }
+    uint32_t chunkBytes = chunkBlocks * bytesPerSector;
+    uint32_t chunkLba = transfer.lba + transfer.currentBlock;
+    uint64_t chunkOffset = (uint64_t)chunkLba * bytesPerSector;
+    uint8_t *writeBuffer = scsiDev.data;
+    uint8_t *verifyBuffer = scsiDev.data + halfBufferSize;
+
+    scsiEnterPhase(DATA_OUT);
+
+    int parityError = 0;
+    scsiRead(writeBuffer, chunkBytes, &parityError);
+    if (parityError && (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
+    {
+        diskSpecialDataOutError(ABORTED_COMMAND, SCSI_PARITY_ERROR);
+        return;
+    }
+
+    if (img.file.write(writeBuffer, chunkBytes) != chunkBytes)
+    {
+        logmsg("SD card write failed during WRITE AND VERIFY at sector ", (int)chunkLba,
+              " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
+        diskSpecialDataOutError(MEDIUM_ERROR, WRITE_ERROR_AUTO_REALLOCATION_FAILED);
+        return;
+    }
+
+    img.file.flush();
+
+    if (!img.file.seek(chunkOffset))
+    {
+        logmsg("Seek to ", chunkLba, " failed during WRITE AND VERIFY for SCSI ID ", (int)scsiDev.target->targetId);
+        diskSpecialDataOutError(MEDIUM_ERROR, NO_SEEK_COMPLETE);
+        return;
+    }
+
+    if (img.file.read(verifyBuffer, chunkBytes) != chunkBytes)
+    {
+        logmsg("SD card read failed during WRITE AND VERIFY at sector ", (int)chunkLba,
+              " SCSI ID", (int)scsiDev.target->targetId, " error ", SD.sdErrorCode());
+        diskSpecialDataOutError(MEDIUM_ERROR, UNRECOVERED_READ_ERROR);
+        return;
+    }
+
+    for (uint32_t block = 0; block < chunkBlocks; block++)
+    {
+        uint8_t *writeSector = writeBuffer + block * bytesPerSector;
+        uint8_t *verifySector = verifyBuffer + block * bytesPerSector;
+        if (memcmp(writeSector, verifySector, bytesPerSector) != 0)
+        {
+            uint32_t failingLba = chunkLba + block;
+            transfer.lba = failingLba;
+            scsiDev.target->sense.info = failingLba;
+            diskSpecialDataOutError(MISCOMPARE, MISCOMPARE_DURING_VERIFY_OPERATION);
+            return;
+        }
+    }
+
+    transfer.currentBlock += chunkBlocks;
+    platform_reset_watchdog();
+
+    if (transfer.currentBlock == transfer.blocks)
+    {
+        diskSpecialDataOutStop();
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
+    }
+}
+
 // Called to transfer next block from SCSI bus.
 // Usually called from SD card driver during waiting for SD card access.
 void diskDataOut_callback(uint32_t bytes_complete)
@@ -1764,15 +2776,15 @@ void diskDataOut_callback(uint32_t bytes_complete)
     // For best performance, do SCSI reads in blocks of 4 or more bytes
     bytes_complete &= ~3;
 
-    if (g_disk_transfer.bytes_scsi_started < g_disk_transfer.bytes_scsi)
+    if (scsiDev.target->transfer.bytes_scsi_started < scsiDev.target->transfer.bytes_scsi)
     {
         // How many bytes remaining in the transfer?
-        uint32_t remain = g_disk_transfer.bytes_scsi - g_disk_transfer.bytes_scsi_started;
+        uint32_t remain = scsiDev.target->transfer.bytes_scsi - scsiDev.target->transfer.bytes_scsi_started;
         uint32_t len = remain;
 
         // Split read so that it doesn't wrap around buffer edge
         uint32_t bufsize = sizeof(scsiDev.data);
-        uint32_t start = (g_disk_transfer.bytes_scsi_started % bufsize);
+        uint32_t start = (scsiDev.target->transfer.bytes_scsi_started % bufsize);
         if (start + len > bufsize)
             len = bufsize - start;
 
@@ -1783,9 +2795,9 @@ void diskDataOut_callback(uint32_t bytes_complete)
         }
 
         // Don't overwrite data that has not yet been written to SD card
-        uint32_t sd_ready_cnt = g_disk_transfer.bytes_sd + bytes_complete;
-        if (g_disk_transfer.bytes_scsi_started + len > sd_ready_cnt + bufsize)
-            len = sd_ready_cnt + bufsize - g_disk_transfer.bytes_scsi_started;
+        uint32_t sd_ready_cnt = scsiDev.target->transfer.bytes_sd + bytes_complete;
+        if (scsiDev.target->transfer.bytes_scsi_started + len > sd_ready_cnt + bufsize)
+            len = sd_ready_cnt + bufsize - scsiDev.target->transfer.bytes_scsi_started;
 
         // Keep transfers a multiple of sector size.
         // Macintosh SCSI driver seems to get confused if we have a delay
@@ -1800,8 +2812,8 @@ void diskDataOut_callback(uint32_t bytes_complete)
             return;
 
         // dbgmsg("SCSI read ", (int)start, " + ", (int)len);
-        scsiStartRead(&scsiDev.data[start], len, &g_disk_transfer.parityError);
-        g_disk_transfer.bytes_scsi_started += len;
+        scsiStartRead(&scsiDev.data[start], len, &scsiDev.target->transfer.parityError);
+        scsiDev.target->transfer.bytes_scsi_started += len;
     }
 }
 
@@ -1810,29 +2822,52 @@ void diskDataOut()
     scsiEnterPhase(DATA_OUT);
 
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    if (img.deviceType == S2S_CFG_SEQUENTIAL && tapeIsTap())
+    {
+        tapeTapDataOut();
+        return;
+    }
     uint32_t blockcount = (transfer.blocks - transfer.currentBlock);
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
-    g_disk_transfer.buffer = scsiDev.data;
-    g_disk_transfer.bytes_scsi = blockcount * bytesPerSector;
-    g_disk_transfer.bytes_sd = 0;
-    g_disk_transfer.bytes_scsi_started = 0;
-    g_disk_transfer.sd_transfer_start = 0;
-    g_disk_transfer.parityError = 0;
 
-    while (g_disk_transfer.bytes_sd < g_disk_transfer.bytes_scsi
+    // If we are using non-power-of-two sector size, wrapping around
+    // the buffer edge doesn't work out. Instead limit the transfer
+    // to a smaller section and re-enter diskDataOut().
+    uint32_t blocksPerBuffer = sizeof(scsiDev.data) / bytesPerSector;
+    if (blockcount > blocksPerBuffer &&
+        blocksPerBuffer * bytesPerSector != sizeof(scsiDev.data))
+    {
+        blockcount = blocksPerBuffer;
+    }
+
+
+    uint32_t i;
+
+
+    uint32_t blocks_per_buffer;
+
+
+    g_disk_transfer.buffer = scsiDev.data;
+    scsiDev.target->transfer.bytes_scsi = blockcount * bytesPerSector;
+    scsiDev.target->transfer.bytes_sd = 0;
+    scsiDev.target->transfer.bytes_scsi_started = 0;
+    scsiDev.target->transfer.sd_transfer_start = 0;
+    scsiDev.target->transfer.parityError = 0;
+
+    while (scsiDev.target->transfer.bytes_sd < scsiDev.target->transfer.bytes_scsi
            && scsiDev.phase == DATA_OUT
            && !scsiDev.resetFlag)
     {
         platform_poll();
         diskEjectButtonUpdate(false);
 
-        // Figure out how many contiguous bytes are available for writing to SD card.
+        // Figure out how many contiguous bytes are available for writing to SD card
         uint32_t bufsize = sizeof(scsiDev.data);
-        uint32_t start = g_disk_transfer.bytes_sd % bufsize;
+        uint32_t start = scsiDev.target->transfer.bytes_sd % bufsize;
         uint32_t len = 0;
 
         // How much data until buffer edge wrap?
-        uint32_t available = g_disk_transfer.bytes_scsi_started - g_disk_transfer.bytes_sd;
+        uint32_t available = scsiDev.target->transfer.bytes_scsi_started - scsiDev.target->transfer.bytes_sd;
         if (start + available > bufsize)
             available = bufsize - start;
 
@@ -1861,7 +2896,7 @@ void diskDataOut()
             len = PLATFORM_OPTIMAL_MAX_SD_WRITE_SIZE;
         }
 
-        uint32_t remain_in_transfer = g_disk_transfer.bytes_scsi - g_disk_transfer.bytes_sd;
+        uint32_t remain_in_transfer = scsiDev.target->transfer.bytes_scsi - scsiDev.target->transfer.bytes_sd;
         if (len < bufsize - start && len < remain_in_transfer)
         {
             // Use large write blocks in middle of transfer and smaller at the end of transfer.
@@ -1878,6 +2913,23 @@ void diskDataOut()
             }
         }
 
+#ifdef PLATFORM_AS400
+        // A Skip Write must commit only whole sectors: it walks the skip mask
+        // sector-by-sector, so any partial trailing sector left in len would
+        // either be dropped or (worse) offset every subsequent sector in the
+        // command by however many bytes were missing. len above is sized by
+        // SD buffer/write-size availability, not by bytesPerSector, so it is
+        // generally not a sector multiple - round it down before it is used
+        // for anything, so scsiFinishRead(), the write below, and the
+        // bytes_sd credit all agree on the same already-aligned amount. The
+        // remainder stays in the SCSI buffer and is picked up whole once the
+        // next chunk has enough bytes to complete the sector.
+        if (g_disk_transfer.skip_command == 0xEA)
+        {
+            len -= len % bytesPerSector;
+        }
+#endif
+
         if (len == 0)
         {
             // Nothing ready to transfer, check if we can read more from SCSI bus
@@ -1886,10 +2938,10 @@ void diskDataOut()
         else
         {
             // Finalize transfer on SCSI side
-            scsiFinishRead(&scsiDev.data[start], len, &g_disk_transfer.parityError);
+            scsiFinishRead(&scsiDev.data[start], len, &scsiDev.target->transfer.parityError);
 
             // Check parity error status before writing to SD card
-            if (g_disk_transfer.parityError)
+            if (scsiDev.target->transfer.parityError)
             {
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = ABORTED_COMMAND;
@@ -1901,9 +2953,107 @@ void diskDataOut()
             // Start writing to SD card and simultaneously start new SCSI transfers
             // when buffer space is freed.
             uint8_t *buf = &scsiDev.data[start];
-            g_disk_transfer.sd_transfer_start = start;
+            scsiDev.target->transfer.sd_transfer_start = start;
             // dbgmsg("SD write ", (int)start, " + ", (int)len, " ", bytearray(buf, len));
             platform_set_sd_callback(&diskDataOut_callback, buf);
+            //KM//debuglog("DiskDataOut LEN:",len);
+
+#ifdef PLATFORM_AS400
+            if (g_disk_transfer.writesame_count)
+            {
+                // Prefill the SCSI buffer with copies of the sector so that we
+                // can issue larger SD card transfers. Make sure SD card sector
+                // boundaries are aligned to a word boundary.
+                int offset = img.file.position() % SD_SECTOR_SIZE;
+                uint8_t *writesame_buf = scsiDev.data + offset;
+                blocks_per_buffer = (sizeof(scsiDev.data) - offset) / bytesPerSector;
+                blocks_per_buffer -= blocks_per_buffer % 4;
+                if (blocks_per_buffer > g_disk_transfer.writesame_count)
+                    blocks_per_buffer = g_disk_transfer.writesame_count;
+                for (i=0; i < blocks_per_buffer; i++)
+                {
+                    memmove(writesame_buf + (i * bytesPerSector), buf, bytesPerSector);
+                }
+                uint32_t blocks_written = 0;
+                
+                while (blocks_written < g_disk_transfer.writesame_count) 
+                {
+                    uint32_t blocks_to_write = blocks_per_buffer;
+                    if ((blocks_written + blocks_to_write) > g_disk_transfer.writesame_count)
+                    {
+                        blocks_to_write = g_disk_transfer.writesame_count - blocks_written;
+                    }
+
+                    uint32_t bytes_to_write = blocks_to_write * bytesPerSector;
+                    if (img.file.write(writesame_buf, bytes_to_write) != bytes_to_write)
+                    {
+                        logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
+                        scsiDev.status = CHECK_CONDITION;
+                        scsiDev.target->sense.code = MEDIUM_ERROR;
+                        scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+                        scsiDev.phase = STATUS;
+                        break;
+                    }
+                    blocks_written += blocks_to_write;
+                    platform_reset_watchdog();
+                }
+                g_disk_transfer.writesame_count = 0;
+            }
+            else if(g_disk_transfer.skip_command == 0xEA)
+            {
+                // Skip Write: selectively write sectors based on skip mask.
+                // len is already a whole number of sectors (aligned above,
+                // before scsiFinishRead()), so every byte received in this
+                // chunk is consumed here.
+                int sectors_remaining = len / bytesPerSector;
+                uint8_t *ptr = buf;
+                bool write_ok = true;
+
+                while (sectors_remaining > 0)
+                {
+                    int16_t run = skip_next(sectors_remaining);
+                    if (run < 0)
+                    {
+                        img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
+                    }
+                    else if (run > 0)
+                    {
+                        uint32_t write_bytes = run * bytesPerSector;
+                        if (img.file.write(ptr, write_bytes) != write_bytes)
+                        {
+                            logmsg("SD card write failed during Skip Write: ", SD.sdErrorCode());
+                            write_ok = false;
+                            break;
+                        }
+                        sectors_remaining -= run;
+                        ptr += write_bytes;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                // The skip mask must cover every sector in this chunk. If the loop
+                // exits with sectors unfilled, the mask ran out early - matching the
+                // guard already applied to the Skip Read side.
+                if (write_ok && sectors_remaining > 0)
+                {
+                    logmsg("Skip Write mask exhausted with ", (int)sectors_remaining,
+                           " sectors unfilled");
+                    write_ok = false;
+                }
+
+                if (!write_ok)
+                {
+                    scsiDev.status = CHECK_CONDITION;
+                    scsiDev.target->sense.code = MEDIUM_ERROR;
+                    scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+                    scsiDev.phase = STATUS;
+                }
+            }
+            else
+#endif
             if (img.file.write(buf, len) != len)
             {
                 logmsg("SD card write failed: ", SD.sdErrorCode());
@@ -1913,7 +3063,7 @@ void diskDataOut()
                 scsiDev.phase = STATUS;
             }
             platform_set_sd_callback(NULL, NULL);
-            g_disk_transfer.bytes_sd += len;
+            scsiDev.target->transfer.bytes_sd += len;
 
             // Reset the watchdog while the transfer is progressing.
             // If the host stops transferring, the watchdog will eventually expire.
@@ -1924,9 +3074,25 @@ void diskDataOut()
     }
 
     // Release SCSI bus
-    scsiFinishRead(NULL, 0, &g_disk_transfer.parityError);
-
+    scsiFinishRead(NULL, 0, &scsiDev.target->transfer.parityError);
     transfer.currentBlock += blockcount;
+#ifdef PLATFORM_AS400
+    // A Skip Write larger than fits in one SD write buffer spans multiple
+    // diskDataOut() invocations (skip commands allow up to 256 blocks; at
+    // 522 bytes/sector the buffer holds only ~125 per invocation, so any
+    // mask above that size needs a second call). skip_command/skip_position/
+    // skip_mask must survive until the whole command is done, or the next
+    // invocation falls through to a plain contiguous write for the
+    // remainder, silently ignoring the mask for however much data is left.
+    // Only clear once the command has actually finished, failed, or been
+    // reset - not after every invocation.
+    if (g_disk_transfer.skip_command &&
+        (transfer.currentBlock == transfer.blocks ||
+         scsiDev.phase != DATA_OUT || scsiDev.resetFlag))
+    {
+        g_disk_transfer.skip_command = 0;
+    }
+#endif
     scsiDev.dataPtr = scsiDev.dataLen = 0;
 
     if (transfer.currentBlock == transfer.blocks)
@@ -1977,20 +3143,18 @@ void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
         scsiDev.dataPtr = 0;
 
 #ifdef PREFETCH_BUFFER_SIZE
-        uint32_t sectors_in_prefetch = g_scsi_prefetch.bytes / bytesPerSector;
-        if (img.scsiId == g_scsi_prefetch.scsiId &&
-            transfer.lba >= g_scsi_prefetch.sector &&
-            transfer.lba < g_scsi_prefetch.sector + sectors_in_prefetch)
+        uint32_t prefetch_sectors = 0;
+        const uint8_t *prefetch_ptr = scsiDiskPrefetchRead(img.scsiId, transfer.lba, bytesPerSector, &prefetch_sectors);
+
+        if (prefetch_ptr)
         {
             // We have the some sectors already in prefetch cache
             scsiEnterPhase(DATA_IN);
 
-            uint32_t start_offset = transfer.lba - g_scsi_prefetch.sector;
-            uint32_t count = sectors_in_prefetch - start_offset;
-            if (count > transfer.blocks) count = transfer.blocks;
-            scsiStartWrite(g_scsi_prefetch.buffer + start_offset * bytesPerSector, count * bytesPerSector);
-            dbgmsg("------ Found ", (int)count, " sectors in prefetch cache");
-            transfer.currentBlock += count;
+            if (prefetch_sectors > transfer.blocks) prefetch_sectors = transfer.blocks;
+            scsiStartWrite(prefetch_ptr, prefetch_sectors * bytesPerSector);
+            dbgmsg("------ Found ", (int)prefetch_sectors, " sectors in prefetch cache");
+            transfer.currentBlock += prefetch_sectors;
         }
 
         if (transfer.currentBlock == transfer.blocks)
@@ -2002,10 +3166,18 @@ void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
             }
 
             scsiFinishWrite();
+# ifdef PLATFORM_AS400
+            if(g_disk_transfer.skip_command)
+            {
+                g_disk_transfer.skip_command = 0;
+            }
+# endif
         }
+
 #endif
 
-        if (!img.file.seek((uint64_t)(transfer.lba + transfer.currentBlock) * bytesPerSector))
+        if (transfer.currentBlock < transfer.blocks &&
+            !img.file.seek((uint64_t)(transfer.lba + transfer.currentBlock) * bytesPerSector))
         {
             logmsg("Seek to ", transfer.lba, " failed for SCSI ID", (int)scsiDev.target->targetId);
             scsiDev.status = CHECK_CONDITION;
@@ -2023,14 +3195,14 @@ void diskDataIn_callback(uint32_t bytes_complete)
     scsiEnterPhase(DATA_IN);
 
     // For best performance, do writes in blocks of 4 or more bytes
-    if (bytes_complete < g_disk_transfer.bytes_sd)
+    if (bytes_complete < scsiDev.target->transfer.bytes_sd)
     {
         bytes_complete &= ~3;
     }
 
     // Machintosh SCSI driver can get confused if pauses occur in middle of
     // a sector, so schedule the transfers in sector sized blocks.
-    if (bytes_complete < g_disk_transfer.bytes_sd)
+    if (bytes_complete < scsiDev.target->transfer.bytes_sd)
     {
         uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
         if (bytes_complete % bytesPerSector != 0)
@@ -2039,13 +3211,13 @@ void diskDataIn_callback(uint32_t bytes_complete)
         }
     }
 
-    if (bytes_complete > g_disk_transfer.bytes_scsi)
+    if (bytes_complete > scsiDev.target->transfer.bytes_scsi)
     {
         // DMA is reading from SD card, bytes_complete bytes have already been read.
         // Send them to SCSI bus now.
-        uint32_t len = bytes_complete - g_disk_transfer.bytes_scsi;
-        scsiStartWrite(g_disk_transfer.buffer + g_disk_transfer.bytes_scsi, len);
-        g_disk_transfer.bytes_scsi += len;
+        uint32_t len = bytes_complete - scsiDev.target->transfer.bytes_scsi;
+        scsiStartWrite(g_disk_transfer.buffer + scsiDev.target->transfer.bytes_scsi, len);
+        scsiDev.target->transfer.bytes_scsi += len;
     }
 
     // Provide a chance for polling request processing
@@ -2057,8 +3229,8 @@ void diskDataIn_callback(uint32_t bytes_complete)
 static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
 {
     g_disk_transfer.buffer = buffer;
-    g_disk_transfer.bytes_scsi = 0;
-    g_disk_transfer.bytes_sd = count;
+    scsiDev.target->transfer.bytes_scsi = 0;
+    scsiDev.target->transfer.bytes_sd = count;
 
     // Verify that previous write using this buffer has finished
     uint32_t start = millis();
@@ -2079,6 +3251,61 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     platform_set_sd_callback(&diskDataIn_callback, buffer);
 
+#ifdef PLATFORM_AS400
+    if (g_disk_transfer.skip_command == 0xE8)
+    {
+        // Skip Read: selectively read sectors based on skip mask
+        uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+        int sectors_remaining = count / bytesPerSector;
+        uint8_t *ptr = buffer;
+        bool read_ok = true;
+
+        while (sectors_remaining > 0)
+        {
+            int16_t run = skip_next(sectors_remaining);
+            if (run < 0)
+            {
+                img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
+            }
+            else if (run > 0)
+            {
+                uint32_t read_bytes = run * bytesPerSector;
+                if (img.file.read(ptr, read_bytes) != (int)read_bytes)
+                {
+                    read_ok = false;
+                    break;
+                }
+                sectors_remaining -= run;
+                ptr += read_bytes;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        // The skip mask must cover every sector the host expects. If the
+        // loop exits with sectors unfilled, those bytes in `buffer` are
+        // stale from the previous transfer — shipping them to the host
+        // would silently corrupt the read. Fail the command instead.
+        if (read_ok && sectors_remaining > 0)
+        {
+            logmsg("Skip Read mask exhausted with ", (int)sectors_remaining,
+                   " sectors unfilled");
+            read_ok = false;
+        }
+
+        if (!read_ok)
+        {
+            logmsg("SD card read failed during Skip Read: ", SD.sdErrorCode());
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
+            scsiDev.phase = STATUS;
+        }
+    }
+    else
+#endif
     if (img.file.read(buffer, count) != count)
     {
         logmsg("SD card read failed: ", SD.sdErrorCode());
@@ -2136,49 +3363,67 @@ static void diskDataIn()
 
 #ifdef PREFETCH_BUFFER_SIZE
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-        int prefetchbytes = img.prefetchbytes;
-        if (prefetchbytes > PREFETCH_BUFFER_SIZE) prefetchbytes = PREFETCH_BUFFER_SIZE;
-        uint32_t prefetch_sectors = prefetchbytes / bytesPerSector;
-        uint32_t img_sector_count = img.file.size() / bytesPerSector;
-        g_scsi_prefetch.sector = transfer.lba + transfer.blocks;
-        g_scsi_prefetch.bytes = 0;
-        g_scsi_prefetch.scsiId = scsiDev.target->cfg->scsiId;
+        int maxPrefetchBytes = img.prefetchbytes;
 
-        if (g_scsi_prefetch.sector + prefetch_sectors > img_sector_count)
-        {
-            // Don't try to read past image end.
-            prefetch_sectors = img_sector_count - g_scsi_prefetch.sector;
-        }
+        uint8_t *prefetchBuffer = NULL;
+        uint32_t prefetchFirstSector = transfer.lba + transfer.blocks;
+        uint32_t maxPrefetchSectors = 0;
+        uint32_t prefetchSectors = 0;
 
-        while (!scsiIsWriteFinished(NULL) && prefetch_sectors > 0 && !scsiDev.resetFlag)
+        while (!scsiIsWriteFinished(NULL) && !scsiDev.resetFlag)
         {
             platform_poll();
             diskEjectButtonUpdate(false);
 
-            // Check if prefetch buffer is free
-            g_disk_transfer.buffer = g_scsi_prefetch.buffer + g_scsi_prefetch.bytes;
-            if (!scsiIsWriteFinished(g_disk_transfer.buffer) ||
-                !scsiIsWriteFinished(g_disk_transfer.buffer + bytesPerSector - 1))
+            // Check if prefetch buffer is available
+            if (!prefetchBuffer)
             {
-                continue;
+                prefetchBuffer = scsiDiskPrefetchBeginWrite(scsiDev.target->cfg->scsiId,
+                    prefetchFirstSector, bytesPerSector, &maxPrefetchSectors);
             }
 
-            // We still have time, prefetch next sectors in case this SCSI request
-            // is part of a longer linear read.
-            g_disk_transfer.bytes_sd = bytesPerSector;
-            g_disk_transfer.bytes_scsi = bytesPerSector; // Tell callback not to send to SCSI
-            platform_set_sd_callback(&diskDataIn_callback, g_disk_transfer.buffer);
-            int status = img.file.read(g_disk_transfer.buffer, bytesPerSector);
-            if (status <= 0)
+            if (prefetchBuffer)
             {
-                logmsg("Prefetch read failed");
-                prefetch_sectors = 0;
-                break;
+                uint32_t img_sector_count = img.file.size() / bytesPerSector;
+                if (prefetchFirstSector + maxPrefetchSectors > img_sector_count)
+                {
+                    // Don't try to read past image end.
+                    maxPrefetchSectors = img_sector_count - prefetchFirstSector;
+                }
+
+                if (maxPrefetchSectors * bytesPerSector > maxPrefetchBytes)
+                {
+                    // Per-image limit on prefetching
+                    maxPrefetchSectors = maxPrefetchBytes / bytesPerSector;
+                }
+
+                if (prefetchSectors >= maxPrefetchSectors)
+                {
+                    // Prefetch done
+                    break;
+                }
+
+                // We still have time, prefetch next sectors in case this SCSI request
+                // is part of a longer linear read. SCSI callback is still invoked so that
+                // it can process the simultaneously running SCSI transfer.
+                g_disk_transfer.bytes_sd = bytesPerSector;
+                g_disk_transfer.bytes_scsi = bytesPerSector; // Tell callback not to send to SCSI
+                platform_set_sd_callback(&diskDataIn_callback, g_disk_transfer.buffer);
+                uint8_t *prefetchSectorPtr = prefetchBuffer + bytesPerSector * prefetchSectors;
+                int status = img.file.read(prefetchSectorPtr, bytesPerSector);
+                if (status != bytesPerSector)
+                {
+                    logmsg("Prefetch read failed: ", status);
+                    break;
+                }
+
+                platform_set_sd_callback(NULL, NULL);
+                prefetchSectors++;
             }
-            g_scsi_prefetch.bytes += status;
-            platform_set_sd_callback(NULL, NULL);
-            prefetch_sectors--;
         }
+
+        scsiDiskPrefetchFinishWrite(scsiDev.target->cfg->scsiId,
+            prefetchFirstSector, bytesPerSector, prefetchSectors);
 #endif
 
         while (!scsiIsWriteFinished(NULL) && !scsiDev.resetFlag)
@@ -2188,9 +3433,229 @@ static void diskDataIn()
         }
 
         scsiFinishWrite();
+
+#ifdef PLATFORM_AS400
+        if(g_disk_transfer.skip_command)
+        {
+            g_disk_transfer.skip_command = 0;
+        }
+#endif
     }
 }
 
+
+#ifdef PLATFORM_AS400
+// AS/400 Write Same(10) entry point
+void scsiDiskWriteSame(uint32_t lba, uint32_t blocks) 
+{
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t capacity = img.file.size() / bytesPerSector;
+
+    uint32_t writesame_count = 0;
+    if(blocks == 0)
+        writesame_count = capacity - lba;
+    else
+        writesame_count = blocks;
+
+    dbgmsg("------ Write Same ", (int)writesame_count, "x", (int)bytesPerSector, " starting at ", (int)lba);
+
+
+
+    if (unlikely(((uint64_t) lba) + blocks > capacity))
+    {
+        logmsg("WARNING: Host attempted write at sector ", (int)lba, "+", (int)blocks,
+              ", exceeding image size ", (int)capacity, " sectors (",
+              (int)bytesPerSector, "B/sector)");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+        scsiDev.phase = STATUS;
+        return;
+    }
+
+    int parityError = 0;
+    // Read exactly one block from the host, then replicate it
+    scsiEnterPhase(DATA_OUT);
+    scsiRead(scsiDev.data, bytesPerSector, &parityError);
+
+    const uint32_t buffer_sectors = sizeof(scsiDev.data) / bytesPerSector;
+    uint32_t sectors_to_write = std::min(writesame_count, buffer_sectors);
+    uint32_t bytes_to_write = sectors_to_write * bytesPerSector;
+
+    // Fill buffer with as much replicated data as possible to speed up writes
+    for (uint32_t i = 1; i < sectors_to_write; i++)
+    {
+        memcpy(scsiDev.data + i * bytesPerSector, scsiDev.data, bytesPerSector);
+    }
+
+    img.file.seek((uint64_t)lba * bytesPerSector);
+
+    while (writesame_count > 0)
+    {
+        sectors_to_write = std::min(writesame_count, buffer_sectors);
+        bytes_to_write = sectors_to_write * bytesPerSector;
+
+        if (img.file.write(scsiDev.data, bytes_to_write) != (int)bytes_to_write)
+        {
+            logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+            scsiDev.phase = STATUS;
+            return;
+        }
+
+        writesame_count -= sectors_to_write;
+        platform_reset_watchdog();
+    }
+    scsiDev.phase = STATUS;
+
+}
+#endif
+
+#ifdef PLATFORM_AS400
+int skip_total_true_bits(uint8_t *mask, size_t masklen) {
+    int total = 0;
+    for (size_t i = 0; i < masklen; i++) {        
+        unsigned char val = mask[i];        
+        while (val) {
+            val &= (val - 1);
+            total++;
+        }
+    }
+    return total;
+}
+
+
+int skip_contiguous_bits(const uint8_t *data, size_t byte_len, size_t bit_start) {    
+    //|Byte 0         |Byte 1         |Byte 2         |
+    // 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
+    size_t total_bits = byte_len * 8;
+    if (bit_start >= total_bits) return 0;
+
+    size_t byte_index = bit_start / 8;
+    int bit_offset = 7 - (bit_start % 8);  // MSB-first
+    int target_bit = (data[byte_index] >> bit_offset) & 1;
+
+    size_t count = 0;
+    for (size_t i = bit_start; i < total_bits; i++) {
+        byte_index = i / 8;
+        bit_offset = 7 - (i % 8);  // MSB-first
+        int current_bit = (data[byte_index] >> bit_offset) & 1;
+
+        if (current_bit != target_bit) break;
+        count++;
+    }
+
+    return target_bit ? (int)count : -(int)count;
+}
+
+int16_t skip_next(int max) {
+    int16_t x;
+    if(g_disk_transfer.skip_position == (g_disk_transfer.skip_mask_length * 8)) {
+        return 0;//We are finished
+    }
+    else {
+        x = skip_contiguous_bits(g_disk_transfer.skip_mask,
+            g_disk_transfer.skip_mask_length,
+            g_disk_transfer.skip_position);
+        if (x > max) x = max; //Maximum is to cap positive response.
+        g_disk_transfer.skip_position += abs(x);
+        return x;
+    }
+}
+
+// AS/400 Skip Read/Write entry point
+//
+// Per IBM ESS SCSI Command Reference SC26-7297-01 §"Skip Read"/"Skip Write"
+// (opcodes X'E8' / X'EA', pages 66-67):
+//   - Mask Length=0 specifies a mask length of 256.
+//   - Transfer Length=0 specifies that no data is to be transferred. This
+//     is not an error.
+//   - Maximum transfer length is 256 blocks; larger values return Check
+//     Condition / Illegal Request - Invalid Field in CDB.
+void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t skip_command) {
+
+    if (blocks > 256)
+    {
+        logmsg("Skip command rejected: transfer length ", (int)blocks, " > 256");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+        scsiDev.phase = STATUS;
+        g_disk_transfer.skip_command = 0;
+        return;
+    }
+
+    g_disk_transfer.skip_lba = lba;
+    g_disk_transfer.skip_blocks = blocks;
+    g_disk_transfer.skip_mask_length = mask_length > 0 ? mask_length : 256;
+
+    int parityError; 
+    scsiEnterPhase(DATA_OUT);
+
+    scsiRead(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length, &parityError);
+
+    if (skip_total_true_bits(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length) != (int) blocks) {
+        logmsg("Skip mask bit count mismatch: expected ", (int)blocks,
+               " set bits in ", (int)mask_length, " byte mask");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_PARAMETER_LIST;
+        scsiDev.phase = STATUS;
+        g_disk_transfer.skip_command = 0;
+    }
+    else
+    {
+        g_disk_transfer.skip_command = skip_command;
+        g_disk_transfer.skip_position = 0;
+
+        if (skip_command == 0xE8)
+        {
+            // A Skip Read must gather its data per the mask; invalidate any
+            // sectors already sitting in the prefetch cache from a prior
+            // ordinary contiguous read now, so the linked Read10 that
+            // follows can't be served contiguous data that would silently
+            // bypass the mask. No-op if nothing is cached for this ID, or
+            // if PREFETCH_BUFFER_SIZE isn't defined at all.
+            scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
+        }
+
+        // Support optional linked command (CDB byte 9 bit 0)
+        if (scsiDev.cdb[9] & 1)
+        {
+            scsiDev.msgIn = MSG_LINKED_COMMAND_COMPLETE;
+            scsiDev.phase = MESSAGE_IN;
+        }
+    }
+}
+#endif
+
+
+extern "C"
+void scsiDiskReportLUNs()
+{
+    uint8_t select_report = scsiDev.cdb[2];
+    uint32_t allocationLength =
+        (((uint32_t) scsiDev.cdb[6]) << 24) +
+        (((uint32_t) scsiDev.cdb[7]) << 16) +
+        (((uint32_t) scsiDev.cdb[8]) << 8) +
+        scsiDev.cdb[9];
+    if (select_report != 0x00 || allocationLength < 16)
+    {
+        if (select_report != 0x00)
+            dbgmsg("---- Report LUNs report ", select_report, " not supported yet");
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+        scsiDev.phase = STATUS;
+    }
+    memset(scsiDev.data, 0, 16);
+    scsiDev.data[3] = 0x08;// (uint32_t)(msb_data[0] - lsb_data[3]) = 8
+    scsiDev.dataLen = 16;
+    scsiDev.phase = DATA_IN;
+}
 
 /********************/
 /* Command dispatch */
@@ -2203,35 +3668,61 @@ int scsiDiskCommand()
     int commandHandled = 1;
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
 
+    g_disk_data_out.verify = false;
+    g_disk_data_out.write_and_verify = false;
+
     uint8_t command = scsiDev.cdb[0];
+#ifdef PLATFORM_AS400
+    // AS/400 skip command validation: if a skip is pending, only allow
+    // the expected follow-up read/write command
+    if (g_disk_transfer.skip_command)
+    {
+        bool allowed = false;
+        if (g_disk_transfer.skip_command == 0xE8 && (command == 0x08 || command == 0x28))
+            allowed = true;
+        if (g_disk_transfer.skip_command == 0xEA && (command == 0x0A || command == 0x2A))
+            allowed = true;
+
+        if (!allowed)
+        {
+            g_disk_transfer.skip_command = 0;
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+            return 0;
+        }
+    }
+#endif
+
     if (unlikely(command == 0x1B))
     {
         // START STOP UNIT
         // Enable or disable media access operations.
         //int immed = scsiDev.cdb[1] & 1;
-        int start = scsiDev.cdb[4] & 1;
-        if ((scsiDev.cdb[4] & 2) || img.deviceType == S2S_CFG_ZIP100)
+        bool start = scsiDev.cdb[4] & 1;
+        bool eject = scsiDev.cdb[4] & 2;
+
+#ifdef PLATFORM_AS400
+        // \todo - figure out is AS400 expects a spin up time or not
+        // Possibly make it a zuluscsi.ini setting
+#endif
+        if (start)
         {
-            // Device load & eject
-            if (start)
-            {
-                doCloseTray(img);
-            }
-            else
-            {
-                // Eject and switch image
-                doPerformEject(img);
-            }
-        }
-        else if (start)
-        {
+            // Start device and close tray if open
             scsiDev.target->started = 1;
+            scsiDiskCloseTray(img);
+        }
+        else if (eject || img.deviceType == S2S_CFG_ZIP100 || img.eject_on_stop)
+        {
+            // Eject and switch image
+            doPerformEject(img);
         }
         else
         {
+            // Stop device
             scsiDev.target->started = 0;
         }
-
     }
     else if (likely(command == 0x08))
     {
@@ -2260,6 +3751,52 @@ int scsiDiskCommand()
 
         scsiDiskStartRead(lba, blocks);
     }
+    else if (unlikely(command == 0xA8))
+    {
+        // READ(12)
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[6]) << 24) +
+            (((uint32_t) scsiDev.cdb[7]) << 16) +
+            (((uint32_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+
+        scsiDiskStartRead(lba, blocks);
+    }
+    else if (unlikely(command == 0x88))
+    {
+        // READ(16)
+        uint64_t lba =
+            (((uint64_t) scsiDev.cdb[2]) << 56) +
+            (((uint64_t) scsiDev.cdb[3]) << 48) +
+            (((uint64_t) scsiDev.cdb[4]) << 40) +
+            (((uint64_t) scsiDev.cdb[5]) << 32) +
+            (((uint64_t) scsiDev.cdb[6]) << 24) +
+            (((uint64_t) scsiDev.cdb[7]) << 16) +
+            (((uint64_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[10]) << 24) +
+            (((uint32_t) scsiDev.cdb[11]) << 16) +
+            (((uint32_t) scsiDev.cdb[12]) << 8) +
+            scsiDev.cdb[13];
+
+        if (lba > UINT32_MAX)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+            scsiDev.phase = STATUS;
+        }
+        else
+        {
+            scsiDiskStartRead((uint32_t)lba, blocks);
+        }
+    }
     else if (likely(command == 0x0A))
     {
         // WRITE(6)
@@ -2271,12 +3808,10 @@ int scsiDiskCommand()
         if (unlikely(blocks == 0)) blocks = 256;
         scsiDiskStartWrite(lba, blocks);
     }
-    else if (likely(command == 0x2A) || // WRITE(10)
-        unlikely(command == 0x2E)) // WRITE AND VERIFY
+    else if (likely(command == 0x2A))
     {
+        // WRITE(10)
         // Ignore all cache control bits - we don't support a memory cache.
-        // Don't bother verifying either. The SD card likely stores ECC
-        // along with each flash row.
 
         uint32_t lba =
             (((uint32_t) scsiDev.cdb[2]) << 24) +
@@ -2288,6 +3823,112 @@ int scsiDiskCommand()
             scsiDev.cdb[8];
 
         scsiDiskStartWrite(lba, blocks);
+    }
+    else if (unlikely(command == 0xAA))
+    {
+        // WRITE(12)
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[6]) << 24) +
+            (((uint32_t) scsiDev.cdb[7]) << 16) +
+            (((uint32_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+
+        scsiDiskStartWrite(lba, blocks);
+    }
+    else if (unlikely(command == 0x8A))
+    {
+        // WRITE(16)
+        uint64_t lba =
+            (((uint64_t) scsiDev.cdb[2]) << 56) +
+            (((uint64_t) scsiDev.cdb[3]) << 48) +
+            (((uint64_t) scsiDev.cdb[4]) << 40) +
+            (((uint64_t) scsiDev.cdb[5]) << 32) +
+            (((uint64_t) scsiDev.cdb[6]) << 24) +
+            (((uint64_t) scsiDev.cdb[7]) << 16) +
+            (((uint64_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[10]) << 24) +
+            (((uint32_t) scsiDev.cdb[11]) << 16) +
+            (((uint32_t) scsiDev.cdb[12]) << 8) +
+            scsiDev.cdb[13];
+
+        if (lba > UINT32_MAX)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+            scsiDev.phase = STATUS;
+        }
+        else
+        {
+            scsiDiskStartWrite((uint32_t)lba, blocks);
+        }
+    }
+    else if (unlikely(command == 0x2E || command == 0xAE || command == 0x8E))
+    {
+        // WRITE AND VERIFY
+        uint64_t lba = 0;
+        uint32_t blocks = 0;
+
+        if (command == 0x2E)
+        {
+            lba =
+                (((uint32_t) scsiDev.cdb[2]) << 24) +
+                (((uint32_t) scsiDev.cdb[3]) << 16) +
+                (((uint32_t) scsiDev.cdb[4]) << 8) +
+                scsiDev.cdb[5];
+            blocks =
+                (((uint32_t) scsiDev.cdb[7]) << 8) +
+                scsiDev.cdb[8];
+        }
+        else if (command == 0xAE)
+        {
+            lba =
+                (((uint32_t) scsiDev.cdb[2]) << 24) +
+                (((uint32_t) scsiDev.cdb[3]) << 16) +
+                (((uint32_t) scsiDev.cdb[4]) << 8) +
+                scsiDev.cdb[5];
+            blocks =
+                (((uint32_t) scsiDev.cdb[6]) << 24) +
+                (((uint32_t) scsiDev.cdb[7]) << 16) +
+                (((uint32_t) scsiDev.cdb[8]) << 8) +
+                scsiDev.cdb[9];
+        }
+        else
+        {
+            lba =
+                (((uint64_t) scsiDev.cdb[2]) << 56) +
+                (((uint64_t) scsiDev.cdb[3]) << 48) +
+                (((uint64_t) scsiDev.cdb[4]) << 40) +
+                (((uint64_t) scsiDev.cdb[5]) << 32) +
+                (((uint64_t) scsiDev.cdb[6]) << 24) +
+                (((uint64_t) scsiDev.cdb[7]) << 16) +
+                (((uint64_t) scsiDev.cdb[8]) << 8) +
+                scsiDev.cdb[9];
+            blocks =
+                (((uint32_t) scsiDev.cdb[10]) << 24) +
+                (((uint32_t) scsiDev.cdb[11]) << 16) +
+                (((uint32_t) scsiDev.cdb[12]) << 8) +
+                scsiDev.cdb[13];
+        }
+
+        if (lba > UINT32_MAX)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+            scsiDev.phase = STATUS;
+        }
+        else
+        {
+            scsiDiskStartWriteAndVerify((uint32_t)lba, blocks);
+        }
     }
     else if (unlikely(command == 0x04))
     {
@@ -2313,6 +3954,22 @@ int scsiDiskCommand()
     {
         // READ CAPACITY
         doReadCapacity();
+    }
+    else if (unlikely(command == 0x9E))
+    {
+        // SERVICE ACTION IN(16)
+        if ((scsiDev.cdb[1] & 0x1F) == 0x10)
+        {
+            // READ CAPACITY(16)
+            doReadCapacity16();
+        }
+        else
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
     }
     else if (unlikely(command == 0x0B))
     {
@@ -2364,23 +4021,53 @@ int scsiDiskCommand()
     }
     else if (unlikely(command == 0x2F))
     {
-        // VERIFY
-        // TODO: When they supply data to verify, we should read the data and
-        // verify it. If they don't supply any data, just say success.
-        if ((scsiDev.cdb[1] & 0x02) == 0)
-        {
-            // They are asking us to do a medium verification with no data
-            // comparison. Assume success, do nothing.
-        }
-        else
-        {
-            // TODO. This means they are supplying data to verify against.
-            // Technically we should probably grab the data and compare it.
-            scsiDev.status = CHECK_CONDITION;
-            scsiDev.target->sense.code = ILLEGAL_REQUEST;
-            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
-            scsiDev.phase = STATUS;
-        }
+        // VERIFY(10)
+        uint64_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[7]) << 8) +
+            scsiDev.cdb[8];
+
+        scsiDiskHandleVerify(lba, blocks, (scsiDev.cdb[1] & 0x02) != 0);
+    }
+    else if (unlikely(command == 0xAF))
+    {
+        // VERIFY(12)
+        uint64_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[6]) << 24) +
+            (((uint32_t) scsiDev.cdb[7]) << 16) +
+            (((uint32_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+
+        scsiDiskHandleVerify(lba, blocks, (scsiDev.cdb[1] & 0x02) != 0);
+    }
+    else if (unlikely(command == 0x8F))
+    {
+        // VERIFY(16)
+        uint64_t lba =
+            (((uint64_t) scsiDev.cdb[2]) << 56) +
+            (((uint64_t) scsiDev.cdb[3]) << 48) +
+            (((uint64_t) scsiDev.cdb[4]) << 40) +
+            (((uint64_t) scsiDev.cdb[5]) << 32) +
+            (((uint64_t) scsiDev.cdb[6]) << 24) +
+            (((uint64_t) scsiDev.cdb[7]) << 16) +
+            (((uint64_t) scsiDev.cdb[8]) << 8) +
+            scsiDev.cdb[9];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[10]) << 24) +
+            (((uint32_t) scsiDev.cdb[11]) << 16) +
+            (((uint32_t) scsiDev.cdb[12]) << 8) +
+            scsiDev.cdb[13];
+
+        scsiDiskHandleVerify(lba, blocks, (scsiDev.cdb[1] & 0x02) != 0);
     }
     else if (unlikely(command == 0x37))
     {
@@ -2389,7 +4076,7 @@ int scsiDiskCommand()
             scsiDev.cdb[8];
 
         scsiDev.data[0] = 0;
-        scsiDev.data[1] = scsiDev.cdb[1];
+        scsiDev.data[1] = scsiDev.cdb[2];
         scsiDev.data[2] = 0;
         scsiDev.data[3] = 0;
         scsiDev.dataLen = 4;
@@ -2401,13 +4088,132 @@ int scsiDiskCommand()
 
         scsiDev.phase = DATA_IN;
     }
-    else if (!img.file.isWritable())
+    else if (!img.file.isWritable() || img.ejectFixedDiskWriteBlocked)
     {
         // Special handling for ROM drive to make SCSI2SD code report it as read-only
         blockDev.state |= DISK_WP;
         commandHandled = scsiModeCommand();
         blockDev.state &= ~DISK_WP;
     }
+#ifdef PLATFORM_AS400
+    else if (likely(command == 0x41))
+    {
+         // Write Same(10)
+        // PBdata, LBdata, RelAdr not implemented
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[7]) << 8) +
+            scsiDev.cdb[8];
+        scsiDiskWriteSame(lba, blocks);
+    }
+    else if (likely(command == 0xEA) || likely(command == 0xE8))
+    {
+        // 0xEA = Skip Write(10), 0xE8 = Skip Read(10) (AS/400 vendor commands)
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
+        uint32_t blocks =
+            (((uint32_t) scsiDev.cdb[7]) << 8) +
+            scsiDev.cdb[8];
+        uint8_t mask_length = scsiDev.cdb[6];
+        scsiDiskSkip(lba, blocks, mask_length, command);
+    }
+    else if (unlikely(command == 0x4D) 
+        && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 
+        && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
+    {
+        // LOG SENSE - required for AS/400 diagnostics
+        uint8_t page_code = scsiDev.cdb[2] & 0x3F;
+
+        if (page_code == 0x00)
+        {
+            memcpy(scsiDev.data, as400_log_sense_page_00, as400_log_sense_page_00_len);
+            scsiDev.dataLen = as400_log_sense_page_00_len;
+            scsiDev.phase = DATA_IN;
+        }
+        else if (page_code == 0x30)
+        {
+            // Device I/O statistics
+            scsiDev.dataLen = as400_log_sense_page_30_page_length + 4;
+            memset(scsiDev.data, 0, scsiDev.dataLen);
+            scsiDev.data[0] = page_code;
+            scsiDev.data[2] = as400_log_sense_page_30_page_length >> 8;
+            scsiDev.data[3] = as400_log_sense_page_30_page_length & 0xFF;
+            scsiDev.data[7] = as400_log_sense_page_30_page_list_length;
+            scsiDev.data[52] = as400_read_ops >> 24;
+            scsiDev.data[53] = (as400_read_ops >> 16) & 0xFF;
+            scsiDev.data[54] = (as400_read_ops >> 8) & 0xFF;
+            scsiDev.data[55] = as400_read_ops & 0xFF;
+            scsiDev.data[56] = as400_write_ops >> 24;
+            scsiDev.data[57] = (as400_write_ops >> 16) & 0xFF;
+            scsiDev.data[58] = (as400_write_ops >> 8) & 0xFF;
+            scsiDev.data[59] = as400_write_ops & 0xFF;
+            scsiDev.phase = DATA_IN;
+        }
+        else if (page_code == 0x31)
+        {
+            // Device information with serial number
+            uint8_t as400_serial[8];
+            as400_get_serial_8(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, as400_serial);
+
+            scsiDev.dataLen = as400_log_sense_page_31_page_length + 4;
+            memset(scsiDev.data, 0, scsiDev.dataLen);
+            scsiDev.data[0] = page_code;
+            scsiDev.data[2] = as400_log_sense_page_31_page_length >> 8;
+            scsiDev.data[3] = as400_log_sense_page_31_page_length & 0xFF;
+            memcpy(&scsiDev.data[124], as400_serial, sizeof(as400_serial));
+            scsiDev.phase = DATA_IN;
+        }
+        else
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+    }
+    else if (unlikely(command == 0x4D)
+        && scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        // LOG SENSE page 0x02 (Write Error Counter) for tape. Unlike the
+        // AS/400-specific disk pages above (0x30/0x31 embed AS/400 serial
+        // and I/O-count data), this is a plain standard SCSI-2 page with no
+        // vendor-specific content, and real AS/400 hosts query it during
+        // routine tape operation regardless of whether this ID has the
+        // AS/400 quirk configured at all -- confirmed on real hardware even
+        // against a stock emulated tape drive with no AS/400-specific
+        // identity set up. So, unlike the block above, not gated on
+        // quirks == S2S_CFG_QUIRKS_AS400.
+        uint8_t page_code = scsiDev.cdb[2] & 0x3F;
+
+        if (page_code == 0x02)
+        {
+            // No real error-counter data is tracked, so report a valid,
+            // empty parameter list (zero page length) rather than
+            // fabricating counter values -- a technically valid LOG SENSE
+            // response, just with nothing logged yet.
+            scsiDev.data[0] = page_code;
+            scsiDev.data[1] = 0; // reserved / subpage code
+            scsiDev.data[2] = 0; // page length MSB
+            scsiDev.data[3] = 0; // page length LSB -- no parameters
+            scsiDev.dataLen = 4;
+            scsiDev.phase = DATA_IN;
+        }
+        else
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+    }
+#endif
     else
     {
         commandHandled = 0;
@@ -2427,7 +4233,18 @@ void scsiDiskPoll()
     else if (scsiDev.phase == DATA_OUT &&
         transfer.currentBlock != transfer.blocks)
     {
-        diskDataOut();
+        if (g_disk_data_out.write_and_verify)
+        {
+            diskWriteVerifyDataOut();
+        }
+        else if (g_disk_data_out.verify)
+        {
+            diskVerifyDataOut();
+        }
+        else
+        {
+            diskDataOut();
+        }
     }
 
     if (scsiDev.phase == STATUS && scsiDev.target)
@@ -2452,7 +4269,7 @@ void scsiDiskPoll()
             if (img.reinsert_on_inquiry)
             {
                 if (img.deviceType == S2S_CFG_OPTICAL) cdromCloseTray(img);
-                else doCloseTray(img);
+                else scsiDiskCloseTray(img);
             }
         }
     }
@@ -2468,18 +4285,26 @@ void scsiDiskReset()
     transfer.blocks = 0;
     transfer.currentBlock = 0;
     transfer.multiBlock = 0;
+    g_disk_data_out.verify = false;
+    g_disk_data_out.write_and_verify = false;
 
-#ifdef PREFETCH_BUFFER_SIZE
-    g_scsi_prefetch.bytes = 0;
-    g_scsi_prefetch.sector = 0;
+    scsiDiskPrefetchInvalidate();
+
+#ifdef ENABLE_AUDIO_OUTPUT
+    audio_stop(0xFF, true);
 #endif
-
-    // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
     for (int i = 0; i < S2S_MAX_TARGETS; ++i)
     {
+
         image_config_t &img = g_DiskImages[i];
-        if (img.deviceType == S2S_CFG_OPTICAL)
+        if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
+            // rewind drive
+            tapeRewind(img, i);
+        }
+        else  if (img.deviceType == S2S_CFG_OPTICAL && !g_scsi_settings.getDevice(i)->keepCurrentImageOnBusReset)
+        {
+            // Reinsert any ejected CD-ROMs on BUS RESET and restart from first image
             cdromReinsertFirstImage(img);
         }
     }
@@ -2491,3 +4316,94 @@ void scsiDiskInit()
     scsiDiskReset();
 }
 
+///////////// These are so LoadImage works - There is a better way
+
+
+// Eject CDROM tray if closed, close if open
+// Switch image on ejection.
+void cdromLoadImage(image_config_t &img, const char* next_filename)
+{
+    uint8_t target = img.scsiId & 7;
+#if ENABLE_AUDIO_OUTPUT
+    // terminate audio playback if active on this target (MMC-1 Annex C)
+    audio_stop(target);
+#endif
+    if (!img.ejected)
+    {
+        blink_cancel();
+        blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);
+        dbgmsg("------ CDROM open tray on ID ", (int)target);
+        img.ejected = true;
+        img.cdrom_events = 3; // Media removal
+        switchNextImage(img, next_filename); // Switch media for next time
+    }
+    else
+    {
+        cdromCloseTray(img);
+    }
+}
+
+#if defined(CONTROL_BOARD)
+// Eject and switch image
+static void genericLoadImage(image_config_t &img, const char* next_filename)
+{
+    uint8_t target = img.scsiId & 7;
+    if (!img.ejected)
+    {
+        blink_cancel();
+        blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
+        dbgmsg("------ Device open tray on ID ", (int)target);
+        img.ejected = true;
+        switchNextImage(img, next_filename); // Switch media for next time
+    }
+    else
+    {
+        scsiDiskCloseTray(img);
+    }
+}
+#endif
+
+#if defined(CONTROL_BOARD)
+static void loadImageToggleEject(uint8_t id, const char* next_filename)
+{
+    image_config_t &img = g_DiskImages[id];
+    if (img.deviceType == S2S_CFG_OPTICAL)
+    {
+        // found = true;
+        logmsg("Eject SCSI ID ", (int)id, " pressed, passing to CD drive SCSI", (int)id);
+        cdromLoadImage(img, next_filename);
+    }
+    else if (img.deviceType == S2S_CFG_ZIP100 
+            || img.deviceType == S2S_CFG_REMOVABLE 
+            || img.deviceType == S2S_CFG_FLOPPY_14MB 
+            || img.deviceType == S2S_CFG_MO
+            || img.deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        // found = true;
+        logmsg("Eject SCSI ID ", (int)id, " pressed, passing to SCSI device", (int)id);
+        genericLoadImage(img, next_filename);
+    }
+}
+#endif
+
+
+// TODO This forces a swap, the logic should use the deffered pattern
+extern "C" void setPendingImageLoad(uint8_t id, const char* next_filename)
+{
+#if defined(CONTROL_BOARD)
+    strcpy(g_filenameToLoad, next_filename);
+
+    g_pendingLoadIndex = id;
+#endif
+}
+
+extern "C" void loadImage()
+{
+#if defined(CONTROL_BOARD)
+   loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // first will eject
+   loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // secind will clode
+
+   g_pendingLoadComplete = g_pendingLoadIndex;
+   g_pendingLoadIndex = -1;
+#endif
+}

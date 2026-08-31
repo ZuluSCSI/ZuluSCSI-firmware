@@ -106,6 +106,7 @@ void rp2040_sdio_dma_irq();
 //    uint8_t crc = 0;
 //    crc = crc7_table[crc ^ byte];
 //    .. repeat for every byte ..
+__attribute__((section(".time_critical.crc7_table")))
 static const uint8_t crc7_table[256] = {
 	0x00, 0x12, 0x24, 0x36, 0x48, 0x5a, 0x6c, 0x7e,	0x90, 0x82, 0xb4, 0xa6, 0xd8, 0xca, 0xfc, 0xee,
 	0x32, 0x20, 0x16, 0x04, 0x7a, 0x68, 0x5e, 0x4c,	0xa2, 0xb0, 0x86, 0x94, 0xea, 0xf8, 0xce, 0xdc,
@@ -172,7 +173,7 @@ sdio_status_t receive_status_register(uint8_t* sds) {
 waitagain:
     while (dma_channel_is_busy(SDIO_DMA_CHB) || dma_channel_is_busy(SDIO_DMA_CH))
     {
-        if ((uint32_t)(millis() - g_sdio.transfer_start_time) > 2)
+        if ((uint32_t)(millis() - g_sdio.transfer_start_time) > 100)
         {
             // Reset the state machine program
             dma_channel_abort(SDIO_DMA_CHB);

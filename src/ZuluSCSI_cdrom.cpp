@@ -495,7 +495,8 @@ static bool cdromSelectBinFileForTrack(image_config_t &img, const CUETrackInfo *
 
 // Fetch track info based on LBA
 // Returns with the requested track already selected for bin file
-static void getTrackFromLBA(image_config_t &img, uint32_t lba, CUETrackInfo *result, CUEParser *parser = nullptr)
+static void getTrackFromLBA(image_config_t &img, uint32_t lba, CUETrackInfo *result,
+    uint32_t *track_end_lba = nullptr, CUEParser *parser = nullptr)
 {
     if (!img.cuesheetfile.isOpen())
     {
@@ -504,13 +505,21 @@ static void getTrackFromLBA(image_config_t &img, uint32_t lba, CUETrackInfo *res
         result->track_mode = CUETrack_MODE1_2048;
         result->sector_length = 2048;
         result->track_number = 1;
+        if (track_end_lba)
+        {
+            *track_end_lba = img.file.size() / result->sector_length;
+        }
     }
     else if (img.cdrom_binfile_index == img.cdrom_trackinfo.file_index &&
              lba >= img.cdrom_trackinfo.track_start &&
-             lba < img.cdrom_trackinfo.data_start + img.file.size() / img.cdrom_trackinfo.sector_length)
+             lba < img.cdrom_track_end_lba)
     {
         // Same track as previous time
         *result = img.cdrom_trackinfo;
+        if (track_end_lba)
+        {
+            *track_end_lba = img.cdrom_track_end_lba;
+        }
     }
     else
     {
@@ -528,14 +537,18 @@ static void getTrackFromLBA(image_config_t &img, uint32_t lba, CUETrackInfo *res
 
         const CUETrackInfo *tmptrack;
         uint64_t prev_capacity = 0;
+        uint32_t next_track_start = 0;
+        bool found_track = false;
         while ((tmptrack = parser->next_track(prev_capacity)) != NULL)
         {
             if (tmptrack->track_start <= lba)
             {
                 *result = *tmptrack;
+                found_track = true;
             }
             else
             {
+                next_track_start = tmptrack->track_start;
                 break;
             }
 
@@ -543,7 +556,26 @@ static void getTrackFromLBA(image_config_t &img, uint32_t lba, CUETrackInfo *res
             prev_capacity = img.file.size();
         }
 
-        img.cdrom_trackinfo = *result;
+        uint32_t track_end_lba_val = 0;
+        if (found_track)
+        {
+            if (next_track_start != 0)
+            {
+                track_end_lba_val = next_track_start;
+            }
+            else
+            {
+                track_end_lba_val = getLeadOutLBA(result);
+            }
+
+            img.cdrom_trackinfo = *result;
+            img.cdrom_track_end_lba = track_end_lba_val;
+        }
+
+        if (track_end_lba)
+        {
+            *track_end_lba = track_end_lba_val;
+        }
     }
 }
 
@@ -827,7 +859,7 @@ void doReadHeader(bool MSF, uint32_t lba, uint16_t allocationLength)
 
 #ifdef ENABLE_AUDIO_OUTPUT
     // terminate audio playback if active on this target (Annex C)
-    audio_stop(img.scsiId & 7);
+    audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 #endif
 
     uint8_t mode = 1;
@@ -840,7 +872,7 @@ void doReadHeader(bool MSF, uint32_t lba, uint16_t allocationLength)
         // Track mode (audio / data)
         if (trackinfo.track_mode == CUETrack_AUDIO)
         {
-            scsiDev.data[0] = 0;
+            mode = 0;
         }
     }
 
@@ -1206,7 +1238,8 @@ bool cdromValidateCueSheet(image_config_t &img)
 
         if (trackinfo->track_mode != CUETrack_AUDIO &&
             trackinfo->track_mode != CUETrack_MODE1_2048 &&
-            trackinfo->track_mode != CUETrack_MODE1_2352)
+            trackinfo->track_mode != CUETrack_MODE1_2352 &&
+            trackinfo->track_mode != CUETrack_MODE2_2352)
         {
             logmsg("---- Warning: track ", trackinfo->track_number, " has unsupported mode ", (int)trackinfo->track_mode);
         }
@@ -1244,7 +1277,7 @@ void cdromCloseTray(image_config_t &img)
 {
     if (img.ejected)
     {
-        uint8_t target = img.scsiId & 7;
+        uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         dbgmsg("------ CDROM close tray on ID ", (int)target);
         img.ejected = false;
         img.cdrom_events = 2; // New media
@@ -1261,7 +1294,7 @@ void cdromCloseTray(image_config_t &img)
 // Switch image on ejection.
 void cdromPerformEject(image_config_t &img)
 {
-    uint8_t target = img.scsiId & 7;
+    uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 #if ENABLE_AUDIO_OUTPUT
     // terminate audio playback if active on this target (MMC-1 Annex C)
     audio_stop(target);
@@ -1274,6 +1307,11 @@ void cdromPerformEject(image_config_t &img)
         img.ejected = true;
         img.cdrom_events = 3; // Media removal
         switchNextImage(img); // Switch media for next time
+
+        if (g_scsi_settings.getDevice(target)->reinsertImmediately)
+        {
+            cdromCloseTray(img);
+        }
     }
     else
     {
@@ -1284,10 +1322,12 @@ void cdromPerformEject(image_config_t &img)
 // Reinsert any ejected CDROMs on reboot
 void cdromReinsertFirstImage(image_config_t &img)
 {
+    uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
+
     if (img.image_index > 0)
     {
         // Multiple images for this drive, force restart from first one
-        uint8_t target = img.scsiId & 7;
+
         dbgmsg("---- Restarting from first CD-ROM image for ID ", (int)target);
         img.image_index = -1;
         img.current_image[0] = '\0';
@@ -1354,14 +1394,14 @@ void cdromGetAudioPlaybackStatus(uint8_t *status, uint32_t *current_lba, bool cu
 #ifdef ENABLE_AUDIO_OUTPUT
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     if (status) {
-        uint8_t target = img.scsiId & 7;
+        uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
         if (current_only) {
             *status = audio_is_playing(target) ? 1 : 0;
         } else {
             *status = (uint8_t) audio_get_status_code(target);
         }
     }
-# ifdef ZULUSCSI_BLASTER
+# if  defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
     *current_lba = audio_get_lba_position();
 # else
     *current_lba = audio_get_file_position() / 2352;
@@ -1374,15 +1414,38 @@ void cdromGetAudioPlaybackStatus(uint8_t *status, uint32_t *current_lba, bool cu
 
 static void doPlayAudio(uint32_t lba, uint32_t length)
 {
-#if defined(ENABLE_AUDIO_OUTPUT) && !defined(ZULUSCSI_BLASTER)
+#ifdef ENABLE_AUDIO_OUTPUT
+    if (!g_scsi_settings.getSystem()->enableCDAudio)
+    {
+        dbgmsg("---- Audio disabled in ", CONFIGFILE);
+#else
+    {
+        dbgmsg("---- Target does not support audio playback");
+#endif
+        // per SCSI-2, targets not supporting audio respond to zero-length
+        // PLAY AUDIO commands with ILLEGAL REQUEST; this seems to be a check
+        // performed by at least some audio playback software
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = 0x0000; // NO ADDITIONAL SENSE INFORMATION
+        scsiDev.phase = STATUS;
+        return;
+// Just balancing curly braces for IDE like vscode
+#ifdef ENABLE_AUDIO_OUTPUT
+    }
+#else
+    }
+#endif
+
+#if defined(ENABLE_AUDIO_OUTPUT) && !(defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE))
     dbgmsg("------ CD-ROM Play Audio request at ", lba, " for ", length, " sectors");
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & 7;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     // Per Annex C terminate playback immediately if already in progress on
     // the current target. Non-current targets may also get their audio
     // interrupted later due to hardware limitations
-    audio_stop(img.scsiId & 7);
+    audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 
     // if transfer length is zero no audio playback happens.
     // don't treat as an error per SCSI-2; handle via short-circuit
@@ -1447,10 +1510,10 @@ static void doPlayAudio(uint32_t lba, uint32_t length)
         scsiDev.target->sense.asc = 0x6400; // ILLEGAL MODE FOR THIS TRACK
         scsiDev.phase = STATUS;
     }
-#elif defined(ENABLE_AUDIO_OUTPUT_I2S) && defined(ZULUSCSI_BLASTER)
+#elif defined(ENABLE_AUDIO_OUTPUT_I2S) && (defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE))
     dbgmsg("------ CD-ROM Play Audio request at ", (int)lba, " for ", (int)length, " sectors");
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & 7;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     // if transfer length is zero no audio playback happens.
     // don't treat as an error per SCSI-2; handle via short-circuit
@@ -1482,25 +1545,16 @@ static void doPlayAudio(uint32_t lba, uint32_t length)
         scsiDev.target->sense.asc = 0x6400; // ILLEGAL MODE FOR THIS TRACK
         scsiDev.phase = STATUS;
     }
-#else
-    dbgmsg("---- Target does not support audio playback");
-    // per SCSI-2, targets not supporting audio respond to zero-length
-    // PLAY AUDIO commands with ILLEGAL REQUEST; this seems to be a check
-    // performed by at least some audio playback software
-    scsiDev.status = CHECK_CONDITION;
-    scsiDev.target->sense.code = ILLEGAL_REQUEST;
-    scsiDev.target->sense.asc = 0x0000; // NO ADDITIONAL SENSE INFORMATION
-    scsiDev.phase = STATUS;
 #endif
 }
 
 static void doPlayAudioTrackIndex(uint8_t start_track, uint8_t start_index, uint8_t end_track, uint8_t end_index)
 {
 #if defined(ENABLE_AUDIO_OUTPUT)
-# if defined(ZULUSCSI_BLASTER)
+# if defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
     dbgmsg("------ CD-ROM Play Audio request at track:index ", (int)start_track, ":", (int)start_index, " until ", (int)end_track, ":", (int)end_index);
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & 7;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     if (audio_play_track_index(target_id, &img, start_track, start_index, end_track, end_index))
     {
         scsiDev.status = 0;
@@ -1548,7 +1602,7 @@ static void doPauseResumeAudio(bool resume)
 #ifdef ENABLE_AUDIO_OUTPUT
     dbgmsg("------ CD-ROM ", resume ? "resume" : "pause", " audio playback");
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & 7;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
     if (audio_is_playing(target_id))
     {
@@ -1577,7 +1631,7 @@ static void doStopAudio()
     dbgmsg("------ CD-ROM Stop Audio request");
 #ifdef ENABLE_AUDIO_OUTPUT
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
-    uint8_t target_id = img.scsiId & 7;
+    uint8_t target_id = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     audio_stop(target_id);
 #endif
 }
@@ -1617,7 +1671,7 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
 
 #ifdef ENABLE_AUDIO_OUTPUT 
     // terminate audio playback if active on this target (Annex C)
-    audio_stop(img.scsiId & 7);
+    audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 #endif
 
     if (!img.cuesheetfile.isOpen()
@@ -1632,12 +1686,13 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
     // Search the track with the requested LBA
     // Supplies dummy data if no cue sheet is active.
     CUETrackInfo trackinfo = {};
-    getTrackFromLBA(img, lba, &trackinfo);
+    uint32_t track_end_lba = 0;
+    getTrackFromLBA(img, lba, &trackinfo, &track_end_lba);
 
     // Figure out the data offset in the file
     int64_t offset;
     if (sector_type == SECTOR_TYPE_VENDOR_PLEXTOR &&
-         g_scsi_settings.getDevice(img.scsiId & 0x7)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
+         g_scsi_settings.getDevice(img.scsiId & S2S_CFG_TARGET_ID_BITS)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
     {
         // This overrides values so doReadCD can be used with the
         // Vendor specific Plextor 0xD8 command to read raw CD data
@@ -1678,6 +1733,11 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
 
     // Ensure read is not out of range of the image
     uint32_t total_length = length;
+    if (track_end_lba > lba && length > track_end_lba - lba)
+    {
+        dbgmsg("------ Splitting read request at track boundary");
+        length = track_end_lba - lba;
+    }
     uint64_t readend = offset + trackinfo.sector_length * length;
     if (offset < 0 && -offset > trackinfo.unstored_pregap_length * trackinfo.sector_length)
     {
@@ -1687,11 +1747,19 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
     else if (readend > img.file.size())
     {
         uint32_t sectors_available = (img.file.size() - offset) / trackinfo.sector_length;
-        if (!img.file.isFolder() || sectors_available == 0)
+        if (!img.is_multi_bin_cue() || sectors_available == 0)
         {
             // This is really past the end of the CD
-            logmsg("WARNING: Host attempted CD read at sector ", lba, "+", length,
-              ", exceeding image size ", img.file.size());
+            if (img.is_multi_bin_cue())
+            {
+                logmsg("WARNING: Host attempted CD read track ", (int) trackinfo.track_number, " at lba ", (int) lba, "+", (int)length,
+                " with zero sectors available");
+            }
+            else
+            {
+                logmsg("WARNING: Host attempted CD read at sector ", (int)lba, "+", (int)length,
+                ", exceeding image size ", ((int)img.file.size()) < 0 ? img.file.size() : (int)img.file.size());
+            }
             scsiDev.status = CHECK_CONDITION;
             scsiDev.target->sense.code = ILLEGAL_REQUEST;
             scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
@@ -1719,7 +1787,7 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
             sector_type_ok = true;
         }
         else if (sector_type == SECTOR_TYPE_VENDOR_PLEXTOR && 
-            g_scsi_settings.getDevice(img.scsiId & 0x7)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
+            g_scsi_settings.getDevice(img.scsiId & S2S_CFG_TARGET_ID_BITS)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR)
         {
             sector_type_ok = true;
         }
@@ -1779,6 +1847,11 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
         // Transfer whole 2352 byte data sector with ECC to host
         sector_length = AUDIO_CD_SECTOR_LEN;
     }
+    else if (trackinfo.track_mode == CUETrack_MODE2_2352 && main_channel == 0x10)
+    {
+        skip_begin = 24;
+        sector_length = 2048;
+    }
     else
     {
         dbgmsg("---- Unsupported channel request for track type ", (int)trackinfo.track_mode);
@@ -1822,106 +1895,195 @@ static void doReadCD(uint32_t lba, uint32_t length, uint8_t sector_type,
 
     // Use two buffers alternately for formatting sector data
     uint32_t result_length = sector_length + (field_q_subchannel ? 16 : 0) + (add_fake_headers ? 304 : 0);
-    uint8_t *buf0 = scsiDev.data;
-    uint8_t *buf1 = scsiDev.data + result_length;
-
-    // Format the sectors for transfer
-    for (uint32_t idx = 0; idx < length; idx++)
+    bool sequential_file_read = sector_length > 0 && skip_begin == 0;
+    uint32_t direct_sectors_per_buffer = 0;
+    if (sequential_file_read && !add_fake_headers && !field_q_subchannel &&
+        result_length == (uint32_t)sector_length)
     {
-        platform_poll();
-        diskEjectButtonUpdate(false);
+        direct_sectors_per_buffer = (sizeof(scsiDev.data) / 2) / result_length;
+    }
+    auto failRead = [&](const char *operation, uint32_t failed_lba)
+    {
+        logmsg("CD-ROM ", operation, " failed at LBA ", (int)failed_lba,
+            " on SCSI ID ", (int)(img.scsiId & S2S_CFG_TARGET_ID_BITS));
+        scsiFinishWrite();
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = MEDIUM_ERROR;
+        scsiDev.target->sense.asc = 0x1106; // CIRC UNRECOVERED ERROR
+        scsiDev.phase = STATUS;
+    };
 
-        img.file.seek(offset + idx * trackinfo.sector_length + skip_begin);
+    if (sequential_file_read && !img.file.seek(offset))
+    {
+        failRead("seek", lba);
+        return;
+    }
 
-        // Verify that previous write using this buffer has finished
-        uint8_t *buf = ((idx & 1) ? buf1 : buf0);
-        uint8_t *bufstart = buf;
-        uint32_t start = millis();
-        while (!scsiIsWriteFinished(buf + result_length - 1) && !scsiDev.resetFlag)
+    if (direct_sectors_per_buffer > 1)
+    {
+        uint32_t direct_buffer_bytes = direct_sectors_per_buffer * result_length;
+        uint8_t *buf0 = scsiDev.data;
+        uint8_t *buf1 = scsiDev.data + direct_buffer_bytes;
+
+        for (uint32_t idx = 0; idx < length; )
         {
-            if ((uint32_t)(millis() - start) > 5000)
-            {
-                logmsg("doReadCD() timeout waiting for previous to finish");
-                scsiDev.resetFlag = 1;
-            }
             platform_poll();
             diskEjectButtonUpdate(false);
-        }
-        if (scsiDev.resetFlag) break;
-        if ((g_scsi_settings.getDevice(img.scsiId & 0x7)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR))
-        {
-            if (sector_length > 0)
+
+            uint32_t sectors_this_time = length - idx;
+            if (sectors_this_time > direct_sectors_per_buffer)
             {
-                // User data
-                img.file.read(buf, sector_length);
-                buf += sector_length;
+                sectors_this_time = direct_sectors_per_buffer;
             }
-        }
-        else 
-        {
-            if (add_fake_headers)
+            uint32_t transfer_bytes = sectors_this_time * result_length;
+
+            // Verify that previous write using this buffer has finished
+            uint8_t *buf = (((idx / direct_sectors_per_buffer) & 1) ? buf1 : buf0);
+            uint32_t start = millis();
+            while (!scsiIsWriteFinished(buf + transfer_bytes - 1) && !scsiDev.resetFlag)
             {
-                // 12-byte data sector sync pattern
-                *buf++ = 0x00;
-                for (int i = 0; i < 10; i++)
+                if ((uint32_t)(millis() - start) > 5000)
                 {
-                    *buf++ = 0xFF;
+                    logmsg("doReadCD() timeout waiting for previous to finish");
+                    scsiDev.resetFlag = 1;
                 }
-                *buf++ = 0x00;
-
-                // 4-byte data sector header
-                LBA2MSFBCD(lba + idx, buf, false);
-                buf += 3;
-                *buf++ = 0x01; // Mode 1
+                platform_poll();
+                diskEjectButtonUpdate(false);
             }
+            if (scsiDev.resetFlag) break;
 
-            if (sector_length > 0)
+            if (img.file.read(buf, transfer_bytes) != transfer_bytes)
             {
-                // User data
-                img.file.read(buf, sector_length);
-                buf += sector_length;
+                failRead("read", lba + idx);
+                return;
             }
 
-            if (add_fake_headers)
-            {
-                // 288 bytes of ECC
-                memset(buf, 0, 288);
-                buf += 288;
-            }
+            scsiStartWrite(buf, transfer_bytes);
+            idx += sectors_this_time;
 
-            if (field_q_subchannel)
-            {
-                // Formatted Q subchannel data
-                // Refer to table 354 in T10/1545-D MMC-4 Revision 5a
-                // and ECMA-130 22.3.3
-                *buf++ = (trackinfo.track_mode == CUETrack_AUDIO ? 0x10 : 0x14); // Control & ADR
-                *buf++ = trackinfo.track_number;
-                *buf++ = (lba + idx >= trackinfo.data_start) ? 1 : 0; // Index number (0 = pregap)
-                int32_t rel = (int32_t)(lba + idx) - (int32_t)trackinfo.data_start;
-                LBA2MSF(rel, buf, true); buf += 3;
-                *buf++ = 0;
-                LBA2MSF(lba + idx, buf, false); buf += 3;
-                *buf++ = 0; *buf++ = 0; // CRC (optional)
-                *buf++ = 0; *buf++ = 0; *buf++ = 0; // (pad)
-                *buf++ = 0; // No P subchannel
-            }
+            // Reset the watchdog while the transfer is progressing.
+            // If the host stops transferring, the watchdog will eventually expire.
+            // This is needed to avoid hitting the watchdog if the host performs
+            // a large transfer compared to its transfer speed.
+            platform_reset_watchdog();
         }
-        assert(buf == bufstart + result_length);
-        scsiStartWrite(bufstart, result_length);
+    }
+    else
+    {
+        uint8_t *buf0 = scsiDev.data;
+        uint8_t *buf1 = scsiDev.data + result_length;
 
-        // Reset the watchdog while the transfer is progressing.
-        // If the host stops transferring, the watchdog will eventually expire.
-        // This is needed to avoid hitting the watchdog if the host performs
-        // a large transfer compared to its transfer speed.
-        platform_reset_watchdog();
+        // Format the sectors for transfer
+        for (uint32_t idx = 0; idx < length; idx++)
+        {
+            platform_poll();
+            diskEjectButtonUpdate(false);
+
+            if (!sequential_file_read && sector_length > 0 &&
+                !img.file.seek(offset + idx * trackinfo.sector_length + skip_begin))
+            {
+                failRead("seek", lba + idx);
+                return;
+            }
+
+            // Verify that previous write using this buffer has finished
+            uint8_t *buf = ((idx & 1) ? buf1 : buf0);
+            uint8_t *bufstart = buf;
+            uint32_t start = millis();
+            while (!scsiIsWriteFinished(buf + result_length - 1) && !scsiDev.resetFlag)
+            {
+                if ((uint32_t)(millis() - start) > 5000)
+                {
+                    logmsg("doReadCD() timeout waiting for previous to finish");
+                    scsiDev.resetFlag = 1;
+                }
+                platform_poll();
+                diskEjectButtonUpdate(false);
+            }
+            if (scsiDev.resetFlag) break;
+            if ((g_scsi_settings.getDevice(img.scsiId & S2S_CFG_TARGET_ID_BITS)->vendorExtensions & VENDOR_EXTENSION_OPTICAL_PLEXTOR))
+            {
+                if (sector_length > 0)
+                {
+                    // User data
+                    if (img.file.read(buf, sector_length) != sector_length)
+                    {
+                        failRead("read", lba + idx);
+                        return;
+                    }
+                    buf += sector_length;
+                }
+            }
+            else
+            {
+                if (add_fake_headers)
+                {
+                    // 12-byte data sector sync pattern
+                    *buf++ = 0x00;
+                    for (int i = 0; i < 10; i++)
+                    {
+                        *buf++ = 0xFF;
+                    }
+                    *buf++ = 0x00;
+
+                    // 4-byte data sector header
+                    LBA2MSFBCD(lba + idx, buf, false);
+                    buf += 3;
+                    *buf++ = 0x01; // Mode 1
+                }
+
+                if (sector_length > 0)
+                {
+                    // User data
+                    if (img.file.read(buf, sector_length) != sector_length)
+                    {
+                        failRead("read", lba + idx);
+                        return;
+                    }
+                    buf += sector_length;
+                }
+
+                if (add_fake_headers)
+                {
+                    // 288 bytes of ECC
+                    memset(buf, 0, 288);
+                    buf += 288;
+                }
+
+                if (field_q_subchannel)
+                {
+                    // Formatted Q subchannel data
+                    // Refer to table 354 in T10/1545-D MMC-4 Revision 5a
+                    // and ECMA-130 22.3.3
+                    *buf++ = (trackinfo.track_mode == CUETrack_AUDIO ? 0x10 : 0x14); // Control & ADR
+                    *buf++ = trackinfo.track_number;
+                    *buf++ = (lba + idx >= trackinfo.data_start) ? 1 : 0; // Index number (0 = pregap)
+                    int32_t rel = (int32_t)(lba + idx) - (int32_t)trackinfo.data_start;
+                    LBA2MSF(rel, buf, true); buf += 3;
+                    *buf++ = 0;
+                    LBA2MSF(lba + idx, buf, false); buf += 3;
+                    *buf++ = 0; *buf++ = 0; // CRC (optional)
+                    *buf++ = 0; *buf++ = 0; *buf++ = 0; // (pad)
+                    *buf++ = 0; // No P subchannel
+                }
+            }
+            assert(buf == bufstart + result_length);
+            scsiStartWrite(bufstart, result_length);
+
+            // Reset the watchdog while the transfer is progressing.
+            // If the host stops transferring, the watchdog will eventually expire.
+            // This is needed to avoid hitting the watchdog if the host performs
+            // a large transfer compared to its transfer speed.
+            platform_reset_watchdog();
+        }
     }
 
     scsiFinishWrite();
 
     if (length != total_length)
     {
-        // This read request was split across multiple .bin files
-        // Tail recurse to read the next track.
+        // This read request was split across a track boundary or image file end.
+        // Tail recurse to read the next track segment.
         doReadCD(lba + length, total_length - length, sector_type, main_channel, sub_channel, data_only);
         return;
     }
@@ -1934,7 +2096,9 @@ static void doReadSubchannel(bool time, bool subq, uint8_t parameter, uint8_t tr
 {
     uint8_t *buf = scsiDev.data;
 
-    if (parameter == 0x01)
+    // DOS for a game Screamer was requesting parameter list 0x00. This defined in the SCSI-2 spec
+    // but later as a reserved value in subsequent SCSI MMCs. Currently treating is as playback position request
+    if (parameter == 0x01 || parameter == 0x00)
     {
         uint8_t audiostatus;
         uint32_t lba = 0;
@@ -1956,7 +2120,7 @@ static void doReadSubchannel(bool time, bool subq, uint8_t parameter, uint8_t tr
             len = 12;
             *buf++ = 0;  // Subchannel data length (MSB)
             *buf++ = len; // Subchannel data length (LSB)
-            *buf++ = 0x01; // Subchannel data format
+            *buf++ = parameter; // Subchannel data format
             *buf++ = (trackinfo.track_mode == CUETrack_AUDIO ? 0x10 : 0x14);
             *buf++ = trackinfo.track_number;
             *buf++ = (lba >= trackinfo.data_start) ? 1 : 0; // Index number (0 = pregap)
@@ -2034,7 +2198,7 @@ static bool doReadCapacity(uint32_t lba, uint8_t pmi)
     }
     else
     {
-        logmsg("WARNING: unable to find capacity of device ID ", (int) 7 & img.scsiId);
+        logmsg("WARNING: unable to find capacity of device ID ", (int) S2S_CFG_TARGET_ID_BITS & img.scsiId);
     }
     uint32_t bytes_per_sector  = scsiDev.target->liveCfg.bytesPerSector;
     scsiDev.data[0] = capacity >> 24;
@@ -2076,21 +2240,21 @@ extern "C" int scsiCDRomCommand()
     {
 #ifdef ENABLE_AUDIO_OUTPUT
         // terminate audio playback if active on this target (MMC-1 Annex C)
-        audio_stop(img.scsiId & 7);
+        audio_stop(img.scsiId & S2S_CFG_TARGET_ID_BITS);
 #endif
-        if ((scsiDev.cdb[4] & 2))
+
+        bool start = scsiDev.cdb[4] & 1;
+        bool eject = scsiDev.cdb[4] & 2;
+
+        // CD-ROM load & eject
+        if (start)
         {
-            // CD-ROM load & eject
-            int start = scsiDev.cdb[4] & 1;
-            if (start)
-            {
-                cdromCloseTray(img);
-            }
-            else
-            {
-                // Eject and switch image
-                cdromPerformEject(img);
-            }
+            cdromCloseTray(img);
+        }
+        else if (eject || img.eject_on_stop)
+        {
+            // Eject and switch image
+            cdromPerformEject(img);
         }
     }
     else if (command == 0x25)
@@ -2133,24 +2297,29 @@ extern "C" int scsiCDRomCommand()
         // The "format" field is reserved for SCSI-2
         uint8_t format = scsiDev.cdb[2] & 0x0F;
 
-        // Matshita SCSI-2 drives appear to use the high 2 bits of the CDB
-        // control byte to switch on session info (0x40) and full toc (0x80)
-        // responses that are very similar to the standard formats described
-        // in MMC-1. These vendor flags must have been pretty common because
-        // even a modern SATA drive (ASUS DRW-24B1ST j) responds to them
-        // (though it always replies in hex rather than bcd)
-        //
-        // The session information page is identical to MMC. The full TOC page
-        // is identical _except_ it returns addresses in bcd rather than hex.
         bool useBCD = false;
-        if (format == 0 && scsiDev.cdb[9] == 0x80)
+
+        if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_APPLE)
         {
-            format = 2;
-            useBCD = true;
-        }
-        else if (format == 0 && scsiDev.cdb[9] == 0x40)
-        {
-            format = 1;
+            // Matshita SCSI-2 drives appear to use the high 2 bits of the CDB
+            // control byte to switch on session info (0x40) and full toc (0x80)
+            // responses that are very similar to the standard formats described
+            // in MMC-1. These vendor flags must have been pretty common because
+            // even a modern SATA drive (ASUS DRW-24B1ST j) responds to them
+            // (though it always replies in hex rather than bcd)
+            //
+            // The session information page is identical to MMC. The full TOC page
+            // is identical _except_ it returns addresses in bcd rather than hex.
+
+            if (format == 0 && scsiDev.cdb[9] == 0x80)
+            {
+                format = 2;
+                useBCD = true;
+            }
+            else if (format == 0 && scsiDev.cdb[9] == 0x40)
+            {
+                format = 1;
+            }
         }
 
         switch (format)
@@ -2171,7 +2340,11 @@ extern "C" int scsiCDRomCommand()
     {
         // CD-ROM Read Header
         bool MSF = (scsiDev.cdb[1] & 0x02);
-        uint32_t lba = 0; // IGNORED for now
+        uint32_t lba =
+            (((uint32_t) scsiDev.cdb[2]) << 24) +
+            (((uint32_t) scsiDev.cdb[3]) << 16) +
+            (((uint32_t) scsiDev.cdb[4]) << 8) +
+            scsiDev.cdb[5];
         uint16_t allocationLength =
             (((uint32_t) scsiDev.cdb[7]) << 8) +
             scsiDev.cdb[8];

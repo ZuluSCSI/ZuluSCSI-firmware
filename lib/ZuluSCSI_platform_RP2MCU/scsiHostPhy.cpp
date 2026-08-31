@@ -32,6 +32,7 @@ extern "C" {
 }
 
 volatile int g_scsiHostPhyReset;
+int g_scsiHostBusWidth;
 
 #ifndef PLATFORM_HAS_INITIATOR_MODE
 
@@ -66,7 +67,8 @@ void scsiHostPhyReset(void)
 // Returns true if the target answers to selection request.
 bool scsiHostPhySelect(int target_id, uint8_t initiator_id)
 {
-    SCSI_RELEASE_OUTPUTS();
+    // Command phase always happens in 8-bit mode
+    scsiHostSetBusWidth(0);
 
     // We can't write individual data bus bits, so use a bit modified
     // arbitration scheme. We always yield to any other initiator on
@@ -76,9 +78,13 @@ bool scsiHostPhySelect(int target_id, uint8_t initiator_id)
     for (int wait = 0; wait < 10; wait++)
     {
         delayMicroseconds(1);
-
+#ifdef ZULUSCSI_WIDE
+        if (SCSI_IN_DATA() == 0)
+        {
+#else
         if (SCSI_IN_DATA() != 0)
         {
+#endif
             dbgmsg("scsiHostPhySelect: bus is busy");
             scsiLogInitiatorPhaseChange(BUS_FREE);
             SCSI_RELEASE_OUTPUTS();
@@ -117,6 +123,20 @@ bool scsiHostPhySelect(int target_id, uint8_t initiator_id)
     SCSI_OUT(BSY, 1);
     SCSI_OUT(SEL, 0);
     return true;
+}
+
+void scsiHostPhySetATN(bool atn)
+{
+    SCSI_OUT(ATN, atn);
+}
+
+void scsiHostSetBusWidth(int busWidth)
+{
+#ifdef ZULUSCSI_WIDE
+    g_scsiHostBusWidth = busWidth;
+#else
+    assert(busWidth == 0);
+#endif
 }
 
 // Read the current communication phase as signaled by the target
@@ -207,19 +227,55 @@ static inline void scsiHostWriteOneByte(uint8_t value)
 static inline uint8_t scsiHostReadOneByte(int* parityError)
 {
     SCSIHOST_WAIT_ACTIVE(REQ);
-    uint16_t r = SCSI_IN_DATA();
+    uint32_t r = SCSI_IN_DATA();
     SCSI_OUT(ACK, 1);
     SCSIHOST_WAIT_INACTIVE(REQ);
     SCSI_OUT(ACK, 0);
 
-    if (parityError && r != (g_scsi_parity_lookup[r & 0xFF] ^ (SCSI_IO_DATA_MASK >> SCSI_IO_SHIFT)))
+#ifdef ZULUSCSI_WIDE // wide keeps data signals inverted
+    if (parityError && !scsi_check_parity(~r))
+#else
+    if (parityError && !scsi_check_parity(r))
+#endif
     {
+
         logmsg("Parity error in scsiReadOneByte(): ", (uint32_t)r);
         *parityError = 1;
     }
 
     return (uint8_t)r;
 }
+
+#ifdef ZULUSCSI_WIDE
+static inline void scsiHostWriteOneWord(uint16_t value)
+{
+    SCSIHOST_WAIT_ACTIVE(REQ);
+    SCSI_OUT_DATA(value);
+    delay_100ns(); // DB setup time before ACK
+    SCSI_OUT(ACK, 1);
+    SCSIHOST_WAIT_INACTIVE(REQ);
+    SCSI_RELEASE_DATA_REQ();
+    SCSI_OUT(ACK, 0);
+}
+
+// Read one byte from SCSI target using the handshake mechanism.
+static inline uint16_t scsiHostReadOneWord(int* parityError)
+{
+    SCSIHOST_WAIT_ACTIVE(REQ);
+    uint32_t r = SCSI_IN_DATA();
+    SCSI_OUT(ACK, 1);
+    SCSIHOST_WAIT_INACTIVE(REQ);
+    SCSI_OUT(ACK, 0);
+
+    if (parityError && !scsi_check_parity_16bit(~r))
+    {
+        logmsg("Parity error in scsiHostReadOneWord(): ", (uint32_t)r);
+        *parityError = 1;
+    }
+
+    return (uint16_t)r;
+}
+#endif
 
 uint32_t scsiHostWrite(const uint8_t *data, uint32_t count)
 {
@@ -240,7 +296,23 @@ uint32_t scsiHostWrite(const uint8_t *data, uint32_t count)
             }
         }
 
-        scsiHostWriteOneByte(data[i]);
+        if (g_scsiHostBusWidth == 0)
+        {
+            scsiHostWriteOneByte(data[i]);
+        }
+#ifdef ZULUSCSI_WIDE
+        else if (g_scsiHostBusWidth == 1)
+        {
+            uint16_t word = data[i++];
+            if (i < count) word |= (uint16_t)data[i] << 8;
+            scsiHostWriteOneWord(word);
+        }
+#endif
+        else
+        {
+            logmsg("Invalid bus width ", g_scsiHostBusWidth);
+            return 0;
+        }
     }
 
     return count;
@@ -248,7 +320,12 @@ uint32_t scsiHostWrite(const uint8_t *data, uint32_t count)
 
 uint32_t scsiHostRead(uint8_t *data, uint32_t count)
 {
-    int parityError = 0;
+    int parityErrorValue = 0;
+    int* parityError = nullptr;
+    if (g_scsi_settings.getSystem()->initiatorParity)
+    {
+        parityError = &parityErrorValue;
+    }
     uint32_t fullcount = count;
 
     int cd_start = SCSI_IN(CD);
@@ -257,7 +334,7 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
     if ((count & 1) == 0 && ((uint32_t)data & 1) == 0)
     {
         // Even number of bytes, use accelerated routine
-        count = scsi_accel_host_read(data, count, &parityError, &g_scsiHostPhyReset);
+        count = scsi_accel_host_read(data, count, parityError, g_scsiHostBusWidth, &g_scsiHostPhyReset);
     }
     else
     {
@@ -286,13 +363,29 @@ uint32_t scsiHostRead(uint8_t *data, uint32_t count)
                 break;
             }
 
-            data[i] = scsiHostReadOneByte(&parityError);
+            if (g_scsiHostBusWidth == 0)
+            {
+                data[i] = scsiHostReadOneByte(parityError);
+            }
+#ifdef ZULUSCSI_WIDE
+            else if (g_scsiHostBusWidth == 1)
+            {
+                uint16_t word = scsiHostReadOneWord(parityError);
+                data[i++] = word & 0xFF;
+                if (i < count) data[i] = word >> 8;
+            }
+#endif
+            else
+            {
+                logmsg("Invalid bus width ", g_scsiHostBusWidth);
+                return 0;
+            }
         }
     }
 
     scsiLogDataIn(data, count);
 
-    if (g_scsiHostPhyReset || parityError)
+    if (g_scsiHostPhyReset || (parityError && *parityError))
     {
         return 0;
     }
@@ -318,9 +411,11 @@ void scsiHostWaitBusFree()
     // Wait for the target to release BSY signal.
     // If the target is expecting more data, transfer dummy bytes.
     // This happens for some reason with READ6 command on IBM H3171-S2.
+    // A dead target holds BSY and REQ forever, so both loops need the deadline
+    // and the watchdog reset request or the drain below never returns.
     uint32_t start = millis();
     int extra_bytes = 0;
-    while (SCSI_IN(BSY))
+    while (SCSI_IN(BSY) && !g_scsiHostPhyReset)
     {
         platform_poll();
 
@@ -331,7 +426,8 @@ void scsiHostWaitBusFree()
              SCSI_OUT(BSY, 1);
              sleep_us(1);
 
-             while (SCSI_IN(REQ))
+             while (SCSI_IN(REQ) && !g_scsiHostPhyReset &&
+                    (uint32_t)(millis() - start) <= 10000)
              {
                 scsiHostReadOneByte(nullptr);
                 extra_bytes++;

@@ -71,6 +71,7 @@
 
 // Status LED pins
 #define LED_PIN      33
+#define LED_PIN_ALTERNATE  5
 
 // SD card pins in SDIO mode
 #define SDIO_CLK 34
@@ -86,6 +87,8 @@
 #define SD_SPI_MOSI  SDIO_CMD
 #define SD_SPI_MISO  SDIO_D0
 #define SD_SPI_CS    SDIO_D3
+
+#define GPIO_INT 29
 
 #ifndef ENABLE_AUDIO_OUTPUT_SPDIF
     // IO expander I2C
@@ -103,6 +106,7 @@
     #define GPIO_I2S_WS   9
     #define GPIO_I2S_DOUT 10
     #define I2S_DMA_IRQ_NUM DMA_IRQ_2
+    #define I2S_DMA_IRQ_IDX 2
 #endif
 
 
@@ -115,11 +119,33 @@
 #define DIP_DBGLOG      SWO_PIN
 #define DIP_TERM        SCSI_OUT_REQ
 
+// Ejection button
+#define GPIO_EJECT_BTN 3
+#define GPIO_EJECT_BTN_INTERNAL_PULL_UP
+
 // RM2 pins
 #define GPIO_RM2_ON   0
 #define GPIO_RM2_DATA 1
 #define GPIO_RM2_CS   2
 #define GPIO_RM2_CLK  4
+
+// Enable sniffer functionality
+// Captures all SCSI signals except OUT_SEL, OUT_BSY, IN_RST, OUT_RST
+// Also captures I2C signals.
+// Default trigger is all SCSI pins, I2C trigger can be enabled from .ini
+// Unlike ENABLE_AUDIO_OUTPUT*/ZULUSCSI_NETWORK/ZULUSCSI_DAYNAPORT above,
+// this was unconditional -- baked into the board's own GPIO header instead
+// of a build_flags-controlled macro, so a build wanting the pins without
+// the sniffer's RAM/flash cost (e.g. env:ZuluSCSI_Blaster_AS400) had no way
+// to opt out. Guarded the same way as the others now.
+#ifndef PLATFORM_DISABLE_SNIFFER
+#define PLATFORM_HAS_SNIFFER
+#endif
+#define SNIFFER_PINCOUNT            26
+#define SNIFFER_FIRSTPIN            SCSI_OUT_ATN
+#define SNIFFER_MASK_TRIGPINS       0x03FFFFC3
+#define SNIFFER_DEFAULT_TRIGPINS    0x0033FFC3
+#define SNIFFER_PINNAMES "ATN IO I2S_CK I2S_WS I2S_SD GPIO11 DB0 DB1 DB2 DB3 DB4 DB5 DB6 DB7 DBP REQ DATA_DIR CD_SEL GPIO24 GPIO25 MSG_BSY ACK GPIO28 GPIO29 SDA SCL"
 
 // Below are GPIO access definitions that are used from scsiPhy.cpp.
 
@@ -179,7 +205,9 @@
     sio_hw->gpio_set = (1 << SCSI_OUT_IO) | \
                        (1 << SCSI_OUT_CD) | \
                        (1 << SCSI_OUT_MSG) | \
-                       (1 << SCSI_OUT_REQ), \
+                       (1 << SCSI_OUT_REQ) | \
+                       (1 << SCSI_OUT_ACK) | \
+                       (1 << SCSI_OUT_ATN), \
     sio_hw->gpio_hi_set =   (1 << (SCSI_OUT_RST - 32)) | \
                             (1 << (SCSI_OUT_BSY - 32)) | \
                             (1 << (SCSI_OUT_SEL - 32))

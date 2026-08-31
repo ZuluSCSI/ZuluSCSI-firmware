@@ -44,6 +44,21 @@
  */
 #define AUDIO_CHANNEL_ENABLE_MASK 0x0201
 
+/**
+ * The audio start up sound is treated as one above the last SCSI ID 
+ */
+#define MAX_AUDIO_TARGETS (S2S_MAX_TARGETS + 1)
+
+
+/**
+ * Audio startup playback owner
+ */
+#define AUDIO_STARTUP_PLAYBACK_OWNER S2S_MAX_TARGETS
+
+
+#define AUDIO_OWNER_MASK (S2S_CFG_TARGET_ID_BITS | AUDIO_STARTUP_PLAYBACK_OWNER)
+
+
 /*
  * Status codes for audio playback, matching the SCSI 'audio status codes'.
  *
@@ -69,7 +84,7 @@ enum audio_status_code {
  */
 bool audio_is_playing(uint8_t id);
 
-#if defined(ENABLE_AUDIO_OUTPUT) && !defined(ZULUSCSI_BLASTER)
+#if defined(ENABLE_AUDIO_OUTPUT) && (defined(ZULUSCSI_V1_1_plus) || defined(ENABLE_AUDIO_OUTPUT_SPDIF))
 /**
  * Begins audio playback for a file.
  *
@@ -82,7 +97,7 @@ bool audio_is_playing(uint8_t id);
  */
 bool audio_play(uint8_t owner, image_config_t* img, uint64_t start, uint64_t end, bool swap);
 
-#elif defined(ENABLE_AUDIO_OUTPUT_I2S) && defined(ZULUSCSI_BLASTER)
+#elif defined(ENABLE_AUDIO_OUTPUT_I2S)
 /**
  * Begins audio playback for a file.
  *
@@ -124,9 +139,10 @@ bool audio_set_paused(uint8_t id, bool pause);
 /**
  * Stops audio playback.
  *
- * \param id     The SCSI ID to stop audio playback on.
+ * \param id     The SCSI ID to stop audio playback on. If id == 0xFF stop audio on all devices
+ * \param startup_skip  If true don't stop playing the startup audio 
  */
-void audio_stop(uint8_t id);
+void audio_stop(uint8_t id = 0xFF, bool startup_skip = false);
 
 /**
  * Provides SCSI 'audio status code' for the given target. Depending on the
@@ -184,7 +200,7 @@ void audio_set_channel(uint8_t id, uint16_t chn);
 */
 uint64_t audio_get_file_position();
 
-#ifdef ZULUSCSI_BLASTER
+#if defined(ZULUSCSI_BLASTER) || defined(ZULUSCSI_WIDE)
 /**
  * Gets the LBA position in the audio image
  * 
@@ -198,3 +214,38 @@ uint32_t audio_get_lba_position();
  * 
 */
 void audio_set_file_position(uint8_t id, uint32_t lba);
+
+
+/**
+ * Resets audio settings for example when inserting a new CD
+ */
+void audio_reset(uint8_t id);
+
+/**
+ * Play a wave file
+ */
+bool audio_play_wav(const char *filename);
+
+#ifdef ENABLE_AUDIO_STREAM
+/*
+ * Host PCM streaming: the host pushes 44.1kHz/16-bit/stereo PCM over SCSI and it
+ * is played out the DAC, reusing the CD-audio double-buffer (no new allocation).
+ * Mutually exclusive with CD-DA playback (one DAC / one engine). Implemented in
+ * audio_i2s.cpp; driven by scsiAudioCommand() in ZuluSCSI_audio_stream.cpp.
+ */
+
+// Begin streaming on the given SCSI ID. Preempts any active playback.
+bool audio_stream_start(uint8_t owner);
+// Append up to one slot of PCM; returns bytes accepted (0 = no room, overflow counted).
+uint32_t audio_stream_write(const uint8_t* data, uint32_t len);
+// Discard queued audio.
+void audio_stream_flush();
+// Max bytes per write / total ring size / live fill levels.
+uint32_t audio_stream_slot_size();
+uint32_t audio_stream_total_size();
+uint32_t audio_stream_bytes_free();
+uint32_t audio_stream_bytes_queued();
+uint32_t audio_stream_underruns();
+uint32_t audio_stream_overflows();
+bool     audio_stream_is_active();
+#endif // ENABLE_AUDIO_STREAM

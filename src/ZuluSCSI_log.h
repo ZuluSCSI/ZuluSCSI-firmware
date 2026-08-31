@@ -25,9 +25,13 @@
 
 #pragma once
 
+#include <scsi2sd.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <scsiPhy.h>
+
+ # define ZULUSCSI_DEFAULT_LOG_MASK S2S_CFG_TARGET_ID_BITS
+
 
 // Get total number of bytes that have been written to log
 uint32_t log_get_buffer_len();
@@ -40,10 +44,11 @@ const char *log_get_buffer(uint32_t *startpos, uint32_t *available = nullptr);
 // Whether to enable debug messages
 extern "C" bool g_log_debug;
 extern "C" bool g_log_ignore_busy_free;
-extern "C" uint8_t g_scsi_log_mask;
+extern "C" uint32_t g_scsi_log_mask;
 
 // Firmware version string
 extern const char *g_log_firmwareversion;
+extern const char *g_log_short_firmwareversion;
 
 // Log string
 void log_raw(const char *str);

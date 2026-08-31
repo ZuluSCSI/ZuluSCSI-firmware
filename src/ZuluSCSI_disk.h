@@ -1,7 +1,7 @@
 /** 
  * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
  * Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com
- * ZuluSCSI™ - Copyright (c) 2022-2025 Rabbit Hole Computing™
+ * ZuluSCSI™ - Copyright (c) 2022-2026 Rabbit Hole Computing™
  * Copyright (c) 2023 joshua stein <jcs@jcs.org>
  * 
  * It is derived from disk.h in SCSI2SD V6.
@@ -42,6 +42,17 @@ extern "C" {
 #include <scsi.h>
 }
 
+// Optimal size for read block from SCSI bus
+// For platforms with nonblocking transfer, this can be large.
+// For Akai MPC60 compatibility this has to be at least 5120
+#ifndef PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE
+#ifdef PLATFORM_SCSIPHY_HAS_NONBLOCKING_READ
+#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 65536
+#else
+#define PLATFORM_OPTIMAL_SCSI_READ_BLOCK_SIZE 8192
+#endif
+#endif
+
 // Extended configuration stored alongside the normal SCSI2SD target information
 struct image_config_t: public S2S_TargetCfg
 {
@@ -54,17 +65,20 @@ struct image_config_t: public S2S_TargetCfg
     uint8_t cdrom_events;
     bool reinsert_on_inquiry; // Reinsert on Inquiry command (to reinsert automatically after boot)
     bool reinsert_after_eject; // Reinsert next image after ejection
+    bool eject_on_stop; // Eject image on START STOP UNIT with start = 0
 
     // selects a physical button channel that will cause an eject action
     // default option of '0' disables this functionality
     uint8_t ejectButton;
 
-    // For tape drive emulation
-    uint32_t tape_pos; // current position in blocks
-    uint32_t tape_mark_index; // a direct relationship to the file in a multi image file tape 
-    uint32_t tape_mark_count; // the number of marks
-    uint32_t tape_mark_block_offset; // Sum of the the previous image file sizes at the current mark
-    bool     tape_load_next_file;
+    // Eject function for fixed disks
+    bool ejectFixedDiskEnable;
+    bool ejectFixedDiskReadOnly;
+    uint32_t ejectFixedDiskDelay;
+    bool ejectFixedDiskPending;
+    uint32_t ejectFixedDiskTimer;
+    bool ejectFixedDiskWriteBlocked;
+
     // True if there is a subdirectory of images for this target
     bool image_directory;
 
@@ -81,6 +95,7 @@ struct image_config_t: public S2S_TargetCfg
 
     // Previously accessed CD-ROM track, cached for performance
     CUETrackInfo cdrom_trackinfo;
+    uint32_t cdrom_track_end_lba;
 
     // Loaded .bin file index for .cue/.bin with multiple files
     // Matches trackinfo.file_index
@@ -91,6 +106,9 @@ struct image_config_t: public S2S_TargetCfg
 
     // the bin file for the cue sheet, the directory for multi bin files, or closed if neither
     FsFile bin_container;
+
+
+    inline bool is_multi_bin_cue() {return bin_container.isOpen() && bin_container.isDir();}
 
     // Right-align vendor / product type strings
     // Standard SCSI uses left alignment
@@ -104,6 +122,9 @@ struct image_config_t: public S2S_TargetCfg
 
     // Warning about geometry settings
     bool geometrywarningprinted;
+
+    // Set the device type
+    void setDeviceType(S2S_CFG_TYPE device_type);
 
     // Clear any image state to zeros
     void clear();
@@ -120,6 +141,9 @@ private:
 // Returns a mask of the buttons that registered an 'eject' action.
 uint8_t diskEjectButtonUpdate(bool immediate);
 
+// Check if pending disk ejects are due to be executed
+void diskEjectDelayCheck(void);
+
 // Reset all image configuration to empty reset state, close all images.
 void scsiDiskResetImages();
 
@@ -127,14 +151,26 @@ void scsiDiskResetImages();
 void scsiDiskCloseSDCardImages();
 
 // Get blocksize from filename or use device setting in ini file
-uint32_t getBlockSize(char *filename, uint8_t scsi_id);
+uint32_t getBlockSize(const char *filename, uint8_t scsi_id);
+
+// AS/400 Related
+int16_t skip_next(int max);
 
 // Get and set the eject button bit flags
 uint8_t getEjectButton(uint8_t idx);
 void    setEjectButton(uint8_t idx, int8_t eject_button);
 
+// Perform eject for devices
+void doPerformEject(image_config_t &img);
+
+void scsiDiskCloseTray(image_config_t &img);
+
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type = S2S_CFG_FIXED, bool use_prefix = false);
 void scsiDiskLoadConfig(int target_idx);
+
+// Read IMG0-IMG99 entry from an ini section, accepting both
+// unpadded (IMG5) and zero-padded (IMG05) single digit keys.
+int scsiDiskReadImgX(const char *section, int index, char *buf, size_t buflen);
 
 // Checks if a filename extension is appropriate for further processing as a disk image.
 // The current implementation does not check the the filename prefix for validity.
@@ -186,3 +222,41 @@ bool scsiDiskCheckAnyNetworkDevicesConfigured();
 
 // Switch to next Drive image if multiple have been configured
 bool switchNextImage(image_config_t &img, const char* next_filename = nullptr);
+
+// Parse SCSI ID - if illegal return -1 else return the SCSI Id
+int8_t scsiParseId(const char scsi_id_text);
+
+// Encode ID as char
+char scsiEncodeID(const uint8_t scsi_id);
+
+// Store the SCSI ID read at boot (-1 = not available).
+// Must be called before readSCSIDeviceConfig().
+void scsiDiskSetDynamicId(int8_t id);
+
+// Return the stored dynamic SCSI ID (-1 if not set).
+int8_t scsiDiskGetDynamicId();
+
+// Return true if any 'n'-prefixed device directory (HDn, CDn, TPn, …) exists on the SD card.
+// Used to decide whether to query the SCA hardware for a dynamic SCSI ID before
+// readSCSIDeviceConfig() runs.
+bool scsiDiskHasDynamicDirs();
+
+// Begin writing to prefetch buffer.
+// If the buffer is not available, returns NULL.
+// Otherwise returns pointer to which caller can write up to maxSectors sectors.
+uint8_t *scsiDiskPrefetchBeginWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *maxSectors);
+
+// Mark prefetch sectors in buffer as valid.
+// Should be called after scsiDiskPrefetchBeginWrite().
+void scsiDiskPrefetchFinishWrite(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t numSectors);
+
+// Check if data is available from prefetch buffer.
+// If data is not found, returns NULL.
+// Otherwise returns pointer for reading up to numSectors sectors of data, beginning at firstSector.
+const uint8_t *scsiDiskPrefetchRead(uint8_t scsiId, uint32_t firstSector, uint32_t bytesPerSector, uint32_t *numSectors);
+
+// Invalidate SCSI prefetch buffer
+// Invalidate SCSI prefetch buffer.
+// If scsiId is given, only invalidate if that device has data in buffer.
+// If scsiId is not given (value -1), invalidate for all devices.
+void scsiDiskPrefetchInvalidate(uint8_t scsiId = (uint8_t)-1);

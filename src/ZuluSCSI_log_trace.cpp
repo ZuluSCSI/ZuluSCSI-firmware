@@ -25,7 +25,6 @@
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_log.h"
 #include <scsi2sd.h>
-
 extern "C" {
 #include <scsi.h>
 #include <scsiPhy.h>
@@ -78,27 +77,38 @@ static const char *getCommandName(uint8_t cmd)
         case 0x37: return "ReadDefectData";
         case 0x3B: return "WriteBuffer";
         case 0x3C: return "ReadBuffer";
+        case 0x41: return "WriteSame10";
         case 0x42: return "CDROM Read SubChannel";
         case 0x43: return "CDROM Read TOC";
         case 0x44: return "CDROM Read Header";
-        case 0x46: return "CDROM GetConfiguration";
-        case 0x4A: return "GetEventStatusNotification";
-        case 0x4B: return "CDROM PauseResume";
-        case 0x4E: return "CDROM StopPlayScan";
-        case 0x51: return "CDROM ReadDiscInformation";
         case 0x45: return "CDROM PlayAudio10";
-        case 0xA5: return "CDROM PlayAudio12";
+        case 0x46: return "CDROM GetConfiguration";
         case 0x47: return "CDROM PlayAudioMSF";
         case 0x48: return "CDROM PlayAudioTrackIndex";
+        case 0x4A: return "GetEventStatusNotification";
+        case 0x4B: return "CDROM PauseResume";
+        case 0x4D: return "LogSense";
+        case 0x4E: return "CDROM StopPlayScan";
+        case 0x51: return "CDROM ReadDiscInformation";
+        case 0xA5: return "CDROM PlayAudio12";
         case 0x52: return "CDROM ReadTrackInformation";
+        case 0x88: return "Read16";
+        case 0x8A: return "Write16";
+        case 0x8E: return "WriteVerify16";
+        case 0x8F: return "Verify16";
+        case 0x9E: return "ServiceActionIn16";
         case 0xBB: return "CDROM SetCDSpeed";
         case 0xBD: return "CDROM MechanismStatus";
         case 0xBE: return "ReadCD";
         case 0xB9: return "ReadCDMSF";
         case 0x55: return "ModeSelect10";
         case 0x5A: return "ModeSense10";
-        case 0xAC: return "Erase12";
+        case 0xA0: return "Report LUNs";
         case 0xA8: return "Read12";
+        case 0xAA: return "Write12";
+        case 0xAC: return "Erase12";
+        case 0xAE: return "WriteVerify12";
+        case 0xAF: return "Verify12";
         case 0xC0: return "OMTI-5204 DefineFlexibleDiskFormat";
         case 0xC2: return "OMTI-5204 AssignDiskParameters";
         case 0xD0: return "Vendor 0xD0 Command (Toolbox list files)";
@@ -113,7 +123,10 @@ static const char *getCommandName(uint8_t cmd)
         case 0xD9: return "Vendor 0xD9 Command (Toolbox list devices/Apple)";
         case 0xDA: return "Vendor 0xDA Command (Toolbox count CDs)";
         case 0xE0: return "Xebec RAM Diagnostic";
-        case 0xE4: return "Xebec Drive Diagnostic";              
+        case 0xE4: return "Xebec Drive Diagnostic";
+        case 0xE8: return "AS400 Skip Read(10)";
+        case 0xEA: return "AS400 Skip Write(10)";
+        
         default:   return "Unknown";
     }
 }
@@ -145,7 +158,7 @@ static void printNewPhase(int phase, bool initiator = false)
             if (initiator)
                 dbgmsg("---- SELECTION");
             else
-                dbgmsg("---- SELECTION: ", (int)(*SCSI_STS_SELECTED & 7));
+                dbgmsg("---- SELECTION: ", (int)(*SCSI_STS_SELECTED & S2S_CFG_TARGET_ID_BITS));
             break;
         
         case RESELECTION:
@@ -164,7 +177,7 @@ static void printNewPhase(int phase, bool initiator = false)
             }
             else if (scsiDev.status == CHECK_CONDITION && scsiDev.target)
             {
-                dbgmsg("---- STATUS: 2 CHECK_CONDITION, sense ", (uint32_t)scsiDev.target->sense.asc);
+                dbgmsg("---- STATUS: 2 CHECK_CONDITION, sense code ", scsiDev.target->sense.code, ", asc ", (uint32_t)scsiDev.target->sense.asc, scsiDev.target->sense.filemark ? ", is filemark " : "" , scsiDev.target->sense.eom ? ", is end of medium" : "");
             }
             else
             {
@@ -217,6 +230,7 @@ void scsiLogPhaseChange(int new_phase)
     static int old_scsi_id = 0;
     static int old_phase = BUS_FREE;
     static int old_sync_period = 0;
+    static int old_buswidth = 0;
 
     if (new_phase != old_phase)
     {
@@ -249,7 +263,7 @@ void scsiLogPhaseChange(int new_phase)
 
             if (syncper > 0)
             {
-                int mbyte_per_s = (1000 + syncper * 2) / (syncper * 4);
+                int mbyte_per_s = (1000 + syncper * 2) / (syncper * 4) * (1 << scsiDev.target->busWidth);
                 logmsg("SCSI ID ", (int)scsiDev.target->targetId,
                     " negotiated synchronous mode ", mbyte_per_s, " MB/s ",
                     "(period 4x", syncper, " ns, offset ", syncoff, " bytes)");
@@ -262,9 +276,20 @@ void scsiLogPhaseChange(int new_phase)
             }
         }
 
+        if (old_phase >= 0 &&
+            scsiDev.target != NULL &&
+            old_scsi_id == scsiDev.target->targetId &&
+            old_buswidth != scsiDev.target->busWidth)
+        {
+            int width = scsiDev.target->busWidth;
+            logmsg("SCSI ID ", (int)scsiDev.target->targetId,
+                   " negotiated bus width ", width, " (", (int)(8 << width), " bits)");
+        }
+
         printNewPhase(new_phase);
         old_phase = new_phase;
         old_sync_period = scsiDev.target->syncPeriod;
+        old_buswidth = scsiDev.target->busWidth;
         old_scsi_id = scsiDev.target->targetId;
     }
 }
@@ -311,7 +336,7 @@ void scsiLogDataOut(const uint8_t *buf, uint32_t length)
 {
     if (buf == scsiDev.cdb || g_LogInitiatorCommand)
     {
-        dbgmsg("---- COMMAND: ", getCommandName(buf[0]));
+        dbgmsg("---- COMMAND: ", buf[0], " (", getCommandName(buf[0]), ")");
     }
     
     if (g_LogData)

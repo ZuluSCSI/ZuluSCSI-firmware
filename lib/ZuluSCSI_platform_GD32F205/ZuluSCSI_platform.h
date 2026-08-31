@@ -28,12 +28,14 @@
 #include <gd32f20x_gpio.h>
 #include <scsi2sd.h>
 #include <ZuluSCSI_config.h>
+#include <ZuluSCSI_settings.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 extern const char *g_platform_name;
+extern bool g_log_lock;
 
 #include "platform_hw_config.h"
 
@@ -46,11 +48,18 @@ enum ZuluSCSIVersion_t
 
 };
 
+#define EJECT_BTN_MASK (platform_get_eject_button_mask())
+#define EJECT_BTN_MAX  2
+#define USER_BTN_MASK  (platform_get_user_button_mask())
+
 extern enum ZuluSCSIVersion_t g_zuluscsi_version;
 extern bool g_moved_select_in;
 
 // Debug logging functions
 void platform_log(const char *s);
+inline void log_lock() {g_log_lock = true;}
+inline void log_unlock() {g_log_lock = false;} 
+void platform_flush_usb_log();
 
 // Minimal millis() implementation as GD32F205 does not
 // have an Arduino core yet.
@@ -105,7 +114,10 @@ uint8_t platform_no_sd_card_on_init_error_code();
 void platform_reset_watchdog();
 
 // Reset MCU after a certain amount of time
-void platform_reset_mcu();
+void platform_reset_mcu(uint32_t reset_in_ms);
+
+// Returns an 8-byte (64bit) mcu id as an 8-byte array
+const uint8_t* platform_get_8byte_mcu_id();
 
 // Poll function that is called every few milliseconds.
 // The SD card is free to access during this time, and pauses up to
@@ -126,16 +138,22 @@ uint32_t platform_sys_clock_in_hz();
 inline bool platform_reclock_supported(){return false;}
 
 // Returns true if reboot was for mass storage - unsupported
-inline bool platform_rebooted_into_mass_storage() {return false;}
+inline mass_storage_mode platform_rebooted_into_mass_storage() {return MASS_STORAGE_MODE_NONE;}
 
 // Reinitialize SD card connection and save log from interrupt context.
 // This can be used in crash handlers.
-void platform_emergency_log_save();
+bool platform_emergency_log_save();
 
 // Set callback that will be called during data transfer to/from SD card.
 // This can be used to implement simultaneous transfer to SCSI bus.
 typedef void (*sd_callback_t)(uint32_t bytes_complete);
 void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer);
+
+// Check if there is a serial interface connected
+bool platform_serial_connected();
+
+// Write to the serial interface, 0 may returned if the serial interface is not ready
+uint32_t platform_write_to_serial(uint8_t* data, uint32_t len);
 
 // This function is called by scsiPhy.cpp.
 // It resets the systick counter to give 1 millisecond of uninterrupted transfer time.
@@ -150,8 +168,12 @@ bool platform_rewrite_flash_page(uint32_t offset, uint8_t buffer[PLATFORM_FLASH_
 void platform_boot_to_main_firmware();
 
 // True if the board has a physical eject button
-bool platform_has_phy_eject_button();
-
+uint8_t platform_phy_eject_button();
+inline void platform_set_eject_button(uint8_t eject_button){;}
+inline void platform_set_cow_button(uint8_t cow_button){;}
+inline uint8_t platform_get_cow_buttons_override(){return 0;}
+uint8_t platform_get_eject_button_mask();
+uint8_t platform_get_user_button_mask();
 // Configuration customizations based on DIP switch settings
 // When DIPSW1 is on, Apple quirks are enabled by default.
 void platform_config_hook(S2S_TargetCfg *config);

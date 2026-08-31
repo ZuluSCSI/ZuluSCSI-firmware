@@ -22,12 +22,15 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
+#ifndef RP2MCU_SCSI_ACCEL_WIDE
+
 /* Data flow in SCSI acceleration:
 *
 * 1. Application provides a buffer of bytes to send.
-* 2. Code in this module adds parity bit to the bytes and packs two bytes into 32 bit words.
-* 3. DMA controller copies the words to PIO peripheral FIFO.
-* 4. PIO peripheral handles low-level SCSI handshake and writes bytes and parity to GPIO.
+* 2. DMA controller copies the bytes to PIO peripheral FIFO.
+* 3. PIO generates memory addresses for parity lookup
+* 4. DMA copies the words with parity to second PIO state machine
+* 5. PIO peripheral handles low-level SCSI handshake and writes bytes and parity to GPIO.
 */
 
 #include "ZuluSCSI_platform.h"
@@ -455,14 +458,19 @@ static void scsi_accel_rp2040_stopWrite(volatile int *resetFlag)
 void scsi_accel_rp2040_finishWrite(volatile int *resetFlag)
 {
     uint32_t start = millis();
-    while (g_scsi_dma_state != SCSIDMA_IDLE && !*resetFlag)
+    while (g_scsi_dma_state != SCSIDMA_IDLE)
     {
+        if (*resetFlag)
+        {
+            scsi_accel_rp2040_stopWrite(resetFlag);
+            break;
+        }
+
         if ((uint32_t)(millis() - start) > 5000)
         {
             logmsg("scsi_accel_rp2040_finishWrite() timeout");
             scsi_accel_log_state();
             *resetFlag = 1;
-            break;
         }
 
         if (g_scsi_dma_state == SCSIDMA_WRITE_DONE || *resetFlag)
@@ -985,6 +993,19 @@ static void scsidma_config_gpio()
 
 void scsi_accel_rp2040_init()
 {
+    if (g_channels_claimed)
+    {
+        volatile int abort_reset = 1;
+        if (g_scsi_dma_state == SCSIDMA_WRITE || g_scsi_dma_state == SCSIDMA_WRITE_DONE)
+        {
+            scsi_accel_rp2040_stopWrite(&abort_reset);
+        }
+        else if (g_scsi_dma_state == SCSIDMA_READ || g_scsi_dma_state == SCSIDMA_READ_DONE)
+        {
+            scsi_accel_rp2040_stopRead();
+        }
+    }
+
     g_scsi_dma_state = SCSIDMA_IDLE;
     scsidma_config_gpio();
 
@@ -1173,8 +1194,10 @@ void scsi_accel_rp2040_init()
     irq_set_enabled(DMA_IRQ_0, true);
 }
 
-bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod)
+bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod, bool wide)
 {
+    assert(!wide);
+
     if (g_scsi_dma_state != SCSIDMA_IDLE)
     {
         logmsg("ERROR: SCSI DMA was in state ", (int)g_scsi_dma_state, " when changing sync mode, forcing bus reset");
@@ -1332,3 +1355,5 @@ bool scsi_accel_rp2040_setSyncMode(int syncOffset, int syncPeriod)
 
     return true;
 }
+
+#endif /* ifndef RP2MCU_SCSI_ACCEL_WIDE */

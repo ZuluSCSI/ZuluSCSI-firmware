@@ -34,10 +34,17 @@
 #include <SdFat.h>
 #include "ROMDrive.h"
 #include "ZuluSCSI_config.h"
-
+#include "ZuluSCSI_settings.h"
+#ifdef CONTAINER_IMAGE_SUPPORT
+#include <ZCFsFile.h>
+#endif
 extern "C" {
 #include <scsi.h>
 }
+
+#if ENABLE_COW
+#include "COWStorage.h"
+#endif
 
 // SD card sector size is always 512 bytes
 extern SdFs SD;
@@ -61,7 +68,14 @@ public:
     // Special filename formats:
     //    RAW:start:end
     //    ROM:
-    ImageBackingStore(const char *filename, uint32_t scsi_block_size);
+    //    *.cow (enables copy-on-write)
+    ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_config);
+
+    // Disable copy and move operations entirely
+    ImageBackingStore(const ImageBackingStore &) = delete;
+    ImageBackingStore &operator=(const ImageBackingStore &) = delete;
+    ImageBackingStore(ImageBackingStore &&) = delete;
+    ImageBackingStore &operator=(ImageBackingStore &&) = delete;
 
     // Can the image be read?
     bool isOpen();
@@ -107,11 +121,20 @@ public:
     // Result is only valid for regular files, not raw or flash access
     uint64_t position();
 
+    // Truncate the file to the specified size.
+    bool truncate(uint64_t size);
+
     size_t getFilename(char* buf, size_t buflen);
 
     // Change image if the image is a folder (used for .cue with multiple .bin)
     bool selectImageFile(const char *filename);
     size_t getFoldername(char* buf, size_t buflen);
+#ifdef CONTAINER_IMAGE_SUPPORT
+    // Return true if the image is contained in a container file like vhd
+    bool isContainer();
+    // Return the name of the container type
+    const char *containerTypeName();
+#endif
 
 protected:
     bool m_iscontiguous;
@@ -119,7 +142,11 @@ protected:
     bool m_isrom;
     bool m_isreadonly_attr;
     romdrive_hdr_t m_romhdr;
+#ifdef CONTAINER_IMAGE_SUPPORT
+    ZuluContainerFs::ZCFsFile m_fsfile;
+#else
     FsFile m_fsfile;
+#endif
     SdCard *m_blockdev;
     uint32_t m_bgnsector;
     uint32_t m_endsector;
@@ -129,4 +156,11 @@ protected:
     char m_foldername[MAX_FILE_PATH + 1];
 
     bool _internal_open(const char *filename);
+
+    void revert_to_noncontiguous();
+
+#if ENABLE_COW
+    bool m_iscow;
+    COWStorage m_cow;
+#endif
 };

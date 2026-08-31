@@ -4,7 +4,7 @@
             "earlephilhower": {
                 "boot2_source": "none.S",
                 "usb_vid": "0x2E8A",
-                "usb_pid": "0x000F"
+                "usb_pid": "0x10D7"
             }
         },
         "core": "earlephilhower",
@@ -18,7 +18,7 @@
             ],
             [
                 "0x2E8A",
-                "0x000F"
+                "0x10D7"
             ]
         ],
         "mcu": "rp2350",

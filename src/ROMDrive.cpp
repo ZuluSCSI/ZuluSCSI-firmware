@@ -29,6 +29,8 @@
 #include <strings.h>
 #include <string.h>
 
+#include "ui.h"
+
 extern "C" {
 #include <scsi.h>
 }
@@ -77,7 +79,7 @@ bool romDriveCheckPresent(romdrive_hdr_t *hdr)
         return false;
     }
 
-    if (hdr->imagesize <= 0 || hdr->scsi_id < 0 || hdr->scsi_id > 8)
+    if (hdr->imagesize <= 0 || hdr->scsi_id < 0 || hdr->scsi_id > S2S_MAX_TARGETS)
     {
         return false;
     }
@@ -88,9 +90,8 @@ bool romDriveCheckPresent(romdrive_hdr_t *hdr)
 // Clear the drive metadata header
 bool romDriveClear()
 {
-    romdrive_hdr_t hdr = {0x0};
-
-    if (!platform_write_romdrive((const uint8_t*)&hdr, 0, PLATFORM_ROMDRIVE_PAGE_SIZE))
+    memset(scsiDev.data, 0, PLATFORM_ROMDRIVE_PAGE_SIZE);
+    if (!platform_write_romdrive(scsiDev.data, 0, PLATFORM_ROMDRIVE_PAGE_SIZE))
     {
         logmsg("-- Failed to clear ROM drive");
         return false;
@@ -144,8 +145,13 @@ bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S
 
     // Program the drive contents
     uint32_t pages = (filesize + PLATFORM_ROMDRIVE_PAGE_SIZE - 1) / PLATFORM_ROMDRIVE_PAGE_SIZE;
+
+    UIRomCopyInit(scsi_id, type, pages, PLATFORM_ROMDRIVE_PAGE_SIZE, filename);
+
     for (uint32_t i = 0; i < pages; i++)
     {
+        uint32_t time_start = millis();
+
         if (i % 2)
             LED_ON();
         else
@@ -158,7 +164,11 @@ bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S
             file.close();
             return false;
         }
+
+        UIRomCopyProgress(scsi_id, millis() - time_start, i);
     }
+
+    UIRomCopyProgress(scsi_id, 0, pages);
 
     LED_OFF();
 

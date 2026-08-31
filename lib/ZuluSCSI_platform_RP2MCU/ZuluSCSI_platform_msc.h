@@ -24,7 +24,7 @@
 
 // private constants/enums
 #define SD_SECTOR_SIZE 512
-
+#define MSC_INIT_DELAY 500
 /* return true if USB presence detected / eligble to enter CR mode */
 bool platform_sense_msc();
 
@@ -36,6 +36,9 @@ void platform_set_msc_image_mode(bool image_mode);
 
 /* return true if we should remain in card reader mode. called in a loop. */
 bool platform_run_msc();
+
+/* return true if a request to stop is issued */
+bool platform_stop_msc();
 
 /* perform any cleanup tasks for the MSC-specific functionality */
 void platform_exit_msc();

@@ -27,21 +27,46 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "25.06.01"
-#define FW_VER_SUFFIX   "release"
+#define FW_VER_NUM      "2026.08.31"
+
+// FW_VER_SUFFIX must distinguish the GD32/V1.x LTS build line from the
+// RP2040/RP2350 (RP2MCU) build line - they were unintentionally collapsed
+// onto one hardcoded value by the "Merge branch 'LTS/V1.x' into main" merge,
+// so every RP2MCU build (Wide, Blaster, Pico, etc) reported the "V1.x-LTS"
+// suffix that only ever meant anything for the GD32 boards. Before that
+// merge, RP2MCU builds correctly reported plain "release".
+#if defined(ZULUSCSI_V1_0) || defined(ZULUSCSI_V1_1_plus)
+#define FW_VER_SUFFIX   "V1.x-LTS-release"
+#else
+#define FW_VER_SUFFIX   "dev"
+
+#endif
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
 #define STRINGFY(STR) #STR
 #define FIRMWARE_NAME_PREFIX DEF_STRINGFY(BUILD_ENV)
 #define ZULU_FW_VERSION FW_VER_NUM "-" FW_VER_SUFFIX
-#define INQUIRY_NAME  PLATFORM_NAME " v" ZULU_FW_VERSION
+#define INQUIRY_NAME  "ZuluSCSI"
 #define TOOLBOX_API 0
 
 // Configuration and log file paths
 #define CONFIGFILE  "zuluscsi.ini"
 #define LOGFILE     "zululog.txt"
+#define LOGFILEPREV "zululog_prev.txt"
+#define LOGFILEROTATE "zululog_rotate"
+#define LOGFILEDIR "zuluscsi_log"
+
+// AS/400 disk profile definitions, captured by utils/extract_as400_disk_data.sh
+// and selected per-[SCSIn] via the AS400_DiskProfile key.
+#define AS400_PROFILES_FILE "as400_disk_definitions.txt"
 #define CRASHFILE   "zuluerr.txt"
+#define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
+
+#define ZULUCONTROL_FW_FILE "zulucontrol.uf2"
+#define ZULUCONTROL_UF2_PREFIX "zulucontrol"
+
+#define SNIFFERFILE "zuluscsi_sniff.dat"
 
 // Prefix for command file to create new image (case-insensitive)
 #define CREATEFILE "create"
@@ -55,6 +80,19 @@
 // How often to check for SD card presence
 #define SDCARD_POLL_INTERVAL 5000
 
+// How often to check an empty SD card for insert
+#define SDCARD_POLL_INSERT_INTERVAL 1500
+
+// How often to attempt WiFi reconnection after link loss (ms)
+#define WIFI_RECONNECT_START_INTERVAL 5000
+#define WIFI_RECONECT_MAX_INTERVAL 15000
+#define WIFI_RECONNECT_INCREMENT_INTERVAL 5000
+
+// How often to send a dummy Ethernet frame while idle, to keep the CYW43
+// radio active and give it a chance to notice/recover from an AP-initiated
+// deauth. Well under typical AP idle timeouts (commonly 300-1000s).
+#define WIFI_KEEPALIVE_INTERVAL 120
+
 // Watchdog timeout
 // Watchdog will first issue a bus reset and if that does not help, crashdump.
 #define WATCHDOG_BUS_RESET_TIMEOUT 15000
@@ -64,13 +102,23 @@
 #define HDIMG_ID_POS  2                 // Position to embed ID number
 #define HDIMG_LUN_POS 3                 // Position to embed LUN numbers
 #define HDIMG_BLK_POS 5                 // Position to embed block size numbers
+
+
+// The INI section [SCSIn] and image prefixes HDn/CDn/TPn/etc. apply to this device.
+// [SCSIn] settings take priority over the hardcoded [SCSI<X>] section for this ID.
+#define DYNAMIC_SCSI_INI_SECTION "SCSIn"
+#define DYNAMIC_SCSI_ID_CHAR     'n'
+
+#if defined(CONTROL_BOARD)
+#define MAX_FILE_PATH 260                // Maximum file name length
+#else
 #define MAX_FILE_PATH 64                // Maximum file name length
+#endif
 
 // Image definition options
-#define IMAGE_INDEX_MAX 9               // Maximum number of 'IMG0' style statements parsed
+#define IMAGE_INDEX_MAX 99              // Maximum number of 'IMG0' - `IMG99` style statements parsed
 
 // SCSI config
-#define NUM_SCSIID  8          // Maximum number of supported SCSI-IDs (The minimum is 0)
 #define NUM_SCSILUN 1          // Maximum number of LUNs supported     (Currently has to be 1)
 #define READ_PARITY_CHECK 0    // Perform read parity check (unverified)
 
@@ -89,8 +137,10 @@
 #define DRIVEINFO_OPTICAL   {"ZULUSCSI", "CDROM",     PLATFORM_REVISION, ""}
 #define DRIVEINFO_FLOPPY    {"ZULUSCSI", "FLOPPY",    PLATFORM_REVISION, ""}
 #define DRIVEINFO_MAGOPT    {"ZULUSCSI", "MO_DRIVE",  PLATFORM_REVISION, ""}
-#define DRIVEINFO_NETWORK   {"Dayna",    "SCSI/Link",       "2.0f", ""}
+#define DRIVEINFO_NETWORK   {"Dayna",    "SCSI/Link", "2.0f",            ""}
 #define DRIVEINFO_TAPE      {"ZULUSCSI", "TAPE",      PLATFORM_REVISION, ""}
+#define DRIVEINFO_AMIGAWIFI {"AmigaNET", "SCSI/Link", "1.0f", ""}
+#define DRIVEINFO_AUDIO     {"ZULUSCSI", "AUDIO",     PLATFORM_REVISION, ""}
 
 // Default block size
 #define DEFAULT_BLOCKSIZE 512
@@ -99,13 +149,16 @@
 #define DEFAULT_BLOCKSIZE_OPTICAL 2048
 
 // Default SCSI drive information when Apple quirks are enabled
-#define APPLE_DRIVEINFO_FIXED     {"CDC",      "ZuluSCSI HDD",      PLATFORM_REVISION, "1.0"}
+#define APPLE_DRIVEINFO_FIXED     {"DEC",      "ZuluSCSI HDD",      PLATFORM_REVISION, "1.0"}
 #define APPLE_DRIVEINFO_REMOVABLE {"IOMEGA",   "BETA230",           PLATFORM_REVISION, "2.02"}
 #define APPLE_DRIVEINFO_OPTICAL   {"MATSHITA", "CD-ROM CR-8004",    PLATFORM_REVISION, "1.1f"}
-#define APPLE_DRIVEINFO_FLOPPY    {"IOMEGA",     "Io20S         *F", "PP33", ""}
+#define APPLE_DRIVEINFO_FLOPPY    {"IOMEGA",   "Io20S         *F",  "PP33",            ""}
 #define APPLE_DRIVEINFO_MAGOPT    {"MOST",     "RMD-5200",          PLATFORM_REVISION, "1.0"}
-#define APPLE_DRIVEINFO_NETWORK   {"Dayna",    "SCSI/Link",       "2.0f", ""}
+#define APPLE_DRIVEINFO_NETWORK   {"Dayna",    "SCSI/Link",         "2.0f",            ""}
 #define APPLE_DRIVEINFO_TAPE      {"ZULUSCSI", "APPLE_TAPE",        PLATFORM_REVISION, ""}
+
+#define AS400_DRIVEINFO_DGVS09U_FIXED  {"IBMAS400", "DGVS09U",      "02A1",             ""}
+#define AS400_DRIVEINFO_OPTICAL        {"IBM",      "CDRM00203",     PLATFORM_REVISION, ""}
 
 // Default Iomega ZIP drive information
 #define IOMEGA_DRIVEINFO_ZIP100     {"IOMEGA", "ZIP 100", "D.13", ""}
@@ -122,10 +175,10 @@
 #define PREFETCH_BUFFER_SIZE 8192
 #endif
 
-// Masks for buttons
-#define EJECT_BTN_MASK (1|2)
-#define USER_BTN_MASK  (4)
-
+// Enable Copy-on-Write functionality for kiosk environments unless specifically disabled
+#ifndef ENABLE_COW
+#define ENABLE_COW 1
+#endif
 
 // Zip disk  media sizes
 #define ZIP100_DISK_SIZE    100663296 // bytes
@@ -134,5 +187,8 @@
 #define TAPE_DEFAULT_NAME  "tape.000"
 
 // Settings for rebooting
+#define REBOOT_PURPOSE_MASK 0x00FFFFFF
 #define REBOOT_INTO_MASS_STORAGE_MAGIC_NUM 0x5eeded
-
+#define REBOOT_INTO_MASS_STORAGE_IMAGES_MAGIC_NUM 0x3e1ce5
+#define REBOOT_ENABLE_COW_BIT 0x01000000
+#define REBOOT_COW_BUTTON_STATE_MASK 0xFF

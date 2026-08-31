@@ -18,11 +18,12 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
-**/
+ **/
 
 #include "ImageBackingStore.h"
 #include <SdFat.h>
 #include <ZuluSCSI_platform.h>
+#include "ZuluSCSI.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
@@ -44,10 +45,23 @@ ImageBackingStore::ImageBackingStore()
     m_bgnsector = m_endsector = m_cursector = 0;
     m_isfolder = false;
     m_foldername[0] = '\0';
+
+#if ENABLE_COW
+    // Initialize COW members
+    m_iscow = false;
+#endif
 }
 
-ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_size): ImageBackingStore()
+ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_settings) : ImageBackingStore()
 {
+#if ENABLE_COW
+    if (m_cow.initialize(filename, scsi_block_size, device_settings))
+    {
+        m_iscow = true;
+        return; // COW mode successfully enabled
+    }
+#endif
+
     if (strncasecmp(filename, "RAW:", 4) == 0)
     {
         char *endptr, *endptr2;
@@ -131,6 +145,15 @@ bool ImageBackingStore::_internal_open(const char *filename)
 
     if (!m_fsfile.isOpen())
     {
+#ifdef CONTAINER_IMAGE_SUPPORT
+        if (m_fsfile.isUnsupportedContainerType())
+        {
+            logmsg("============ ERROR: Unsupported container image type ============");
+            logmsg("Image is a ", m_fsfile.getContainerNameCstr(), " container but the image type is unsupported.");
+            logmsg("Please use a container with a fixed size or fully allocated image");
+            logmsg("=================================================================");
+        }
+#endif
         return false;
     }
 
@@ -166,20 +189,56 @@ bool ImageBackingStore::_internal_open(const char *filename)
     return true;
 }
 
+void ImageBackingStore::revert_to_noncontiguous()
+{
+    if (m_iscontiguous && !m_israw && m_fsfile.isOpen())
+    {
+        // Revert from direct SD card access to filesystem based access.
+        // Keep the seek position.
+        m_iscontiguous = false;
+        m_fsfile.seek((m_cursector - m_bgnsector) * SD_SECTOR_SIZE);
+    }
+}
+
 bool ImageBackingStore::isOpen()
 {
-    if (m_iscontiguous)
-        return (m_blockdev != NULL);
-    else if (m_isrom)
-        return (m_romhdr.imagesize > 0);
-    else if (m_isfolder)
-        return m_foldername[0] != '\0';
+#if ENABLE_COW
+    if (m_iscow)
+    {
+        return m_cow.isOpen();
+    }
+#endif
+    if (!g_sdcard_present)
+    { 
+        if (m_isrom)
+        {
+            return (m_romhdr.imagesize > 0);
+        }
+        return false;
+    }
     else
-        return m_fsfile.isOpen();
+    {
+        if (m_iscontiguous)
+            return (m_blockdev != NULL);
+        else if (m_isrom)
+            return (m_romhdr.imagesize > 0);
+        else if (m_isfolder)
+            return m_foldername[0] != '\0';
+        else
+            return m_fsfile.isOpen();
+    }
 }
 
 bool ImageBackingStore::isWritable()
 {
+#if ENABLE_COW
+    // COW mode is always writable (writes go to dirty file)
+    if (m_iscow)
+    {
+        return true;
+    }
+#endif
+
     return !m_isrom && !m_isreadonly_attr;
 }
 
@@ -195,6 +254,12 @@ bool ImageBackingStore::isRom()
 
 bool ImageBackingStore::isFolder()
 {
+#if ENABLE_COW
+    if (m_iscow)
+    {
+        return false;
+    }
+#endif
     return m_isfolder;
 }
 
@@ -205,6 +270,13 @@ bool ImageBackingStore::isContiguous()
 
 bool ImageBackingStore::close()
 {
+#if ENABLE_COW
+    if (m_iscow)
+    {
+        m_cow.cleanup();
+    }
+#endif
+
     m_isfolder = false;
     if (m_iscontiguous)
     {
@@ -224,6 +296,14 @@ bool ImageBackingStore::close()
 
 uint64_t ImageBackingStore::size()
 {
+#if ENABLE_COW
+    // Handle Copy-on-Write mode - return original file size
+    if (m_iscow)
+    {
+        return m_cow.size();
+    }
+#endif
+
     if (m_iscontiguous && m_blockdev && m_israw)
     {
         return (uint64_t)(m_endsector - m_bgnsector + 1) * SD_SECTOR_SIZE;
@@ -260,12 +340,20 @@ bool ImageBackingStore::contiguousRange(uint32_t* bgnSector, uint32_t* endSector
 
 bool ImageBackingStore::seek(uint64_t pos)
 {
+#if ENABLE_COW
+    // Handle Copy-on-Write mode
+    if (m_iscow)
+    {
+        return m_cow.seek( pos );
+    }
+#endif
+
     uint32_t sectornum = pos / SD_SECTOR_SIZE;
 
     if (m_iscontiguous && (uint64_t)sectornum * SD_SECTOR_SIZE != pos)
     {
         dbgmsg("---- Unaligned access to image, falling back to SdFat access mode");
-        m_iscontiguous = false;
+        revert_to_noncontiguous();
     }
 
     if (m_iscontiguous)
@@ -288,11 +376,19 @@ bool ImageBackingStore::seek(uint64_t pos)
 
 ssize_t ImageBackingStore::read(void* buf, size_t count)
 {
+#if ENABLE_COW
+    // Handle Copy-on-Write mode
+    if (m_iscow)
+    {
+        return m_cow.read(buf, count);
+    }
+#endif
+
     uint32_t sectorcount = count / SD_SECTOR_SIZE;
     if (m_iscontiguous && (uint64_t)sectorcount * SD_SECTOR_SIZE != count)
     {
         dbgmsg("---- Unaligned access to image, falling back to SdFat access mode");
-        m_iscontiguous = false;
+        revert_to_noncontiguous();
     }
 
     if (m_iscontiguous && m_blockdev)
@@ -330,11 +426,19 @@ ssize_t ImageBackingStore::read(void* buf, size_t count)
 
 ssize_t ImageBackingStore::write(const void* buf, size_t count)
 {
+    #if ENABLE_COW
+    // Handle Copy-on-Write mode
+    if (m_iscow)
+    {
+        return m_cow.write(buf, count);
+    }
+#endif
+
     uint32_t sectorcount = count / SD_SECTOR_SIZE;
     if (m_iscontiguous && (uint64_t)sectorcount * SD_SECTOR_SIZE != count)
     {
         dbgmsg("---- Unaligned access to image, falling back to SdFat access mode");
-        m_iscontiguous = false;
+        revert_to_noncontiguous();
     }
 
     if (m_iscontiguous && m_blockdev)
@@ -367,14 +471,48 @@ ssize_t ImageBackingStore::write(const void* buf, size_t count)
 
 void ImageBackingStore::flush()
 {
+#if ENABLE_COW
+    // Handle Copy-on-Write mode
+    if (m_iscow)
+    {
+        m_cow.flush();
+        return;
+    }
+#endif
+
     if (!m_iscontiguous && !m_isrom && !m_isreadonly_attr)
     {
         m_fsfile.flush();
     }
 }
 
+bool ImageBackingStore::truncate(uint64_t size)
+{
+    if (m_isrom || m_israw || m_isreadonly_attr)
+    {
+        logmsg("ERROR: truncate called on non-writable or non-regular file");
+        return false;
+    }
+    else
+    {
+        if (m_iscontiguous)
+        {
+            revert_to_noncontiguous();
+        }
+        return m_fsfile.truncate(size);
+    }
+}
+
 uint64_t ImageBackingStore::position()
 {
+#if ENABLE_COW
+    // Handle Copy-on-Write mode
+    if (m_iscow)
+    {
+        return m_cow.position();
+    }
+#endif
+
     if (!m_iscontiguous && !m_isrom)
     {
         return m_fsfile.curPosition();
@@ -422,3 +560,15 @@ size_t ImageBackingStore::getFoldername(char* buf, size_t buflen)
 
     return 0;
 }
+
+#ifdef CONTAINER_IMAGE_SUPPORT
+bool ImageBackingStore::isContainer()
+{
+    return m_fsfile.getContainerFormat() != ZuluContainerFs::Container::None;
+}
+
+const char *ImageBackingStore::containerTypeName()
+{
+    return m_fsfile.getContainerNameCstr();
+}
+#endif

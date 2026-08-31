@@ -97,7 +97,7 @@ uint8_t platform_no_sd_card_on_init_error_code();
 void platform_reset_watchdog();
 
 // Reset MCU
-void platform_reset_mcu();
+void platform_reset_mcu(uint32_t reset_in_ms);
 
 // Poll function that is called every few milliseconds.
 // The SD card is free to access during this time, and pauses up to
@@ -121,7 +121,7 @@ inline bool platform_rebooted_into_mass_storage() {return false;}
 
 // Reinitialize SD card connection and save log from interrupt context.
 // This can be used in crash handlers.
-void platform_emergency_log_save();
+bool platform_emergency_log_save();
 
 // Set callback that will be called during data transfer to/from SD card.
 // This can be used to implement simultaneous transfer to SCSI bus.
@@ -200,7 +200,7 @@ const uint32_t platform_flash_sector_map[] =
 bool platform_firmware_erase(FsFile &file);
 bool platform_firmware_program(FsFile &file);
 
-bool platform_has_phy_eject_button(){return false};
+inline uint8_t platform_phy_eject_button(){return 0};
 
 // SD card driver for SdFat
 

@@ -1,0 +1,8 @@
+{
+    "name": "ZuluSCSI_WebUI_RP2MCU",
+    "version": "1.0.0",
+    "description": "ZuluSCSI WebUI I2C server - manages the I2C WebUI client remote interface board",
+    "keywords": ["zuluscsi", "webui", "i2c"],
+    "frameworks": "arduino",
+    "platforms": "raspberrypi"
+}

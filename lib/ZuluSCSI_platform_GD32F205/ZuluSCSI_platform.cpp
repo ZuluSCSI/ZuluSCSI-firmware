@@ -44,6 +44,7 @@ extern "C" {
 const char *g_platform_name = PLATFORM_NAME;
 static bool g_enable_apple_quirks = false;
 bool g_direct_mode = false;
+bool g_log_lock = false;
 ZuluSCSIVersion_t g_zuluscsi_version = ZSVersion_unknown;
 bool g_moved_select_in = false;
 static bool g_led_blinking = false;
@@ -52,8 +53,8 @@ static bool g_led_blinking = false;
 
 // usb_log_poll() is called through function pointer to
 // avoid including USB in SD card bootloader.
-static void (*g_usb_log_poll_func)(void);
-static void usb_log_poll();
+static int32_t (*g_usb_log_poll_func)(void);
+static int32_t usb_log_poll();
 
 
 /*************************/
@@ -208,7 +209,7 @@ void platform_init()
     NVIC_SetPriority(SysTick_IRQn, 0x00U);
 
     // Enable DWT counter to drive delay_ns()
-    g_ns_to_cycles = ((uint64_t)SystemCoreClock << 32) / 1000000000;
+    g_ns_to_cycles = (SystemCoreClock / (1000000000 >> 16)) << 16;
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
@@ -306,8 +307,10 @@ void platform_init()
         // Buttons
         gpio_init(EJECT_BTN_PORT, GPIO_MODE_IPU, 0, EJECT_BTN_PIN);
         gpio_init(USER_BTN_PORT, GPIO_MODE_IPU, 0, USER_BTN_PIN);
+    #ifdef ENABLE_AUDIO_OUTPUT
         init_audio_gpio();
         g_audio_enabled = true;
+    #endif
     }
     else if (g_zuluscsi_version == ZSVersion_v1_2)
     {
@@ -424,7 +427,9 @@ void platform_late_init()
         set_termination(ODE_DIP_PORT, ODE_DIPSW3_PIN, "DIPSW3");
         g_log_debug = get_debug(ODE_DIP_PORT, ODE_DIPSW2_PIN, "DIPSW2");
         g_enable_apple_quirks = get_quirks(ODE_DIP_PORT, ODE_DIPSW1_PIN, "DIPSW1");
+#ifdef ENABLE_AUDIO_OUTPUT
         audio_setup();
+#endif
     }
     else if (ZSVersion_v1_2 == g_zuluscsi_version)
     {
@@ -451,6 +456,7 @@ void platform_late_init()
 
 void platform_post_sd_card_init()
 {
+#ifdef ENABLE_AUDIO_OUTPUT
     #ifdef PLATFORM_VERSION_1_1_PLUS
     if (ZSVersion_v1_2 == g_zuluscsi_version && g_scsi_settings.getSystem()->enableCDAudio)
     {
@@ -460,6 +466,7 @@ void platform_post_sd_card_init()
         audio_setup();
     }
     #endif
+#endif
 }
 
 void platform_write_led(bool state)
@@ -548,6 +555,21 @@ static void adc_poll()
     }
 #endif
 }
+bool platform_serial_connected()
+{
+    return usb_serial_ready();
+}
+
+uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
+{
+    if (usb_serial_ready())
+    {
+        if (len > USB_CDC_DATA_PACKET_SIZE) len = USB_CDC_DATA_PACKET_SIZE;
+        usb_serial_send((uint8_t*)data, len);
+        return len;
+    }
+    return 0;
+}
 
 /*****************************************/
 /* Debug logging and watchdog            */
@@ -557,27 +579,41 @@ static void adc_poll()
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.
 
-static void usb_log_poll()
+static int32_t usb_log_poll()
 {
     static uint32_t logpos = 0;
 
-    if (usb_serial_ready())
-    {
-        // Retrieve pointer to log start and determine number of bytes available.
-        uint32_t available = 0;
-        const char *data = log_get_buffer(&logpos, &available);
-        // Limit to CDC packet size
-        uint32_t len = available;
-        if (len == 0) return;
-        if (len > USB_CDC_DATA_PACKET_SIZE) len = USB_CDC_DATA_PACKET_SIZE;
+    if (g_log_lock)
+        return -1;
 
-        // Update log position by the actual number of bytes sent
-        // If USB CDC buffer is full, this may be 0
-        usb_serial_send((uint8_t*)data, len);
-        logpos -= available - len;
-    }
+    if (!usb_serial_ready())
+        return -1;
+
+    // Retrieve pointer to log start and determine number of bytes available.
+    uint32_t available = 0;
+    const char *data = log_get_buffer(&logpos, &available);
+    if (available == 0) return 0;
+
+    // Limit to CDC packet size
+    uint32_t len = available;
+    if (len > USB_CDC_DATA_PACKET_SIZE) len = USB_CDC_DATA_PACKET_SIZE;
+
+    usb_serial_send((uint8_t*)data, len);
+
+    // Rewind the read position by the number of bytes that were not sent,
+    // so that they are retried on the next poll instead of being dropped.
+    logpos -= available - len;
+    return available - len;
 }
 
+void platform_flush_usb_log()
+{
+    uint32_t flush_start = millis();
+    while (usb_log_poll() > 0 && (uint32_t)(millis() - flush_start) < 250)
+    {
+        platform_reset_watchdog();
+    }
+}
 /*****************************************/
 /* Crash handlers                        */
 /*****************************************/
@@ -592,13 +628,13 @@ void platform_log(const char *s)
     }
 }
 
-void platform_emergency_log_save()
+bool platform_emergency_log_save()
 {
     if (g_rawdrive_active)
-        return;
+        return false;
 #ifdef ZULUSCSI_HARDWARE_CONFIG
     if (g_hw_config.is_active())
-        return;
+        return false;
 #endif
     platform_set_sd_callback(NULL, NULL);
 
@@ -613,12 +649,16 @@ void platform_emergency_log_save()
 
         crashfile = SD.open(CRASHFILE, O_WRONLY | O_CREAT | O_TRUNC);
     }
-
-    uint32_t startpos = 0;
-    crashfile.write(log_get_buffer(&startpos));
-    crashfile.write(log_get_buffer(&startpos));
-    crashfile.flush();
-    crashfile.close();
+    if (crashfile.isOpen())
+    {
+        uint32_t startpos = 0;
+        crashfile.write(log_get_buffer(&startpos));
+        crashfile.write(log_get_buffer(&startpos));
+        crashfile.flush();
+        crashfile.close();
+        return true;
+    }
+    return false;
 }
 
 extern uint32_t _estack;
@@ -629,6 +669,8 @@ void show_hardfault(uint32_t *sp)
     uint32_t pc = sp[6];
     uint32_t lr = sp[5];
     uint32_t cfsr = SCB->CFSR;
+    uint32_t bfar = SCB->BFAR;
+    uint32_t mmfar = SCB->MMFAR;
     
     logmsg("--------------");
     logmsg("CRASH!");
@@ -637,6 +679,8 @@ void show_hardfault(uint32_t *sp)
     logmsg("scsiDev.cdb: ", bytearray(scsiDev.cdb, 12));
     logmsg("scsiDev.phase: ", (int)scsiDev.phase);
     logmsg("CFSR: ", cfsr);
+    logmsg("BFAR: ", bfar, (cfsr & (1 << 15)) ? " valid" : " not valid");
+    logmsg("MMFAR: ",mmfar, (cfsr & (1 << 7)) ? " valid" : " not valid");
     logmsg("SP: ", (uint32_t)sp);
     logmsg("PC: ", pc);
     logmsg("LR: ", lr);
@@ -654,10 +698,15 @@ void show_hardfault(uint32_t *sp)
         p += 4;
     }
  
-    platform_emergency_log_save();
+    bool log_saved = platform_emergency_log_save();
 
     while (1)
     {
+        if (!log_saved)
+        {
+            log_saved = platform_emergency_log_save();
+        }
+
         if (g_usb_log_poll_func) g_usb_log_poll_func();
         // Flash the crash address on the LED
         // Short pulse means 0, long pulse means 1
@@ -759,12 +808,42 @@ void platform_reset_watchdog()
     usb_log_poll();
 }
 
-void platform_reset_mcu()
+void platform_reset_mcu(uint32_t reset_in_ms)
 {
     // reset in 2 sec ( 1 / (40KHz / 32) * 2500 == 2sec)
-    fwdgt_config(2500, FWDGT_PSC_DIV32);
+    uint32_t cycles = reset_in_ms * 160 / 128;
+    fwdgt_config(cycles, FWDGT_PSC_DIV32);
     fwdgt_enable();
 
+}
+
+const uint8_t* platform_get_8byte_mcu_id()
+{
+    static uint8_t mcu_id[8] = {0};
+    static bool filled = false;
+    if (!filled)
+    {
+        // capture the lower 64bit of the 96bit mcu id
+        // the last 32 bits of the mcu id are added to the first 32 bits
+        volatile uint32_t mcu_id_0 = *(uint32_t*) 0x1FFFF7E8U;
+        volatile uint32_t mcu_id_1 = *(uint32_t*) 0x1FFFF7ECU;
+        volatile uint32_t mcu_id_2 = *(uint32_t*) 0x1FFFF7F0U;
+
+        mcu_id_0 += mcu_id_2;
+
+        for (uint8_t i = 0; i < 2; i++)
+        {
+            uint32_t id = i == 0 ? mcu_id_0 : mcu_id_1;
+            for (uint8_t j = 0; j < 4; j++)
+            {
+                mcu_id[j + i*4] = id & 0xFF;
+                id = id >> 4;
+            }
+        }
+        filled = true;
+    }
+    return mcu_id;
+   
 }
 
 // Poll function that is called every few milliseconds.
@@ -787,7 +866,7 @@ uint8_t platform_get_buttons()
     if (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2)
     {
         if (!gpio_input_bit_get(EJECT_BTN_PORT, EJECT_BTN_PIN))   buttons |= 1;
-        if (!gpio_input_bit_get(USER_BTN_PORT, USER_BTN_PIN))   buttons |= 4;
+        if (!gpio_input_bit_get(USER_BTN_PORT, USER_BTN_PIN))   buttons |= 2;
     }
     else
     {
@@ -812,26 +891,21 @@ uint8_t platform_get_buttons()
         buttons_debounced = 0;
     }
 
-#ifdef PLATFORM_VERSION_1_1_PLUS
-    if(g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2)
-    {
-        static uint8_t previous = 0x00;
-        uint8_t bitmask = buttons_debounced & USER_BTN_MASK;
-        uint8_t ejectors = (previous ^ bitmask) & previous;
-        previous = bitmask;
-        if (ejectors & USER_BTN_MASK)
-        {
-            logmsg("User button pressed - feature not yet implemented");
-        }
-    }
-#endif
-
     return buttons_debounced;
 }
 
-bool platform_has_phy_eject_button()
+uint8_t platform_phy_eject_button()
 {
-    return g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2;
+    return (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2) ? 1 : 0;
+}
+
+uint8_t platform_get_eject_button_mask()
+{
+    return (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2) ? 1 : 3;
+}
+uint8_t platform_get_user_button_mask()
+{
+    return (g_zuluscsi_version == ZSVersion_v1_1_ODE || g_zuluscsi_version == ZSVersion_v1_2) ? 2 : 0;
 }
 
 /***********************/

@@ -21,6 +21,9 @@
 #define SDIO_DBGMSG(txt, arg1, arg2) dbgmsg(txt, " ", (uint32_t)(arg1), " ", (uint32_t)(arg2))
 #endif
 
+// Critical messages are logged always
+#define SDIO_CRITMSG(txt, arg1, arg2) logmsg(txt, " ", (uint32_t)(arg1), " ", (uint32_t)(arg2))
+
 // PIO block to use
 #define SDIO_PIO pio1
 #define SDIO_SM  0
