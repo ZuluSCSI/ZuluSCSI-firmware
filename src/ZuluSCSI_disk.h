@@ -260,3 +260,5 @@ const uint8_t *scsiDiskPrefetchRead(uint8_t scsiId, uint32_t firstSector, uint32
 // If scsiId is given, only invalidate if that device has data in buffer.
 // If scsiId is not given (value -1), invalidate for all devices.
 void scsiDiskPrefetchInvalidate(uint8_t scsiId = (uint8_t)-1);
+
+bool scsiDiskTypeIsRemovable(S2S_CFG_TYPE type);

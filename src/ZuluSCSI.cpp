@@ -656,21 +656,6 @@ static bool autoCreateAS400ProfileImages()
 }
 #endif
 
-static bool typeIsRemovable(S2S_CFG_TYPE type)
-{
-  switch (type)
-  {
-  case S2S_CFG_OPTICAL:
-  case S2S_CFG_MO:
-  case S2S_CFG_FLOPPY_14MB:
-  case S2S_CFG_ZIP100:
-  case S2S_CFG_REMOVABLE:
-  case S2S_CFG_SEQUENTIAL:
-    return true;
-  default:
-    return false;
-  }
-}
 static bool mountSDCard();
 static void spin_for_reboot(bool rebooting);
 
@@ -1083,7 +1068,7 @@ bool findHDDImages()
               ", BlockSize: ", (int)cfg->bytesPerSector,
               ", Sectors: ", (int) cfg->scsiSectors,
               ", Size: ", capacity_kB, "kB",
-              typeIsRemovable((S2S_CFG_TYPE)cfg->deviceType) ? ", Removable" : ""
+              scsiDiskTypeIsRemovable((S2S_CFG_TYPE)cfg->deviceType) ? ", Removable" : ""
               );
        }
     }
@@ -1094,7 +1079,7 @@ bool findHDDImages()
     const S2S_TargetCfg* cfg = s2s_getConfigByIndex(id);
     if (cfg  && (cfg->scsiId & S2S_CFG_TARGET_ENABLED ))
     {
-       if (typeIsRemovable((S2S_CFG_TYPE)cfg->deviceType))
+       if (scsiDiskTypeIsRemovable((S2S_CFG_TYPE)cfg->deviceType))
         {
           removable_count++;
           last_removable_device = id;
