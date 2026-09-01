@@ -239,7 +239,7 @@ static void send_filenames_for_device(uint8_t scsi_id)
 static void send_all_filenames()
 {
     uint8_t ids[S2S_MAX_TARGETS];
-    int count = controlListRemovableDevices(ids, 8);
+    int count = controlListRemovableDevices(ids, S2S_MAX_TARGETS);
     for (int i = 0; i < count; i++)
     {
         send_filenames_for_device(ids[i]);
