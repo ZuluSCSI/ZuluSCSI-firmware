@@ -225,6 +225,11 @@ void log_getl_8bit_hex_with_negative(const char *Key, long value)
     }
 }
 
+void log_getl_16bit_hex(const char *Key, long value)
+{
+    logmsg("---- ", Key, " = ", (uint16_t) value);
+}
+
 void log_getl_quirks(const char *Key, long value)
 {
     if (value == 0)
@@ -578,19 +583,6 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
 #endif
 
 
-
-    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE) & ZULUSCSI_DEFAULT_LOG_MASK;
-    if (g_scsi_log_mask == 0)
-    {
-      dbgmsg("DebugLogMask set to 0x00, this will silence all debug messages when a SCSI ID has been selected");
-    }
-    else if (g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK)
-    {
-      dbgmsg("DebugLogMask set to ", (uint8_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
-    }
-
-    g_log_ignore_busy_free = ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE);
-
 }
 
 scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, bool disable_logging)
@@ -657,8 +649,6 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 #else
     cfgSys.maxBusWidth = 0;
 #endif
-
-    cfgSys.logToSDCard = true;
 
     cfgSys.logRotate = 1;
 
@@ -874,7 +864,6 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     }
 
     cfgSys.maxBusWidth = log_ini_getl("SCSI", "MaxBusWidth", cfgSys.maxBusWidth, CONFIGFILE, log_settings, log_getl_bus_width);
-    cfgSys.logToSDCard = log_ini_getbool("SCSI", "LogToSDCard", cfgSys.logToSDCard, CONFIGFILE, log_settings);
     cfgSys.logRotate = log_ini_getl("SCSI", "LogRotate", cfgSys.logRotate, CONFIGFILE, log_settings, log_getl_log_rotate);
     
     cfgSys.wifi_keep_alive_s = log_ini_getl("SCSI", "WiFiKeepAliveSecs", cfgSys.wifi_keep_alive_s, CONFIGFILE, log_settings);
@@ -887,7 +876,12 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
 // Setting not stored m_sys or m_dev but should be printed out
     log_ini_getbool("SCSI", "Debug", 0, CONFIGFILE, log_settings);
-    log_ini_getl("SCSI", "DebugLogMask", 0xFF, CONFIGFILE, log_settings, &log_getl_8bit_hex);
+    log_ini_getbool("SCSI", "LogToSDCard", 1, CONFIGFILE, log_settings);
+#if PLATFORM_MAX_BUS_WIDTH == 1
+    log_ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE, log_settings, &log_getl_16bit_hex);
+#else
+    log_ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE, log_settings, &log_getl_8bit_hex);
+#endif
     log_ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE, log_settings);
     log_ini_getbool("SCSI", "DisableStatusLED", false, CONFIGFILE, log_settings);
 
@@ -905,6 +899,32 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     log_ini_getbool("SCSI", "DisableROMDrive", 0, CONFIGFILE, log_settings);
     log_ini_getl("SCSI", "ROMDriveSCSIID", -1, CONFIGFILE, log_settings);
+
+
+    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE) & ZULUSCSI_DEFAULT_LOG_MASK;
+    if (!disable_logging && g_log_debug && g_scsi_log_mask == 0)
+    {
+#if PLATFORM_MAX_BUS_WIDTH == 1
+        logmsg("---- DebugLogMask set to ", (uint16_t) 0x0000, ", this will silence all debug messages when a SCSI ID has been selected");
+#else
+        logmsg("---- DebugLogMask set to ", (uint8_t) 0x00, ", this will silence all debug messages when a SCSI ID has been selected");
+#endif
+    }
+    else if (!disable_logging && g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK)
+    {
+#if PLATFORM_MAX_BUS_WIDTH == 1
+        logmsg("---- DebugLogMask set to ", (uint16_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
+#else
+        logmsg("---- DebugLogMask set to ", (uint8_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
+#endif
+    }
+
+    g_log_ignore_busy_free = ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE);
+    if (!disable_logging && g_log_debug && g_log_ignore_busy_free)
+    {
+        logmsg("---- DebugIgnoreBusyFree enabled, BUS_FREE/BUS_BUSY messages suppressed");
+    }
+
     return &cfgSys;
 }
 

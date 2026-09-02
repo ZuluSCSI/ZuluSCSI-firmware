@@ -133,8 +133,6 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     bool initiatorParity;
 
-    bool logToSDCard;
-
     int logRotate;
 
     uint32_t wifi_keep_alive_s;
