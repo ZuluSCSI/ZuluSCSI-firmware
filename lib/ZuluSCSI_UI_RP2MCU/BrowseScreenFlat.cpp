@@ -98,7 +98,7 @@ void BrowseScreenFlat::initPrefix(int index)
 {
   char pre[4];
   strcpy(pre, typeToShortString(_deviceMap->DeviceType));
-  pre[2] = '0' + index;
+  pre[2] = scsiEncodeID(index);
   pre[3] = 0;
 
   if (SDNavTotalPrefixFiles.TotalItems(pre, _totalObjects))
@@ -330,10 +330,7 @@ void BrowseScreenFlat::getCurrentFilename()
     {
       char pre[4];
       strcpy(pre, typeToShortString(_deviceMap->DeviceType));
-      if (_scsiId >= 0 && _scsiId <= 9)
-        pre[2] = '0' + _scsiId;
-      else if (_scsiId >= 10  && _scsiId <= 15)
-        pre[2] = 'A' + (_scsiId - 10);
+      pre[2] = scsiEncodeID(_scsiId);
       pre[3] = '\0';
       SDNavPrefixFileByIndex.GetFileByIndex(pre, _currentObjectIndex, _currentObjectName, MAX_PATH_LEN, _currentObjectSize);
       strcpy(_currentObjectDisplayName, _currentObjectName);

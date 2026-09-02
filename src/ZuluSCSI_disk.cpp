@@ -1585,7 +1585,7 @@ static void diskEjectAction(uint8_t buttonId)
                     && img.ejectFixedDiskEnable)
             {
                 found = true;
-                uint8_t target = img.scsiId & 7;
+                uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
                 if (!img.ejectFixedDiskPending && !img.ejectFixedDiskWriteBlocked)
                 {
                     logmsg("Eject button ", (int)img.ejectButton, " pressed, scheduling eject for fixed disk SCSI ID: ", (int)i);
@@ -1641,7 +1641,7 @@ uint8_t diskEjectButtonUpdate(bool immediate)
         if (ejectors)
         {
             uint8_t mask = 1;
-            for (uint8_t i = 0; i < 8; i++)
+            for (uint8_t i = 0; i < S2S_MAX_TARGETS; i++)
             {
                 if (ejectors & mask) diskEjectAction(ejectors & mask);
                 mask = mask << 1;
@@ -4323,7 +4323,7 @@ void scsiDiskInit()
 // Switch image on ejection.
 void cdromLoadImage(image_config_t &img, const char* next_filename)
 {
-    uint8_t target = img.scsiId & 7;
+    uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 #if ENABLE_AUDIO_OUTPUT
     // terminate audio playback if active on this target (MMC-1 Annex C)
     audio_stop(target);
@@ -4347,7 +4347,7 @@ void cdromLoadImage(image_config_t &img, const char* next_filename)
 // Eject and switch image
 static void genericLoadImage(image_config_t &img, const char* next_filename)
 {
-    uint8_t target = img.scsiId & 7;
+    uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
     if (!img.ejected)
     {
         blink_cancel();
@@ -4401,7 +4401,7 @@ extern "C" void loadImage()
 {
 #if defined(CONTROL_BOARD)
    loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // first will eject
-   loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // secind will clode
+   loadImageToggleEject(g_pendingLoadIndex, g_filenameToLoad); // second will close
 
    g_pendingLoadComplete = g_pendingLoadIndex;
    g_pendingLoadIndex = -1;
