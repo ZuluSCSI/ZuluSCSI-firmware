@@ -190,6 +190,21 @@ bool scsiDiskActivateRomDrive()
 #endif
 }
 
+bool scsiDiskTypeIsRemovable(S2S_CFG_TYPE type)
+{
+  switch (type)
+  {
+  case S2S_CFG_OPTICAL:
+  case S2S_CFG_MO:
+  case S2S_CFG_FLOPPY_14MB:
+  case S2S_CFG_ZIP100:
+  case S2S_CFG_REMOVABLE:
+  case S2S_CFG_SEQUENTIAL:
+    return true;
+  default:
+    return false;
+  }
+}
 
 /***********************/
 /* Image configuration */
@@ -2083,10 +2098,18 @@ int doTestUnitReady()
     {
         ready = 0;
         scsiDev.status = CHECK_CONDITION;
-         // AS/400: preserve pending sense (e.g. UNIT ATTENTION / POWER ON RESET)
-        // so the host sees it before we overwrite with NOT_READY
-        if (scsiDev.target->sense.code == NO_SENSE)
+        if (scsiDev.target->started
+            && !img.file.isOpen()
+            && scsiDiskTypeIsRemovable((S2S_CFG_TYPE)img.deviceType))
         {
+            // Removable device and the image file is not open, likely because the SD card was removed.
+            scsiDev.target->sense.code = NOT_READY;
+            scsiDev.target->sense.asc = MEDIUM_NOT_PRESENT;
+        }
+        else if (scsiDev.target->sense.code == NO_SENSE)
+        {
+            // AS/400: preserve pending sense (e.g. UNIT ATTENTION / POWER ON RESET)
+            // so the host sees it before we overwrite with NOT_READY
             scsiDev.target->sense.code = NOT_READY;
             scsiDev.target->sense.asc = LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED;
         }
