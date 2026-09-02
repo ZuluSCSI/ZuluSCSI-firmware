@@ -243,18 +243,18 @@ void init_logfile()
   bool temp_log_to_sd = ini_getbool("SCSI", "LogToSDCard", 1, CONFIGFILE);
   if (!temp_log_to_sd)
   {
-    logmsg("========================================================");
-    logmsg(" Warning LogToSDCard is disabled, no further log messages");
-    logmsg(" will written to the SD card's ", LOGFILE);
     logmsg("=========================================================");
+    logmsg(" WARNING: LogToSDCard is disabled, no further log messages");
+    logmsg(" will be written to the SD card", LOGFILE);
+    logmsg("==========================================================");
   }
 
   if (!g_log_to_sd && temp_log_to_sd)
   {
-    logmsg("========================================================");
+    logmsg("==========================================================");
     logmsg(" LogToSDCard is has been reenabled, log messages will");
-    logmsg(" be written to the SD card's ", LOGFILE);
-    logmsg("=========================================================");
+    logmsg(" be written to the SD card ", LOGFILE);
+    logmsg("==========================================================");
     g_log_to_sd = temp_log_to_sd;
   }
 
