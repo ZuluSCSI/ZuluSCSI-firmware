@@ -30,7 +30,7 @@
 #include <stddef.h>
 #include <scsiPhy.h>
 
- # define ZULUSCSI_DEFAULT_LOG_MASK S2S_CFG_TARGET_ID_BITS
+#define ZULUSCSI_DEFAULT_LOG_MASK S2S_CFG_TARGETS_BITMAP
 
 
 // Get total number of bytes that have been written to log
@@ -45,6 +45,7 @@ const char *log_get_buffer(uint32_t *startpos, uint32_t *available = nullptr);
 extern "C" bool g_log_debug;
 extern "C" bool g_log_ignore_busy_free;
 extern "C" uint32_t g_scsi_log_mask;
+extern "C" bool g_log_to_sd;
 
 // Firmware version string
 extern const char *g_log_firmwareversion;
@@ -55,6 +56,9 @@ void log_raw(const char *str);
 
 // Log byte as hex
 void log_raw(uint8_t value);
+
+// Log byte as hex
+void log_raw(uint16_t value);
 
 // Log integer as hex
 void log_raw(uint32_t value);

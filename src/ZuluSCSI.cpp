@@ -77,7 +77,7 @@ bool g_rawdrive_active;
 bool g_romdrive_active;
 bool g_sdcard_present;
 bool g_rebooting = false;
-bool g_log_to_sd;
+bool g_log_to_sd = true;
 #ifndef SD_SPEED_CLASS_WARN_BELOW
 #define SD_SPEED_CLASS_WARN_BELOW 10
 #endif
@@ -239,7 +239,27 @@ void init_logfile()
   {
     logmsg("Failed to open log file: ", SD.sdErrorCode());
   }
+
+  bool temp_log_to_sd = ini_getbool("SCSI", "LogToSDCard", 1, CONFIGFILE);
+  if (!temp_log_to_sd)
+  {
+    logmsg("========================================================");
+    logmsg(" Warning LogToSDCard is disabled, no further log messages");
+    logmsg(" will written to the SD card's ", LOGFILE);
+    logmsg("=========================================================");
+  }
+
+  if (!g_log_to_sd && temp_log_to_sd)
+  {
+    logmsg("========================================================");
+    logmsg(" LogToSDCard is has been reenabled, log messages will");
+    logmsg(" be written to the SD card's ", LOGFILE);
+    logmsg("=========================================================");
+    g_log_to_sd = temp_log_to_sd;
+  }
+
   save_logfile(true);
+  g_log_to_sd = temp_log_to_sd;
 
   first_open_after_boot = false;
 }
@@ -1211,34 +1231,22 @@ static bool mountSDCard()
 static void reinitSCSI()
 {
 #if defined(ZULUSCSI_HARDWARE_CONFIG)
-  if (!g_hw_config.is_active() && ini_getbool("SCSI", "Debug", 0, CONFIGFILE))
+  if (!g_hw_config.is_active())
   {
-    g_log_debug = true;
+    g_log_debug = ini_getbool("SCSI", "Debug", g_log_debug, CONFIGFILE);
   }
 #else
-  if (ini_getbool("SCSI", "Debug", 0, CONFIGFILE))
-  {
-    g_log_debug = true;
-  }
+  g_log_debug = ini_getbool("SCSI", "Debug", g_log_debug, CONFIGFILE);
 #endif
+
   if (g_log_debug)
   {
-    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", 0xFF, CONFIGFILE) & 0xFF;
-    if (g_scsi_log_mask == 0)
-    {
-      dbgmsg("DebugLogMask set to 0x00, this will silence all debug messages when a SCSI ID has been selected");
-    }
-    else if (g_scsi_log_mask != 0xFF)
-    {
-      dbgmsg("DebugLogMask set to ", (uint8_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
-    }
-
-    g_log_ignore_busy_free = ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE);
-    if (g_log_ignore_busy_free)
-    {
-      dbgmsg("DebugIgnoreBusyFree enabled, BUS_FREE/BUS_BUSY messages suppressed");
-    }
+      logmsg("===========================================================");
+      logmsg(" Debug logging has been enabled. This will severely impact ");
+      logmsg(" performance and is not recommended for normal use.        ");
+      logmsg("===========================================================");
   }
+
 #ifdef PLATFORM_HAS_INITIATOR_MODE
   if (platform_is_initiator_mode_enabled())
   {
@@ -1751,7 +1759,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     char presetName[32];
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
     scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName, true);
-    g_log_to_sd = g_scsi_settings.getSystem()->logToSDCard;
+
     initUIPostSDInit(true);
 
     #ifdef RECLOCKING_SUPPORTED

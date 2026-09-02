@@ -31,6 +31,8 @@ extern "C" {
 
 #define S2S_CFG_SIZE (S2S_MAX_TARGETS * sizeof(S2S_TargetCfg) + sizeof(S2S_BoardCfg))
 
+#define S2S_CFG_TARGETS_BITMAP ((1 << S2S_MAX_TARGETS) - 1)
+
 typedef enum
 {
 	S2S_CFG_TARGET_ID_BITS = (S2S_MAX_TARGETS - 1),

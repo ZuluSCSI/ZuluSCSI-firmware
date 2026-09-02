@@ -77,6 +77,19 @@ void log_raw(uint8_t value)
     log_raw(hexbuf);
 }
 
+// Log byte as hex
+void log_raw(uint16_t value)
+{
+    const char *nibble = "0123456789ABCDEF";
+    char hexbuf[7] = {
+        '0', 'x', 
+        nibble[(value >> 12) & 0xF], nibble[(value >>  8) & 0xF],
+        nibble[(value >>  4) & 0xF], nibble[(value >>  0) & 0xF],
+        0
+    };
+    log_raw(hexbuf);
+}
+
 // Log integer as hex
 void log_raw(uint32_t value)
 {
