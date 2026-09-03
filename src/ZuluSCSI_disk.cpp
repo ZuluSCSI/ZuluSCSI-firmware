@@ -789,8 +789,15 @@ static void checkDiskGeometryDivisible(image_config_t &img)
     }
 }
 
-bool scsiDiskFilenameValid(const char* name)
+bool scsiDiskFilenameValid(const char* name, bool quiet)
 {
+    // Check first character
+    if (!isalnum(name[0]))
+    {
+        // ignore files that don't start with a letter or a number
+        return false;
+    }
+
     // Check file extension
     const char *extension = strrchr(name, '.');
     if (extension)
@@ -829,16 +836,10 @@ bool scsiDiskFilenameValid(const char* name)
         {
             if (strcasecmp(extension, archive_exts[i]) == 0)
             {
-                logmsg("-- Ignoring compressed file ", name);
+                if (!quiet) logmsg("-- Ignoring compressed file ", name);
                 return false;
             }
         }
-    }
-    // Check first character
-    if (!isalnum(name[0]))
-    {
-        // ignore files that don't start with a letter or a number
-        return false;
     }
     return true;
 }

@@ -174,7 +174,7 @@ int scsiDiskReadImgX(const char *section, int index, char *buf, size_t buflen);
 
 // Checks if a filename extension is appropriate for further processing as a disk image.
 // The current implementation does not check the the filename prefix for validity.
-bool scsiDiskFilenameValid(const char* name);
+bool scsiDiskFilenameValid(const char* name, bool quiet = false);
 
 // Check if a directory contains a .cue sheet file.
 // This is used when single .cue sheet references multiple .bin files.

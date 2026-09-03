@@ -373,11 +373,14 @@ static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char im
   imgname[MAX_FILE_PATH] = '\0';
   int namelen = strlen(imgname);
 
-  // Strip .txt extension if any
-  if (namelen >= 4 && strncasecmp(imgname + namelen - 4, ".txt", 4) == 0)
+  // Strip possible .txt.txt extension or single .txt extension, and add .bin if no extension
+  for (uint8_t i = 0; i < 2; i++)
   {
-    namelen -= 4;
-    imgname[namelen] = '\0';
+    if (namelen >= 4 && strncasecmp(imgname + namelen - 4, ".txt", 4) == 0)
+    {
+      namelen -= 4;
+      imgname[namelen] = '\0';
+    }
   }
 
   // Add .bin if no extension
@@ -385,6 +388,28 @@ static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char im
   {
     namelen += 4;
     strcat(imgname, ".bin");
+  }
+  
+  if (!scsiDiskFilenameValid(imgname, true))
+  {
+    logmsg("---- Create command filename '", cmd_filename, "' creates an invalid filename '", imgname, "'");
+    logmsg("---- Renaming ", cmd_filename, " to \"-Failed-", cmd_filename, "\"");
+    strncpy(imgname, "-Failed-", MAX_FILE_PATH);
+    if (strlen(cmd_filename) < MAX_FILE_PATH - sizeof("-Failed-"))
+    {
+      strcat(imgname, cmd_filename);
+    }
+    else
+    {
+      logmsg("---- Create command filename '", cmd_filename, "' is too long to rename to \"-Failed-", cmd_filename, "\"");
+      return false;
+    }
+
+    if (!SD.rename(cmd_filename, imgname))
+    {
+      logmsg("---- Failed to rename ", cmd_filename, " to \"-Failed-", cmd_filename, "\"");
+      return false;
+    }
   }
 
   return true;
