@@ -553,6 +553,7 @@ static void loadAS400TapeDefaults(uint8_t scsiId, S2S_CFG_TYPE type)
     const uint8_t *modeSense = nullptr; size_t modeSenseLen = 0;
     const uint8_t (*vitalPages)[255] = nullptr; size_t vitalPagesLen = 0;
     const char *presetName = nullptr;
+    uint8_t mediumType = 0;
 
     switch (preset)
     {
@@ -561,6 +562,7 @@ static void loadAS400TapeDefaults(uint8_t scsiId, S2S_CFG_TYPE type)
             inquiry = AS400TapeCISCVendorInquiry; inquiryLen = AS400TapeCISCVendorInquiryLen;
             modeSense = as400_tape_cisc_mode_sense_all_pages; modeSenseLen = as400_tape_cisc_mode_sense_all_pagesLen;
             // No VPD table -- the real captured CISC drive doesn't support VPD/EVPD at all.
+            mediumType = AS400TapeCISCMediumType;
             presetName = "CISC";
             break;
         case DEV_PRESET_AS400_BS522: [[fallthrough]];
@@ -568,6 +570,7 @@ static void loadAS400TapeDefaults(uint8_t scsiId, S2S_CFG_TYPE type)
             inquiry = AS400TapePPCVendorInquiry; inquiryLen = AS400TapePPCVendorInquiryLen;
             modeSense = as400_tape_ppc_mode_sense_all_pages; modeSenseLen = as400_tape_ppc_mode_sense_all_pagesLen;
             vitalPages = AS400TapePPCVitalPages; vitalPagesLen = AS400TapePPCVitalPagesLen;
+            mediumType = AS400TapePPCMediumType;
             presetName = "PPC";
             break;
         default:
@@ -577,6 +580,20 @@ static void loadAS400TapeDefaults(uint8_t scsiId, S2S_CFG_TYPE type)
     }
 
     bool loaded_default_data = false;
+
+    // MODE SENSE header "Medium Type" -- see AS400TapeCISCMediumType's own
+    // comment for why this can't come from the .tap file itself, and why
+    // leaving it at the generic default (0x00, "no cartridge") is wrong
+    // once a tape image is actually configured. Respects an explicit
+    // MediumType= ini override the same way the SPD/modesense/VPD data
+    // above does: only fill in when the generic device-settings default
+    // (-1, "not set") is still in place.
+    scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(scsiId);
+    if (devCfg->mediumType < 0)
+    {
+        devCfg->mediumType = mediumType;
+        loaded_default_data = true;
+    }
 
     if (g_custom_spd[scsiId].length == 0)
     {

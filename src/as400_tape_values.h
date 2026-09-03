@@ -42,6 +42,17 @@ extern const size_t  AS400TapeCISCVendorInquiryLen;
 extern const uint8_t as400_tape_cisc_mode_sense_all_pages[];
 extern const size_t  as400_tape_cisc_mode_sense_all_pagesLen;
 
+// MODE SENSE header "Medium Type" byte for a *loaded* cartridge, matching
+// this exact captured drive (product "IBM 4100"). Real hardware only
+// reports 0x00 ("no cartridge") when the drive is genuinely empty --
+// confirmed across 5 real drives x 4 cartridges, see project notes -- so
+// the compiled-in identity above (itself captured with no cartridge
+// loaded) must not be served as-is once a tape image is actually
+// configured. 0x03 is this drive family's own real code for a loaded
+// DC6525 cartridge, which is what the project's existing dc6525.tap test
+// data was captured from.
+extern const uint8_t AS400TapeCISCMediumType;
+
 // PPC-era ("IBM SLR5", Tandberg-manufactured): standard INQUIRY,
 // MODE SENSE(6) page 0x3F, and a 14-page VPD table (the real drive supports
 // VPD/EVPD, including vendor pages 0xC7/0xD0 that real RISC-side AS/400
@@ -57,5 +68,12 @@ extern const size_t  as400_tape_ppc_mode_sense_all_pagesLen;
 // included), so the page code is readable at row[2].
 extern const uint8_t AS400TapePPCVitalPages[][255];
 extern const size_t  AS400TapePPCVitalPagesLen;
+
+// Same idea as AS400TapeCISCMediumType above, for the PPC identity. This
+// drive family's own real code (revision 0938, matching this exact
+// capture) for a loaded SLR5-branded cartridge -- the most apt real value
+// for an "IBM SLR5" drive to report as loaded, since it's the drive's own
+// native cartridge type.
+extern const uint8_t AS400TapePPCMediumType;
 
 #endif
