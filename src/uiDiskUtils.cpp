@@ -27,8 +27,8 @@
 
 extern "C" void getImgXByIndex(uint8_t id, int index, char* buf, size_t buflen, u_int64_t &size)
 {
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(id);
+    char section[SCSI_INI_SECTION_SIZE];
+    scsiGetIniSection(id, section, sizeof(section));
 
     scsiDiskReadImgX(section, index, buf, buflen);
 

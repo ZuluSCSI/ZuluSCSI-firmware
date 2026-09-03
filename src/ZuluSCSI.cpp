@@ -648,8 +648,8 @@ static bool autoCreateAS400ProfileImages()
     if (s2s_getConfigById(id))
       continue; // the scan below already found a real image for this ID
 
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(id);
+    char section[SCSI_INI_SECTION_SIZE];
+    scsiGetIniSection(id, section, sizeof(section));
     char profileName[64];
     ini_gets(section, "AS400_DiskProfile", "", profileName, sizeof(profileName), CONFIGFILE);
     if (profileName[0] == '\0')
@@ -1206,6 +1206,7 @@ static bool mountSDCard()
   // When switching between FAT and exFAT cards the pointers
   // are invalidated and accessing old files results in crash.
   invalidate_ini_cache();
+  scsiResetIniSectionWarnings();
   g_logfile.close();
   scsiDiskCloseSDCardImages();
 
