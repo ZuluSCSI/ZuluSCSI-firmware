@@ -38,7 +38,7 @@
 #if defined(ZULUSCSI_V1_0) || defined(ZULUSCSI_V1_1_plus)
 #define FW_VER_SUFFIX   "V1.x-LTS-release"
 #else
-#define FW_VER_SUFFIX   "dev"
+#define FW_VER_SUFFIX   "release"
 
 #endif
 
