@@ -192,6 +192,14 @@ extern "C" void scsiPhyReset(void)
     gpio_set_irq_enabled(SCSI_IN_SEL, GPIO_IRQ_EDGE_FALL, true);
 }
 
+extern "C" void scsiPhyDisable(void)
+{
+    gpio_set_irq_enabled(SCSI_IN_BSY, GPIO_IRQ_EDGE_RISE, false);
+    gpio_set_irq_enabled(SCSI_IN_RST, GPIO_IRQ_EDGE_FALL, false);
+    gpio_set_irq_enabled(SCSI_IN_SEL, GPIO_IRQ_EDGE_FALL, false);
+    SCSI_RELEASE_OUTPUTS();
+}
+
 /************************/
 /* SCSI bus phase logic */
 /************************/

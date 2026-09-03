@@ -29,15 +29,33 @@
 
 // Request to stop activity and reset the bus
 extern volatile int g_scsiHostPhyReset;
+extern uint8_t g_scsiHostPhySelectionStage;
+extern uint32_t g_scsiHostPhySelectionSignals;
 
 // Release bus and pulse RST signal, initialize PHY to host mode.
 void scsiHostPhyReset(void);
+void scsiHostPhyActivateNoReset(void);
+// Return the initiator-only ACK/ATN pins to inputs before target-mode restore.
+void scsiHostPhyDeactivate(void);
+
+// Wait until both BSY and SEL have remained inactive for stable_us.
+// This is required when changing from target mode to initiator mode on a
+// live multi-initiator bus.
 
 // Select a device, id 0-7.
 // target_id - target device id 0-7
 // initiator_id - host device id 0-7
 // Returns true if the target answers to selection request.
-bool scsiHostPhySelect(int target_id, uint8_t initiator_id);
+bool scsiHostPhySelect(int target_id, uint8_t initiator_id, bool request_atn);
+
+// Raw active-high signal snapshot for diagnostics. Bits 0..6 are
+// BSY, SEL, REQ, CD, IO, MSG and ATN; bits 8..15 contain the data bus.
+uint32_t scsiHostPhyGetSignals(void);
+
+// Compact Blaster GPIO snapshot for diagnostics. Bits 0..8 are pin
+// directions, 9..17 are pad inputs, and 18..26 are output-latch levels for
+// REQ, CD, MSG, IO, ATN, ACK, SEL, BSY and RST respectively.
+uint32_t scsiHostPhyGetGPIOState(void);
 
 // Set SCSI ATN signal to request MESSAGE_OUT phase
 void scsiHostPhySetATN(bool atn);

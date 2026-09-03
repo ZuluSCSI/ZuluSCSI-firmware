@@ -74,6 +74,23 @@ SECTIONS
         *(.init)
         *libgcc.a:cmse_nonsecure_call.o
 
+        /* ZBridge's PIO/DMA feeder is compact and runs while XIP remains
+         * available. Keep it in flash so Direct RAM does not consume the
+         * RP2350 main-SRAM reserve used by the upstream initiator. */
+        *ZBridgeFastHostWrite.cpp.o(.text .text*)
+        *ZBridgeFastHostRead.cpp.o(.text .text*)
+        /* These ZBridge entry points are outside the live Direct RAM DATA OUT
+         * loop. Keeping only this cold code in XIP leaves the USB parser in
+         * SRAM while restoring deterministic linker headroom. */
+        *ZBridge.cpp.o(.text._ZN12_GLOBAL__N_114enterInitiatorEhhPh)
+        *ZBridge.cpp.o(.text._ZN12_GLOBAL__N_119handleMIDISendBatchEPKht.constprop.0)
+        *ZBridge.cpp.o(.text._ZN12_GLOBAL__N_115handleMIDIFlushEPKht.constprop.0)
+        *ZBridge.cpp.o(.text._Z19zbridge_stream_readPhm)
+        *ZBridge.cpp.o(.text.startup._GLOBAL__sub_I__Z21zbridge_binary_activev)
+        /* Direct RAM is headless; display/web UI code is never on its SCSI or
+         * USB transfer path and is safer in the RP2350 XIP region. */
+        *libZuluSCSI_UI_RP2MCU.a:(.text .text*)
+        *libZuluSCSI_WebUI_RP2MCU.a:(.text .text*)
 /* =============================================================== */
     /* Exclude as much code from flash as possible as the RP2350 series has twice as much SRAM */
         *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *libZuluSCSI_platform_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *.cpp.o)  .text*)
@@ -284,6 +301,10 @@ SECTIONS
         "ERROR: Pico second stage bootloader must be no more than 256 bytes in size")
 
     .rodata : {
+        *ZBridgeFastHostWrite.cpp.o(.rodata .rodata*)
+        *ZBridgeFastHostRead.cpp.o(.rodata .rodata*)
+        *ZBridge.cpp.o(.rodata._ZN12_GLOBAL__N_119handleMIDISendBatchEPKht.constprop.0*)
+        *ZBridge.cpp.o(.rodata._ZN12_GLOBAL__N_115handleMIDIFlushEPKht.constprop.0*)
         /* Exclude as many constants as possible from flash as corresponding to the code that has been removed from flash
             to keep the MCU from having to hit flash while it is executing in SRAM */
         *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:  *libZuluSCSI_platform_RP2MCU.a: *libZuluSCSI_UI_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *CUEParser.a: *minIni.a: *.cpp.o) .rodata*)

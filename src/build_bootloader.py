@@ -39,9 +39,16 @@ dep_objs = []
 for nodelist in env["PIOBUILDFILES"]:
     for node in nodelist:
         filename = str(node.rfile())
-        if 'ZuluSCSI_main' not in filename:
+        basename = os.path.basename(filename)
+        if ('ZuluSCSI_main' not in filename
+                and basename not in ('ZBridge.cpp.o', 'ZBridgeFastHostWrite.cpp.o',
+                                     'ZBridgeFastHostRead.cpp.o')):
             dep_objs.append(node)
 # print("Bootloader dependencies: ", type(dep_objs), str([str(f.rfile()) for f in dep_objs]))
+zbridge_bootloader_stubs = env2.Object(
+    os.path.join("$BUILD_DIR", "ZBridgeBootloaderStubs.o"),
+    [os.path.join(env.subst("$PROJECT_DIR"), "ZBridgeBootloaderStubs.cpp")]
+)
 
 # Use different linker script for bootloader
 if env2.GetProjectOption("ldscript_bootloader"):
@@ -52,7 +59,7 @@ if env2.GetProjectOption("ldscript_bootloader"):
 # Build bootloader.elf
 bootloader_elf = env2.Program(
     os.path.join("$BUILD_DIR", "bootloader.elf"),
-    [bootloader_main] + dep_objs
+    [bootloader_main, zbridge_bootloader_stubs] + dep_objs
 )
 
 # Strip bootloader symbols so that it can be combined with main program

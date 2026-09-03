@@ -139,6 +139,7 @@ void platform_reset_watchdog();
 
 // Reset MCU
 void platform_reset_mcu(uint32_t reset_in_ms);
+void platform_enter_bootloader(void);
 
 // Returns an 8-byte (64bit) mcu id as an 8-byte array
 const uint8_t* platform_get_8byte_mcu_id();

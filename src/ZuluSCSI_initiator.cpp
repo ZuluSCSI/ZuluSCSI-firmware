@@ -164,6 +164,12 @@ int scsiInitiatorGetOwnID()
     return g_initiator_state.initiator_id;
 }
 
+void scsiInitiatorSetOwnID(uint8_t initiator_id)
+{
+    g_initiator_state.initiator_id = initiator_id & 7;
+    memset(g_initiator_state.targetBusWidth, 0, sizeof(g_initiator_state.targetBusWidth));
+}
+
 // Update progress bar LED during transfers
 static void scsiInitiatorUpdateLed()
 {
@@ -755,15 +761,36 @@ void scsiInitiatorMainLoop()
  * Low level command implementations *
  *************************************/
 
+uint32_t g_scsiInitiatorTimeoutSignals = 0;
+int8_t g_scsiInitiatorTimeoutPhase = BUS_FREE;
+uint8_t g_scsiInitiatorTimeoutSelectionStage = 0;
+uint8_t g_scsiInitiatorPhaseHistory = 0;
+uint32_t g_scsiInitiatorTimeoutGPIOState = 0;
+
 int scsiInitiatorRunCommand(int target_id,
                             const uint8_t *command, size_t cmdLen,
                             uint8_t *bufIn, size_t bufInLen,
                             const uint8_t *bufOut, size_t bufOutLen,
-                            bool returnDataPhase, uint32_t timeout)
+                            bool returnDataPhase, uint32_t timeout,
+                            bool abortOnTimeout, bool requestIdentify)
 {
 
-    if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
+    g_scsiInitiatorTimeoutSignals = 0;
+    g_scsiInitiatorTimeoutPhase = BUS_FREE;
+    g_scsiInitiatorTimeoutSelectionStage = 0;
+    g_scsiInitiatorPhaseHistory = 0;
+    g_scsiInitiatorTimeoutGPIOState = 0;
+
+    // Akai processor targets follow the SCSI-2 initiator sequence used by
+    // MESA/SCSI2Pi: assert ATN during selection, then send IDENTIFY in the
+    // MESSAGE OUT phase before the command. Generic disk callers retain the
+    // historical no-ATN behavior unless they explicitly request it.
+    if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id, requestIdentify))
     {
+        g_scsiInitiatorTimeoutSignals = g_scsiHostPhySelectionSignals;
+        g_scsiInitiatorTimeoutGPIOState = scsiHostPhyGetGPIOState();
+        g_scsiInitiatorTimeoutSelectionStage = g_scsiHostPhySelectionStage;
+        if (requestIdentify) scsiHostPhySetATN(false);
 #ifndef ZULUSCSI_NETWORK
         dbgmsg("------ Target ", target_id, " did not respond");
 #endif
@@ -776,8 +803,30 @@ int scsiInitiatorRunCommand(int target_id,
     uint32_t start = millis();
     while ((phase = (SCSI_PHASE)scsiHostPhyGetPhase()) != BUS_FREE)
     {
+        uint32_t elapsed = (uint32_t)(millis() - start);
+
+        // ZBridge commands run synchronously on the USB command path. The
+        // historical timeout argument only extended the watchdog; it did not
+        // return from a target that selected successfully but never asserted
+        // a command phase. Allow bridge callers to bound that wait, reset the
+        // wedged SCSI transaction, and report an error instead of disappearing
+        // from USB until the MCU watchdog eventually fires.
+        if (abortOnTimeout && timeout > 0 && elapsed >= timeout)
+        {
+            g_scsiInitiatorTimeoutSignals = scsiHostPhyGetSignals();
+            g_scsiInitiatorTimeoutGPIOState = scsiHostPhyGetGPIOState();
+            g_scsiInitiatorTimeoutPhase = (int8_t)phase;
+            g_scsiInitiatorTimeoutSelectionStage = g_scsiHostPhySelectionStage;
+            logmsg("SCSI initiator command phase timeout for target ", target_id,
+                   ", phase ", (int)phase, ", signals ",
+                   (uint32_t)g_scsiInitiatorTimeoutSignals);
+            if (requestIdentify) scsiHostPhySetATN(false);
+            scsiHostPhyReset();
+            return -4;
+        }
+
         // If explicit timeout is specified, prevent watchdog from triggering too early.
-        if ((uint32_t)(millis() - start) < timeout)
+        if (elapsed < timeout)
         {
             platform_reset_watchdog();
         }
@@ -786,6 +835,7 @@ int scsiInitiatorRunCommand(int target_id,
 
         if (phase == MESSAGE_IN)
         {
+            g_scsiInitiatorPhaseHistory |= 1u << 5;
             uint8_t msg = 0;
             scsiHostRead(&msg, 1);
 
@@ -796,15 +846,19 @@ int scsiInitiatorRunCommand(int target_id,
         }
         else if (phase == MESSAGE_OUT)
         {
+            g_scsiInitiatorPhaseHistory |= 1u << 0;
             uint8_t identify_msg = 0x80;
             scsiHostWrite(&identify_msg, 1);
+            if (requestIdentify) scsiHostPhySetATN(false);
         }
         else if (phase == COMMAND)
         {
+            g_scsiInitiatorPhaseHistory |= 1u << 1;
             scsiHostWrite(command, cmdLen);
         }
         else if (phase == DATA_IN)
         {
+            g_scsiInitiatorPhaseHistory |= 1u << 2;
             if (returnDataPhase) return 0;
             if (bufInLen == 0)
             {
@@ -825,6 +879,7 @@ int scsiInitiatorRunCommand(int target_id,
         }
         else if (phase == DATA_OUT)
         {
+            g_scsiInitiatorPhaseHistory |= 1u << 3;
             if (returnDataPhase) return 0;
             if (bufOutLen == 0)
             {
@@ -845,6 +900,7 @@ int scsiInitiatorRunCommand(int target_id,
         }
         else if (phase == STATUS)
         {
+            g_scsiInitiatorPhaseHistory |= 1u << 4;
             uint8_t tmp = -1;
             scsiHostRead(&tmp, 1);
             status = tmp;
@@ -854,7 +910,22 @@ int scsiInitiatorRunCommand(int target_id,
         }
     }
 
+    if (requestIdentify) scsiHostPhySetATN(false);
+    if (phase == BUS_FREE) g_scsiInitiatorPhaseHistory |= 1u << 6;
     scsiHostWaitBusFree();
+
+    // A target that asserted BSY (selection stage 3/4) and then dropped the
+    // bus before presenting any phase is not a selection failure. Preserve
+    // the real state and classify it as a bounded phase failure so ZBridge's
+    // host receives useful diagnostics instead of the stale "no BSY" text.
+    if (status == -1 && g_scsiHostPhySelectionStage >= 3)
+    {
+        g_scsiInitiatorTimeoutSignals = scsiHostPhyGetSignals();
+        g_scsiInitiatorTimeoutGPIOState = scsiHostPhyGetGPIOState();
+        g_scsiInitiatorTimeoutPhase = BUS_FREE;
+        g_scsiInitiatorTimeoutSelectionStage = g_scsiHostPhySelectionStage;
+        return -4;
+    }
 
     return status;
 }
@@ -868,7 +939,7 @@ int scsiInitiatorMessage(int target_id,
 
     scsiHostPhySetATN(true);
 
-    if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id))
+    if (!scsiHostPhySelect(target_id, g_initiator_state.initiator_id, false))
     {
         dbgmsg("------ Target ", target_id, " did not respond");
         scsiHostPhyRelease();

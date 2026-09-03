@@ -70,6 +70,7 @@
 #include <ZuluSCSI_WebUI.h>
 
 #include "ui.h"
+#include "ZBridge.h"
 
 SdFs SD;
 FsFile g_logfile;
@@ -1137,6 +1138,13 @@ static void reinitSCSI()
     // Initializer initiator mode state machine
     scsiInitiatorInit();
 
+#ifdef ZBRIDGE_NATIVE_DIAGNOSTIC
+    // Capture the physical Blaster GPIO transitions around ZBridge's Akai
+    // selection attempt. The file is decoded after returning to normal
+    // combined target/direct mode.
+    platform_init_sniffer();
+#endif
+
     blinkStatus(BLINK_STATUS_OK);
 
     return;
@@ -1746,14 +1754,19 @@ extern "C" void zuluscsi_main_loop(void)
 #ifdef PLATFORM_HAS_INITIATOR_MODE
   if (is_initiator)
   {
+#if !defined(ZBRIDGE_NATIVE_DIAGNOSTIC) && !defined(ZBRIDGE_DIRECT_RAM_MODE)
     scsiInitiatorMainLoop();
     save_logfile();
+#endif
   }
   else
 #endif
   {
-    scsiPoll();
-    scsiDiskPoll();
+    if (!zbridge_target_quiesced())
+    {
+      scsiPoll();
+      scsiDiskPoll();
+    }
     scsiLogPhaseChange(scsiDev.phase);
 
     // Save log periodically during status phase if there are new messages.

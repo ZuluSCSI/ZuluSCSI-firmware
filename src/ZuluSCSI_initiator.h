@@ -49,6 +49,14 @@ void scsiInitiatorMainLoop();
 
 // Get the SCSI ID used by the initiator itself
 int scsiInitiatorGetOwnID();
+void scsiInitiatorSetOwnID(uint8_t initiator_id);
+
+// Raw SCSI signal state captured immediately before a bounded command timeout.
+extern uint32_t g_scsiInitiatorTimeoutSignals;
+extern int8_t g_scsiInitiatorTimeoutPhase;
+extern uint8_t g_scsiInitiatorTimeoutSelectionStage;
+extern uint8_t g_scsiInitiatorPhaseHistory;
+extern uint32_t g_scsiInitiatorTimeoutGPIOState;
 
 // Select target and execute SCSI command
 // If timeout is non-zero, it is added to the default watchdog timeout.
@@ -57,7 +65,9 @@ int scsiInitiatorRunCommand(int target_id,
                             uint8_t *bufIn, size_t bufInLen,
                             const uint8_t *bufOut, size_t bufOutLen,
                             bool returnDataPhase = false,
-                            uint32_t timeout = 30000);
+                            uint32_t timeout = 30000,
+                            bool abortOnTimeout = false,
+                            bool requestIdentify = false);
 
 // Run TestUnitReady command and exchange messages
 int scsiInitiatorMessage(int target_id,

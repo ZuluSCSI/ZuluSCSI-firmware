@@ -54,6 +54,7 @@ extern volatile uint8_t g_scsi_ctrl_bsy;
 
 // Called when SCSI RST signal has been asserted, should release bus.
 void scsiPhyReset(void);
+void scsiPhyDisable(void);
 
 // Change MSG / CD / IO signal states and wait for necessary transition time.
 // Phase argument is one of SCSI_PHASE enum values.

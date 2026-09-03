@@ -20,6 +20,7 @@
 **/
 
 #include "ui.h"
+#include "ZBridge.h"
 
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI_log.h"
@@ -628,6 +629,11 @@ void platform_init()
 // late_init() only runs in main application, SCSI not needed in bootloader
 void platform_late_init()
 {
+#if defined(ZBRIDGE_NATIVE_DIAGNOSTIC) || defined(ZBRIDGE_DIRECT_RAM_MODE)
+    // Diagnostic build: boot through the platform's real initiator branch so
+    // ZBridge can distinguish a live role-handoff bug from a PHY limitation.
+    g_scsi_initiator = true;
+#endif
 #if defined(HAS_DIP_SWITCHES) && defined(PLATFORM_HAS_INITIATOR_MODE)
     if (g_scsi_initiator == true)
     {
@@ -801,6 +807,9 @@ void platform_late_init()
 
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
     Serial.begin();
+#if defined(ZBRIDGE_DIRECT_RAM_MODE)
+    zbridge_usb_init();
+#endif
 #endif
     scsi_accel_rp2040_init();
 
@@ -1064,6 +1073,7 @@ bool platform_serial_connected()
 
 uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
 {
+    if (zbridge_binary_active()) return 0;
     if (len > 0 && usb_serial_connected() && Serial.availableForWrite())
     {
         if (len > CFG_TUD_CDC_EP_BUFSIZE) len = CFG_TUD_CDC_EP_BUFSIZE;
@@ -1085,6 +1095,7 @@ uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
 static void usb_log_poll()
 {
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
+    if (zbridge_binary_active()) return;
     static uint32_t logpos = 0;
 
     if (!usb_serial_connected()) return;
@@ -1453,6 +1464,12 @@ void platform_reset_mcu(uint32_t reset_in_ms)
         reset_usb_boot(0, 0);
     else
         watchdog_reboot(0, 0, reset_in_ms);
+}
+
+void platform_enter_bootloader(void)
+{
+    g_uf2_mode = true;
+    platform_reset_mcu(0);
 }
 
 const uint8_t* platform_get_8byte_mcu_id()
@@ -1830,6 +1847,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
 #ifndef PIO_FRAMEWORK_ARDUINO_NO_USB
 
     if (!usb_serial_connected()) return USB_INPUT_NONE;
+    if (zbridge_poll()) return USB_INPUT_NONE;
 
     if (platform_msc_lock_get()) return USB_INPUT_NONE; // Avoid re-entrant USB events
 
