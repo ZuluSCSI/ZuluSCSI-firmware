@@ -67,6 +67,8 @@ SECTIONS
         *ZuluSCSI_mode.cpp.o*(*)
         *ZuluSCSI_blink.cpp.o*(*)
         *ZuluSCSI_buffer_control.cpp.o*(*)
+        *ZBridgeFastHostRead.cpp.o*(*)
+        *ZBridgeFastHostWrite.cpp.o*(*)
         *uiDiskUtils.cpp.o*(*)
         *SDNavigator.cpp.o*(*)
     }
@@ -79,6 +81,13 @@ SECTIONS
         setPendingImageLoad = 0;
         platform_poll = 0;
         _vfprintf_r = 0;
+        _Z21zbridge_binary_activev = 0;
+        _Z30zbridge_streaming_write_activev = 0;
+        _Z20zbridgeFastHostWritePKhmPVi = 0;
+        _Z29zbridge_streaming_read_activev = 0;
+        _Z25zbridgeFastHostStreamReadmPiiPVi = 0;
+        _Z26zbridgeFastHostStreamWritemPVi = 0;
+        _svfprintf_r = 0;
 
         __logical_binary_start = .;
         KEEP (*(.btldr_vectors))
