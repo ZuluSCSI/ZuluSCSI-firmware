@@ -877,6 +877,18 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 // Setting not stored m_sys or m_dev but should be printed out
     log_ini_getbool("SCSI", "Debug", 0, CONFIGFILE, log_settings);
     log_ini_getbool("SCSI", "LogToSDCard", 1, CONFIGFILE, log_settings);
+
+    int8_t dbgLogScsiId = log_ini_getl("SCSI", "DebugLogSCSIID", -1, CONFIGFILE, log_settings);
+    if (dbgLogScsiId >= 0 && dbgLogScsiId < S2S_MAX_TARGETS)
+    {
+        g_scsi_log_mask = 1 << dbgLogScsiId;
+    }
+    else if (dbgLogScsiId != -1)
+    {
+        logmsg("---- DebugLogSCSIID value ", dbgLogScsiId, " is invalid, must be between 0 and ", PLATFORM_MAX_BUS_WIDTH - 1);
+        dbgLogScsiId = -1;
+    }
+
 #if PLATFORM_MAX_BUS_WIDTH == 1
     log_ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE, log_settings, &log_getl_16bit_hex);
 #else
@@ -901,22 +913,26 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     log_ini_getl("SCSI", "ROMDriveSCSIID", -1, CONFIGFILE, log_settings);
 
 
-    g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE) & ZULUSCSI_DEFAULT_LOG_MASK;
-    if (!disable_logging && g_log_debug && g_scsi_log_mask == 0)
+
+    if (dbgLogScsiId == -1)
     {
+        g_scsi_log_mask = ini_getl("SCSI", "DebugLogMask", ZULUSCSI_DEFAULT_LOG_MASK, CONFIGFILE) & ZULUSCSI_DEFAULT_LOG_MASK;
+        if (!disable_logging && g_log_debug && g_scsi_log_mask == 0)
+        {
 #if PLATFORM_MAX_BUS_WIDTH == 1
-        logmsg("---- DebugLogMask set to ", (uint16_t) 0x0000, ", this will silence all debug messages when a SCSI ID has been selected");
+            logmsg("---- DebugLogMask set to ", (uint16_t) 0x0000, ", this will silence all debug messages when a SCSI ID has been selected");
 #else
-        logmsg("---- DebugLogMask set to ", (uint8_t) 0x00, ", this will silence all debug messages when a SCSI ID has been selected");
+            logmsg("---- DebugLogMask set to ", (uint8_t) 0x00, ", this will silence all debug messages when a SCSI ID has been selected");
 #endif
-    }
-    else if (!disable_logging && g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK)
-    {
+        }
+        else if (!disable_logging && g_scsi_log_mask != ZULUSCSI_DEFAULT_LOG_MASK)
+        {
 #if PLATFORM_MAX_BUS_WIDTH == 1
-        logmsg("---- DebugLogMask set to ", (uint16_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
+            logmsg("---- DebugLogMask set to ", (uint16_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
 #else
-        logmsg("---- DebugLogMask set to ", (uint8_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
+            logmsg("---- DebugLogMask set to ", (uint8_t) g_scsi_log_mask, " only SCSI ID's matching the bit mask will be logged");
 #endif
+        }
     }
 
     g_log_ignore_busy_free = ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE);
