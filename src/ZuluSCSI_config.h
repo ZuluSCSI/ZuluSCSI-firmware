@@ -51,6 +51,7 @@
 
 // Configuration and log file paths
 #define CONFIGFILE  "zuluscsi.ini"
+#define CONFIGFILECACHED "zuluscsi-cached.ini"
 #define LOGFILE     "zululog.txt"
 #define LOGFILEPREV "zululog_prev.txt"
 #define LOGFILEROTATE "zululog_rotate"
