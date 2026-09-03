@@ -89,8 +89,15 @@ SECTIONS
         *ZBridge.cpp.o(.text.startup._GLOBAL__sub_I__Z21zbridge_binary_activev)
         /* Direct RAM is headless; display/web UI code is never on its SCSI or
          * USB transfer path and is safer in the RP2350 XIP region. */
+        *minIni.a*:(.text .text*)
+        *libZipParser.a*:(.text .text*)
+        *libZuluSCSI_audio_RP2MCU.a*:(.text .text*)
+        *libZuluSCSI_Control.a*:(.text .text*)
         *libZuluSCSI_UI_RP2MCU.a:(.text .text*)
         *libZuluSCSI_WebUI_RP2MCU.a:(.text .text*)
+        *libAdafruit*:(.text .text*)
+        *libRP2350_Logic_Sniffer.a*:(.text .text*)
+        *libCUEParser.a*:(.text .text*)
 /* =============================================================== */
     /* Exclude as much code from flash as possible as the RP2350 series has twice as much SRAM */
         *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *libZuluSCSI_platform_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *.cpp.o)  .text*)
