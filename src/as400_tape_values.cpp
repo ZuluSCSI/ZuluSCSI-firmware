@@ -52,11 +52,21 @@ const size_t as400_tape_cisc_mode_sense_all_pagesLen = sizeof(as400_tape_cisc_mo
 
 // Real-hardware verified, 2026-09-03: 5 drives x 4 cartridges captured via
 // utils/extract_as400_tape_data.sh. Medium Type is 0x00 ONLY when a drive
-// has no cartridge loaded, on every drive tested; a loaded DC6525 reads as
-// 0x03 on this drive family (same family as "IBM 4100"/"IBM 4200" real
-// captures, revision I08X/I09X). dc6525.tap (the project's existing test
-// tape image) was itself captured from a real DC6525 cartridge.
-const uint8_t AS400TapeCISCMediumType = 0x03;
+// has no cartridge loaded, on every drive tested.
+//
+// Corrected 2026-09-04, hardware-confirmed: this identity's own native
+// format is QIC-1000 (drive #6379). 0x25 (DC9120) is DC9120/DC9100-family's
+// real code for QIC-1000 media, confirmed both by Tandberg's own SCSI-2
+// interface spec and by real hardware -- with `MediumType = 0x25` set,
+// INZTAP on the actual target machine finally progressed past CPF6763
+// (real read/write traffic, clean completion). The previous value here,
+// 0x03, matched dc6525.tap's own source cartridge (DC6525 = QIC-525) --
+// the wrong thing to match, since it's the drive's *target* format that
+// matters, not which cartridge some incidental test image came from. Left
+// as a fixed default rather than derived per-image, since the .tap format
+// itself carries no density/medium-type metadata to derive it from (see
+// project notes) -- override via MediumType= in ini for anything else.
+const uint8_t AS400TapeCISCMediumType = 0x25;
 
 
 // PPC-era: "IBM SLR5" (Tandberg-branded), supports VPD/EVPD (14 declared

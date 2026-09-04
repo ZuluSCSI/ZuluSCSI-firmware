@@ -48,9 +48,15 @@ extern const size_t  as400_tape_cisc_mode_sense_all_pagesLen;
 // confirmed across 5 real drives x 4 cartridges, see project notes -- so
 // the compiled-in identity above (itself captured with no cartridge
 // loaded) must not be served as-is once a tape image is actually
-// configured. 0x03 is this drive family's own real code for a loaded
-// DC6525 cartridge, which is what the project's existing dc6525.tap test
-// data was captured from.
+// configured. 0x25 (DC9120) is this drive's #6379 identity's own native
+// format, QIC-1000 -- confirmed both by the drive vendor's own SCSI-2
+// spec (DC9100/DC9120-family = QIC-1000) and, decisively, by real
+// hardware: INZTAP only progressed (real read/write traffic, no more
+// CPF6763) once MediumType was set to this value on the actual target
+// machine. An earlier choice, 0x03 (matching dc6525.tap's own source
+// cartridge, DC6525 = QIC-525), was wrong -- it matched the wrong thing
+// (an incidental test-data cartridge instead of the drive's actual
+// native/target format) and did not work on real hardware.
 extern const uint8_t AS400TapeCISCMediumType;
 
 // PPC-era ("IBM SLR5", Tandberg-manufactured): standard INQUIRY,
