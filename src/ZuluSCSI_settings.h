@@ -137,6 +137,8 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     uint32_t wifi_keep_alive_s;
 
+    bool dumpCachedSettings;
+
 #if ENABLE_COW
     uint16_t cowBufferSize;
 #endif

@@ -156,8 +156,8 @@ bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen)
     image_config_t &img = scsiDiskGetImageConfig(scsi_id);
 
     // Explicit ImgDir in zuluscsi.ini takes first priority
-    char section[] = "SCSI0";
-    section[4] =  scsiEncodeID(scsi_id);
+    char section[SCSI_INI_SECTION_SIZE];
+    scsiGetIniSection(scsi_id, section, sizeof(section));
     char dirname[MAX_FILE_PATH];
     int dirlen = ini_gets(section, "ImgDir", "", dirname, sizeof(dirname), CONFIGFILE);
     if (dirlen > 0)

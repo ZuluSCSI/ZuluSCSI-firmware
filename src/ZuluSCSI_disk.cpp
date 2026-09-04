@@ -133,6 +133,52 @@ char scsiEncodeID(const uint8_t scsi_id)
     return '\0';
 }
 
+// One bit per SCSI ID, set once the ignored duplicate section has been logged
+static uint16_t g_reported_duplicate_sections = 0;
+
+void scsiResetIniSectionWarnings()
+{
+    g_reported_duplicate_sections = 0;
+}
+
+const char *scsiGetIniSection(const uint8_t scsi_id, char *buffer, size_t buffer_size)
+{
+    assert(buffer != NULL && buffer_size >= SCSI_INI_SECTION_SIZE);
+
+    memcpy(buffer, "SCSI", 4);
+    size_t len = 4;
+    if (scsi_id >= 10)
+        buffer[len++] = '0' + scsi_id / 10;
+    buffer[len++] = '0' + scsi_id % 10;
+    buffer[len] = '\0';
+
+    if (scsi_id < 0xA || scsi_id > 0xF)
+    {
+        // IDs 0 to 9 have only one possible spelling, higher IDs do not exist
+        return buffer;
+    }
+
+    // IDs 10 to 15 can also be written with a hexadecimal digit, e.g. [SCSIB] for ID 11.
+    char legacy_section[SCSI_INI_SECTION_SIZE];
+    memcpy(legacy_section, "SCSI", 4);
+    legacy_section[4] = scsiEncodeID(scsi_id);
+    legacy_section[5] = '\0';
+
+    if (!ini_hassection(buffer, CONFIGFILE))
+    {
+        // No decimal section for this ID, fall back to the hexadecimal one
+        memcpy(buffer, legacy_section, sizeof(legacy_section));
+    }
+    else if (ini_hassection(legacy_section, CONFIGFILE)
+             && !(g_reported_duplicate_sections & (1 << scsi_id)))
+    {
+        g_reported_duplicate_sections |= (1 << scsi_id);
+        logmsg("---- Using [", buffer, "] and ignoring [", legacy_section, "] as they both refer to SCSI ID: ", (int) scsi_id );
+    }
+
+    return buffer;
+}
+
 /************************************************/
 /* ROM drive support (in microcontroller flash) */
 /************************************************/
@@ -905,8 +951,8 @@ static void scsiDiskSetConfig(int target_idx)
 
     scsiDiskSetImageConfig(target_idx);
 
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(target_idx);
+    char section[SCSI_INI_SECTION_SIZE];
+    scsiGetIniSection(target_idx, section, sizeof(section));
     char tmp[32];
 #ifdef DYNAMIC_SCSI_ID
     bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id);
@@ -1213,8 +1259,8 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
 {
     int target_idx = img.scsiId & S2S_CFG_TARGET_ID_BITS;
 
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(target_idx);
+    char section[SCSI_INI_SECTION_SIZE];
+    scsiGetIniSection(target_idx, section, sizeof(section));
 #ifdef DYNAMIC_SCSI_ID
     bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id);
 #endif

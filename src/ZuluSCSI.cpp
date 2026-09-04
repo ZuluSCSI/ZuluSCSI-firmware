@@ -648,8 +648,8 @@ static bool autoCreateAS400ProfileImages()
     if (s2s_getConfigById(id))
       continue; // the scan below already found a real image for this ID
 
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(id);
+    char section[SCSI_INI_SECTION_SIZE];
+    scsiGetIniSection(id, section, sizeof(section));
     char profileName[64];
     ini_gets(section, "AS400_DiskProfile", "", profileName, sizeof(profileName), CONFIGFILE);
     if (profileName[0] == '\0')
@@ -1200,12 +1200,61 @@ void readSCSIDeviceConfig()
 /* Main SCSI handling loop       */
 /*********************************/
 
+// Report how much of the settings cache the config file uses, and warn if it
+// was too large to cache and has to be read from the SD card on every access.
+// Called from reinitSCSI() rather than from the reload in mountSDCard(), so
+// that the debug message is also shown when Debug is enabled in the config
+// file itself instead of by the DIP switch.
+static void logIniCacheUsage()
+{
+  uint32_t capacity = get_ini_cache_capacity();
+
+  if (is_ini_cached())
+  {
+    dbgmsg("Original ", CONFIGFILE, " is ", (int)get_ini_file_length()," bytes, takes up ", (int)get_ini_cache_length(),
+           " bytes in cache out of ", (int)capacity, " bytes after being processed");
+  }
+  else if (get_ini_file_length() > 0)
+  {
+    logmsg("WARNING: '", CONFIGFILE, "' stripped of comments does not fit in the ", (int)capacity,
+           " byte settings cache and will be read from the SD card instead");
+    dbgmsg("'", CONFIGFILE, "' is ", (int)get_ini_file_length(),
+           " bytes and overflows the ", (int)capacity, " byte settings cache");
+  }
+}
+
+// Write out the cached copy of the config file when DumpCachedSettings is set
+static void dumpIniCache()
+{
+  if (!g_scsi_settings.getSystem()->dumpCachedSettings)
+  {
+    return;
+  }
+
+  if (dump_ini_cache(CONFIGFILECACHED))
+  {
+    logmsg("DumpCachedSettings: wrote ", (int)get_ini_cache_length(),
+           " bytes of cached settings to '", CONFIGFILECACHED, "'");
+  }
+  else if (!is_ini_cached())
+  {
+    logmsg("WARNING: DumpCachedSettings is set but '", CONFIGFILE,
+           "' is not cached, nothing to write to '", CONFIGFILECACHED, "'");
+  }
+  else
+  {
+    logmsg("WARNING: DumpCachedSettings failed to write '", CONFIGFILECACHED,
+           "', SD error code: ", (int)SD.sdErrorCode());
+  }
+}
+
 static bool mountSDCard()
 {
   // Prepare for mounting new SD card by closing all old files.
   // When switching between FAT and exFAT cards the pointers
   // are invalidated and accessing old files results in crash.
   invalidate_ini_cache();
+  scsiResetIniSectionWarnings();
   g_logfile.close();
   scsiDiskCloseSDCardImages();
 
@@ -1256,6 +1305,9 @@ static void reinitSCSI()
       logmsg(" performance and is not recommended for normal use.        ");
       logmsg("===========================================================");
   }
+
+  logIniCacheUsage();
+  dumpIniCache();
 
 #ifdef PLATFORM_HAS_INITIATOR_MODE
   if (platform_is_initiator_mode_enabled())
@@ -1837,6 +1889,10 @@ extern "C" void zuluscsi_setup(void)
 {
   platform_init();
   platform_late_init();
+
+  // An .ini file too large to cache is rescanned from the SD card for every
+  // setting that is read, which can take longer than the watchdog allows.
+  set_ini_keep_alive_callback(&platform_reset_watchdog);
 
   bool is_initiator = false;
 #ifdef PLATFORM_HAS_INITIATOR_MODE

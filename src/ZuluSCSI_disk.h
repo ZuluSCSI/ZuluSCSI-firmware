@@ -229,6 +229,18 @@ int8_t scsiParseId(const char scsi_id_text);
 // Encode ID as char
 char scsiEncodeID(const uint8_t scsi_id);
 
+// Size of a buffer that can hold any device section name, e.g. "SCSI15"
+#define SCSI_INI_SECTION_SIZE 7
+
+// Write the CONFIGFILE section name for the given SCSI ID into buffer and return it.
+// IDs 10 to 15 can be written either as [SCSI10] - [SCSI15] or as [SCSIA] - [SCSIF],
+// the decimal form takes precedence when both are present in the file.
+const char *scsiGetIniSection(const uint8_t scsi_id, char *buffer, size_t buffer_size);
+
+// Forget which duplicate device sections have already been reported so that they
+// are logged again after the config file has been re-read.
+void scsiResetIniSectionWarnings();
+
 // Store the SCSI ID read at boot (-1 = not available).
 // Must be called before readSCSIDeviceConfig().
 void scsiDiskSetDynamicId(int8_t id);
