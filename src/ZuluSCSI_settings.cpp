@@ -654,6 +654,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     cfgSys.wifi_keep_alive_s = WIFI_KEEPALIVE_INTERVAL;
 
+    cfgSys.dumpCachedSettings = false;
+
 #ifdef ENABLE_COW
     cfgSys.cowBufferSize = DEFAULT_COW_BUFFER_SIZE;
 #endif
@@ -867,6 +869,9 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     cfgSys.wifi_keep_alive_s = log_ini_getl("SCSI", "WiFiKeepAliveSecs", cfgSys.wifi_keep_alive_s, CONFIGFILE, log_settings);
 
     cfgSys.initiatorParity = log_ini_getbool("SCSI", "InitiatorParity", cfgSys.initiatorParity, CONFIGFILE, log_settings);
+
+    cfgSys.dumpCachedSettings = log_ini_getbool("SCSI", "DumpCachedSettings", cfgSys.dumpCachedSettings, CONFIGFILE, log_settings);
+
 
 #if ENABLE_COW
     cfgSys.cowBufferSize = log_ini_getl("SCSI", "CowBufferSize", cfgSys.cowBufferSize, CONFIGFILE, log_settings);
