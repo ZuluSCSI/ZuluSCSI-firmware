@@ -1,6 +1,6 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2023-2025 Rabbit Hole Computing™
- * Copyright (c) 2023 Eric Helgeson
+ * ZuluSCSI™ - Copyright (c) 2023-2026 Rabbit Hole Computing™
+ * Copyright (c) 2023-2026 Eric Helgeson <eric@bluescsi.com>
  * 
  * This file is licensed under the GPL version 3 or any later version.  
  * 
@@ -60,6 +60,15 @@ const char * const speed_grade_strings[] =
     "B",
     "C",
     "WifiRM2"
+};
+
+// must be in the same order as zuluscsi_wifi_security_t in ZuluSCSI_settings.h
+const char * const wifi_security_strings[] =
+{
+    "WPA2",
+    "WPA2AES",
+    "WPA3",
+    "WPA3WPA2"
 };
 
 // Helper function for case-insensitive string compare
@@ -911,6 +920,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     log_ini_gets("SCSI", "WiFiMACAddress", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     log_ini_gets("SCSI", "WiFiSSID", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     log_ini_gets("SCSI", "WiFiPassword", "", tmp, sizeof(tmp), CONFIGFILE, log_settings, &log_gets_password);
+    log_ini_gets("SCSI", "WiFiSecurity", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
 
     log_ini_getbool("SCSI", "DisableROMDrive", 0, CONFIGFILE, log_settings);
     log_ini_getl("SCSI", "ROMDriveSCSIID", -1, CONFIGFILE, log_settings);
@@ -1086,6 +1096,20 @@ zuluscsi_speed_grade_t ZuluSCSISettings::stringToSpeedGrade(const char *speed_gr
     }
 
     return grade;
+}
+
+zuluscsi_wifi_security_t ZuluSCSISettings::stringToWifiSecurity(const char *wifi_security_target)
+{
+    for (uint8_t i = 0; i < sizeof(wifi_security_strings)/sizeof(wifi_security_strings[0]); i++)
+    {
+        if (strequals(wifi_security_target, wifi_security_strings[i]))
+        {
+            return (zuluscsi_wifi_security_t)i;
+        }
+    }
+
+    logmsg("Setting \"", wifi_security_target, "\" does not match any known Wi-Fi security mode, using WPA2");
+    return WIFI_SECURITY_WPA2;
 }
 
 const char *ZuluSCSISettings::getSpeedGradeString()
