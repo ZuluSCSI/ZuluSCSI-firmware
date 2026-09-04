@@ -27,7 +27,7 @@
 #include <ZuluSCSI_platform_config.h>
 
 // Use variables for version number
-#define FW_VER_NUM      "2026.09.03"
+#define FW_VER_NUM      "2026.09.04"
 
 // FW_VER_SUFFIX must distinguish the GD32/V1.x LTS build line from the
 // RP2040/RP2350 (RP2MCU) build line - they were unintentionally collapsed
@@ -38,7 +38,7 @@
 #if defined(ZULUSCSI_V1_0) || defined(ZULUSCSI_V1_1_plus)
 #define FW_VER_SUFFIX   "V1.x-LTS-release"
 #else
-#define FW_VER_SUFFIX   "release"
+#define FW_VER_SUFFIX   "devel"
 
 #endif
 
