@@ -315,13 +315,11 @@ void log_gets_password(const char *Key, char *buffer, int BufferSize)
 
 void ZuluSCSISettings::setDefaultDriveInfo(uint8_t scsiId, const char *presetName, S2S_CFG_TYPE type, bool log_settings)
 {
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(scsiId);
+    char section[SCSI_INI_SECTION_SIZE];
+    scsiGetIniSection(scsiId, section, sizeof(section));
 
     scsi_device_settings_t &cfgDev = m_dev[scsiId];
     scsi_device_settings_t &cfgDefault = m_dev[SCSI_SETTINGS_SYS_IDX];
-    
-
 
     static const char * const driveinfo_fixed[4]     = DRIVEINFO_FIXED;
     static const char * const driveinfo_removable[4] = DRIVEINFO_REMOVABLE;
@@ -948,8 +946,8 @@ scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYP
 {
     scsi_device_settings_t& cfg = m_dev[scsiId];
     char presetName[32] = {};
-    char section[6] = "SCSI0";
-    section[4] = scsiEncodeID(scsiId);
+    char section[SCSI_INI_SECTION_SIZE];
+    scsiGetIniSection(scsiId, section, sizeof(section));
     bool log_settings = false; 
 
 #ifdef ZULUSCSI_HARDWARE_CONFIG

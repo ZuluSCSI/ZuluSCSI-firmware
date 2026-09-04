@@ -653,10 +653,10 @@ void resetCustomInquiryData()
 void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
 {
     char tmp[512];
-    char section[6] = "SCSI0";
+    char section[SCSI_INI_SECTION_SIZE];
     char key[8];
 
-    section[4] = scsiEncodeID(scsiId);
+    scsiGetIniSection(scsiId, section, sizeof(section));
 
     // Parse VPD pages: vpd00, vpd80, etc.
     int page;

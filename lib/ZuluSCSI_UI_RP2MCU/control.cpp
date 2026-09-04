@@ -1096,8 +1096,8 @@ void patchDevice(uint8_t target_idx)
             
                 // MaxImgX
                 char filename[MAX_PATH_LEN];
-                char section[6] = "SCSI0";
-                section[4] = scsiEncodeID(target_idx);
+                char section[SCSI_INI_SECTION_SIZE];
+                scsiGetIniSection(target_idx, section, sizeof(section));
                 int j;
                 for (j=0;j<=IMAGE_INDEX_MAX;j++)
                 {
