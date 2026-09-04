@@ -37,7 +37,15 @@
 // SCSI system and device settings
 ZuluSCSISettings g_scsi_settings;
 
-const char *systemPresetName[] = {"", "Mac", "MacPlus", "MPC3000", "MegaSTE", "X68000", "X68000-SCSI","X68000-SASI", "DOS", "NeXT", "PC-9801-55",
+const char *systemPresetName[] = {
+    "", "Mac", "MacPlus",
+    "MPC3000",
+    "MegaSTE",
+    "X68000", "X68000-SCSI","X68000-SASI",
+    "DOS",
+    "NeXT",
+    "PC-9801-55",
+    "IRIX",
 #ifdef PLATFORM_AS400
     "AS400", "AS400_BS520", "AS400_BS522", "AS400_CISC", "AS400_PPC",
 #endif
@@ -59,7 +67,10 @@ const char * const speed_grade_strings[] =
     "A",
     "B",
     "C",
-    "WifiRM2"
+    "WifiRM2",
+    "Base203MHz",
+    "Base155MHz",
+    "SystemIRIX",
 };
 
 // Helper function for case-insensitive string compare
@@ -773,6 +784,11 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
         m_sysPreset = SYS_PRESET_NeXT;
         cfgDev.sectorsPerTrack = 139;
         cfgDev.headsPerCylinder= 4;
+    }
+    else if (strequals(systemPresetName[SYS_PRESET_IRIX], presetName))
+    {
+        m_sysPreset = SYS_PRESET_IRIX;
+        cfgSys.speedGrade = SPEED_GRADE_SYS_IRIX;
     }
 #ifdef PLATFORM_AS400
     else if (strequals(systemPresetName[SYS_PRESET_AS400], presetName))

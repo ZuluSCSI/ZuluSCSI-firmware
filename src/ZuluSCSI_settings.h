@@ -36,6 +36,7 @@ typedef enum
     SPEED_GRADE_WIFI_RM2,
     SPEED_GRADE_BASE_203MHZ,
     SPEED_GRADE_BASE_155MHZ,
+    SPEED_GRADE_SYS_IRIX,
 } zuluscsi_speed_grade_t;
 
 
@@ -69,6 +70,7 @@ typedef enum
     SYS_PRESET_DOS,
     SYS_PRESET_NeXT,
     SYS_PRESET_PC_9801_55,
+    SYS_PRESET_IRIX,
 #ifdef PLATFORM_AS400
     SYS_PRESET_AS400,
     SYS_PRESET_AS400_BS520,
