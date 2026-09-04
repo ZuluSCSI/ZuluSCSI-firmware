@@ -177,9 +177,18 @@ bool scsiDiskProgramRomDrive(const char *filename, int scsi_id, int blocksize, S
     char newname[MAX_FILE_PATH * 2] = "";
     strlcat(newname, filename, sizeof(newname));
     strlcat(newname, "_loaded", sizeof(newname));
-    SD.rename(filename, newname);
-    logmsg("---- ROM drive programming successful, image file renamed to ", newname);
-
+    if (SD.exists(newname))
+    {
+        SD.remove(newname);
+    }
+    if (SD.rename(filename, newname))
+    {
+        logmsg("---- ROM drive programming successful, image file renamed to ", newname);
+    }
+    else
+    {
+        logmsg("---- ROM drive programming successful, but failed to rename image to ", newname);
+    }
     return true;
 }
 

@@ -405,9 +405,13 @@ static bool parseCreateCommand(const char *cmd_filename, uint64_t &size, char im
       return false;
     }
 
+    if (SD.exists(imgname))
+    {
+      SD.remove(imgname);
+    }
     if (!SD.rename(cmd_filename, imgname))
     {
-      logmsg("---- Failed to rename ", cmd_filename, " to \"-Failed-", cmd_filename, "\"");
+      logmsg("---- Failed to rename \"", cmd_filename, "\" to \"", imgname, "\"");
       return false;
     }
   }
