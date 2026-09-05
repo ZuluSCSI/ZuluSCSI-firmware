@@ -1,6 +1,6 @@
 /**
  * ZuluSCSI™ - Copyright (c) 2023-2025 Rabbit Hole Computing™
- * Copyright (c) 2023 Eric Helgeson
+ * Copyright (c) 2023-2026 Eric Helgeson <eric@bluescsi.com>
  * 
  * This file is licensed under the GPL version 3 or any later version.  
  * 
@@ -37,6 +37,18 @@ typedef enum
     SPEED_GRADE_BASE_203MHZ,
     SPEED_GRADE_BASE_155MHZ,
 } zuluscsi_speed_grade_t;
+
+// Wi-Fi security mode requested by the WiFiSecurity setting.
+// WIFI_SECURITY_WPA2 must stay 0 so a zeroed S2S_BoardCfg keeps the
+// long-standing default when the setting is absent.
+// must be in the same order as wifi_security_strings[] in ZuluSCSI_settings.cpp
+typedef enum
+{
+    WIFI_SECURITY_WPA2 = 0,  // WPA/WPA2 mixed PSK, widest compatibility
+    WIFI_SECURITY_WPA2_AES,  // WPA2 AES PSK only, refuses TKIP
+    WIFI_SECURITY_WPA3,      // WPA3 SAE only
+    WIFI_SECURITY_WPA3_WPA2, // WPA3 SAE, also programming the WPA2 PSK
+} zuluscsi_wifi_security_t;
 
 
 typedef enum {
@@ -226,6 +238,9 @@ public:
 
     // convert string to speed grade
     zuluscsi_speed_grade_t stringToSpeedGrade(const char *speed_grade_str, size_t length);
+
+    // convert string to Wi-Fi security mode
+    zuluscsi_wifi_security_t stringToWifiSecurity(const char *wifi_security_str);
 
     const char* getSpeedGradeString();
 
