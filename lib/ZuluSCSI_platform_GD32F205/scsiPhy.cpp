@@ -180,24 +180,36 @@ extern "C" bool scsiPhyReselect(uint8_t targetId, uint8_t initiatorId)
     scsiDev.selFlag = 0;
     g_scsi_phase = RESELECTION;
     scsiLogPhaseChange(RESELECTION);
+    // SCSI-2 6.1.2: arbitrate by asserting BSY and our own SCSI ID bit
+    // together, then waiting a full arbitration delay (2.4us, table 7)
+    // before checking whether a higher-priority ID (DB(7) highest) is
+    // also asserted. Only a higher-priority bit means we lost -- a
+    // lower-priority contender does not, and must not prevent us from
+    // winning.
     SCSI_OUT(BSY, 1);
-    for (int wait = 0; wait < 10; wait++)
+    SCSI_OUT_DATA(1u << targetId);
+    s2s_delay_us(3); // arbitration delay, >= 2.4us
+
+    uint8_t higherPriorityMask = (uint8_t)(~((2u << targetId) - 1));
+    if (SCSI_IN_DATA() & higherPriorityMask)
     {
-        s2s_delay_us(1);
-        if (SCSI_IN_DATA() != 0)
-        {
-            SCSI_OUT(BSY, 0);
-            g_scsi_phase = BUS_FREE;
-            return false;
-        }
+        // Lost arbitration to a higher-priority ID.
+        SCSI_RELEASE_DATA_REQ();
+        SCSI_OUT(BSY, 0);
+        g_scsi_phase = BUS_FREE;
+        return false;
     }
 
+    // Won arbitration. SCSI-2 6.1.2(e)/6.1.4.1: wait at least a bus clear
+    // delay (800ns) plus a bus settle delay (400ns) after asserting SEL
+    // before changing any other signal.
     SCSI_OUT(IO, 1);
     SCSI_OUT(SEL, 1);
-    s2s_delay_us(1);
+    s2s_delay_us(2);
     SCSI_OUT_DATA((1u << targetId) | (1u << initiatorId));
     s2s_delay_us(1);
     SCSI_OUT(BSY, 0);
+    s2s_delay_us(1); // bus settle delay before looking for a response
 
     uint32_t waitStart_ms = s2s_getTime_ms();
     while (!SCSI_IN(BSY) &&
