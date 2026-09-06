@@ -60,6 +60,21 @@ volatile uint8_t g_scsi_ctrl_bsy;
 
 static uint8_t pack_selection_status(uint8_t sel_bits)
 {
+    // SCSI-2 6.1.3: a target shall not respond to a selection if more
+    // than two SCSI ID bits are asserted on the DATA BUS.
+    int bitCount = 0;
+    for (int id = 0; id < 8; id++)
+    {
+        if (sel_bits & (1 << id))
+        {
+            bitCount++;
+        }
+    }
+    if (bitCount > 2)
+    {
+        return 0;
+    }
+
     int sel_id = -1;
 
     for (int i = 0; i < S2S_MAX_TARGETS; i++)
