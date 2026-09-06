@@ -1530,6 +1530,7 @@ void scsiInit()
 			scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;
 			scsiDev.targets[i].liveCfg.tapeDensity = cfg->tapeDensity;
 			scsiDev.targets[i].liveCfg.tapeBufferedMode = cfg->tapeBufferedMode;
+			scsiDev.targets[i].liveCfg.disconnectTimeLimit = 0;
 		}
 		else
 		{
@@ -1638,13 +1639,20 @@ int scsiReconnect()
 
 	// SCSI-2 6.6.6: the target shall not participate in another
 	// ARBITRATION phase for at least a disconnection delay (200us,
-	// table 7) after releasing the bus. Our timer's granularity is
-	// 1ms; rounding up is harmless, arbitrating early is not.
+	// table 7) or the disconnect time limit negotiated via the
+	// Disconnect-Reconnect mode page (8.3.3.2), whichever is greater.
+	// Our timer's granularity is 1ms; rounding up is harmless,
+	// arbitrating early is not.
+	uint32_t negotiatedLimitUs =
+		(uint32_t)scsiDev.target->liveCfg.disconnectTimeLimit * 100;
+	uint32_t requiredWaitUs = (negotiatedLimitUs > 200) ? negotiatedLimitUs : 200;
+	uint32_t requiredWaitMs = (requiredWaitUs + 999) / 1000;
+
 	uint32_t elapsedSinceDisconnect_ms =
 		s2s_elapsedTime_ms(g_scsi_disconnect_state.disconnectTime_ms);
-	if (elapsedSinceDisconnect_ms < 1)
+	if (elapsedSinceDisconnect_ms < requiredWaitMs)
 	{
-		s2s_delay_ms(1 - elapsedSinceDisconnect_ms);
+		s2s_delay_ms(requiredWaitMs - elapsedSinceDisconnect_ms);
 	}
 
 	if (!scsiPhyReselect(scsiDev.target->targetId, scsiDev.initiatorId))
