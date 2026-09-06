@@ -1666,6 +1666,27 @@ int scsiReconnect()
 		return 0;
 	}
 
+	// SCSI-2 6.2.1(f): if ATN is true, the initiator wants to send a
+	// message before we resume the disconnected command -- most likely
+	// ABORT, ABORT TAG, or BUS DEVICE RESET for this exact nexus right
+	// at reconnection (note 29 anticipates exactly this). Service it the
+	// same way every other phase already does in scsiPoll(), rather than
+	// silently discarding it.
+	scsiDev.atnFlag |= scsiStatusATN();
+	while (scsiDev.atnFlag && !scsiDev.resetFlag)
+	{
+		process_MessageOut();
+		scsiDev.atnFlag |= scsiStatusATN();
+	}
+
+	if (scsiDev.resetFlag || scsiDev.phase == BUS_FREE)
+	{
+		// A reset, or the message just handled (e.g. ABORT, BUS DEVICE
+		// RESET), already tore down this nexus -- do not resume it.
+		g_scsi_disconnect_state.active = 0;
+		return 0;
+	}
+
 	scsiDev.phase = g_scsi_disconnect_state.phase;
 	scsiDev.cdbLen = g_scsi_disconnect_state.cdbLen;
 	scsiDev.dataPtr = scsiDev.savedDataPtr;
