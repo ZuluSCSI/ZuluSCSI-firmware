@@ -63,6 +63,7 @@ static struct {
 	int active;
 	int phase;
 	uint8_t cdbLen;
+	uint32_t disconnectTime_ms;
 } g_scsi_disconnect_state;
 
 void enter_BusFree()
@@ -1622,6 +1623,7 @@ void scsiDisconnect()
 	enter_BusFree();
 	scsiDev.phase = RESELECTION;
 	scsiDev.cdbLen = g_scsi_disconnect_state.cdbLen;
+	g_scsi_disconnect_state.disconnectTime_ms = s2s_getTime_ms();
 }
 
 int scsiReconnect()
@@ -1632,6 +1634,17 @@ int scsiReconnect()
 		scsiDev.resetFlag)
 	{
 		return 0;
+	}
+
+	// SCSI-2 6.6.6: the target shall not participate in another
+	// ARBITRATION phase for at least a disconnection delay (200us,
+	// table 7) after releasing the bus. Our timer's granularity is
+	// 1ms; rounding up is harmless, arbitrating early is not.
+	uint32_t elapsedSinceDisconnect_ms =
+		s2s_elapsedTime_ms(g_scsi_disconnect_state.disconnectTime_ms);
+	if (elapsedSinceDisconnect_ms < 1)
+	{
+		s2s_delay_ms(1 - elapsedSinceDisconnect_ms);
 	}
 
 	if (!scsiPhyReselect(scsiDev.target->targetId, scsiDev.initiatorId))
