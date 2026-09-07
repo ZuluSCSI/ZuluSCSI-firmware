@@ -972,9 +972,31 @@ static void process_SelectionPhase()
 		// for SCSI-1 (and older) hosts, regardless of our configured setting.
 		// Enable the compatability mode also as many SASI and SCSI1
 		// controllers don't generate parity bits.
+		//
+		// AS/400 CISC (9401-P02) exception: this SP always selects without
+		// ATN (old-style selection, it never sends IDENTIFY -- see the
+		// implicit-discPriv handling elsewhere in this file), but it is NOT
+		// one of the broken hosts this suppression targets. A real disk's
+		// Ancot baseline shows the SP correctly consuming a genuine
+		// POWER_ON_RESET unit attention on its very first TEST UNIT READY
+		// (sense 06/2900) before a second TUR/REQUEST SENSE cycle reports
+		// NOT_READY (02/0402) and START STOP UNIT succeeds. Suppressing it
+		// here wiped the pending condition on the first SELECT (for
+		// INQUIRY, before any command byte is read), so Zulu's first TUR
+		// jumped straight to the "second cycle" NOT_READY state the real
+		// disk only reaches after the initiator has already seen and
+		// cleared the power-on attention -- a sequence the SP's ROM likely
+		// never anticipated, and the probable cause of it never reaching
+		// START STOP UNIT (confirmed via real-hardware Ancot trace
+		// comparison, 2026-09-07).
 		if (!scsiDev.atnFlag)
 		{
-			target->unitAttention = 0;
+#ifdef PLATFORM_AS400
+			if (target->cfg->quirks != S2S_CFG_QUIRKS_AS400)
+#endif
+			{
+				target->unitAttention = 0;
+			}
 			scsiDev.compatMode = COMPAT_SCSI1;
 		}
 		else if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_SCSI2))
@@ -1491,15 +1513,21 @@ void scsiInit()
 #ifdef PLATFORM_AS400
 		if (cfg && cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
 		{
-			scsiDev.target->sense.code = UNIT_ATTENTION;
-			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			// scsiDev.target (the currently-selected-target pointer) is
+			// NULL throughout this whole init loop -- these must prime
+			// this target's own (array-indexed) sense state, or the write
+			// silently goes nowhere and this priming never actually takes
+			// effect. Found alongside the ATN/unitAttention fix above,
+			// same investigation.
+			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
+			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
 			scsiDev.targets[i].started = 0;
 		}
 		else
 #endif
 		{
-			scsiDev.target->sense.code = NO_SENSE;
-			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+			scsiDev.targets[i].sense.code = NO_SENSE;
+			scsiDev.targets[i].sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
 			// Always "start" the device. Many systems (eg. Apple System 7)
 			// won't respond properly to
 			// LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED sense
