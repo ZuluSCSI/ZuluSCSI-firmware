@@ -28,7 +28,19 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-const char *g_log_firmwareversion = ZULU_FW_VERSION " " __DATE__ " " __TIME__;
+// ZULU_BUILD_GIT_REV / ZULU_BUILD_TIMESTAMP are injected by
+// src/inject_build_info.py on every build, independent of __DATE__/__TIME__
+// -- those macros only refresh when the compiler actually recompiles this
+// specific file, which a stale object-level build cache can silently skip
+// even after touching the file. Falls back to __DATE__/__TIME__ and
+// "unknown" for build environments that don't wire in that script.
+#ifndef ZULU_BUILD_TIMESTAMP
+#define ZULU_BUILD_TIMESTAMP __DATE__ " " __TIME__
+#endif
+#ifndef ZULU_BUILD_GIT_REV
+#define ZULU_BUILD_GIT_REV "unknown"
+#endif
+const char *g_log_firmwareversion = ZULU_FW_VERSION " " ZULU_BUILD_TIMESTAMP " git:" ZULU_BUILD_GIT_REV;
 const char *g_log_short_firmwareversion = ZULU_FW_VERSION;
 
 bool g_log_debug = false;
