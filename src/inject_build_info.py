@@ -32,22 +32,30 @@ import subprocess
 
 Import("env")
 
+_project_dir = env.subst("$PROJECT_DIR")
+print("inject_build_info.py: PROJECT_DIR = %r" % _project_dir)
+
 
 def _run(cmd):
     try:
         out = subprocess.check_output(
-            cmd, cwd=env.subst("$PROJECT_DIR"), stderr=subprocess.DEVNULL
+            cmd, cwd=_project_dir, stderr=subprocess.STDOUT
         )
         return out.decode("utf-8", "replace").strip()
-    except Exception:
+    except Exception as e:
+        print("inject_build_info.py: %r failed: %r" % (cmd, e))
         return ""
 
 
-git_rev = _run(["git", "rev-parse", "--short", "HEAD"]) or "unknown"
-git_dirty = bool(_run(["git", "status", "--porcelain"]))
-git_ident = git_rev + ("-dirty" if git_dirty else "")
+git_rev = _run(["git", "rev-parse", "--short", "HEAD"])
+git_status = _run(["git", "status", "--porcelain"])
+git_ident = (git_rev or "unknown") + ("-dirty" if git_rev and git_status else "")
 
-build_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# No spaces: a raw space in a -D value has repeatedly been a source of
+# command-line quoting breakage across scons/compiler/shell combinations.
+build_timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+print("inject_build_info.py: git_ident=%s build_timestamp=%s" % (git_ident, build_timestamp))
 
 env.Append(CPPDEFINES=[
     ("ZULU_BUILD_GIT_REV", '\\"%s\\"' % git_ident),
