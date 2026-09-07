@@ -828,32 +828,43 @@ static void scsiReset()
 	scsiDev.lun = -1;
 	scsiDev.compatMode = COMPAT_UNKNOWN;
 
-	if (scsiDev.target)
+	scsiDev.target = NULL;
+
+	// Must refresh EVERY target's state here, not just whichever one
+	// scsiDev.target happened to point to -- that pointer is NULL
+	// whenever a reset arrives on an idle bus (e.g. the initiator's own
+	// power-cycle, with Zulu itself staying powered via USB throughout),
+	// which is the common case for a bus reset, not the exception. The
+	// old single-pointer version silently skipped this whole block in
+	// that case, leaving every target's unitAttention/sense/started
+	// state exactly as the previous connection left it -- confirmed on
+	// real AS/400 hardware: power-cycling the P02 while Zulu stayed up
+	// produced a second connection whose first TEST UNIT READY returned
+	// Status GOOD immediately (no unit attention, no not-ready, no
+	// START STOP UNIT), unlike a fresh boot or a mid-connection reset.
+	// Same bug shape as the scsiInit() fix earlier this session.
+	for (int i = 0; i < S2S_MAX_TARGETS; ++i)
 	{
-		if (scsiDev.target->unitAttention != POWER_ON_RESET)
+		if (scsiDev.targets[i].unitAttention != POWER_ON_RESET)
 		{
-			scsiDev.target->unitAttention = SCSI_BUS_RESET;
+			scsiDev.targets[i].unitAttention = SCSI_BUS_RESET;
 		}
-		scsiDev.target->reservedId = -1;
-		scsiDev.target->reserverId = -1;
+		scsiDev.targets[i].reservedId = -1;
+		scsiDev.targets[i].reserverId = -1;
 #ifdef PLATFORM_AS400
-		const S2S_TargetCfg* config = scsiDev.target->cfg;
-		if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
+		const S2S_TargetCfg* config = scsiDev.targets[i].cfg;
+		if (config && config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
 		{
-			scsiDev.target->sense.code = UNIT_ATTENTION;
-			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
+			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
 		}
 		else
 #endif
 		{
-			scsiDev.target->sense.code = NO_SENSE;
-			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+			scsiDev.targets[i].sense.code = NO_SENSE;
+			scsiDev.targets[i].sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
 		}
-	}
-	scsiDev.target = NULL;
 
-	for (int i = 0; i < S2S_MAX_TARGETS; ++i)
-	{
 		if (g_force_sync > 0)
 		{
 			scsiDev.targets[i].syncPeriod = g_force_sync;
