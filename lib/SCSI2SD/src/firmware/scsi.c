@@ -1069,7 +1069,7 @@ static void process_SelectionPhase()
 		// section.
 		// SCSI1/SASI initiators may not set their own ID.
 		scsiDev.initiatorId =
-			(g_scsi_sts_selection_initiator <= 7) ? g_scsi_sts_selection_initiator : -1;
+			(g_scsi_sts_selection_initiator < S2S_MAX_TARGETS) ? g_scsi_sts_selection_initiator : -1;
 
 		// Wait until the end of the selection phase.
 		uint32_t selTimerBegin = s2s_getTime_ms();

@@ -91,7 +91,7 @@ static uint8_t pack_selection_status(uint8_t sel_bits)
     // SCSI-2 6.1.3: a target shall not respond to a selection if more
     // than two SCSI ID bits are asserted on the DATA BUS.
     int bitCount = 0;
-    for (int id = 0; id < 8; id++)
+    for (int id = 0; id < S2S_MAX_TARGETS; id++)
     {
         if (sel_bits & (1 << id))
         {
@@ -106,7 +106,7 @@ static uint8_t pack_selection_status(uint8_t sel_bits)
     int sel_id = -1;
     for (int i = 0; i < S2S_MAX_TARGETS; i++)
     {
-        if (scsiDev.targets[i].targetId <= 7 && scsiDev.targets[i].cfg)
+        if (scsiDev.targets[i].targetId < S2S_MAX_TARGETS && scsiDev.targets[i].cfg)
         {
             if (sel_bits & (1 << scsiDev.targets[i].targetId))
             {
@@ -122,7 +122,7 @@ static uint8_t pack_selection_status(uint8_t sel_bits)
     }
 
     g_scsi_sts_selection_initiator = 0xFF;
-    for (int id = 0; id < 8; id++)
+    for (int id = 0; id < S2S_MAX_TARGETS; id++)
     {
         if (id != sel_id && (sel_bits & (1 << id)))
         {
@@ -169,7 +169,7 @@ extern "C" bool scsiStatusSEL()
 
 extern "C" bool scsiPhyReselect(uint8_t targetId, uint8_t initiatorId)
 {
-    if (initiatorId > 7 || targetId >= S2S_MAX_TARGETS)
+    if (initiatorId >= S2S_MAX_TARGETS || targetId >= S2S_MAX_TARGETS)
     {
         return false;
     }
