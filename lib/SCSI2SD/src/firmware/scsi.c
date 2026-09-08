@@ -979,32 +979,37 @@ static void process_SelectionPhase()
 		scsiDev.atnFlag = selStatus & 0x80;
 
 
-		// Unit attention breaks many older SCSI hosts. Disable it completely
-		// for SCSI-1 (and older) hosts, regardless of our configured setting.
-		// Enable the compatability mode also as many SASI and SCSI1
-		// controllers don't generate parity bits.
+		// Unit attention breaks many older SCSI hosts (eg. the Mac Plus --
+		// see the comment on the general UA-check below). The historical
+		// fix was to disable it completely for any host selecting without
+		// ATN (old-style SCSI-1-ish selection), regardless of the
+		// configured EnableUnitAttention setting.
 		//
-		// AS/400 CISC (9401-P02) exception: this SP always selects without
-		// ATN (old-style selection, it never sends IDENTIFY -- see the
-		// implicit-discPriv handling elsewhere in this file), but it is NOT
-		// one of the broken hosts this suppression targets. A real disk's
-		// Ancot baseline shows the SP correctly consuming a genuine
+		// That default is too broad: EnableUnitAttention=Yes is explicitly
+		// set by two presets in ZuluSCSISettings -- AS/400 (deviceInitAS400())
+		// and DOS (SYS_PRESET_DOS) -- and both are known to select without
+		// ATN despite being SCSI-2-capable hosts that do want unit
+		// attention reported, not broken SCSI-1 hosts. A real AS/400 P02's
+		// Ancot baseline shows its SP correctly consuming a genuine
 		// POWER_ON_RESET unit attention on its very first TEST UNIT READY
 		// (sense 06/2900) before a second TUR/REQUEST SENSE cycle reports
-		// NOT_READY (02/0402) and START STOP UNIT succeeds. Suppressing it
-		// here wiped the pending condition on the first SELECT (for
-		// INQUIRY, before any command byte is read), so Zulu's first TUR
-		// jumped straight to the "second cycle" NOT_READY state the real
-		// disk only reaches after the initiator has already seen and
-		// cleared the power-on attention -- a sequence the SP's ROM likely
-		// never anticipated, and the probable cause of it never reaching
-		// START STOP UNIT (confirmed via real-hardware Ancot trace
-		// comparison, 2026-09-07).
+		// NOT_READY (02/0402) and START STOP UNIT succeeds -- unconditional
+		// suppression here wiped the pending condition on the very first
+		// SELECT (for INQUIRY, before any command byte is read), so Zulu's
+		// first TUR jumped straight to the "second cycle" NOT_READY state
+		// the real disk only reaches after the initiator has already seen
+		// and cleared the power-on attention, a sequence this SP's ROM
+		// likely never anticipated (confirmed via real-hardware Ancot
+		// trace comparison, 2026-09-07). Gating on the same
+		// EnableUnitAttention flag the deferred UA-check below already
+		// uses -- instead of a platform-specific quirks check -- fixes
+		// this for AS/400 and for DOS (same preset, not yet confirmed on
+		// real DOS hardware, but the identical shape of bug) without
+		// touching the historical default (EnableUnitAttention=No) that
+		// still protects genuinely ATN-less-and-broken hosts.
 		if (!scsiDev.atnFlag)
 		{
-#ifdef PLATFORM_AS400
-			if (target->cfg->quirks != S2S_CFG_QUIRKS_AS400)
-#endif
+			if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION))
 			{
 				target->unitAttention = 0;
 			}
