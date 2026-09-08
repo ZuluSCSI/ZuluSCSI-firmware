@@ -857,6 +857,20 @@ static void scsiReset()
 		{
 			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
 			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			// Confirmed necessary on real hardware, 2026-09-08: without
+			// this, doTestUnitReady() (ZuluSCSI_disk.cpp) never revisits
+			// the sense/unitAttention state re-armed above at all -- it
+			// gates its entire CHECK_CONDITION/NOT_READY branch on
+			// !started, and started stays 1 forever after the first
+			// successful START STOP UNIT (set generically, not reset
+			// anywhere else). Tried dropping this same day, on the theory
+			// that correctly-raised unit attention alone (the fix a few
+			// lines above / in process_SelectionPhase()) would be enough
+			// and the full re-spin-up dance was unnecessary -- disproven
+			// immediately: TEST UNIT READY went back to returning GOOD
+			// immediately on every reset after the first, identical to
+			// the original bug, confirmed via a live hardware retest.
+			scsiDev.targets[i].started = 0;
 		}
 		else
 #endif
