@@ -852,24 +852,38 @@ static void scsiReset()
 		scsiDev.targets[i].reservedId = -1;
 		scsiDev.targets[i].reserverId = -1;
 #ifdef PLATFORM_AS400
-		const S2S_TargetCfg* config = scsiDev.targets[i].cfg;
-		if (config && config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
+		// Gated on EnableUnitAttention (not a specific quirk) and no
+		// longer restricted to deviceType==FIXED, 2026-09-08: originally
+		// AS400+disk-only, generalized because (a) this flag, not the
+		// AS400 quirk specifically, is what actually means "this host
+		// wants unit attention" everywhere else in this file, and (b)
+		// doTestUnitReady() (ZuluSCSI_disk.cpp)'s !started gate and its
+		// "preserve pending sense" branch apply uniformly to every
+		// device type -- restricting this priming to FIXED disks left
+		// tape/CD-ROM/etc. under the same quirk with the identical
+		// latent bug this whole block exists to fix, just not yet
+		// observed on hardware. Still #ifdef PLATFORM_AS400-gated: the
+		// flag itself is general-purpose (e.g. the DOS preset also sets
+		// it), but this exact priming mechanism has only been verified
+		// against AS/400 hardware, not tested for any other quirk.
+		if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
 		{
 			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
 			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
 			// Confirmed necessary on real hardware, 2026-09-08: without
-			// this, doTestUnitReady() (ZuluSCSI_disk.cpp) never revisits
-			// the sense/unitAttention state re-armed above at all -- it
-			// gates its entire CHECK_CONDITION/NOT_READY branch on
-			// !started, and started stays 1 forever after the first
-			// successful START STOP UNIT (set generically, not reset
-			// anywhere else). Tried dropping this same day, on the theory
-			// that correctly-raised unit attention alone (the fix a few
-			// lines above / in process_SelectionPhase()) would be enough
-			// and the full re-spin-up dance was unnecessary -- disproven
-			// immediately: TEST UNIT READY went back to returning GOOD
-			// immediately on every reset after the first, identical to
-			// the original bug, confirmed via a live hardware retest.
+			// this, doTestUnitReady() never revisits the sense/
+			// unitAttention state re-armed above at all -- it gates its
+			// entire CHECK_CONDITION/NOT_READY branch on !started, and
+			// started stays 1 forever after the first successful START
+			// STOP UNIT (set generically, not reset anywhere else).
+			// Tried dropping this same day, on the theory that
+			// correctly-raised unit attention alone (the fix a few
+			// lines above / in process_SelectionPhase()) would be
+			// enough and the full re-spin-up dance was unnecessary --
+			// disproven immediately: TEST UNIT READY went back to
+			// returning GOOD immediately on every reset after the
+			// first, identical to the original bug, confirmed via a
+			// live hardware retest.
 			scsiDev.targets[i].started = 0;
 		}
 		else
@@ -1541,7 +1555,11 @@ void scsiInit()
 		}
 
 #ifdef PLATFORM_AS400
-		if (cfg && cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
+		// Gated on EnableUnitAttention, not a specific quirk, and not
+		// restricted to deviceType==FIXED -- see the matching comment in
+		// scsiReset() for the full reasoning (same generalization, same
+		// investigation, 2026-09-08).
+		if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
 		{
 			// scsiDev.target (the currently-selected-target pointer) is
 			// NULL throughout this whole init loop -- these must prime
