@@ -913,9 +913,25 @@ static void scsiReset()
 			// tape as bystander?) and P03 (does CHKTAP get further?)
 			// before this can be considered a real fix rather than a
 			// hypothesis.
+			//
+			// BUGFIX, 2026-09-09 (same day): the first cut of this
+			// carve-out only skipped the started=0 assignment for tape
+			// -- but nothing else in this function ever sets started=1
+			// for it either (unlike CD-ROM, which reaches that via the
+			// *other* branch below), so tape's started flag just sat at
+			// its zero-initialized default forever, identical in effect
+			// to the un-excluded behavior. Confirmed on real hardware:
+			// CHKTAP's TEST UNIT READY still returned NOT_READY
+			// (02/0402), completely unchanged from before this
+			// carve-out existed. Must explicitly set started=1 for
+			// tape, not just omit the =0.
 			if (!scsiDev.targets[i].cfg || scsiDev.targets[i].cfg->deviceType != S2S_CFG_SEQUENTIAL)
 			{
 				scsiDev.targets[i].started = 0;
+			}
+			else
+			{
+				scsiDev.targets[i].started = 1;
 			}
 		}
 		else
@@ -1620,11 +1636,17 @@ void scsiInit()
 			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
 			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
 			// EXPERIMENTAL, 2026-09-09: tape excluded from started=0 here
-			// too -- see the matching comment (and the full reasoning)
-			// in scsiReset(). Not yet confirmed safe for P02.
+			// too -- see the matching comment (and the full reasoning,
+			// plus the same-day bugfix for the same-effect-as-before
+			// omission bug) in scsiReset(). Not yet confirmed safe for
+			// P02.
 			if (!cfg || cfg->deviceType != S2S_CFG_SEQUENTIAL)
 			{
 				scsiDev.targets[i].started = 0;
+			}
+			else
+			{
+				scsiDev.targets[i].started = 1;
 			}
 		}
 		else
