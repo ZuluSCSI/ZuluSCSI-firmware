@@ -921,7 +921,35 @@ static void scsiReset()
 			// returning GOOD immediately on every reset after the
 			// first, identical to the original bug, confirmed via a
 			// live hardware retest.
-			scsiDev.targets[i].started = 0;
+			//
+			// EXPERIMENTAL, 2026-09-09: tape (S2S_CFG_SEQUENTIAL)
+			// excluded from started=0 specifically -- UA reporting
+			// above is untouched, still generalized to tape, and still
+			// confirmed correct (Fiona/P03's own IPL-time probe shows
+			// the textbook 06/2900 -> 02/0402 two-step). But Fiona's
+			// screenlog.0 cross-checked against 6 OS/400 problem-detail
+			// PDFs (matched via wall-clock correlation) showed CHKTAP's
+			// TEST UNIT READY correctly reporting NOT_READY (02/0402)
+			// with nothing ever sent afterward to clear it -- no
+			// START STOP UNIT/LOAD UNLOAD appears anywhere in the whole
+			// capture (IPL or CHKTAP), and ZuluSCSI_tape.cpp's own 0x1B
+			// handler never sets started=1 under any branch either. So
+			// once forced to 0 here, tape has no path back to ready at
+			// all -- same dead-end shape as the CD-ROM regression this
+			// same block was carved out for above. NOT YET CONFIRMED
+			// SAFE for the P02 CISC bystander-tape case that originally
+			// motivated this forcing: that validation used disk as the
+			// load source with tape merely present, and whether tape's
+			// OWN started=0 forcing was ever actually load-bearing for
+			// THAT fix specifically was never isolated. Needs testing
+			// on both P02 (regression check: does B982 stay fixed with
+			// tape as bystander?) and P03 (does CHKTAP get further?)
+			// before this can be considered a real fix rather than a
+			// hypothesis.
+			if (!scsiDev.targets[i].cfg || scsiDev.targets[i].cfg->deviceType != S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.targets[i].started = 0;
+			}
 		}
 		else
 #endif
@@ -1630,7 +1658,13 @@ void scsiInit()
 			// regression (SRC B1014507), confirmed by the maintainers.
 			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
 			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
-			scsiDev.targets[i].started = 0;
+			// EXPERIMENTAL, 2026-09-09: tape excluded from started=0 here
+			// too -- see the matching comment (and the full reasoning)
+			// in scsiReset(). Not yet confirmed safe for P02.
+			if (!cfg || cfg->deviceType != S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.targets[i].started = 0;
+			}
 		}
 		else
 #endif
