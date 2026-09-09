@@ -852,7 +852,8 @@ bool findHDDImages()
     }
 
     char name[MAX_FILE_PATH+1];
-    if(!file.isDir() || scsiDiskFolderContainsCueSheet(&file) || scsiDiskFolderIsTapeFolder(&file)) {
+    if(!file.isDir() || scsiDiskFolderContainsCueSheet(&file) || scsiDiskFolderIsTapeFolder(&file))
+    {
       file.getName(name, MAX_FILE_PATH+1);
       file.close();
 
@@ -1063,9 +1064,11 @@ bool findHDDImages()
           else
           {
             logmsg("---- Failed to load image");
+            continue;
           }
         } else {
           logmsg("-- Invalid lun or id for image ", fullname);
+          continue;
         }
       }
     }
