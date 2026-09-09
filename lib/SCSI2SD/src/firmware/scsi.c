@@ -866,8 +866,12 @@ static void scsiReset()
 		// flag itself is general-purpose (e.g. the DOS preset also sets
 		// it), but this exact priming mechanism has only been verified
 		// against AS/400 hardware, not tested for any other quirk.
-		if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
+		if ((scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) &&
+			(!scsiDev.targets[i].cfg || scsiDev.targets[i].cfg->deviceType != S2S_CFG_OPTICAL))
 		{
+			// CD-ROM excluded, 2026-09-09: see the matching comment in
+			// process_SelectionPhase() -- real AS/400 Model 600 (RISC)
+			// regression (SRC B1014507), confirmed by the maintainers.
 			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
 			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
 			// Confirmed necessary on real hardware, 2026-09-08: without
@@ -1037,7 +1041,21 @@ static void process_SelectionPhase()
 		// still protects genuinely ATN-less-and-broken hosts.
 		if (!scsiDev.atnFlag)
 		{
-			if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION))
+			// CD-ROM excluded, 2026-09-09: a real AS/400 Model 600 (RISC)
+			// manual D-mode IPL from CD-ROM (SRC B1014507, a generic
+			// CD-ROM read error) regressed once this exemption's gate
+			// widened from AS400+FIXED-only to EnableUnitAttention-for-
+			// any-device-type -- confirmed by the maintainers reverting
+			// just this file's #952 changes and reporting it fixes their
+			// hardware. Unlike disk (and tape, per the P02 baseline),
+			// real optical drives auto-spin-up with no expected START
+			// UNIT handshake; this RISC boot ROM's minimal CD-boot path
+			// evidently can't tolerate a real unit attention it never
+			// saw before. Keep the fix for FIXED/SEQUENTIAL (still
+			// needed, still hardware-confirmed); suppress again for
+			// OPTICAL specifically rather than reverting to disk-only.
+			if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) ||
+				target->cfg->deviceType == S2S_CFG_OPTICAL)
 			{
 				target->unitAttention = 0;
 			}
@@ -1559,7 +1577,8 @@ void scsiInit()
 		// restricted to deviceType==FIXED -- see the matching comment in
 		// scsiReset() for the full reasoning (same generalization, same
 		// investigation, 2026-09-08).
-		if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
+		if ((scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) &&
+			(!cfg || cfg->deviceType != S2S_CFG_OPTICAL))
 		{
 			// scsiDev.target (the currently-selected-target pointer) is
 			// NULL throughout this whole init loop -- these must prime
@@ -1567,6 +1586,9 @@ void scsiInit()
 			// silently goes nowhere and this priming never actually takes
 			// effect. Found alongside the ATN/unitAttention fix above,
 			// same investigation.
+			// CD-ROM excluded, 2026-09-09: see the matching comment in
+			// process_SelectionPhase() -- real AS/400 Model 600 (RISC)
+			// regression (SRC B1014507), confirmed by the maintainers.
 			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
 			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
 			scsiDev.targets[i].started = 0;
