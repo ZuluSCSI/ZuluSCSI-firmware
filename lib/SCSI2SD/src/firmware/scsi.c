@@ -605,6 +605,24 @@ static void process_Command()
 				// QIC drive vendor-specific sense bytes (Caliper/Sankyo/Wangtek)
 				// Byte 9 bit 3: BOM (Beginning of Medium)
 				scsiDev.data[9] = scsiDev.target->tapeBOM ? (1 << 3) : 0;
+#ifdef PLATFORM_AS400
+				if (cfg->quirks == S2S_CFG_QUIRKS_AS400)
+				{
+					// Real AS/400 tape drive wire captures (2026-09-11, see
+					// AS/400 tape investigation) diverge from both the
+					// generic convention above and from this drive's own
+					// Tandberg SCSI-2 manual:
+					// - Valid is only set when Information is actually
+					//   meaningful, not unconditionally.
+					// - Byte 9 is Tandberg's own documented "Destination
+					//   Sense Pointer" (COPY-only) on this drive family, not
+					//   a general BOM flag borrowed from a different
+					//   vendor's convention -- real hardware always sends 0
+					//   here outside COPY.
+					scsiDev.data[0] = scsiDev.target->sense.info ? 0xF0 : 0x70;
+					scsiDev.data[9] = 0;
+				}
+#endif
 			}
 			else if (scsiDev.target->sense.code == MEDIUM_ERROR
 				|| scsiDev.target->sense.code == HARDWARE_ERROR
@@ -619,6 +637,14 @@ static void process_Command()
 			}
 			// Additional bytes if there are errors to report
 			scsiDev.data[7] = 10; // additional length
+#ifdef PLATFORM_AS400
+			if (cfg->deviceType == S2S_CFG_SEQUENTIAL && cfg->quirks == S2S_CFG_QUIRKS_AS400)
+			{
+				// Matches real AS/400 tape drive wire captures, which
+				// consistently declare 19 (not this generic default of 10).
+				scsiDev.data[7] = 19;
+			}
+#endif
 			scsiDev.data[12] = scsiDev.target->sense.asc >> 8;
 			scsiDev.data[13] = scsiDev.target->sense.asc;
 			if ((scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD))
