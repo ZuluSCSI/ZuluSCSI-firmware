@@ -102,6 +102,15 @@ def decode(path=None, start_s=None, end_s=None, limit=None, result=None):
     def cur_bsy(pins):
         return bit(pins, i_bsy)  # meaningful as BSY only while not connected
 
+    def db_ids(pins):
+        # During SELECTION the initiator asserts both its own ID bit and the
+        # target ID bit on the data bus (OR'd together, active low).
+        mask = 0
+        for i, dbi in enumerate(db_indices):
+            if bit(pins, dbi) == 0:
+                mask |= (1 << i)
+        return mask, [i for i in range(8) if mask & (1 << i)]
+
     def push_cmd(t):
         if cmd_bytes:
             cls, name = SCSI_COMMANDS.get(cmd_bytes[0], (3, "UNKNOWN"))
@@ -148,7 +157,8 @@ def decode(path=None, start_s=None, end_s=None, limit=None, result=None):
                 cmd_bytes = []
                 phase_data = []
                 pending_data = None
-                lines.append(f"[{us/1000:.3f}ms] ---- SELECTION (BSY asserted)")
+                mask, bits = db_ids(pins)
+                lines.append(f"[{us/1000:.3f}ms] ---- SELECTION (BSY asserted) IDs on bus: {bits} (mask 0x{mask:02x})")
             elif b == 1 and prev_b == 0 and state != -1 and not connected:
                 # BSY released again before a real connection formed (glitch,
                 # arbitration loss, or a bus-free we didn't otherwise detect)
