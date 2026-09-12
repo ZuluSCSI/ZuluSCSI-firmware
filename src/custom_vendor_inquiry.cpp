@@ -195,6 +195,23 @@ static bool hasCustomVPD(uint8_t scsiId, uint8_t pageCode)
     return false;
 }
 
+// Index of an already-loaded custom VPD page for a given SCSI ID and page
+// code, for in-place mutation (unlike getCustomVPD(), which copies out).
+// `startIdx` restricts the search to entries at or after that index --
+// used to distinguish pages a profile just loaded from pages that already
+// existed beforehand via an explicit [SCSI<n>] vpdXX= override, which must
+// never be touched here (it's meant to be the final, most-authoritative
+// word on that page's bytes). Returns -1 if not found.
+static int findCustomVPDIndex(uint8_t scsiId, uint8_t pageCode, int startIdx = 0)
+{
+    for (int i = startIdx; i < g_custom_vpd_count; i++)
+    {
+        if (g_custom_vpd[i].scsiId == scsiId && g_custom_vpd[i].pageCode == pageCode)
+            return i;
+    }
+    return -1;
+}
+
 #ifdef PLATFORM_AS400
 // Inject the generated serial number into a VPD page at the given offset
 static void injectSerial(uint8_t *data, int offset, uint8_t scsiId)
@@ -229,6 +246,146 @@ static void injectPartNumber(uint8_t *data, int asciiOffset, int ebcdicOffset, u
     memcpy(data + asciiOffset, g_as400_part_override[id].ascii, 7);
     if (ebcdicOffset >= 0)
         memcpy(data + ebcdicOffset, g_as400_part_override[id].ebcdic, 7);
+}
+
+// Patch a per-ID AS400_DiskSerialNumber override into an already-loaded
+// AS/400 disk profile's VPD pages (see loadAS400ProfileFromFile() below).
+// Unlike loadAS400Defaults()'s injectSerial() calls, which use offsets
+// hardcoded for the ONE built-in profile's own known page layout, this
+// works on ANY captured profile by deriving each page's injection offset
+// from the page's own self-reported length/descriptor-length bytes --
+// verified generic across every profile in as400_disk_definitions.txt as
+// of 2026-09-12 (see project memory:
+// project_as400_serial_collision_investigation.md). No-op if no
+// AS400_DiskSerialNumber override is configured for this ID.
+//
+// `startIdx` must be the value of `g_custom_vpd_count` from *before* the
+// profile started loading its pages -- restricts every lookup here to
+// pages the profile itself just added, so an explicit [SCSI<n>] vpdXX=
+// override (parsed earlier, always at a lower index) is never touched.
+// That key is documented as the final, most-authoritative word on a
+// page's bytes; silently patching serial bytes into a hand-crafted
+// override the user typed in themselves would violate that.
+static void injectSerialIntoLoadedProfile(uint8_t scsiId, int startIdx, bool spdWasEmpty)
+{
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (g_as400_serial_override[id].length != 8) return;
+
+    // SPD (standard INQUIRY response) patching -- DISABLED, 2026-09-12,
+    // confirmed harmful on real hardware (Fiona). Offset 36 is
+    // structurally guaranteed by the SCSI-2 INQUIRY format (8-byte header
+    // + 8-byte Vendor ID + 16-byte Product ID + 4-byte Revision, all
+    // fixed-width), and the byte-visible serial does sit there in every
+    // capture checked -- but a real IPL test patching only that 8-byte
+    // slice made DST's "Display Non-Configured Units" screen show
+    // `00-********` (masked/invalid) for ALL FOUR test units, including
+    // the two that previously displayed clean (if duplicated) real
+    // serials before this patch existed. That's a regression, not just
+    // "still not fixed" -- something past offset 36 (the trailing bytes
+    // seen after the serial in every real capture, e.g. `99F9820` for
+    // `45G9463`, `6475668` for `55F9806`) is very likely a structured
+    // field DST cross-validates against the serial (a checksum or
+    // duplicate reference), and overwriting only the 8-byte slice broke
+    // that consistency. Do not re-enable without first understanding that
+    // trailing structure -- ideally via a real bus trace (Ancot analyzer)
+    // showing exactly what DST reads/validates, not more blind offset
+    // guessing on live hardware. See
+    // project_as400_serial_collision_investigation.md for the full
+    // writeup.
+#if 0
+    if (spdWasEmpty && g_custom_spd[scsiId].length >= 44)
+    {
+        injectSerial(g_custom_spd[scsiId].data, 36, scsiId);
+        logmsg("---- Patched custom serial into SPD for SCSI ID ", (int)scsiId, " at offset 36");
+    }
+    else if (spdWasEmpty && g_custom_spd[scsiId].length > 0)
+    {
+        logmsg("---- WARNING: SPD for SCSI ID ", (int)scsiId, " is only ",
+               (int)g_custom_spd[scsiId].length, " bytes -- too short to patch, serial override not applied to SPD");
+    }
+#else
+    (void)spdWasEmpty;
+#endif
+
+    // VPD80 (Unit Serial Number): the real captured field width varies
+    // (8 or 10 ASCII characters observed so far, always right-justified,
+    // space/zero-padded on the left), but the actual per-drive-varying
+    // digits are always the LAST 8 bytes of the page -- confirmed across
+    // every VPD80 capture in the definitions file regardless of its
+    // declared length (16 or 20 bytes seen so far). Requires at least 12
+    // bytes total (4-byte page header + >=8 payload) so the write can
+    // never reach into the header itself.
+    int idx = findCustomVPDIndex(scsiId, 0x80, startIdx);
+    if (idx >= 0 && g_custom_vpd[idx].length >= 12)
+    {
+        injectSerial(g_custom_vpd[idx].data, g_custom_vpd[idx].length - 8, scsiId);
+        logmsg("---- Patched custom serial into VPD80 for SCSI ID ", (int)scsiId,
+               " at offset ", (int)(g_custom_vpd[idx].length - 8));
+    }
+    else if (idx >= 0)
+    {
+        logmsg("---- WARNING: VPD80 for SCSI ID ", (int)scsiId, " is only ",
+               (int)g_custom_vpd[idx].length, " bytes -- too short to patch, serial override not applied to this page");
+    }
+
+    // VPD82: a fixed-format IBM page, always exactly 48 bytes of payload
+    // (52 with the page header) in every real capture seen -- ASCII copy
+    // of the serial at offset 14, an EBCDIC copy at offset 38. Gate
+    // strictly on the expected length so an unexpected future capture
+    // with a differently-shaped VPD82 gets skipped, not silently
+    // corrupted.
+    idx = findCustomVPDIndex(scsiId, 0x82, startIdx);
+    if (idx >= 0 && g_custom_vpd[idx].length == 52)
+    {
+        injectSerial(g_custom_vpd[idx].data, 14, scsiId);
+        injectSerial(g_custom_vpd[idx].data, 38, scsiId);
+        logmsg("---- Patched custom serial into VPD82 (ASCII+EBCDIC) for SCSI ID ", (int)scsiId);
+    }
+    else if (idx >= 0)
+    {
+        logmsg("---- WARNING: VPD82 for SCSI ID ", (int)scsiId, " is ",
+               (int)g_custom_vpd[idx].length, " bytes, not the expected 52 -- serial override not applied to this page");
+    }
+
+    // VPD83 (Device Identification): only the ASCII T10-vendor-ID
+    // designator shape is handled -- codeset 0x02 (ASCII), designator
+    // type 0x01 (T10 vendor ID) in the first descriptor. `08K0304`/
+    // `08K0264` use a binary NAA-type designator instead (codeset 0x01,
+    // type 0x03) and are deliberately left untouched rather than having
+    // ASCII bytes spliced into binary identifier data. The per-model/
+    // revision 2-character prefix seen before the serial (`68`/`F8`/etc.)
+    // is preserved automatically, since it's part of the untouched,
+    // already-captured bytes ahead of the injection point -- its value
+    // never needs to be known here. Injection offset is simply the
+    // descriptor's own declared length byte (data[7]): descriptor data
+    // starts at a fixed buffer offset 8 (4-byte page header + 4-byte
+    // descriptor header, both fixed by the SCSI spec), and the serial is
+    // the descriptor's own last 8 bytes, so offset = 8 + desc_len - 8 ==
+    // desc_len.
+    idx = findCustomVPDIndex(scsiId, 0x83, startIdx);
+    if (idx >= 0 && g_custom_vpd[idx].length >= 16)
+    {
+        uint8_t *data = g_custom_vpd[idx].data;
+        uint8_t codeset = data[4] & 0x0F;
+        uint8_t desigType = data[5] & 0x0F;
+        uint8_t descLen = data[7];
+        if (codeset == 0x02 && desigType == 0x01 && descLen >= 8 &&
+            (8 + descLen) <= g_custom_vpd[idx].length)
+        {
+            injectSerial(data, descLen, scsiId);
+            logmsg("---- Patched custom serial into VPD83 T10-vendor-ID designator for SCSI ID ", (int)scsiId);
+        }
+        else
+        {
+            logmsg("---- VPD83 for SCSI ID ", (int)scsiId, " is not an ASCII T10-vendor-ID designator "
+                   "(codeset=", (int)codeset, " type=", (int)desigType, ") -- left untouched");
+        }
+    }
+
+    logmsg("---- injectSerialIntoLoadedProfile() done for SCSI ID ", (int)scsiId,
+           " (VPD80 idx=", findCustomVPDIndex(scsiId, 0x80, startIdx),
+           " VPD82 idx=", findCustomVPDIndex(scsiId, 0x82, startIdx),
+           " VPD83 idx=", findCustomVPDIndex(scsiId, 0x83, startIdx), ")");
 }
 #endif
 
@@ -281,6 +438,19 @@ static int readProfileHexField(const char *section, const char *field, uint8_t *
 // be an obvious, logged error, not a quiet switch to the wrong drive.
 static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
 {
+    // Captured before this profile adds any pages of its own, so
+    // injectSerialIntoLoadedProfile() at the end of this function only
+    // ever touches pages loaded from the profile itself -- never an
+    // explicit [SCSI<n>] vpdXX= override, which was already parsed (and
+    // would already occupy a lower index) before this function was called.
+    int vpdStartIdx = g_custom_vpd_count;
+
+    // Same idea for SPD, which has no per-entry index to compare against
+    // (it's a single flat per-ID slot, not an appendable list like VPD) --
+    // a plain before/after emptiness check serves the same purpose: only
+    // patch it if THIS call is the one that filled it in.
+    bool spdWasEmpty = (g_custom_spd[scsiId].length == 0);
+
     FsFile f = SD.open(AS400_PROFILES_FILE, O_RDONLY);
     bool fileUsable = f.isOpen() && f.fileSize() > 0;
     if (f.isOpen()) f.close();
@@ -435,6 +605,13 @@ static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
     if (blockSize > 0) g_as400_profile_info[scsiId].blockSize = (uint32_t)blockSize;
     if (sectors > 0) g_as400_profile_info[scsiId].sectors = (uint32_t)sectors;
     g_as400_profile_info[scsiId].loaded = true;
+
+    // Apply this ID's own AS400_DiskSerialNumber override (parsed earlier
+    // in parseCustomInquiryData(), before this function runs) on top of
+    // whatever the profile just supplied -- lets two SCSI IDs share the
+    // same AS400_DiskProfile= without OS/400 seeing identical serials.
+    // No-op if no override is configured for this ID.
+    injectSerialIntoLoadedProfile(scsiId, vpdStartIdx, spdWasEmpty);
 
     logmsg("---- Loaded AS/400 disk profile '", profileName, "' for SCSI ID ", (int)scsiId,
            " (BlockSize=", (int)blockSize, " Sectors=", (int)sectors, ")");

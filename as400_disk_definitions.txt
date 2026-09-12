@@ -950,12 +950,6 @@ LogSense30_chunks = 2
 LogSense30PageLength = 44
 LogSense30PageListLength = 0
 
-; ===========================================================================
-; AS/400 disk profile '86G9124', captured from /dev/sg0 on 2026-09-05T22:26:17Z
-; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
-; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
-; ===========================================================================
 [86G9124-5]
 Vendor = IBMAS400
 Product = DFHSS2W
@@ -995,12 +989,6 @@ LogSense30PageListLength = 44
 LogSense31 = 00 00 00 00
 LogSense31PageLength = 0
 
-; ===========================================================================
-; AS/400 disk profile '74G6978', captured from /dev/sg1 on 2026-09-05T22:26:21Z
-; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
-; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
-; ===========================================================================
 [74G6978-6]
 Vendor = IBMAS400
 Product = DFHSS2W
