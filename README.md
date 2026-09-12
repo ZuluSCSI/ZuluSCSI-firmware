@@ -1,7 +1,7 @@
 ZuluSCSI™ Firmware
 =================
 
-ZuluSCSI is a family of hardware devices that emulates Small System Computer Interface storage devices. This repository contains the firmware source code for these devices, as well as precompiled firmware, available via the [releases](https://github.com/ZuluSCSI/ZuluSCSI-firmware/releases) page.  
+ZuluSCSI is a family of hardware devices that emulates Small System Computer Interface storage devices. This repository contains the firmware source code for these devices, as well as precompiled firmware, available via the [releases](https://github.com/ZuluSCSI/ZuluSCSI-firmware/releases) page.
 
 
 Image files on the SD card
@@ -30,7 +30,7 @@ Directories and files whose "hidden" attribute is set are skipped. Files whose r
 
 The type prefix, ID and LUN are read from **fixed byte offsets** in the filename, so
 their positions matter. The block size is read from the first `_` found anywhere in the name.
-The media type can also be set in `zuluscsi.ini`, or directly by the file name or directory prefix. 
+The media type can also be set in `zuluscsi.ini`, or directly by the file name or directory prefix.
 
 **Device type file name prefixes**
 
@@ -57,17 +57,18 @@ type is used instead. The block size may also be set per-device in `zuluscsi.ini
 which takes effect when the filename does not specify one.
 
 **Example file names**
-| Example file name       | Result |
-|--------------------------|------------------------------------------ |
-|    `HD1.img`             | hard disk, ID 1, 512 byte blocks |
-|    `HD5.hda`             | hard disk, ID 5 |
-|    `HDA.hda`             | hard disk, ID 10 |
-|    `HD20_512.hda`        | hard disk, ID 2, LUN 0, 512 byte blocks |
-|    `CD3.iso`             | CD-ROM, ID 3, 2048 byte blocks |
-|    `CD3_512.iso`         | CD-ROM, ID 3, 512 byte blocks |
-|    `ZP4.img`             | Iomega Zip 100, ID 4 |
-|    `TP6 - backup.tap`    | tape, ID 6, SIMH .tap format |
-|    `HDn.img`             | hard disk on the SCA-supplied dynamic ID |
+
+| Example file name  | Result |
+|--------------------|------------------------------------------ |
+| `HD1.img`          | hard disk, ID 1, 512 byte blocks |
+| `HD5.hda`          | hard disk, ID 5 |
+| `HDA.hda`          | hard disk, ID 10 |
+| `HD20_512.hda`     | hard disk, ID 2, LUN 0, 512 byte blocks |
+| `CD3.iso`          | CD-ROM, ID 3, 2048 byte blocks |
+| `CD3_512.iso`      | CD-ROM, ID 3, 512 byte blocks |
+| `ZP4.img`          | Iomega Zip 100, ID 4 |
+| `TP6 - backup.tap` | tape, ID 6, SIMH .tap format |
+| `HDn.img`          | hard disk on the SCA-supplied dynamic ID |
 
 ### File extensions
 
@@ -168,19 +169,11 @@ For AS/400 `AS400_DiskProfile=` SCSI IDs (see below), a correctly-sized image is
 
 AS/400 disk profiles
 ---------------------
-For AS/400 (`System = "AS400_PPC"` or `"AS400_CISC"`), multiple SCSI IDs can each emulate a different real DASD unit by setting `AS400_DiskProfile = "<name>"` in that ID's `[SCSIn]` section, naming a profile from [`as400_disk_definitions.txt`](as400_disk_definitions.txt) — copy it to the SD card root.
+For AS/400 (`System = "AS400_PPC"` or `"AS400_CISC"`), multiple SCSI IDs can each emulate a different real DASD unit by setting `AS400_DiskProfile = "<name>"` in that ID's `[SCSIn]` section, naming a profile from [`as400_disk_definitions.txt`](as400_disk_definitions.txt) — copy this file to the SD card root.
 
-This ships with real profiles already captured from several physical drives, so it's usable even without any AS/400 DASD hardware on hand. Capturing your own is optional, for drives not already in the list: connect one to a Linux machine with `sg3_utils` installed and run [`utils/extract_as400_disk_data.sh`](utils/extract_as400_disk_data.sh):
+> **Note:** The AS/400 platform extensively uses serial numbers to distinguish between devices. If another device with the same serial number is configured, even on separate SCSI-IDs, the machine recognizes only one of them. Hence the large count of disk profiles, until this issue is fixed.
 
-```
-./extract_as400_disk_data.sh /dev/sgN [Label] [outfile]
-```
-
-This appends one `[Label]` section to `as400_disk_definitions.txt` (or auto-derives the label from the drive's own FRU/part number if omitted) with its real INQUIRY, VPD, MODE SENSE, and capacity data. Copy the resulting file to the SD card root.
-
-If no image file exists yet for a profiled ID, one is created automatically at the profile's real captured size — see "Creating new image files" above.
-
-Each profiled ID gets that drive's real INQUIRY/VPD/MODE SENSE identity. Using the **same** profile for more than one SCSI ID currently gives them identical serial numbers, with no way to override this yet — use a different profile per ID until this is resolved.
+See [`README-as400.md`](README-as400.md) for more information about AS/400 specific configurations.
 
 Log files and error indications
 -------------------------------
@@ -202,7 +195,7 @@ Configuration file
 Optional configuration can be stored in `zuluscsi.ini`.
 If image file is found but configuration is missing, a default configuration is used.
 
-Example config file is available here: [zuluscsi.ini](zuluscsi.ini).
+An annotated example config file is available here: [zuluscsi.ini](zuluscsi.ini).
 
 Performance
 -----------
@@ -241,7 +234,7 @@ ZuluSCSI Blaster and RP2040 (Full Size) DIP switch settings are:
 - INITIATOR: Enable SCSI initiator mode for imaging SCSI drives
 - DEBUG LOG: Enable verbose debug log (saved to `zululog.txt`)
 - TERMINATION: Enable SCSI termination
-Later (Rev2023a) ZuluSCSI RP2040 and all ZuluSCSI Blaster Full Size boards have a bootloader button instead of a DIP switch. 
+Later (Rev2023a) ZuluSCSI RP2040 and all ZuluSCSI Blaster Full Size boards have a bootloader button instead of a DIP switch.
 
 For ZuluSCSI V1.1, the DIP switch settings are as follows:
 
@@ -427,7 +420,7 @@ Depending on the way images are set up for browsing, some styles can have differ
 If images are set up in config, either as:
 - An ImgDir path is specified
 - Use the standard folder naming of Device Type / SCSI ID. e.g.  CD0 for cd images for SCSI ID 0
-  
+
 Then the browsing type can be selected. To do this, long-press the `eject` button
 
 Other image browsing modes, i.e. `IMGx` and naming file with the Device Type / SCSI ID prefix e.g. CD0 cannot access the browser type screen or use categories
@@ -535,17 +528,17 @@ Info Screen:
 Browse Type Screen:
 - click on `user` - returns to main screen
 - click on `eject` or `rotary button` - go to the selected Browser screen
-  
+
 Browser Screen (Folder Mode):
 - turning the `rotary dial` will select a folder or file
 - click on `user` in a nested folder will go back a directory, in the root folder it will return to the main menu
 - click on `eject` or `rotary button` on the folder to navigate into that folder
-- click on `eject` on a file to load the image 
-  
+- click on `eject` on a file to load the image
+
 Browser Screen (Flat  Mode):
 - turning the `rotary dial` will select a file
 - click on `user` - returns to main screen
-- click on `eject` on a file to load the image 
+- click on `eject` on a file to load the image
 
 No SD screen:
 - This screen has no controls.
