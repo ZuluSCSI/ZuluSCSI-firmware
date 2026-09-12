@@ -37,6 +37,7 @@
 #endif
 #include "ZuluSCSI_cdrom.h"
 #include "ZuluSCSI_tape.h"
+#include "ZuluSCSI_iotrace.h"
 #include "custom_vendor_inquiry.h"
 #include "ImageBackingStore.h"
 #include "ROMDrive.h"
@@ -392,6 +393,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     scsi_system_settings_t *devSys = g_scsi_settings.getSystem();
     scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(target_idx);
     img.scsiId = target_idx;
+    img.file.setScsiId(target_idx); // IOTrace Layer B tagging only
     memset(img.vendor, 0, sizeof(img.vendor));
     memset(img.prodId, 0, sizeof(img.prodId));
     memset(img.revision, 0, sizeof(img.revision));
@@ -540,7 +542,10 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
 
     // Close existing file and construct new one in-place
     img.file.~ImageBackingStore();
-    new (&img.file) ImageBackingStore(filename, blocksize, device_config);
+    // scsiId passed directly here (rather than via setScsiId() afterwards)
+    // so it's already known when _internal_open() runs during construction --
+    // see ImageBackingStore's constructor comment.
+    new (&img.file) ImageBackingStore(filename, blocksize, device_config, target_idx);
 
     if (img.file.isOpen())
     {
@@ -948,6 +953,7 @@ static void scsiDiskSetConfig(int target_idx)
 
     image_config_t &img = g_DiskImages[target_idx];
     img.scsiId = target_idx;
+    img.file.setScsiId(target_idx); // IOTrace Layer B tagging only
 
     scsiDiskSetImageConfig(target_idx);
 
@@ -2383,6 +2389,12 @@ void scsiDiskPrefetchInvalidate(uint8_t scsiId)
 
 void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
 {
+    // IOTrace Layer A: one record per Write CDB dispatch, regardless of
+    // which specific opcode (Write6/10/12/...) normalized to this common
+    // entry point -- scsiDev.cdb[0] still holds that opcode. No-op
+    // entirely when IOTrace= is off.
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, scsiDev.cdb[0], (uint16_t)blocks, lba);
+
     if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
         // Floppies are supposed to be slow. Some systems can't handle a floppy
         // without an access time
@@ -3188,6 +3200,9 @@ void diskDataOut()
 
 void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
 {
+    // IOTrace Layer A: see the matching comment in scsiDiskStartWrite().
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, scsiDev.cdb[0], (uint16_t)blocks, lba);
+
     if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
         // Floppies are supposed to be slow. Some systems can't handle a floppy
         // without an access time
@@ -3654,6 +3669,11 @@ int16_t skip_next(int max) {
 //   - Maximum transfer length is 256 blocks; larger values return Check
 //     Condition / Illegal Request - Invalid Field in CDB.
 void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t skip_command) {
+
+    // IOTrace Layer A: see the matching comment in scsiDiskStartWrite().
+    // Logged even for a request this function is about to reject (blocks
+    // > 256 below) -- that's still a real, informative wire observation.
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, skip_command, (uint16_t)blocks, lba);
 
     if (blocks > 256)
     {

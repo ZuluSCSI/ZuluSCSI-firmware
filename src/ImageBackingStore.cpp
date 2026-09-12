@@ -27,6 +27,7 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
+#include "ZuluSCSI_iotrace.h"
 #include <minIni.h>
 #include <strings.h>
 #include <string.h>
@@ -52,8 +53,10 @@ ImageBackingStore::ImageBackingStore()
 #endif
 }
 
-ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_settings) : ImageBackingStore()
+ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_settings, uint8_t scsiId) : ImageBackingStore()
 {
+    m_iotraceScsiId = scsiId;
+
 #if ENABLE_COW
     if (m_cow.initialize(filename, scsi_block_size, device_settings))
     {
@@ -159,7 +162,37 @@ bool ImageBackingStore::_internal_open(const char *filename)
 
     uint32_t sectorcount = m_fsfile.size() / SD_SECTOR_SIZE;
     uint32_t begin = 0, end = 0;
-    if (m_fsfile.contiguousRange(&begin, &end) && end >= begin + sectorcount - 1)
+    bool got_range = m_fsfile.contiguousRange(&begin, &end);
+    bool range_covers_file = got_range && end >= begin + sectorcount - 1;
+
+    // Diagnostic for the AS/400 performance investigation (see project
+    // memory: project_as400_write_performance.md) -- logged unconditionally
+    // at open time, independent of IOTrace, since this is the actual root
+    // decision point for whether ImageBackingStore's raw-block fast path
+    // is even reachable for this file at all. A trace showing 0% fast-path
+    // accesses only tells you the symptom; this tells you why, immediately,
+    // without needing a trace to infer it from.
+    if (!got_range)
+    {
+        logmsg("---- ", filename, ": not contiguous on SD card (contiguousRange() failed) -- ",
+               "ImageBackingStore's raw-block fast path is unavailable for this file");
+    }
+    else if (!range_covers_file)
+    {
+        logmsg("---- ", filename, ": contiguous range too short for fast path -- have sectors ",
+               (int)begin, "-", (int)end, " (", (int)(end - begin + 1), "), need ", (int)sectorcount);
+    }
+    else
+    {
+        logmsg("---- ", filename, ": contiguous sectors ", (int)begin, "-", (int)end,
+               " -- fast path available");
+    }
+
+    uint8_t iotrace_imageopen_flags = (got_range ? IOTRACE_IMAGEOPEN_FLAG_GOT_RANGE : 0) |
+        (range_covers_file ? IOTRACE_IMAGEOPEN_FLAG_CONTIGUOUS : 0);
+    iotrace_imageopen(m_iotraceScsiId, got_range ? begin : 0, got_range ? end : 0, sectorcount, iotrace_imageopen_flags);
+
+    if (range_covers_file)
     {
         // Convert to raw mapping, this avoids some unnecessary
         // access overhead in SdFat library.
@@ -384,6 +417,7 @@ ssize_t ImageBackingStore::read(void* buf, size_t count)
     }
 #endif
 
+    bool iotrace_was_contiguous = m_iscontiguous;
     uint32_t sectorcount = count / SD_SECTOR_SIZE;
     if (m_iscontiguous && (uint64_t)sectorcount * SD_SECTOR_SIZE != count)
     {
@@ -391,9 +425,35 @@ ssize_t ImageBackingStore::read(void* buf, size_t count)
         revert_to_noncontiguous();
     }
 
+    // IOTrace Layer B: sector/flags captured now, before m_cursector
+    // advances or m_fsfile's position moves past this access -- the actual
+    // logging call happens after each dispatch branch below, once the
+    // real operation duration is known, so it can be carried on the same
+    // record instead of only being visible pooled into Layer C's DMA_WAIT
+    // bucket. `sector` is approximate once non-contiguous (SdFat's own
+    // file position expressed in 512-byte units, not this image's real
+    // sector size), but still monotonic/comparable across log entries.
+    // No-op entirely when IOTrace= is off. Not logged at all for the ROM
+    // branch below -- that's flash-memory access, not SD card I/O.
+    uint32_t iotrace_sector = m_iscontiguous ? m_cursector : (uint32_t)(m_fsfile.position() / SD_SECTOR_SIZE);
+    uint8_t iotrace_flags = (m_iscontiguous ? IOTRACE_SD_FLAG_CONTIGUOUS : 0) |
+        ((iotrace_was_contiguous && !m_iscontiguous) ? IOTRACE_SD_FLAG_REVERTED : 0);
+
     if (m_iscontiguous && m_blockdev)
     {
-        if (m_blockdev->readSectors(m_cursector, (uint8_t*)buf, sectorcount))
+        // IOTrace Layer C: this call (and the equivalent m_fsfile.read()
+        // below) is where the CPU actually blocks waiting for the SD card
+        // -- timing it directly here is simpler and lower-risk than
+        // reaching into sdio.cpp's own low-level DMA-completion wait
+        // loops. Bucket name says DMA_WAIT but really means "blocked on
+        // storage I/O," covering both this raw path and the SdFat
+        // fallback below.
+        uint64_t iotrace_t0 = iotrace_now_us();
+        bool ok = m_blockdev->readSectors(m_cursector, (uint8_t*)buf, sectorcount);
+        uint32_t iotrace_duration_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+        iotrace_loop_account(IOTRACE_BUCKET_DMA_WAIT, iotrace_duration_us);
+        iotrace_sd_access(m_iotraceScsiId, iotrace_sector, (uint16_t)sectorcount, iotrace_flags, iotrace_duration_us);
+        if (ok)
         {
             m_cursector += sectorcount;
             return count;
@@ -420,7 +480,12 @@ ssize_t ImageBackingStore::read(void* buf, size_t count)
     }
     else
     {
-        return m_fsfile.read(buf, count);
+        uint64_t iotrace_t0 = iotrace_now_us();
+        ssize_t result = m_fsfile.read(buf, count);
+        uint32_t iotrace_duration_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+        iotrace_loop_account(IOTRACE_BUCKET_DMA_WAIT, iotrace_duration_us);
+        iotrace_sd_access(m_iotraceScsiId, iotrace_sector, (uint16_t)sectorcount, iotrace_flags, iotrace_duration_us);
+        return result;
     }
 }
 
@@ -434,6 +499,7 @@ ssize_t ImageBackingStore::write(const void* buf, size_t count)
     }
 #endif
 
+    bool iotrace_was_contiguous = m_iscontiguous;
     uint32_t sectorcount = count / SD_SECTOR_SIZE;
     if (m_iscontiguous && (uint64_t)sectorcount * SD_SECTOR_SIZE != count)
     {
@@ -441,9 +507,23 @@ ssize_t ImageBackingStore::write(const void* buf, size_t count)
         revert_to_noncontiguous();
     }
 
+    // IOTrace Layer B: see the matching comment in read() above -- same
+    // reasoning (logged after dispatch, with the real duration, not at
+    // each return point below except where dispatch actually occurred).
+    uint32_t iotrace_sector = m_iscontiguous ? m_cursector : (uint32_t)(m_fsfile.position() / SD_SECTOR_SIZE);
+    uint8_t iotrace_flags = IOTRACE_SD_FLAG_WRITE |
+        (m_iscontiguous ? IOTRACE_SD_FLAG_CONTIGUOUS : 0) |
+        ((iotrace_was_contiguous && !m_iscontiguous) ? IOTRACE_SD_FLAG_REVERTED : 0);
+
     if (m_iscontiguous && m_blockdev)
     {
-        if (m_blockdev->writeSectors(m_cursector, (const uint8_t*)buf, sectorcount))
+        // IOTrace Layer C: see the matching comment in read() above.
+        uint64_t iotrace_t0 = iotrace_now_us();
+        bool ok = m_blockdev->writeSectors(m_cursector, (const uint8_t*)buf, sectorcount);
+        uint32_t iotrace_duration_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+        iotrace_loop_account(IOTRACE_BUCKET_DMA_WAIT, iotrace_duration_us);
+        iotrace_sd_access(m_iotraceScsiId, iotrace_sector, (uint16_t)sectorcount, iotrace_flags, iotrace_duration_us);
+        if (ok)
         {
             m_cursector += sectorcount;
             return count;
@@ -465,7 +545,12 @@ ssize_t ImageBackingStore::write(const void* buf, size_t count)
     }
     else
     {
-        return m_fsfile.write(buf, count);
+        uint64_t iotrace_t0 = iotrace_now_us();
+        ssize_t result = m_fsfile.write(buf, count);
+        uint32_t iotrace_duration_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+        iotrace_loop_account(IOTRACE_BUCKET_DMA_WAIT, iotrace_duration_us);
+        iotrace_sd_access(m_iotraceScsiId, iotrace_sector, (uint16_t)sectorcount, iotrace_flags, iotrace_duration_us);
+        return result;
     }
 }
 

@@ -69,7 +69,13 @@ public:
     //    RAW:start:end
     //    ROM:
     //    *.cow (enables copy-on-write)
-    ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_config);
+    // scsiId is for IOTrace Layer B/image-open logging only (see setScsiId()
+    // below) -- passed here, rather than set afterwards via setScsiId(),
+    // because _internal_open() runs during construction and needs it
+    // already known at that point. Callers that don't reconstruct the
+    // object (i.e. don't need _internal_open() to run again) can keep using
+    // setScsiId() instead.
+    ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_config, uint8_t scsiId = 0xFF);
 
     // Disable copy and move operations entirely
     ImageBackingStore(const ImageBackingStore &) = delete;
@@ -94,6 +100,15 @@ public:
 
     // Is this a contigious block on the SD card? Allowing less overhead
     bool isContiguous();
+
+    // Which SCSI ID this image is currently bound to, for IOTrace Layer B
+    // and image-open logging only (see ZuluSCSI_iotrace.h) -- ImageBackingStore
+    // itself has no other use for this and doesn't otherwise know its own
+    // target. Set by the caller (ZuluSCSI_disk.cpp) alongside image_config_t's
+    // own S2S_TargetCfg::scsiId. Defaults to 0xFF (unknown) until set.
+    // Prefer passing scsiId to the constructor instead when (re)constructing
+    // an image -- see its comment above.
+    void setScsiId(uint8_t scsiId) { m_iotraceScsiId = scsiId; }
 
     // Close the image so that .isOpen() will return false.
     bool close();
@@ -151,6 +166,7 @@ protected:
     uint32_t m_bgnsector;
     uint32_t m_endsector;
     uint32_t m_cursector;
+    uint8_t m_iotraceScsiId = 0xFF;
 
     bool m_isfolder;
     char m_foldername[MAX_FILE_PATH + 1];

@@ -64,6 +64,7 @@
 #include "ZuluSCSI_blink.h"
 #include "ZuluSCSI_buffer_control.h"
 #include "ZuluSCSI_audio.h"
+#include "ZuluSCSI_iotrace.h"
 #include "ROMDrive.h"
 #include "custom_vendor_inquiry.h"
 #include "vhd_support.h"
@@ -248,6 +249,9 @@ void init_logfile()
     logmsg(" will be written to the SD card", LOGFILE);
     logmsg("==========================================================");
   }
+
+  iotrace_load_setting();
+  iotrace_init();
 
   if (!g_log_to_sd && temp_log_to_sd)
   {
@@ -2013,13 +2017,37 @@ extern "C" void zuluscsi_main_loop(void)
   static uint32_t sd_card_check_time = 0;
   static uint32_t last_request_time = 0;
 
+  // IOTrace Layer C: five sub-calls are timed directly (platform_poll(),
+  // scsiPoll(), scsiDiskPoll(), save_logfile(), and the SD hotplug check/
+  // remount block) -- save_logfile() and the SD maintenance block were
+  // added 2026-09-13 after a first real capture showed the OTHER bucket
+  // (everything not individually timed) at 34.7% with zero attribution;
+  // both do their own SD-card I/O, the plausible reason to split them out.
+  // Everything else still left in one iteration (control_disk_swap,
+  // blink_poll, controlLoop, etc.) is attributed to IOTRACE_BUCKET_OTHER
+  // by subtraction against the whole iteration's own span, rather than
+  // wrapping every remaining call individually -- this is temporary
+  // falsework, not code meant to stay, so cheaper/lower-risk wins unless a
+  // capture shows a specific remaining call is worth breaking out too. No-ops
+  // entirely when IOTrace= is off (see ZuluSCSI_iotrace.h) or outside
+  // PLATFORM_AS400.
+  uint64_t iotrace_iter_start = iotrace_now_us();
+  uint32_t iotrace_platform_poll_us = 0;
+  uint32_t iotrace_scsi_poll_us = 0;
+  uint32_t iotrace_disk_compute_us = 0;
+  uint32_t iotrace_save_logfile_us = 0;
+  uint32_t iotrace_sd_maintenance_us = 0;
+
   bool is_initiator = false;
 #ifdef PLATFORM_HAS_INITIATOR_MODE
   is_initiator = platform_is_initiator_mode_enabled();
 #endif
 
   platform_reset_watchdog();
+  uint64_t iotrace_t0 = iotrace_now_us();
   platform_poll();
+  iotrace_platform_poll_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+  iotrace_loop_account(IOTRACE_BUCKET_PLATFORM_POLL, iotrace_platform_poll_us);
 
   control_disk_swap();
 
@@ -2046,8 +2074,16 @@ extern "C" void zuluscsi_main_loop(void)
   else
 #endif
   {
+    iotrace_t0 = iotrace_now_us();
     scsiPoll();
+    iotrace_scsi_poll_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+    iotrace_loop_account(IOTRACE_BUCKET_SCSI_POLL, iotrace_scsi_poll_us);
+
+    iotrace_t0 = iotrace_now_us();
     scsiDiskPoll();
+    iotrace_disk_compute_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+    iotrace_loop_account(IOTRACE_BUCKET_DISK_COMPUTE, iotrace_disk_compute_us);
+
     scsiLogPhaseChange(scsiDev.phase);
 
     // Save log periodically during status phase if there are new messages.
@@ -2058,11 +2094,15 @@ extern "C" void zuluscsi_main_loop(void)
     // come through or a request hangs, it's useful to force saving of log.
     if (scsiDev.phase == STATUS || (g_log_debug && (uint32_t)(millis() - last_request_time) > 2000))
     {
+      iotrace_t0 = iotrace_now_us();
       save_logfile();
+      iotrace_save_logfile_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+      iotrace_loop_account(IOTRACE_BUCKET_SAVE_LOGFILE, iotrace_save_logfile_us);
       last_request_time = millis();
     }
   }
 
+  iotrace_t0 = iotrace_now_us();
   if (g_sdcard_present)
   {
     // Check SD card status for hotplug
@@ -2119,6 +2159,26 @@ extern "C" void zuluscsi_main_loop(void)
     {
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
     }
+  }
+  iotrace_sd_maintenance_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+  iotrace_loop_account(IOTRACE_BUCKET_SD_MAINTENANCE, iotrace_sd_maintenance_us);
+
+  // IOTrace Layer C: OTHER = whatever's left of this iteration's total
+  // span once the five explicitly-timed buckets (captured above into the
+  // iotrace_*_us locals) are subtracted out -- see the comment at the top
+  // of this function. DMA_WAIT isn't part of this subtraction: it's
+  // accounted separately, as a sub-component of iotrace_disk_compute_us's
+  // own span (inside scsiDiskPoll()'s own call chain), not additional time
+  // on top of this iteration's total. iotrace_loop_account()/
+  // iotrace_loop_tick() are no-ops when IOTrace= is off.
+  {
+    uint32_t iotrace_iter_us = (uint32_t)(iotrace_now_us() - iotrace_iter_start);
+    uint32_t iotrace_accounted_us = iotrace_platform_poll_us + iotrace_scsi_poll_us +
+                                     iotrace_disk_compute_us + iotrace_save_logfile_us +
+                                     iotrace_sd_maintenance_us;
+    iotrace_loop_account(IOTRACE_BUCKET_OTHER, iotrace_iter_us > iotrace_accounted_us ?
+                          iotrace_iter_us - iotrace_accounted_us : 0);
+    iotrace_loop_tick();
   }
 }
 
