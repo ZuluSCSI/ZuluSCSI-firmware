@@ -558,14 +558,19 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             return false;
         }
 
+        // AU-boundary alignment is a performance hint, not a correctness
+        // requirement (unlike the too-small/overlap checks below) -- warn
+        // and continue rather than refusing to present the device.
+        // Standard partitioning tools (gdisk, fdisk, etc.) commonly align
+        // to 1 MiB, which is smaller than some SD cards' preferred AU
+        // size (observed: 4096 KB), so a hard block here would reject
+        // correctly, conventionally-partitioned cards for no functional
+        // reason.
         uint32_t auSizeSectors = 0;
         if (!partitionTableCheckAlignment(extent.startSector, &auSizeSectors))
         {
-            logmsg("---- Partition ", (int)partitionNumber, "'s start is unaligned to the SD card's preferred ",
-                   (int)(auSizeSectors / 2), " KB boundary, not presenting as SCSI device ", target_idx);
-            img.scsiId = target_idx;
-            partitionTableClearClaim(target_idx);
-            return false;
+            logmsg("---- WARNING: Partition ", (int)partitionNumber, "'s start is unaligned to the SD card's preferred ",
+                   (int)(auSizeSectors / 2), " KB boundary. This will increase read/write latency but is not an error.");
         }
 
         // Too-small check: only meaningful when this target declares an
