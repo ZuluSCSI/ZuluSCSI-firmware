@@ -39,6 +39,7 @@
 #include "ZuluSCSI_tape.h"
 #include "ZuluSCSI_iotrace.h"
 #include "custom_vendor_inquiry.h"
+#include "ZuluSCSI_partition_table.h"
 #include "ImageBackingStore.h"
 #include "ROMDrive.h"
 #include <new> // For placement new
@@ -537,6 +538,99 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
     img.cdrom_binfile_index = -1;
     img.cdrom_track_end_lba = 0;
     scsiDiskSetImageConfig(target_idx);
+
+    // PART:n resolves to a RAW:start:end mapping via the SD card's own
+    // MBR/GPT partition table (see ZuluSCSI_partition_table.h) -- checked
+    // and validated here, before ImageBackingStore ever gets involved, so
+    // a failed check can refuse to present the SCSI ID at all rather than
+    // opening a bad mapping. `resolvedFilename` must outlive the
+    // ImageBackingStore construction below, hence it's declared in this
+    // function's own scope rather than the `if` block's.
+    char resolvedFilename[32];
+    if (strncasecmp(filename, "PART:", 5) == 0)
+    {
+        uint32_t partitionNumber = strtoul(filename + 5, NULL, 0);
+        partition_extent_t extent;
+
+        if (!partitionTableResolve(partitionNumber, &extent))
+        {
+            logmsg("---- Partition ", (int)partitionNumber, " not found on SD card, not presenting as SCSI device ", target_idx);
+            img.scsiId = target_idx;
+            partitionTableClearClaim(target_idx);
+            return false;
+        }
+
+        // AU-boundary alignment is a performance hint, not a correctness
+        // requirement (unlike the too-small/overlap checks below) -- warn
+        // and continue rather than refusing to present the device.
+        // Standard partitioning tools (gdisk, fdisk, etc.) commonly align
+        // to 1 MiB, which is smaller than some SD cards' preferred AU
+        // size (observed: 4096 KB), so a hard block here would reject
+        // correctly, conventionally-partitioned cards for no functional
+        // reason.
+        uint32_t auSizeSectors = 0;
+        if (!partitionTableCheckAlignment(extent.startSector, &auSizeSectors))
+        {
+            logmsg("---- WARNING: Partition ", (int)partitionNumber, "'s start is unaligned to the SD card's preferred ",
+                   (int)(auSizeSectors / 2), " KB boundary. This will increase read/write latency but is not an error.");
+        }
+
+        // Too-small check: only meaningful when this target declares an
+        // expected capacity (currently: an AS400_DiskProfile). Without
+        // one, whatever the partition provides simply becomes the
+        // device's capacity, same as RAW: today. "alignment gapping" in
+        // the message refers to the planned AlignUnalignedAccesses
+        // setting (a separate branch) -- worded now so the message
+        // doesn't need to change once that setting exists and starts
+        // contributing to the required size too.
+        uint32_t profileBlockSize = 0, profileSectors = 0;
+        if (getAS400ProfileCapacity(target_idx, &profileBlockSize, &profileSectors) &&
+            profileBlockSize > 0 && profileSectors > 0)
+        {
+            uint64_t requiredBytes = (uint64_t)profileSectors * profileBlockSize;
+            uint64_t haveBytes = (uint64_t)extent.sectorCount * SD_SECTOR_SIZE;
+            if (haveBytes < requiredBytes)
+            {
+                logmsg("---- Partition is too small, disk profile + alignment gapping require ",
+                       (int)(requiredBytes / (1024 * 1024)), " MB (", (unsigned long long)requiredBytes,
+                       " bytes), partition only has ", (int)(haveBytes / (1024 * 1024)), " MB (",
+                       (unsigned long long)haveBytes, " bytes). Not presenting as SCSI device ", target_idx);
+                img.scsiId = target_idx;
+                partitionTableClearClaim(target_idx);
+                return false;
+            }
+        }
+
+        partition_conflict_t conflicts[PARTITION_TABLE_MAX_INDEX];
+        int conflictCount = 0;
+        if (partitionTableCheckOverlap(target_idx, extent.startSector, extent.sectorCount,
+                                        conflicts, PARTITION_TABLE_MAX_INDEX, &conflictCount))
+        {
+            char list[128] = {0};
+            for (int i = 0; i < conflictCount && i < PARTITION_TABLE_MAX_INDEX; i++)
+            {
+                char one[32];
+                snprintf(one, sizeof(one), "%s%d (SCSI ID %d)", i == 0 ? "" : ", ",
+                         (int)conflicts[i].partitionNumber, conflicts[i].targetIdx);
+                strncat(list, one, sizeof(list) - strlen(list) - 1);
+            }
+            logmsg("---- Partition ", (int)partitionNumber, " overlaps with partition(s) ", list,
+                   ". Not presenting as SCSI device ", target_idx);
+            img.scsiId = target_idx;
+            partitionTableClearClaim(target_idx);
+            return false;
+        }
+
+        partitionTableRegisterClaim(target_idx, partitionNumber, extent.startSector, extent.sectorCount);
+
+        snprintf(resolvedFilename, sizeof(resolvedFilename), "RAW:0x%lX:0x%lX",
+                 (unsigned long)extent.startSector, (unsigned long)(extent.startSector + extent.sectorCount - 1));
+        filename = resolvedFilename;
+    }
+    else
+    {
+        partitionTableClearClaim(target_idx);
+    }
 
     auto device_config = g_scsi_settings.getDevice(target_idx);
 
