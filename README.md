@@ -114,14 +114,32 @@ IMG0 = RAW:0x00000000:0xFFFFFFFF # Whole SD card
 Format is `RAW:first_sector:last_sector`, decimal or hex, with the end sector
 automatically clamped to the SD card's actual size.
 
-> **Planned:** a `PART:n` form (not yet implemented) will let `IMGn` reference a
-> partition by number instead of hand-computed sector ranges, resolved from the SD
-> card's own MBR or GPT partition table. One thing worth knowing ahead of time: **MBR
-> supports at most 4 partitions** (a hard limit of the MBR format itself — logical/
-> extended partitions beyond that are out of scope for `PART:n`), while **GPT supports
-> more** — the exact number will depend on how many partition-table entries this
-> firmware chooses to read, not on any per-model SD card limit. If you expect to need
-> more than 4 partitions on a card, plan on GPT-partitioning it rather than MBR.
+> **Status:** a `PART:n` form lets `IMGn` reference a partition by number instead of
+> hand-computed sector ranges, resolved from the SD card's own MBR or GPT partition
+> table. Implemented and compiles for real hardware, but **not yet verified on real
+> hardware**. It is also **not yet safe with a block size that isn't a multiple of
+> 512 bytes** (some disk profiles used on other platforms use non-512-byte blocks):
+> raw/partition-backed images currently skip the misalignment fallback that
+> file-backed images have, so a misaligned access silently targets the wrong
+> physical sector rather than falling back to a slower-but-correct path. Safe today
+> only with a plain 512-byte block size.
+>
+> One thing worth knowing ahead of time: **MBR supports at most 4 partitions** (a
+> hard limit of the MBR format itself — logical/extended partitions beyond that are
+> out of scope for `PART:n`), while **GPT supports more** — the exact number will
+> depend on how many partition-table entries this firmware chooses to read, not on
+> any per-model SD card limit. If you expect to need more than 4 partitions on a
+> card, plan on GPT-partitioning it rather than MBR.
+>
+> **Marking a partition as ZuluSCSI's own**: when creating raw `PART:n` partitions
+> with a GPT-aware tool (e.g. `gdisk`), consider setting their partition type GUID to
+> `E5BF00BF-E1B8-4E16-945C-5AB326258BCC` — a preliminary, not yet officially adopted
+> marker for "this is a ZuluSCSI raw partition." ZuluSCSI's own firmware does not
+> check this GUID for anything; the sole purpose is to stop *other* operating
+> systems that read/write the same SD card from recognizing the partition as an
+> ordinary data volume and offering to format or otherwise interfere with it. Leave
+> the SD card's FAT32/exFAT boot volume itself as the standard `0700` ("Microsoft
+> basic data") type.
 
 ### Image directories (swappable media)
 
