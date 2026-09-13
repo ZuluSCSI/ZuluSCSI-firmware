@@ -29,19 +29,16 @@
 
 #define SD_SECTOR_SIZE 512
 
-// ---- little-endian field readers (on-disk fields are byte arrays, not
-// native ints, so this works regardless of the MCU's own endianness even
-// though RP2040/RP2350 are little-endian anyway) ----
-
-static uint32_t getLe32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static uint64_t getLe64(const uint8_t *p)
-{
-    return (uint64_t)getLe32(p) | ((uint64_t)getLe32(p + 4) << 32);
-}
+// getLe32()/getLe64() (little-endian field readers -- on-disk fields are
+// byte arrays, not native ints) are NOT defined here: `ZuluSCSI.h` (above)
+// already pulls them in transitively via SdFat.h -> ExFatLib.h ->
+// common/FsStructs.h, where they're plain (non-static) `inline` functions
+// -- a first attempt at a local, portable reimplementation collided with
+// them at compile time ("redefinition"). The library's versions assume a
+// little-endian CPU with tolerant unaligned access (a raw pointer-cast
+// read), which RP2040/RP2350 already provide and which the rest of this
+// codebase's own MBR/GPT-adjacent code already relies on -- reusing them
+// here instead of a second, portable-but-redundant implementation.
 
 // ---- CRC-32/ISO-HDLC (the "zlib" polynomial, 0xEDB88320 reflected) --
 // this is what the UEFI/GPT spec mandates for both the header and
