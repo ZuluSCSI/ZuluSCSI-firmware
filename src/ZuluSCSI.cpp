@@ -283,9 +283,23 @@ void print_sd_info()
   }
 
   sds_t sds = {0};
-  if (SD.card()->readSDS(&sds) && sds.speedClass() < SD_SPEED_CLASS_WARN_BELOW)
+  if (SD.card()->readSDS(&sds))
   {
-    logmsg("-- WARNING: Your SD Card Speed Class is ", (int)sds.speedClass(), ". Class ", (int) SD_SPEED_CLASS_WARN_BELOW," or better is recommended for best performance.");
+    if (sds.speedClass() < SD_SPEED_CLASS_WARN_BELOW)
+    {
+      logmsg("-- WARNING: Your SD Card Speed Class is ", (int)sds.speedClass(), ". Class ", (int) SD_SPEED_CLASS_WARN_BELOW," or better is recommended for best performance.");
+    }
+
+    // AU_SIZE is this card's preferred erase/write alignment -- a hint
+    // for partitioning tools, not a requirement (see
+    // ZuluSCSI_partition_table.cpp's alignment check, which only warns,
+    // never blocks, on partitions that don't follow it).
+    uint32_t auSizeKB = sds.auSizeKB();
+    if (auSizeKB > 0)
+    {
+      uint32_t auSizeSectors = (auSizeKB * 1024) / 512; // SD cards use a fixed 512-byte sector size
+      logmsg("SD preferred alignment: ", (int)auSizeSectors, " sectors (", (int)(auSizeKB * 1024), " bytes)");
+    }
   }
 
 }

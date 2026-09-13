@@ -101,6 +101,52 @@ download rather than an image:
 Files whose name does not begin with a letter or digit are ignored. This is what keeps
 macOS `._` resource forks and similar metadata from being mistaken for images.
 
+### Raw sector-range and partition access
+
+Instead of a regular file, an `IMGn` entry in `zuluscsi.ini` can point directly at a
+range of SD card sectors, bypassing the filesystem entirely:
+
+```ini
+[SCSI5]
+IMG0 = RAW:0x00000000:0xFFFFFFFF # Whole SD card
+```
+
+Format is `RAW:first_sector:last_sector`, decimal or hex, with the end sector
+automatically clamped to the SD card's actual size.
+
+```ini
+[SCSI5]
+IMG0 = PART:2
+```
+
+A `PART:n` form lets `IMGn` reference a partition by number instead of
+hand-computed sector ranges, resolved from the SD card's own MBR or GPT
+partition table. Consistent with the partition utilities, we count from 1! It is
+also **not yet safe with a block size that isn't a multiple of 512 bytes**!
+
+> **Note:** MBR supports at most 4 partitions (a hard limit of the MBR format
+> itself — logical/extended partitions beyond that are out of scope for
+> `PART:n`), while GPT supports more — the exact number will depend on how many
+> partition-table entries this firmware chooses to read, not on any per-model SD
+> card limit. If you expect to need more than 4 partitions on a card, plan on
+> GPT-partitioning it rather than MBR.
+
+When creating raw `PART:n` partitions with a GPT-aware tool (e.g. `gdisk`),
+consider setting their partition type GUID to
+`E5BF00BF-E1B8-4E16-945C-5AB326258BCC` — a preliminary, not yet officially
+adopted marker for "this is a ZuluSCSI raw partition." ZuluSCSI's own firmware
+does not check this GUID for anything; the sole purpose is to stop *other*
+operating systems that read/write the same SD card from recognizing the
+partition as an ordinary data volume and interfere with it. Leave the SD card's
+FAT32/exFAT boot volume itself as the standard `0700` ("Microsoft basic data")
+type. Use "uncommon" partition IDs for MBR.
+
+Partitions give best performance when they're aligned to the particular SD card's
+recommended value. A card's alignment value is output on the Zulu's console at
+at reboot time, or when a card is inserted. Use this value with e. g. `gdisk` to
+set the desired alignment  by issuing `x` (extra functionality) and `l` (set the
+sector alignment value).
+
 ### Image directories (swappable media)
 
 Instead of a single file, a device can be pointed at a directory of images that are
