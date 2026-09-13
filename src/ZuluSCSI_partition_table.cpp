@@ -326,3 +326,86 @@ bool partitionTableResolve(uint32_t partitionNumber, partition_extent_t *out)
 
     return mbrResolve(partitionNumber, out);
 }
+
+// ---- Validation helpers ----
+
+// Bounded by S2S_MAX_TARGETS' own max (16, wide boards -- see
+// scsi2sd.h), not redefined here to avoid pulling that header in just for
+// one constant.
+#define PARTITION_TABLE_MAX_TRACKED_TARGETS 16
+
+typedef struct
+{
+    bool valid;
+    uint32_t partitionNumber;
+    uint32_t startSector;
+    uint32_t sectorCount;
+} partition_claim_t;
+
+bool partitionTableCheckAlignment(uint32_t startSector, uint32_t *auSizeSectorsOut)
+{
+    sds_t sds = {0};
+    if (!SD.card()->readSDS(&sds))
+        return true; // couldn't query -- nothing to check against, don't block
+
+    uint32_t auSizeKB = sds.auSizeKB();
+    if (auSizeKB == 0)
+        return true; // card doesn't report a usable AU_SIZE -- same as above
+
+    uint32_t auSizeSectors = (auSizeKB * 1024) / SD_SECTOR_SIZE;
+    if (auSizeSectors == 0)
+        return true;
+
+    if (auSizeSectorsOut)
+        *auSizeSectorsOut = auSizeSectors;
+
+    return (startSector % auSizeSectors) == 0;
+}
+
+static partition_claim_t s_claims[PARTITION_TABLE_MAX_TRACKED_TARGETS];
+
+void partitionTableRegisterClaim(int targetIdx, uint32_t partitionNumber, uint32_t startSector, uint32_t sectorCount)
+{
+    if (targetIdx < 0 || targetIdx >= PARTITION_TABLE_MAX_TRACKED_TARGETS)
+        return;
+
+    s_claims[targetIdx].valid = true;
+    s_claims[targetIdx].partitionNumber = partitionNumber;
+    s_claims[targetIdx].startSector = startSector;
+    s_claims[targetIdx].sectorCount = sectorCount;
+}
+
+void partitionTableClearClaim(int targetIdx)
+{
+    if (targetIdx < 0 || targetIdx >= PARTITION_TABLE_MAX_TRACKED_TARGETS)
+        return;
+
+    s_claims[targetIdx].valid = false;
+}
+
+bool partitionTableCheckOverlap(int targetIdx, uint32_t startSector, uint32_t sectorCount,
+                                 partition_conflict_t *conflicts, int maxConflicts, int *conflictCount)
+{
+    *conflictCount = 0;
+    uint64_t end = (uint64_t)startSector + sectorCount; // exclusive
+
+    for (int i = 0; i < PARTITION_TABLE_MAX_TRACKED_TARGETS; i++)
+    {
+        if (i == targetIdx || !s_claims[i].valid)
+            continue;
+
+        uint64_t otherEnd = (uint64_t)s_claims[i].startSector + s_claims[i].sectorCount;
+        bool overlaps = startSector < otherEnd && s_claims[i].startSector < end;
+        if (!overlaps)
+            continue;
+
+        if (*conflictCount < maxConflicts)
+        {
+            conflicts[*conflictCount].targetIdx = i;
+            conflicts[*conflictCount].partitionNumber = s_claims[i].partitionNumber;
+        }
+        (*conflictCount)++;
+    }
+
+    return *conflictCount > 0;
+}

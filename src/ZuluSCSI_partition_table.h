@@ -73,3 +73,42 @@ typedef struct
 // card has both copies of its partition table corrupt (logged loudly
 // either way -- this is not silent).
 bool partitionTableResolve(uint32_t partitionNumber, partition_extent_t *out);
+
+// ---- Validation helpers for PART:n, used by ZuluSCSI_disk.cpp before a
+// resolved partition is allowed to back a SCSI target. Kept here (rather
+// than in ZuluSCSI_disk.cpp) because they only need partition-extent and
+// SD-card information, which this file already owns. ----
+
+// Checks whether `startSector` lands on the SD card's preferred
+// allocation-unit boundary (from the SD Status Register's AU_SIZE field,
+// see ZuluSCSI.cpp's existing readSDS() use for speed class). Returns
+// true (pass) if the card doesn't report a usable AU_SIZE at all --
+// that's advisory hardware information, not something to hard-block a
+// configuration over when unavailable. On failure, `auSizeSectorsOut` is
+// filled with the AU size in sectors, for the caller's error message.
+bool partitionTableCheckAlignment(uint32_t startSector, uint32_t *auSizeSectorsOut);
+
+// Records `partitionNumber`/extent as target `targetIdx`'s current claim,
+// for overlap checking against other targets. Overwrites any previous
+// claim for the same targetIdx (e.g. a config reload), so a target never
+// conflicts with its own prior registration.
+void partitionTableRegisterClaim(int targetIdx, uint32_t partitionNumber, uint32_t startSector, uint32_t sectorCount);
+
+// Clears a target's claim (e.g. it failed validation and won't be
+// presented, or was reconfigured to a non-partition image).
+void partitionTableClearClaim(int targetIdx);
+
+// One conflicting claim, for building the overlap error message.
+typedef struct
+{
+    int targetIdx;
+    uint32_t partitionNumber;
+} partition_conflict_t;
+
+// Checks [startSector, startSector+sectorCount) against every OTHER
+// target's currently registered claim (this target's own existing claim,
+// if any, is ignored). Fills `conflicts` (capacity `maxConflicts`) and
+// `conflictCount` with what it finds. Returns true if any conflict was
+// found.
+bool partitionTableCheckOverlap(int targetIdx, uint32_t startSector, uint32_t sectorCount,
+                                 partition_conflict_t *conflicts, int maxConflicts, int *conflictCount);
