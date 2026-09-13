@@ -101,6 +101,28 @@ download rather than an image:
 Files whose name does not begin with a letter or digit are ignored. This is what keeps
 macOS `._` resource forks and similar metadata from being mistaken for images.
 
+### Raw sector-range and partition access
+
+Instead of a regular file, an `IMGn` entry in `zuluscsi.ini` can point directly at a
+range of SD card sectors, bypassing the filesystem entirely:
+
+```ini
+[SCSI5]
+IMG0 = RAW:0x00000000:0xFFFFFFFF # Whole SD card
+```
+
+Format is `RAW:first_sector:last_sector`, decimal or hex, with the end sector
+automatically clamped to the SD card's actual size.
+
+> **Planned:** a `PART:n` form (not yet implemented) will let `IMGn` reference a
+> partition by number instead of hand-computed sector ranges, resolved from the SD
+> card's own MBR or GPT partition table. One thing worth knowing ahead of time: **MBR
+> supports at most 4 partitions** (a hard limit of the MBR format itself — logical/
+> extended partitions beyond that are out of scope for `PART:n`), while **GPT supports
+> more** — the exact number will depend on how many partition-table entries this
+> firmware chooses to read, not on any per-model SD card limit. If you expect to need
+> more than 4 partitions on a card, plan on GPT-partitioning it rather than MBR.
+
 ### Image directories (swappable media)
 
 Instead of a single file, a device can be pointed at a directory of images that are
