@@ -35,6 +35,7 @@
 #include "ROMDrive.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
+#include "ZuluSCSI_gap_layout.h"
 #ifdef CONTAINER_IMAGE_SUPPORT
 #include <ZCFsFile.h>
 #endif
@@ -168,12 +169,60 @@ protected:
     uint32_t m_cursector;
     uint8_t m_iotraceScsiId = 0xFF;
 
+    // AlignUnalignedAccesses support -- see ZuluSCSI_gap_layout.h for the
+    // physical layout this implements. m_blockSize is the *logical* AS/400
+    // sector size (e.g. 520/522), independent of SD_SECTOR_SIZE. m_alignMode
+    // is ALIGN_UNALIGNED_OFF for every non-AS/400 image (the overwhelming
+    // majority) -- seek()/read()/write() branch to the gapped-layout code
+    // path only when it isn't, leaving the existing, long-relied-on
+    // non-gapped path completely untouched otherwise.
+    uint32_t m_blockSize;
+    uint8_t m_alignMode;
+    // Current position in *logical* sectors, used only when m_alignMode !=
+    // ALIGN_UNALIGNED_OFF -- a separate concept from m_cursector above,
+    // which (for the non-gapped path) counts physical 512-byte SD sectors.
+    uint32_t m_logicalSector;
+    // Total logical sectors available, computed once at open time from the
+    // backing store's actual physical size -- see
+    // gapLayoutLogicalSectorsInPhysicalSize(). Bounds seek() the same way
+    // m_endsector bounds the non-gapped raw path.
+    uint32_t m_logicalSectorCount;
+
     bool m_isfolder;
     char m_foldername[MAX_FILE_PATH + 1];
 
     bool _internal_open(const char *filename);
 
     void revert_to_noncontiguous();
+
+    // Sets up m_blockSize/m_alignMode/m_logicalSectorCount from the
+    // constructor's scsi_block_size/device_settings. Called once, near
+    // the end of construction, after m_bgnsector/m_endsector or m_fsfile
+    // are already set up -- physicalSizeBytes is whatever backing store
+    // the caller already determined (raw extent size, or the opened
+    // file's size).
+    void setupGapLayout(uint64_t physicalSizeBytes);
+
+    // Gapped-layout read/write, used in place of the normal dispatch in
+    // read()/write() whenever m_alignMode != ALIGN_UNALIGNED_OFF. Shared
+    // between the raw blockdev backend (RAW:/PART:, or a plain file
+    // promoted to the contiguous fast path) and the FsFile backend (a
+    // plain, possibly-fragmented file) -- both are addressed identically
+    // in terms of gapLayoutNextRun()'s logical/physical translation, only
+    // the actual low-level transfer primitive (gapUnitTransfer() below)
+    // differs between them. Handles the whole request's contiguous
+    // physical span in one shot (one SD transaction per call, not one per
+    // CISC slot/PPC group) via a shared staging buffer sized to the
+    // worst-case span a single call can ever need -- see that buffer's
+    // own declaration comment in the .cpp for the exact derivation.
+    ssize_t gappedTransfer(void *buf, size_t count, bool isWrite);
+
+    // Performs one contiguous physical transfer spanning [physOffset,
+    // physOffset+physSize) -- may cover several CISC slots/PPC groups at
+    // once, not just one -- dispatching to the raw blockdev (whole SD
+    // sectors) or m_fsfile (seek + read/write) depending on which backend
+    // this instance uses.
+    bool gapUnitTransfer(uint64_t physOffset, uint32_t physSize, uint8_t *stagingBuf, bool isWrite);
 
 #if ENABLE_COW
     bool m_iscow;

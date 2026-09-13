@@ -57,6 +57,12 @@ typedef enum {
     MASS_STORAGE_MODE_IMAGES
 } mass_storage_mode;
 
+// zuluscsi_align_unaligned_t (AlignUnalignedAccesses=) lives in
+// ZuluSCSI_gap_layout.h, not here -- it's the settings-facing enum for a
+// lower-level, hardware-independent translation module that has no other
+// reason to depend on this (much larger) settings header.
+#include "ZuluSCSI_gap_layout.h"
+
 #ifdef __cplusplus
 
 #include <stdint.h>
@@ -203,6 +209,8 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     int16_t mediumType;
     uint8_t tapeDensity;
     uint8_t tapeBufferedMode;
+
+    uint8_t alignUnalignedAccesses; // memory allocation for zuluscsi_align_unaligned_t enum
 } scsi_device_settings_t;
 
 
@@ -241,6 +249,13 @@ public:
 
     // convert string to Wi-Fi security mode
     zuluscsi_wifi_security_t stringToWifiSecurity(const char *wifi_security_str);
+
+    // convert string to AlignUnalignedAccesses mode -- static because it's
+    // called from readIniSCSIDeviceSetting(), a free function with no
+    // ZuluSCSISettings instance of its own (unlike stringToSpeedGrade()/
+    // stringToWifiSecurity() above, which are only ever called from
+    // instance methods)
+    static zuluscsi_align_unaligned_t stringToAlignUnalignedAccesses(const char *align_str);
 
     const char* getSpeedGradeString();
 

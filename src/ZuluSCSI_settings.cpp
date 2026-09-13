@@ -71,6 +71,17 @@ const char * const wifi_security_strings[] =
     "WPA3WPA2"
 };
 
+#ifdef PLATFORM_AS400
+// must be in the same order as zuluscsi_align_unaligned_t in ZuluSCSI_gap_layout.h
+const char * const align_unaligned_strings[] =
+{
+    "Off",
+    "CISC",
+    "PPC",
+    "Auto"
+};
+#endif
+
 // Helper function for case-insensitive string compare
 static bool strequals(const char *a, const char *b)
 {
@@ -582,6 +593,13 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings, &log_getl_8bit_hex);
     cfg.tapeBufferedMode = log_ini_getl(section, "TapeBufferedMode", cfg.tapeBufferedMode, CONFIGFILE, log_settings, &log_getl_8bit_hex);
 
+#ifdef PLATFORM_AS400
+    log_ini_gets(section, "AlignUnalignedAccesses", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
+    if (tmp[0])
+    {
+        cfg.alignUnalignedAccesses = ZuluSCSISettings::stringToAlignUnalignedAccesses(tmp);
+    }
+#endif
 
 #if ENABLE_COW
     cfg.cowBitmapSize =  log_ini_getl(section, "CowBitmapSize", cfg.cowBitmapSize, CONFIGFILE, log_settings);
@@ -1111,6 +1129,31 @@ zuluscsi_wifi_security_t ZuluSCSISettings::stringToWifiSecurity(const char *wifi
     logmsg("Setting \"", wifi_security_target, "\" does not match any known Wi-Fi security mode, using WPA2");
     return WIFI_SECURITY_WPA2;
 }
+
+#ifdef PLATFORM_AS400
+zuluscsi_align_unaligned_t ZuluSCSISettings::stringToAlignUnalignedAccesses(const char *align_target)
+{
+    // "0"/"no" and "1"/"yes" are accepted as plain boolean-style synonyms
+    // for off/auto (part of this setting's original design, alongside the
+    // named off/cisc/ppc/auto values below) -- checked first since they
+    // don't fit the same one-string-per-enum-value scan.
+    if (strequals(align_target, "0") || strequals(align_target, "no"))
+        return ALIGN_UNALIGNED_OFF;
+    if (strequals(align_target, "1") || strequals(align_target, "yes"))
+        return ALIGN_UNALIGNED_AUTO;
+
+    for (uint8_t i = 0; i < sizeof(align_unaligned_strings)/sizeof(align_unaligned_strings[0]); i++)
+    {
+        if (strequals(align_target, align_unaligned_strings[i]))
+        {
+            return (zuluscsi_align_unaligned_t)i;
+        }
+    }
+
+    logmsg("Setting \"", align_target, "\" does not match any known AlignUnalignedAccesses mode, using Off");
+    return ALIGN_UNALIGNED_OFF;
+}
+#endif
 
 const char *ZuluSCSISettings::getSpeedGradeString()
 {

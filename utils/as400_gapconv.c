@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <sys/stat.h>
 
 #define _FILE_OFFSET_BITS 64
 
@@ -32,22 +33,64 @@ typedef enum { MODE_INSERT, MODE_STRIP } gap_mode_t;
 static void usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s --scheme=cisc|ppc --mode=insert|strip --sectors=N\n"
+        "Usage: %s --scheme=cisc|ppc --mode=insert|strip [--sectors=N]\n"
         "          [--blocksize=N] --input=PATH --output=PATH\n"
         "\n"
         "  --scheme=cisc     520-byte sectors, 1024-byte padded slots\n"
         "  --scheme=ppc      522-byte sectors, 8-into-9-sector (4608-byte) groups\n"
         "  --mode=insert     tightly-packed logical image -> gapped physical layout\n"
         "  --mode=strip      gapped physical layout -> tightly-packed logical image\n"
-        "  --sectors=N       number of logical AS/400 sectors to convert (required --\n"
-        "                    read from the disk profile's own declared sector count,\n"
-        "                    not inferred, so a short trailing group is handled\n"
-        "                    exactly rather than guessed)\n"
+        "  --sectors=N       number of logical AS/400 sectors to convert. Optional --\n"
+        "                    auto-derived from the input's size when that's\n"
+        "                    unambiguous (a plain file, exact multiple of the unit\n"
+        "                    size for this scheme/mode); required otherwise -- notably\n"
+        "                    always required for --scheme=ppc --mode=strip, since a\n"
+        "                    full 8-sector group and a short trailing one occupy the\n"
+        "                    identical physical size and can't be told apart, and\n"
+        "                    always required when --input is a raw partition/block\n"
+        "                    device, since its tail may be unrelated alignment\n"
+        "                    padding rather than real data.\n"
         "  --blocksize=N     override logical sector size (default: 520 for cisc,\n"
         "                    522 for ppc)\n"
         "  --input/--output  PATH may be a regular file or a raw partition/block\n"
         "                    device node -- both are opened identically\n",
         prog);
+}
+
+// Returns 1 and fills *size_out with the file's size in bytes, or 0 on
+// failure. Works for both regular files and (on most Unix systems) block
+// device nodes, matching skip_input()'s own fseeko()-based approach above.
+static int getFileSize(FILE *f, uint64_t *size_out)
+{
+    if (fseeko(f, 0, SEEK_END) != 0)
+        return 0;
+    off_t size = ftello(f);
+    if (size < 0)
+        return 0;
+    if (fseeko(f, 0, SEEK_SET) != 0)
+        return 0;
+    *size_out = (uint64_t)size;
+    return 1;
+}
+
+// Best-effort check for whether path names a raw partition/block device
+// rather than a regular file -- if so, its tail may be unrelated alignment
+// padding rather than real logical data, so auto-deriving --sectors from
+// its size would risk silently converting extra garbage past the real
+// disk's end (exactly the failure mode --sectors exists to avoid). Not
+// available on every platform (no S_ISBLK) -- falls back to "assume it's
+// a regular file" there, same as never checking at all.
+static int isBlockDevice(const char *path)
+{
+#if defined(S_ISBLK)
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return 0;
+    return S_ISBLK(st.st_mode) ? 1 : 0;
+#else
+    (void)path;
+    return 0;
+#endif
 }
 
 // One CISC slot: blockSize real bytes + padding up to 1024.
@@ -197,7 +240,7 @@ int main(int argc, char *argv[])
         else { fprintf(stderr, "Error: unrecognized argument '%s'\n", argv[i]); usage(argv[0]); return EXIT_FAILURE; }
     }
 
-    if (!scheme_str || !mode_str || sectors < 0 || !input_path || !output_path)
+    if (!scheme_str || !mode_str || !input_path || !output_path)
     {
         usage(argv[0]);
         return EXIT_FAILURE;
@@ -230,6 +273,51 @@ int main(int argc, char *argv[])
     if (!in) { perror(input_path); return EXIT_FAILURE; }
     FILE *out = fopen(output_path, "wb");
     if (!out) { perror(output_path); fclose(in); return EXIT_FAILURE; }
+
+    if (sectors < 0)
+    {
+        // PPC strip can never be auto-derived: a full 8-sector group and a
+        // short trailing one occupy the exact same 4608-byte physical
+        // span, so the size alone can't tell them apart.
+        if (scheme == SCHEME_PPC && mode == MODE_STRIP)
+        {
+            fprintf(stderr, "Error: --sectors is required for --scheme=ppc --mode=strip "
+                             "(a short trailing group can't be told apart from a full one by size alone)\n");
+            fclose(in); fclose(out);
+            return EXIT_FAILURE;
+        }
+
+        if (isBlockDevice(input_path))
+        {
+            fprintf(stderr, "Error: --sectors is required when --input is a raw partition/block device "
+                             "(its tail may be unrelated alignment padding, not real data)\n");
+            fclose(in); fclose(out);
+            return EXIT_FAILURE;
+        }
+
+        uint64_t inputSize;
+        if (!getFileSize(in, &inputSize))
+        {
+            fprintf(stderr, "Error: could not determine --input size to auto-derive --sectors\n");
+            fclose(in); fclose(out);
+            return EXIT_FAILURE;
+        }
+
+        // insert reads tightly-packed logical data (unit = blockSize);
+        // strip (cisc only, ppc excluded above) reads the gapped physical
+        // layout (unit = one whole slot).
+        uint32_t unit = (mode == MODE_INSERT) ? blockSize : CISC_SLOT_SIZE;
+        if (inputSize % unit != 0)
+        {
+            fprintf(stderr, "Error: --input size (%" PRIu64 " bytes) is not an exact multiple of %u bytes -- "
+                             "cannot unambiguously auto-derive --sectors, pass it explicitly\n", inputSize, unit);
+            fclose(in); fclose(out);
+            return EXIT_FAILURE;
+        }
+
+        sectors = (int64_t)(inputSize / unit);
+        fprintf(stderr, "%s: auto-derived --sectors=%" PRId64 " from --input size\n", argv[0], sectors);
+    }
 
     fprintf(stderr, "%s: %s scheme, %s, %" PRId64 " sectors, blockSize=%u\n",
             argv[0], scheme_str, mode_str, sectors, blockSize);

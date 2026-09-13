@@ -88,7 +88,15 @@ When an *AS400_DiskProfile* is configured for a given SCSI ID, and the associate
 | 8.35 GiB | #6717 | `34L2279` | 16.38 GiB | 9.21 GiB |
 | 16.67 GiB | #4318 | `08K0304` | 32.70 GiB | 18.39 GiB |
 
-¹ **Planned, not yet implemented:** a future `AlignUnalignedAccesses` setting would pad or group AS/400's 520/522-byte logical sectors so they land on the SD card's native 512-byte boundaries, trading SD card space for reduced access overhead — CISC pads each 520-byte sector out to its own 1024-byte slot; RISC/PPC groups 8 522-byte sectors into 9 SD-card sectors (4608 bytes). This column shows that padded size; until the setting exists, an image occupies its usable size directly (plus whatever slack the SD card's own filesystem allocates). Once available: **images written under one `AlignUnalignedAccesses` mode (off, `cisc`, `ppc`) are not compatible with either of the other two modes** -- each uses a different on-SD-card byte layout for the same logical disk. Simply changing the setting on an existing image will not reinterpret it correctly and will corrupt reads/writes. Converting an existing image between modes will require the `utils/as400_gapconv` tool (below), or recreating the image from scratch.
+¹ **Status: implemented, not yet hardware-verified.** A per-device `AlignUnalignedAccesses` setting (`off`/`cisc`/`ppc`/`auto`, see below) pads or groups AS/400's 520/522-byte logical sectors so they land on the SD card's native 512-byte boundaries, trading SD card space for reduced access overhead — CISC pads each 520-byte sector out to its own 1024-byte slot; RISC/PPC groups 8 522-byte sectors into 9 SD-card sectors (4608 bytes). This column shows that padded size; with the setting off (the default), an image occupies its usable size directly (plus whatever slack the SD card's own filesystem allocates). **Images written under one resolved `AlignUnalignedAccesses` mode (off, `cisc`, `ppc`) are not compatible with either of the other two** -- each uses a different on-SD-card byte layout for the same logical disk. Simply changing the setting on an existing image will not reinterpret it correctly and will corrupt reads/writes. Converting an existing image between modes requires the `utils/as400_gapconv` tool (below), or recreating the image from scratch.
+
+```ini
+[SCSI6]
+AS400_DiskProfile = "09L4044"
+AlignUnalignedAccesses = auto
+```
+
+`AlignUnalignedAccesses` is set per SCSI ID. `auto` picks the scheme matching that ID's actual block size (520→`cisc`, 522→`ppc`, anything else→`off`) -- the recommended value for any profile-based device, since it can't drift out of sync with the profile the way spelling out `cisc`/`ppc` by hand can (a real, hardware-hit mistake during this feature's own testing: `PART:n` on a CISC profile with `AlignUnalignedAccesses` left unset entirely failed outright, since `RAW:`/`PART:` has never supported a non-512-byte-multiple block size without it). Spell out `cisc`/`ppc` explicitly only if you deliberately want gapping off for a particular profile despite its block size, or vice versa. **`AlignUnalignedAccesses` is never turned on implicitly just because `AS400_DiskProfile` is set** -- an existing, un-gapped image must keep working unmodified after an upgrade; it only ever takes effect when written explicitly. Compiles clean and passes standalone host-side tests cross-checked against `utils/as400_gapconv` byte-for-byte, but **has not yet been run against real AS/400 hardware** -- verify carefully (and back up any existing images first) before relying on it.
 
 There is a shell-script `utils/extract_as400_disk_data.sh` in the original source tree on GitHub to generate more *as400_disk_definitions.txt* entries from real disks connected to a SCSI controller when ran under Linux. With that, and a sector copy, you can migrate your real disks to Zulu SCSI, keeping disk metadata and serial numbers intact. Example command line for copying a disk's data: `sg_dd blk_sgio=1 if=/dev/sg0 bs=520 of=outfile_520.dd verbose=2 sync=1`.
 
@@ -103,7 +111,7 @@ Fully tested with Firmware v2026.08.27RC1, 9401-150, V4R4, V5R2.
 A small standalone host-side C tool (not part of the firmware build; compile with `cc -O2 -o as400_gapconv utils/as400_gapconv.c`) that converts an AS/400 disk image between the tightly-packed logical-sector layout and the "gapped" physical layout `AlignUnalignedAccesses` will use on the SD card. Works identically on a plain image file or a raw partition/block-device node -- both are just opened as a byte stream, no special-casing.
 
 ```
-as400_gapconv --scheme=cisc|ppc --mode=insert|strip --sectors=N \
+as400_gapconv --scheme=cisc|ppc --mode=insert|strip [--sectors=N] \
               [--blocksize=N] --input=PATH --output=PATH
 ```
 
@@ -111,7 +119,7 @@ as400_gapconv --scheme=cisc|ppc --mode=insert|strip --sectors=N \
 - `--scheme=ppc` -- 522-byte logical sectors, grouped 8-at-a-time into a 4608-byte (9-SD-sector) physical group, matching OS/400's own 8-sector-aligned paging.
 - `--mode=insert` -- tightly-packed logical image (what you have today) → gapped physical layout.
 - `--mode=strip` -- gapped physical layout → tightly-packed logical image (e.g. before moving an image to a card/setting where `AlignUnalignedAccesses` is off).
-- `--sectors=N` -- the disk's logical sector count (from its `as400_disk_definitions.txt` profile). Required, not inferred from file size, so a short trailing group is handled exactly.
+- `--sectors=N` -- the disk's logical sector count (from its `as400_disk_definitions.txt` profile). Optional -- auto-derived from `--input`'s size when that's unambiguous (a plain file whose size is an exact multiple of the relevant unit size). Always required for `--scheme=ppc --mode=strip` (a full 8-sector group and a short trailing one occupy the identical physical size, so there's no way to tell them apart from size alone) and whenever `--input` is a raw partition/block device (its tail may be unrelated alignment padding, not real data).
 - `--blocksize=N` -- override the logical sector size; defaults to 520 (`cisc`) or 522 (`ppc`).
 
 ## Tape drive support

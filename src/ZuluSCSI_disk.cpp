@@ -578,16 +578,18 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         // Too-small check: only meaningful when this target declares an
         // expected capacity (currently: an AS400_DiskProfile). Without
         // one, whatever the partition provides simply becomes the
-        // device's capacity, same as RAW: today. "alignment gapping" in
-        // the message refers to the planned AlignUnalignedAccesses
-        // setting (a separate branch) -- worded now so the message
-        // doesn't need to change once that setting exists and starts
-        // contributing to the required size too.
+        // device's capacity, same as RAW: today. requiredBytes accounts
+        // for AlignUnalignedAccesses's gapped layout (see
+        // ZuluSCSI_gap_layout.h) when the target has it enabled -- a
+        // gapped partition genuinely needs more physical space than
+        // sectors*blockSize alone.
         uint32_t profileBlockSize = 0, profileSectors = 0;
         if (getAS400ProfileCapacity(target_idx, &profileBlockSize, &profileSectors) &&
             profileBlockSize > 0 && profileSectors > 0)
         {
-            uint64_t requiredBytes = (uint64_t)profileSectors * profileBlockSize;
+            zuluscsi_align_unaligned_t alignMode = gapLayoutResolveAuto(
+                (zuluscsi_align_unaligned_t)g_scsi_settings.getDevice(target_idx)->alignUnalignedAccesses, profileBlockSize);
+            uint64_t requiredBytes = gapLayoutPhysicalSize(alignMode, profileBlockSize, profileSectors);
             uint64_t haveBytes = (uint64_t)extent.sectorCount * SD_SECTOR_SIZE;
             if (haveBytes < requiredBytes)
             {
@@ -1574,6 +1576,14 @@ void scsiDiskLoadConfig(int target_idx)
     int blocksize = 0;
     if (scsiDiskGetNextImageName(img, filename, sizeof(filename)))
     {
+        // Record that a real image was configured for this ID -- before
+        // the open attempt below, which may fail -- so a failure here
+        // doesn't look identical to "never configured" (see the field's
+        // own comment in ZuluSCSI_disk.h for why that distinction
+        // matters: autoCreateAS400ProfileImages() must not paper over a
+        // failed PART:n/RAW:/file open by creating an unrelated new file).
+        img.image_config_attempted = true;
+
         if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
             // set custom tape density
@@ -2037,6 +2047,13 @@ const S2S_TargetCfg* s2s_getConfigById(int scsiId)
         }
     }
     return NULL;
+}
+
+bool scsiDiskImageWasConfigured(int scsiId)
+{
+    if (scsiId < 0 || scsiId >= S2S_MAX_TARGETS)
+        return false;
+    return g_DiskImages[scsiId].image_config_attempted;
 }
 
 /**********************/

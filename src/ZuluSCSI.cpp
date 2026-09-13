@@ -670,6 +670,20 @@ static bool autoCreateAS400ProfileImages()
     if (s2s_getConfigById(id))
       continue; // the scan below already found a real image for this ID
 
+    if (scsiDiskImageWasConfigured(id))
+    {
+      // A real image (IMG0=/RAW:/PART:n/directory-scan result) WAS found
+      // and an open WAS attempted for this ID -- it just failed (wrong
+      // block size, partition too small, corrupt file, etc.). Auto-
+      // creating an unrelated new file here would silently paper over
+      // that failure instead of leaving the device disabled the way the
+      // failed open already (correctly) intended -- confirmed as a real
+      // bug via a real screenlog: a PART:n rejected for an incompatible
+      // block size fell through to here and tried to auto-create a
+      // multi-hundred-MB file on a card too small to hold it.
+      continue;
+    }
+
     char section[SCSI_INI_SECTION_SIZE];
     scsiGetIniSection(id, section, sizeof(section));
     char profileName[64];
@@ -699,9 +713,16 @@ static bool autoCreateAS400ProfileImages()
     snprintf(namepart, sizeof(namepart), "HD%c0.hda", scsiEncodeID(id));
     strcat(fullname, namepart);
 
-    uint64_t size = (uint64_t)sectors * blockSize;
+    // Account for AlignUnalignedAccesses: a gapped-layout image needs more
+    // physical SD card space than its logical sectors*blockSize (see
+    // ZuluSCSI_gap_layout.h) -- passing that logical size to
+    // createImageFile() here would silently under-allocate the file.
+    zuluscsi_align_unaligned_t alignMode = gapLayoutResolveAuto(
+        (zuluscsi_align_unaligned_t)g_scsi_settings.getDevice(id)->alignUnalignedAccesses, blockSize);
+    uint64_t size = gapLayoutPhysicalSize(alignMode, blockSize, sectors);
     logmsg("---- No image found for SCSI ID ", id, ", auto-creating ",
-           (int)(size / (1024 * 1024)), " MB per AS400_DiskProfile '", profileName, "'");
+           (int)(size / (1024 * 1024)), " MB per AS400_DiskProfile '", profileName, "'",
+           alignMode != ALIGN_UNALIGNED_OFF ? " (includes AlignUnalignedAccesses padding)" : "");
 
     if (!createImageFile(fullname, size))
     {

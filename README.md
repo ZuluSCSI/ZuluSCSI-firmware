@@ -122,7 +122,10 @@ IMG0 = PART:2
 A `PART:n` form lets `IMGn` reference a partition by number instead of
 hand-computed sector ranges, resolved from the SD card's own MBR or GPT
 partition table. Consistent with the partition utilities, we count from 1! It is
-also **not yet safe with a block size that isn't a multiple of 512 bytes**!
+also **not yet safe with a block size that isn't a multiple of 512 bytes**,
+unless the device also has an alignment/gapping setting enabled to compensate
+(currently only exists for AS/400 profiles -- see `AlignUnalignedAccesses` in
+README-as400.md).
 
 > **Note:** MBR supports at most 4 partitions (a hard limit of the MBR format
 > itself — logical/extended partitions beyond that are out of scope for
