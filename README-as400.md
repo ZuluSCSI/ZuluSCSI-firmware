@@ -80,6 +80,24 @@ Caveats:
 
 - Writes to the emulated disk are very slow compared to reads. This is most apparent with PPC platforms.
 
+> **Planned:** an `AlignUnalignedAccesses` setting is planned (not yet implemented) to pad or group AS/400's 520/522-byte logical sectors so they land on the SD card's native 512-byte boundaries, trading SD card space for reduced access overhead. Once available: **images written under one `AlignUnalignedAccesses` mode (off, `cisc`, `ppc`) are not compatible with either of the other two modes** -- each uses a different on-SD-card byte layout for the same logical disk. Simply changing the setting on an existing image will not reinterpret it correctly and will corrupt reads/writes. Converting an existing image between modes will require the `utils/as400_gapconv` tool (below), or recreating the image from scratch.
+
+#### `utils/as400_gapconv` -- converting images for `AlignUnalignedAccesses`
+
+A small standalone host-side C tool (not part of the firmware build; compile with `cc -O2 -o as400_gapconv utils/as400_gapconv.c`) that converts an AS/400 disk image between the tightly-packed logical-sector layout and the "gapped" physical layout `AlignUnalignedAccesses` will use on the SD card. Works identically on a plain image file or a raw partition/block-device node -- both are just opened as a byte stream, no special-casing.
+
+```
+as400_gapconv --scheme=cisc|ppc --mode=insert|strip --sectors=N \
+              [--blocksize=N] --input=PATH --output=PATH
+```
+
+- `--scheme=cisc` -- 520-byte logical sectors, each padded to its own 1024-byte physical slot.
+- `--scheme=ppc` -- 522-byte logical sectors, grouped 8-at-a-time into a 4608-byte (9-SD-sector) physical group, matching OS/400's own 8-sector-aligned paging.
+- `--mode=insert` -- tightly-packed logical image (what you have today) → gapped physical layout.
+- `--mode=strip` -- gapped physical layout → tightly-packed logical image (e.g. before moving an image to a card/setting where `AlignUnalignedAccesses` is off).
+- `--sectors=N` -- the disk's logical sector count (from its `as400_disk_definitions.txt` profile). Required, not inferred from file size, so a short trailing group is handled exactly.
+- `--blocksize=N` -- override the logical sector size; defaults to 520 (`cisc`) or 522 (`ppc`).
+
 Fully tested with Firmware v2026.08.27RC1, 9401-150, V4R4, V5R2.
 
 ## Tape drive support
