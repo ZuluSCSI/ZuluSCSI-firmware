@@ -1858,6 +1858,20 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       delay(boot_delay_ms);
     }
     platform_post_sd_card_init();
+
+    // IOTrace must be enabled before kiosk_restore_images()/reinitSCSI()
+    // open any images, not just later inside init_logfile() below --
+    // otherwise every IOTRACE_REC_IMAGEOPEN record from the initial boot-time
+    // image open (the only one most sessions ever get -- see
+    // ImageBackingStore::_internal_open()) is silently dropped, because
+    // iotrace_*() calls are no-ops until iotrace_enabled_ref() is set.
+    // Confirmed 2026-09-13: two full real captures with zero IMAGEOPEN
+    // records each. iotrace_init() is idempotent per boot (see its own
+    // first_call_this_boot guard), so the later call inside init_logfile()
+    // is a harmless no-op once this one has already run.
+    iotrace_load_setting();
+    iotrace_init();
+
 #ifdef PLATFORM_HAS_INITIATOR_MODE
     if (!platform_is_initiator_mode_enabled())
 #endif

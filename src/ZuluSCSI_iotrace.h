@@ -63,6 +63,23 @@ enum IOTraceLoopBucket : uint8_t
     // becomes a genuinely small residual instead of a catch-all guess.
     IOTRACE_BUCKET_SAVE_LOGFILE,
     IOTRACE_BUCKET_SD_MAINTENANCE,
+    // Added 2026-09-13: two fresh real captures (both machines, both SD
+    // cards) showed per-summary median iteration time roughly unchanged
+    // from the pre-instrumentation baseline, but p95/p99 substantially
+    // worse (Wide: p95 11.4us -> 50.2us, p99 674.7us; Blaster: p95 25.1us
+    // -> 38.1us) -- user's own suspicion that the tracing itself is the
+    // cause. Layer A/B/BOOT/IMAGEOPEN's iotrace_write() calls land
+    // precisely on the busy (CDB/SD-access) iterations, which is where
+    // the tail lives, not on the idle-loop median -- consistent with the
+    // shape of the regression, but not yet *measured* directly. This
+    // bucket wraps exactly those write() calls (see iotrace_cdb() /
+    // iotrace_sd_access() / iotrace_imageopen() below) so the next
+    // capture states the overhead as a number instead of an inference.
+    // Deliberately overlaps with (is a subset of) SCSI_POLL/DISK_COMPUTE's
+    // own totals -- not part of the OTHER-bucket subtraction in
+    // zuluscsi_main_loop() -- since the point is to show what fraction of
+    // time already counted there was actually just tracing itself.
+    IOTRACE_BUCKET_TRACE_OVERHEAD,
     IOTRACE_BUCKET_OTHER,
     IOTRACE_BUCKET_COUNT
 };
@@ -182,7 +199,7 @@ struct __attribute__((packed)) IOTraceImageOpenRecord
 
 // Layer C. One summary per IOTRACE_LOOP_EMIT_INTERVAL main-loop
 // iterations, not one per iteration. 12 + 4*IOTRACE_BUCKET_COUNT bytes
-// (40 with the current 7 buckets) -- grows automatically if buckets are
+// (44 with the current 8 buckets) -- grows automatically if buckets are
 // added/removed, since bucket_us[] is sized off the enum, not a literal.
 struct __attribute__((packed)) IOTraceLoopRecord
 {
@@ -221,6 +238,21 @@ inline void iotrace_write(const void *data, size_t len)
 // outside PLATFORM_AS400 (see the stub below), so a caller in a
 // multi-platform file can always call this safely without its own #ifdef.
 inline uint64_t iotrace_now_us() { return time_us_64(); }
+
+// Layer C: add `elapsed_us` to `bucket`'s running total for this
+// accounting window. Call once per (begin, end) pair around the
+// corresponding zuluscsi_main_loop() sub-call or DMA-wait spin loop.
+// Declared up here (ahead of iotrace_cdb() et al.) because Layer A/B/
+// IMAGEOPEN's own IOTRACE_BUCKET_TRACE_OVERHEAD self-timing (see below)
+// needs to call it too, and plain functions need their declaration
+// before first use.
+inline void iotrace_loop_account(IOTraceLoopBucket bucket, uint32_t elapsed_us)
+{
+    if (!iotrace_enabled_ref()) return;
+    if (bucket >= IOTRACE_BUCKET_COUNT) return;
+
+    iotrace_loop_bucket_us_ref()[bucket] += elapsed_us;
+}
 
 // Parses IOTrace= from [SCSI]. Mirrors how g_log_debug is parsed from
 // Debug= in reinitSCSI() -- call from the same place.
@@ -302,7 +334,9 @@ inline void iotrace_cdb(uint8_t scsiId, uint8_t opcode, uint16_t blockCount, uin
     rec.blockCount = blockCount;
     rec._pad = 0;
 
+    uint64_t iotrace_t0 = iotrace_now_us();
     iotrace_write(&rec, sizeof(rec));
+    iotrace_loop_account(IOTRACE_BUCKET_TRACE_OVERHEAD, (uint32_t)(iotrace_now_us() - iotrace_t0));
 }
 
 // Layer B: one ImageBackingStore access. `sector`/`sectorCount` are in the
@@ -328,7 +362,9 @@ inline void iotrace_sd_access(uint8_t scsiId, uint32_t sector, uint16_t sectorCo
     rec.sectorCount = sectorCount;
     rec._pad = 0;
 
+    uint64_t iotrace_t0 = iotrace_now_us();
     iotrace_write(&rec, sizeof(rec));
+    iotrace_loop_account(IOTRACE_BUCKET_TRACE_OVERHEAD, (uint32_t)(iotrace_now_us() - iotrace_t0));
 }
 
 // One per ImageBackingStore _internal_open() call -- see
@@ -347,18 +383,9 @@ inline void iotrace_imageopen(uint8_t scsiId, uint32_t bgnSector, uint32_t endSe
     rec.endSector = endSector;
     rec.sectorCount = sectorCount;
 
+    uint64_t iotrace_t0 = iotrace_now_us();
     iotrace_write(&rec, sizeof(rec));
-}
-
-// Layer C: add `elapsed_us` to `bucket`'s running total for this
-// accounting window. Call once per (begin, end) pair around the
-// corresponding zuluscsi_main_loop() sub-call or DMA-wait spin loop.
-inline void iotrace_loop_account(IOTraceLoopBucket bucket, uint32_t elapsed_us)
-{
-    if (!iotrace_enabled_ref()) return;
-    if (bucket >= IOTRACE_BUCKET_COUNT) return;
-
-    iotrace_loop_bucket_us_ref()[bucket] += elapsed_us;
+    iotrace_loop_account(IOTRACE_BUCKET_TRACE_OVERHEAD, (uint32_t)(iotrace_now_us() - iotrace_t0));
 }
 
 // Layer C: call once per zuluscsi_main_loop() iteration, after accounting
