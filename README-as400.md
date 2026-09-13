@@ -74,6 +74,22 @@ PrefetchBytes = 0
 
 When an *AS400_DiskProfile* is configured for a given SCSI ID, and the associated image cannot be found on the SD card, a new one is generated automatically, with the correct size. This takes some time, so wait until the activity LED stays unlit.
 
+### Available disk profiles
+
+*as400_disk_definitions.txt* carries several captures per real drive model; entries below are grouped by usable size and Feature Code, since several `as400_disk_definitions.txt` sections often describe the same physical drive model (multiple captured units, or minor firmware/certification variants). Entries with no Feature Code recorded (a real disk was captured, but which FC OS/400 would show for it isn't known) are omitted here — refer to *as400_disk_definitions.txt* directly for those.
+
+| Usable size | Feature Code | `as400_disk_definitions.txt` sections | CISC padded size¹ | RISC/PPC padded size¹ |
+|---|---|---|---|---|
+| 957.7 MiB | #6104 | `55F9806` | 1.84 GiB | 1.04 GiB |
+| 1001.5 MiB | #6601 | `45G9463`, `45G9463-1` | 1.93 GiB | 1.08 GiB |
+| 2.04 GiB | #6606 | `86G9124`, `86G9124-5`, `74G6978-6` | 4.01 GiB | 2.26 GiB |
+| 4.07 GiB | #6607 | `59H7001` | 7.99 GiB | 4.50 GiB |
+| 8.35 GiB | #6713 | `59H6611` | 16.38 GiB | 9.21 GiB |
+| 8.35 GiB | #6717 | `34L2279` | 16.38 GiB | 9.21 GiB |
+| 16.67 GiB | #4318 | `08K0304` | 32.70 GiB | 18.39 GiB |
+
+¹ **Planned, not yet implemented:** a future `AlignUnalignedAccesses` setting (aligning AS/400's 520/522-byte sectors to the SD card's native 512-byte sectors, to reduce access overhead) would need this much SD card space instead of the usable size — CISC pads each 520-byte sector out to its own 1024-byte slot; RISC/PPC groups 8 522-byte sectors into 9 SD-card sectors (4608 bytes). Until that setting exists, an image occupies its usable size directly (plus whatever slack the SD card's own filesystem allocates).
+
 There is a shell-script `utils/extract_as400_disk_data.sh` in the original source tree on GitHub to generate more *as400_disk_definitions.txt* entries from real disks connected to a SCSI controller when ran under Linux. With that, and a sector copy, you can migrate your real disks to Zulu SCSI, keeping disk metadata and serial numbers intact. Example command line for copying a disk's data: `sg_dd blk_sgio=1 if=/dev/sg0 bs=520 of=outfile_520.dd verbose=2 sync=1`.
 
 Caveats:
