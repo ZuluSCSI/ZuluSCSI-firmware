@@ -375,11 +375,14 @@ void serialMediaMenuProcess(char c)
 
                 case 'n':
                 case 'N':
+                    platform_flush_usb_log();
+                    log_lock();
                     if (controlLoadImage(id, nullptr))
-                        serial_println("  Next image staged — host will see media change.");
+                        serial_println("  Next image staged -- host will see media change.");
                     else
                         serial_println("  No next image available.");
                     show_device_actions();
+                    log_unlock();
                     break;
 
                 case 'e':
