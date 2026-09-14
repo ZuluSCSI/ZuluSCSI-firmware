@@ -560,6 +560,37 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             return false;
         }
 
+        // The SD card's own mounted FAT/exFAT volume (zuluscsi.ini,
+        // firmware, tape/CD images) is never itself tracked as a PART:n
+        // claim, so nothing above stops a config typo from mapping the
+        // *admin* partition itself as a PART:n disk -- e.g. the
+        // documented layout (utils/as400_part_planner.py) puts the admin
+        // volume at PART:1 and AS/400 disks at PART:2.., so `IMG0 =
+        // PART:1` where `PART:2` was meant would otherwise silently
+        // present zuluscsi.ini/firmware/images as a writable SCSI disk.
+        // Check the resolved extent against SD.vol()'s own already-
+        // mounted data area directly (same public accessors
+        // print_sd_info() already uses) -- refusing this up front is far
+        // better than discovering a corrupted config volume after the
+        // fact.
+        {
+            uint32_t volDataStart = SD.vol()->dataStartSector();
+            uint64_t volDataEnd = (uint64_t)volDataStart +
+                (uint64_t)SD.vol()->clusterCount() * SD.vol()->sectorsPerCluster();
+            uint64_t partEnd = (uint64_t)extent.startSector + extent.sectorCount;
+            if (extent.startSector < volDataEnd && volDataStart < partEnd)
+            {
+                logmsg("---- Partition ", (int)partitionNumber, " (sectors ", (int)extent.startSector,
+                       "-", (int)(extent.startSector + extent.sectorCount - 1),
+                       ") overlaps the SD card's own mounted FAT/exFAT volume (data area starts at sector ",
+                       (int)volDataStart, "). Not presenting as SCSI device ", target_idx,
+                       " -- this would let the host overwrite zuluscsi.ini/firmware/images");
+                img.scsiId = target_idx;
+                partitionTableClearClaim(target_idx);
+                return false;
+            }
+        }
+
         // AU-boundary alignment is a performance hint, not a correctness
         // requirement (unlike the too-small/overlap checks below) -- warn
         // and continue rather than refusing to present the device.
@@ -668,17 +699,25 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             if (getAS400ProfileCapacity(target_idx, &profileBlockSize, &profileSectors) &&
                 profileSectors > 0 && profileSectors < img.scsiSectors)
             {
-                logmsg("---- Clamping reported capacity from ", (int)img.scsiSectors,
-                       " to ", (int)profileSectors, " sectors to match the AS400_DiskProfile's own declared geometry");
                 // img.scsiSectors alone only feeds CHS geometry math below --
                 // ReadCapacity and the read/write bounds check both derive
                 // capacity fresh from img.file.size(), so the clamp has to
-                // land inside ImageBackingStore itself (m_logicalSectorCount)
-                // or it never actually reaches the host. Recompute
-                // img.scsiSectors from size() afterwards so both stay in
-                // sync with whatever the backing store actually enforces.
-                img.file.clampLogicalSectorCount(profileSectors);
-                img.scsiSectors = img.file.size() / blocksize;
+                // land inside ImageBackingStore itself (m_logicalSectorCount,
+                // or m_endsector for a non-gapped raw device) or it never
+                // actually reaches the host. Only log success once the
+                // clamp is confirmed to have actually taken effect --
+                // clampLogicalSectorCount() can decline (e.g. a plain
+                // FsFile-backed image, which has no oversized "extent" to
+                // shrink in the first place), and claiming a clamp
+                // happened when it didn't would actively mislead whoever
+                // is reading the log while the phantom-sector overreporting
+                // this exists to fix silently persists.
+                if (img.file.clampLogicalSectorCount(profileSectors))
+                {
+                    logmsg("---- Clamping reported capacity from ", (int)img.scsiSectors,
+                           " to ", (int)profileSectors, " sectors to match the AS400_DiskProfile's own declared geometry");
+                    img.scsiSectors = img.file.size() / blocksize;
+                }
             }
         }
 #endif
@@ -3258,7 +3297,18 @@ void diskDataOut()
                     int16_t run = skip_next(sectors_remaining);
                     if (run < 0)
                     {
-                        img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
+                        // A rejected seek (out-of-range target) leaves the
+                        // position unchanged, not moved -- if left
+                        // undetected, the next positive run below would
+                        // silently write to the wrong (stale, but still
+                        // in-range) sectors instead of failing the
+                        // command. Fail explicitly instead.
+                        if (!img.file.seek(img.file.position() + (abs(run) * bytesPerSector)))
+                        {
+                            logmsg("Skip Write mask seek past end of device");
+                            write_ok = false;
+                            break;
+                        }
                     }
                     else if (run > 0)
                     {
@@ -3512,7 +3562,18 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
             int16_t run = skip_next(sectors_remaining);
             if (run < 0)
             {
-                img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
+                // A rejected seek (out-of-range target) leaves the
+                // position unchanged -- if left undetected, the next
+                // positive run below would silently read the wrong
+                // (stale, but still in-range) sectors and deliver them to
+                // the host instead of failing the command. Fail
+                // explicitly instead.
+                if (!img.file.seek(img.file.position() + (abs(run) * bytesPerSector)))
+                {
+                    logmsg("Skip Read mask seek past end of device");
+                    read_ok = false;
+                    break;
+                }
             }
             else if (run > 0)
             {
@@ -3611,6 +3672,22 @@ static void diskDataIn()
 #ifdef PREFETCH_BUFFER_SIZE
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
         int maxPrefetchBytes = img.prefetchbytes;
+
+#ifdef PLATFORM_AS400
+        if (g_disk_transfer.skip_command)
+        {
+            // A Skip Read's masked walk leaves img.file's position at
+            // lba+blocks+(interior skipped sectors), not lba+blocks --
+            // prefetchFirstSector below assumes the latter. Filling the
+            // cache from the wrong position would silently poison it: a
+            // later ordinary Read10 covering [lba+blocks, ...) could be
+            // served this mismatched data with GOOD status. The existing
+            // Skip-Read invalidate (scsiDiskSkip()) only covers stale
+            // data already cached *before* the skip started, not this
+            // after-the-fact case -- skip read-ahead entirely instead.
+            maxPrefetchBytes = 0;
+        }
+#endif
 
         uint8_t *prefetchBuffer = NULL;
         uint32_t prefetchFirstSector = transfer.lba + transfer.blocks;

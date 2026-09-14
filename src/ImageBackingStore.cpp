@@ -71,11 +71,10 @@ ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_s
     // block-size check below -- that check predates this setting and
     // would otherwise unconditionally reject any AS/400 block size, since
     // 520/522 never divides 512 evenly. An explicit cisc/ppc request
-    // always takes effect directly, regardless of scsi_block_size --
-    // there are exactly two AS/400 block sizes in existence (520/522),
-    // stable for decades, so there is no real incompatible combination to
-    // guard against here; auto is what actually needs the block size to
-    // pick a scheme.
+    // always takes effect directly, regardless of scsi_block_size -- the
+    // two real AS/400 block sizes (520/522) are always safe for their
+    // matching scheme; auto is what actually needs the block size to pick
+    // a scheme.
     m_blockSize = scsi_block_size;
     m_alignMode = ALIGN_UNALIGNED_OFF;
     if (device_settings)
@@ -88,6 +87,29 @@ ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_s
             logmsg("---- AlignUnalignedAccesses=auto resolved to ",
                    m_alignMode == ALIGN_UNALIGNED_CISC ? "cisc" : m_alignMode == ALIGN_UNALIGNED_PPC ? "ppc" : "off",
                    " for block size ", (int)scsi_block_size);
+        }
+
+        // gappedTransfer()'s memcpys assume a whole logical sector fits
+        // inside its physical unit -- GAP_CISC_SLOT_SIZE for cisc, or
+        // GAP_PPC_GROUP_PHYS_SIZE/GAP_PPC_GROUP_SECTORS bytes-per-sector
+        // for ppc. Real AS/400 block sizes (520/522) always fit both
+        // comfortably, so this only ever fires for an *explicit* cisc/ppc
+        // paired with an unrelated block size (wrong section, a typo) --
+        // without it, such a combination would silently write past the
+        // end of the shared static staging buffer in ImageBackingStore.cpp.
+        if (m_alignMode == ALIGN_UNALIGNED_CISC && scsi_block_size > GAP_CISC_SLOT_SIZE)
+        {
+            logmsg("ERROR: AlignUnalignedAccesses=cisc block size ", (int)scsi_block_size,
+                   " exceeds the ", (int)GAP_CISC_SLOT_SIZE, "-byte CISC slot size -- disabling gapping");
+            m_alignMode = ALIGN_UNALIGNED_OFF;
+        }
+        else if (m_alignMode == ALIGN_UNALIGNED_PPC &&
+                 (uint64_t)scsi_block_size * GAP_PPC_GROUP_SECTORS > GAP_PPC_GROUP_PHYS_SIZE)
+        {
+            logmsg("ERROR: AlignUnalignedAccesses=ppc block size ", (int)scsi_block_size,
+                   " exceeds the ", (int)(GAP_PPC_GROUP_PHYS_SIZE / GAP_PPC_GROUP_SECTORS),
+                   " bytes/sector the PPC group layout allows -- disabling gapping");
+            m_alignMode = ALIGN_UNALIGNED_OFF;
         }
     }
 
@@ -373,6 +395,21 @@ ssize_t ImageBackingStore::gappedTransfer(void *buf, size_t count, bool isWrite)
     if (sectorsWanted == 0)
         return 0;
 
+    // Hard bounds check before touching any media -- a second line of
+    // defense alongside seek() now refusing to commit an out-of-range
+    // position (see its own comment). Without this, a transfer starting
+    // at or continuing past m_logicalSectorCount would compute a physical
+    // offset beyond this device's own extent and read/write into whatever
+    // physically follows it -- the adjacent partition, given PART:n
+    // layouts are packed back-to-back with no unallocated space by
+    // design.
+    if ((uint64_t)m_logicalSector + sectorsWanted > m_logicalSectorCount)
+    {
+        logmsg("ERROR: gapped image access [", (int)m_logicalSector, ", ", (int)(m_logicalSector + sectorsWanted),
+               ") exceeds logical sector count ", (int)m_logicalSectorCount);
+        return -1;
+    }
+
     zuluscsi_align_unaligned_t mode = (zuluscsi_align_unaligned_t)m_alignMode;
     uint32_t firstSector = m_logicalSector;
     uint8_t *cbuf = (uint8_t*)buf;
@@ -582,12 +619,35 @@ bool ImageBackingStore::close()
 
 bool ImageBackingStore::clampLogicalSectorCount(uint32_t maxSectors)
 {
-    if (m_alignMode == ALIGN_UNALIGNED_OFF)
-        return false;
-    if (maxSectors >= m_logicalSectorCount)
+    if (m_alignMode != ALIGN_UNALIGNED_OFF)
+    {
+        if (maxSectors >= m_logicalSectorCount)
+            return false;
+
+        m_logicalSectorCount = maxSectors;
+        return true;
+    }
+
+    // Non-gapped raw/contiguous path: size() derives capacity from
+    // m_endsector directly (m_logicalSectorCount isn't used at all off
+    // the gapped path), so clamp that instead, converted to physical
+    // SD-sector units. Only meaningful for a contiguous raw (RAW:/PART:n)
+    // device -- a plain file has no equivalent "extent" field to shrink
+    // here, and doesn't need one: FsFile-backed images already report
+    // their own real file size, not a partition's potentially-oversized
+    // extent. blockSize % SD_SECTOR_SIZE == 0 is already guaranteed by
+    // this constructor's own RAW: block-size check whenever alignMode is
+    // off, so this division is always exact.
+    if (!m_iscontiguous || !m_israw || m_blockdev == nullptr ||
+        m_blockSize == 0 || (m_blockSize % SD_SECTOR_SIZE) != 0)
         return false;
 
-    m_logicalSectorCount = maxSectors;
+    uint64_t maxPhysSectors = (uint64_t)maxSectors * (m_blockSize / SD_SECTOR_SIZE);
+    uint64_t currentPhysSectors = (uint64_t)(m_endsector - m_bgnsector + 1);
+    if (maxPhysSectors == 0 || maxPhysSectors >= currentPhysSectors)
+        return false;
+
+    m_endsector = m_bgnsector + (uint32_t)maxPhysSectors - 1;
     return true;
 }
 
@@ -668,8 +728,21 @@ bool ImageBackingStore::seek(uint64_t pos)
             return false;
         }
 
-        m_logicalSector = (uint32_t)(pos / m_blockSize);
-        return m_logicalSector < m_logicalSectorCount;
+        // Validate before committing -- a rejected seek must leave
+        // m_logicalSector exactly where it was, not moved to the
+        // rejected (out-of-range) position. Skip Read/Write's mask walk
+        // (ZuluSCSI_disk.cpp) calls seek(position()+skip_bytes) and now
+        // does check the return value, but this still matters as its own
+        // line of defense: committing an out-of-range position before
+        // returning false would leave the object's own state
+        // inconsistent with what it just reported, for any future/other
+        // caller that might not check it.
+        uint32_t newSector = (uint32_t)(pos / m_blockSize);
+        if (newSector >= m_logicalSectorCount)
+            return false;
+
+        m_logicalSector = newSector;
+        return true;
     }
 
     uint32_t sectornum = pos / SD_SECTOR_SIZE;
