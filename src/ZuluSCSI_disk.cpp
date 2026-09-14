@@ -647,6 +647,34 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
     {
         img.bytesPerSector = blocksize;
         img.scsiSectors = img.file.size() / blocksize;
+
+        // A RAW:/PART:-backed device's size() naturally reports "however
+        // much physical space is available" (the extent's own size, or --
+        // with AlignUnalignedAccesses on -- however many whole gapped
+        // units fit in it), not the disk's true capacity: PART:n
+        // partitions routinely have some margin beyond what a profile
+        // strictly needs (the too-small check below only validates a
+        // lower bound, never an upper one), and that margin becomes
+        // real, phantom extra sectors reported to the host if left
+        // unclamped. Confirmed as a real bug via hardware testing: a
+        // ~190MB margin on a real partition turned into 345,652 sectors
+        // of capacity beyond a profile's own documented, fixed geometry
+        // -- these are real physical IBM disk models with an exact
+        // capacity OS/400 expects, so overreporting it is a genuine
+        // device-identity mismatch, not just wasted space.
+#ifdef PLATFORM_AS400
+        {
+            uint32_t profileBlockSize = 0, profileSectors = 0;
+            if (getAS400ProfileCapacity(target_idx, &profileBlockSize, &profileSectors) &&
+                profileSectors > 0 && profileSectors < img.scsiSectors)
+            {
+                logmsg("---- Clamping reported capacity from ", (int)img.scsiSectors,
+                       " to ", (int)profileSectors, " sectors to match the AS400_DiskProfile's own declared geometry");
+                img.scsiSectors = profileSectors;
+            }
+        }
+#endif
+
         img.scsiId = target_idx | S2S_CFG_TARGET_ENABLED;
         img.sdSectorStart = 0;
         bool tape_is_tap_format = false;
