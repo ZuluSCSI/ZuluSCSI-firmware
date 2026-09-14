@@ -670,7 +670,15 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             {
                 logmsg("---- Clamping reported capacity from ", (int)img.scsiSectors,
                        " to ", (int)profileSectors, " sectors to match the AS400_DiskProfile's own declared geometry");
-                img.scsiSectors = profileSectors;
+                // img.scsiSectors alone only feeds CHS geometry math below --
+                // ReadCapacity and the read/write bounds check both derive
+                // capacity fresh from img.file.size(), so the clamp has to
+                // land inside ImageBackingStore itself (m_logicalSectorCount)
+                // or it never actually reaches the host. Recompute
+                // img.scsiSectors from size() afterwards so both stay in
+                // sync with whatever the backing store actually enforces.
+                img.file.clampLogicalSectorCount(profileSectors);
+                img.scsiSectors = img.file.size() / blocksize;
             }
         }
 #endif
@@ -3143,20 +3151,27 @@ void diskDataOut()
         }
 
 #ifdef PLATFORM_AS400
-        // A Skip Write must commit only whole sectors: it walks the skip mask
-        // sector-by-sector, so any partial trailing sector left in len would
-        // either be dropped or (worse) offset every subsequent sector in the
-        // command by however many bytes were missing. len above is sized by
-        // SD buffer/write-size availability, not by bytesPerSector, so it is
-        // generally not a sector multiple - round it down before it is used
-        // for anything, so scsiFinishRead(), the write below, and the
-        // bytes_sd credit all agree on the same already-aligned amount. The
-        // remainder stays in the SCSI buffer and is picked up whole once the
-        // next chunk has enough bytes to complete the sector.
-        if (g_disk_transfer.skip_command == 0xEA)
-        {
-            len -= len % bytesPerSector;
-        }
+        // len above is sized purely by SD write-size optimization
+        // (PLATFORM_OPTIMAL_MAX/LAST_SD_WRITE_SIZE), with no awareness of
+        // bytesPerSector -- so it is generally not a sector multiple. A
+        // Skip Write must commit only whole sectors regardless (it walks
+        // the skip mask sector-by-sector; a partial trailing sector would
+        // be dropped or offset every following sector). But a gapped
+        // image (AlignUnalignedAccesses) needs exactly the same rounding
+        // for a PLAIN Write10/WriteVerify too: ImageBackingStore::write()
+        // hard-rejects any count that isn't a whole multiple of blockSize
+        // for a gapped device (see gappedTransfer()), and this chunking
+        // can easily produce one that isn't (e.g. exactly
+        // PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE = 8192 bytes, not a
+        // multiple of 522) -- confirmed via real hardware: the write was
+        // silently failing here, contributing to a real IPL halt. Round
+        // down unconditionally so scsiFinishRead(), the write below, and
+        // the bytes_sd credit all agree on the same already-aligned
+        // amount. The remainder stays in the SCSI buffer and is picked up
+        // whole once the next chunk has enough bytes to complete the
+        // sector -- harmless for a non-gapped AS/400 image too, just a
+        // slightly more conservative chunk size.
+        len -= len % bytesPerSector;
 #endif
 
         if (len == 0)

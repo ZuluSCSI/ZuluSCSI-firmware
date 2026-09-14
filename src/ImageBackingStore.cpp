@@ -311,6 +311,22 @@ static uint8_t s_gapStagingBuffer[GAP_TRANSFER_BUFFER_SIZE];
 
 bool ImageBackingStore::gapUnitTransfer(uint64_t physOffset, uint32_t physSize, uint8_t *stagingBuf, bool isWrite)
 {
+    // IOTrace Layer B/DMA_WAIT: previously a deliberate gap (see JOURNAL.md)
+    // -- gappedTransfer()/gapUnitTransfer() bypassed both entirely, so any
+    // AlignUnalignedAccesses device's SD-access latency, sequentiality and
+    // fast-path status were invisible to a capture, unlike every other
+    // image type. sector/sectorCount are physical SD sectors (matches the
+    // non-gapped branches' own m_cursector-based meaning below), not
+    // logical AS/400 sectors -- physOffset/physSize are always exact
+    // multiples of SD_SECTOR_SIZE by construction (see the comment on the
+    // raw blockdev branch), so this division is always exact.
+    uint32_t iotrace_sector = (uint32_t)(physOffset / SD_SECTOR_SIZE);
+    uint16_t iotrace_sectorCount = (uint16_t)(physSize / SD_SECTOR_SIZE);
+    uint8_t iotrace_flags = (isWrite ? IOTRACE_SD_FLAG_WRITE : 0) |
+        (m_iscontiguous ? IOTRACE_SD_FLAG_CONTIGUOUS : 0);
+    uint64_t iotrace_t0 = iotrace_now_us();
+    bool ok;
+
     if (m_iscontiguous && m_blockdev)
     {
         // physOffset/physSize are always exact multiples of SD_SECTOR_SIZE
@@ -324,22 +340,28 @@ bool ImageBackingStore::gapUnitTransfer(uint64_t physOffset, uint32_t physSize, 
         // safe regardless of how large physSize gets.
         uint32_t sdSector = m_bgnsector + (uint32_t)(physOffset / SD_SECTOR_SIZE);
         uint32_t sdSectorCount = physSize / SD_SECTOR_SIZE;
-        return isWrite ? m_blockdev->writeSectors(sdSector, stagingBuf, sdSectorCount)
-                        : m_blockdev->readSectors(sdSector, stagingBuf, sdSectorCount);
+        ok = isWrite ? m_blockdev->writeSectors(sdSector, stagingBuf, sdSectorCount)
+                     : m_blockdev->readSectors(sdSector, stagingBuf, sdSectorCount);
     }
     else if (m_fsfile.isOpen())
     {
         if (!m_fsfile.seek(physOffset))
-            return false;
-        if (isWrite)
-            return m_fsfile.write(stagingBuf, physSize) == (ssize_t)physSize;
+            ok = false;
+        else if (isWrite)
+            ok = m_fsfile.write(stagingBuf, physSize) == (ssize_t)physSize;
         else
-            return m_fsfile.read(stagingBuf, physSize) == (ssize_t)physSize;
+            ok = m_fsfile.read(stagingBuf, physSize) == (ssize_t)physSize;
     }
     else
     {
-        return false;
+        ok = false;
     }
+
+    uint32_t iotrace_duration_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+    iotrace_loop_account(IOTRACE_BUCKET_DMA_WAIT, iotrace_duration_us);
+    iotrace_sd_access(m_iotraceScsiId, iotrace_sector, iotrace_sectorCount, iotrace_flags, iotrace_duration_us);
+
+    return ok;
 }
 
 ssize_t ImageBackingStore::gappedTransfer(void *buf, size_t count, bool isWrite)
@@ -562,6 +584,17 @@ bool ImageBackingStore::close()
     }
 }
 
+bool ImageBackingStore::clampLogicalSectorCount(uint32_t maxSectors)
+{
+    if (m_alignMode == ALIGN_UNALIGNED_OFF)
+        return false;
+    if (maxSectors >= m_logicalSectorCount)
+        return false;
+
+    m_logicalSectorCount = maxSectors;
+    return true;
+}
+
 uint64_t ImageBackingStore::size()
 {
 #if ENABLE_COW
@@ -681,9 +714,8 @@ ssize_t ImageBackingStore::read(void* buf, size_t count)
 
     if (m_alignMode != ALIGN_UNALIGNED_OFF)
     {
-        // Not currently IOTrace-instrumented -- a known, deliberate gap for
-        // this initial implementation (see JOURNAL.md); can be added once
-        // the translation itself is confirmed working on real hardware.
+        // IOTrace instrumentation lives inside gapUnitTransfer() itself
+        // (Layer B/DMA_WAIT), not here -- see its own comment.
         return gappedTransfer(buf, count, false);
     }
 
@@ -776,8 +808,8 @@ ssize_t ImageBackingStore::write(const void* buf, size_t count)
             logmsg("ERROR: attempted to write to a read only image");
             return 0;
         }
-        // Not currently IOTrace-instrumented -- see the matching comment
-        // in read() above.
+        // IOTrace instrumentation lives inside gapUnitTransfer() itself --
+        // see the matching comment in read() above.
         return gappedTransfer((void*)buf, count, true);
     }
 

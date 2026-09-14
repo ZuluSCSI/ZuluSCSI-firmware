@@ -117,6 +117,16 @@ public:
     // Return image size in bytes
     uint64_t size();
 
+    // Gapped mode only: shrink the logical sector count down to at most
+    // maxSectors, so size() (and therefore ReadCapacity and the read/write
+    // bounds check, both of which derive capacity from size()) report a
+    // caller-supplied true capacity instead of "however many whole gapped
+    // units physically fit in the backing store" -- needed when a PART:n
+    // partition has margin beyond what an AS400_DiskProfile actually
+    // declares. No-op (returns false) outside gapped mode, or if
+    // maxSectors isn't smaller than the current count.
+    bool clampLogicalSectorCount(uint32_t maxSectors);
+
     // Check if the image sector range is contiguous, and the image is on
     // SD card, return the sector numbers.
     bool contiguousRange(uint32_t* bgnSector, uint32_t* endSector);
