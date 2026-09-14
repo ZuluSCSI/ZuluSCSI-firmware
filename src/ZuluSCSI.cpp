@@ -240,6 +240,15 @@ void init_logfile()
   {
     logmsg("Failed to open log file: ", SD.sdErrorCode());
   }
+  else
+  {
+    // Diagnostic only: this function previously had no success-path log
+    // line at all, so a clean open and a silent failure upstream (e.g.
+    // init_logfile() not being reached this boot) were indistinguishable
+    // from the console/screenlog alone -- see the zululog.txt
+    // creation/gating investigation in JOURNAL.md.
+    logmsg("---- Log file opened: ", LOGFILE, truncate ? " (truncated)" : " (appending)");
+  }
 
   bool temp_log_to_sd = ini_getbool("SCSI", "LogToSDCard", 1, CONFIGFILE);
   if (!temp_log_to_sd)
@@ -259,11 +268,17 @@ void init_logfile()
     logmsg(" LogToSDCard is has been reenabled, log messages will");
     logmsg(" be written to the SD card ", LOGFILE);
     logmsg("==========================================================");
-    g_log_to_sd = temp_log_to_sd;
   }
 
-  save_logfile(true);
+  // Must be set before the forced save_logfile() below, not after --
+  // otherwise this boot's first (forced) flush always writes regardless
+  // of LogToSDCard, since save_logfile() gates purely on g_log_to_sd's
+  // current value. Confirmed on real hardware: log entries appeared on
+  // the SD card even with LogToSDCard=0, then stopped -- exactly this
+  // one forced flush leaking through before the flag took effect.
   g_log_to_sd = temp_log_to_sd;
+
+  save_logfile(true);
 
   first_open_after_boot = false;
 }

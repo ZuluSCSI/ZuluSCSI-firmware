@@ -33,13 +33,10 @@
 #include <string.h>
 #include <assert.h>
 
-extern bool g_rawdrive_active;
-
 ImageBackingStore::ImageBackingStore()
 {
     m_iscontiguous = false;
     m_israw = false;
-    g_rawdrive_active = m_israw;
     m_isrom = false;
     m_isreadonly_attr = false;
     m_blockdev = nullptr;
@@ -114,7 +111,6 @@ ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_s
 
         m_iscontiguous = true;
         m_israw = true;
-        g_rawdrive_active = m_israw;
         m_blockdev = SD.card();
 
         uint32_t sectorCount = SD.card()->sectorCount();
