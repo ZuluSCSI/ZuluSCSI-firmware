@@ -122,6 +122,39 @@ as400_gapconv --scheme=cisc|ppc --mode=insert|strip [--sectors=N] \
 - `--sectors=N` -- the disk's logical sector count (from its `as400_disk_definitions.txt` profile). Optional -- auto-derived from `--input`'s size when that's unambiguous (a plain file whose size is an exact multiple of the relevant unit size). Always required for `--scheme=ppc --mode=strip` (a full 8-sector group and a short trailing one occupy the identical physical size, so there's no way to tell them apart from size alone) and whenever `--input` is a raw partition/block device (its tail may be unrelated alignment padding, not real data).
 - `--blocksize=N` -- override the logical sector size; defaults to 520 (`cisc`) or 522 (`ppc`).
 
+#### `utils/as400_part_planner` -- computing exact partition boundaries for `gdisk`
+
+Getting a `PART:n` partition's size exactly right by hand is impractical --
+it needs to be the gapped (not logical) size, rounded up to the SD card's
+own preferred AU_SIZE boundary, and every partition after it needs its own
+start to land on an AU boundary too. This tool does that arithmetic and
+prints ready-to-type `gdisk` sector numbers instead. It never drives
+`gdisk` itself.
+
+Not part of the firmware build; a standalone Python 3 script (standard
+library only, nothing to install or compile -- run it directly):
+
+```
+utils/as400_part_planner.py --total-sectors=N --au-size-sectors=N \
+                             --profile=NAME [--profile=NAME ...]
+```
+
+- `--total-sectors=N` -- the SD card's total sector count (`gdisk -l /dev/sdX` prints this as `Disk /dev/sdX: N sectors`).
+- `--au-size-sectors=N` -- the card's preferred alignment, in 512-byte sectors -- read directly off the Zulu console's own boot log line `SD preferred alignment: N sectors (...)`.
+- `--profile=NAME` -- an `as400_disk_definitions.txt` profile to place, by its section name. Repeat in the order you want them assigned `PART:2`, `PART:3`, ...
+- `--definitions=PATH` -- path to `as400_disk_definitions.txt` (default: in the current directory).
+
+Every requested profile is sized to its exact gapped requirement, rounded
+up to a whole AU_SIZE unit (so every partition starts AU-aligned); the
+remaining space becomes `PART:1`, a FAT32/exFAT admin partition sized to
+whatever's left -- no unallocated space anywhere on the card. Output is a
+plain table (partition number, purpose, start/end sector, size) plus a
+reminder of the exact `gdisk` steps: setting its own alignment to match
+(`x`, `l`, the AU value, `m`) before creating anything, and the
+preliminary ZuluSCSI partition type GUID (see README.md's "Raw
+sector-range and partition access" section) to set on each AS/400
+partition.
+
 ## Tape drive support
 
 Currently, two AS/400 specific tape drives are emulated:
