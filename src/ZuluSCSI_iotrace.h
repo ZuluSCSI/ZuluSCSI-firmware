@@ -37,6 +37,22 @@
  * leak into what those files see, including enum values used at call
  * sites: IOTraceLoopBucket is defined once, the same on every platform,
  * precisely so a caller never needs its own #ifdef PLATFORM_AS400 either.
+ *
+ * KNOWN ISSUE, unresolved as of 2026-09-15: real iotrace.bin captures from
+ * the Wide/twodisks (PPC) rig have repeatedly shown file corruption partway
+ * through a session -- a long, structurally clean run of records followed
+ * by unparseable garbage for the remainder of the file. Reproduced across
+ * multiple independent captures; never observed on the Blaster (CISC) rig
+ * captured in the same test round. iotrace_write()'s short/failed-write
+ * detection below (added specifically to chase this) has been confirmed
+ * built and active in an affected capture and never fired -- the
+ * underlying write() calls report full success every time, so a silent
+ * short write is ruled out as the mechanism. The actual cause (bytes not
+ * durably persisted despite a successful-looking write(), the file
+ * position drifting via some other path, or something else entirely) is
+ * still unknown. Deprioritized for now -- this is diagnostic-only code
+ * (iotrace.bin, not AS/400 disk image data), so the corruption says
+ * nothing about disk-data integrity either way.
  */
 
 #pragma once
@@ -231,7 +247,29 @@ inline void iotrace_write(const void *data, size_t len)
     if (!iotrace_enabled_ref()) return;
     if (!iotrace_file_ref().isOpen()) return;
 
-    iotrace_file_ref().write((const uint8_t *)data, len);
+    ssize_t written = iotrace_file_ref().write((const uint8_t *)data, len);
+    if (written != (ssize_t)len)
+    {
+        // A short/failed write here desyncs every record written after it
+        // for the rest of the file -- record boundaries drift permanently,
+        // with no way to resynchronize offline. This check was added on
+        // the theory that a short/failed write() was the direct cause of
+        // real corruption seen in real Wide/twodisks captures (a long,
+        // cleanly-parsing prefix followed by unparseable garbage from one
+        // point on) -- since RULED OUT, not confirmed: a build with this
+        // check active and confirmed running still produced a corrupted
+        // capture, and this warning never fired. write() is reporting
+        // full success every time; the real mechanism is still unknown
+        // (see the file header's "KNOWN ISSUE" note). Left in regardless
+        // -- if a genuine short/failed write ever does happen for some
+        // other reason, disabling further recording rather than
+        // continuing from a now-wrong position still keeps everything up
+        // to that point valid, which is strictly better than not checking
+        // at all.
+        logmsg("---- WARNING: iotrace_write() short/failed write (wanted ", (int)len,
+               " got ", (int)written, ") -- disabling further IOTrace recording this boot");
+        iotrace_enabled_ref() = false;
+    }
 }
 
 // Portable "now" for Layer C callers to bracket a call with -- returns 0
