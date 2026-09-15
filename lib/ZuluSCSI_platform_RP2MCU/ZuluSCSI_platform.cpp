@@ -1072,6 +1072,11 @@ uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
 }
 
 
+// How often platform_reset_watchdog() below is allowed to push the log to USB.
+// It is called from the SCSI command path, so this is what keeps the USB stack
+// off that hot path while still letting long-running loops report progress.
+#define USB_LOG_POLL_INTERVAL_MS 50
+
 // Send log data to USB UART if USB is connected.
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.
@@ -1431,9 +1436,26 @@ void platform_reset_watchdog()
         g_watchdog_initialized = true;
     }
 
-    // USB log is polled here also to make sure any log messages in fault states
-    // get passed to USB.
-    usb_log_poll();
+    // USB log is polled here as well, not only from platform_poll(). Every
+    // loop that can run for a while kicks the watchdog -- the SCSI command
+    // path, image creation, the SD-card-absent wait in zuluscsi_setup(), the
+    // SCA dynamic-ID poll -- and several of those never reach platform_poll(),
+    // so without this they produce no USB serial output at all while they run.
+    // The SD-card-absent wait is the one users meet first: with no card there
+    // is nowhere to write zululog.txt either, so USB is the only way to see
+    // why the board is unhappy.
+    //
+    // Rate-limited because the SCSI command path calls this often enough that
+    // polling every time walks into the TinyUSB stack thousands of times a
+    // second. That is where a "ep 80 was already available" panic came from,
+    // and it is far more often than a CDC endpoint can drain regardless.
+    static uint32_t last_usb_log_poll = 0;
+    uint32_t now = millis();
+    if ((uint32_t)(now - last_usb_log_poll) >= USB_LOG_POLL_INTERVAL_MS)
+    {
+        last_usb_log_poll = now;
+        usb_log_poll();
+    }
 }
 
 // Poll function that is called every few milliseconds.
