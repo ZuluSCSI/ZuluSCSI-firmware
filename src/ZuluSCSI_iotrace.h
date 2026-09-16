@@ -53,6 +53,18 @@
  * still unknown. Deprioritized for now -- this is diagnostic-only code
  * (iotrace.bin, not AS/400 disk image data), so the corruption says
  * nothing about disk-data integrity either way.
+ *
+ * MAINTAINER SUGGESTION, 2026-09-16, not yet tried: sidestep the whole
+ * question by dropping the SD-card file sink entirely and emitting these
+ * records to the console instead, captured via the same `screen` logging
+ * already used for screenlog.0 -- that pipeline has never shown corruption
+ * anywhere in this investigation. Trade-off to weigh before committing:
+ * this is instrumentation of SD-access *timing*, and formatting each
+ * record to text on the hot path (vs. today's raw memcpy-style binary
+ * append) adds real CPU cost that could perturb the very numbers being
+ * measured -- worth a short A/B capture (one record type, e.g. SDACCESS,
+ * console vs. binary) to check for a timing shift before rewriting the
+ * whole mechanism.
  */
 
 #pragma once
