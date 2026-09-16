@@ -74,11 +74,16 @@ PrefetchBytes = 0
 
 When an *AS400_DiskProfile* is configured for a given SCSI ID, and the associated image cannot be found on the SD card, a new one is generated automatically, with the correct size. This takes some time, so wait until the activity LED stays unlit.
 
-### Available disk profiles
+> **Note:** A real disk can be supported by CISC and RISC platforms, notably
+the #6606 2GB "0662" based drives. Since VPD/mode page data is not yet persisted
+between ZuluSCSI boots, reformatting to a different sector size is moot, and has
+not been tested live!
+
+#### Disk profiles, `AlignUnalignedAccesses`
 
 *as400_disk_definitions.txt* carries several captures per real drive model; entries below are grouped by usable size and Feature Code, since several `as400_disk_definitions.txt` sections often describe the same physical drive model (multiple captured units, or minor firmware/certification variants). Entries with no Feature Code recorded (a real disk was captured, but which FC OS/400 would show for it isn't known) are omitted here — refer to *as400_disk_definitions.txt* directly for those.
 
-| Usable size | Feature Code | `as400_disk_definitions.txt` sections | CISC padded size¹ | RISC/PPC padded size¹ |
+| Usable size | Feature Code | `as400_disk_definitions.txt` sections | CISC padded size  | RISC/PPC padded size  |
 |---|---|---|---|---|
 | 957.7 MiB | #6104 | `55F9806` | 1.84 GiB | 1.04 GiB |
 | 1001.5 MiB | #6601 | `45G9463`, `45G9463-1` | 1.93 GiB | 1.08 GiB |
@@ -88,7 +93,7 @@ When an *AS400_DiskProfile* is configured for a given SCSI ID, and the associate
 | 8.35 GiB | #6717 | `34L2279` | 16.38 GiB | 9.21 GiB |
 | 16.67 GiB | #4318 | `08K0304` | 32.70 GiB | 18.39 GiB |
 
-¹ **Status: implemented, hardware-verified.** A per-device `AlignUnalignedAccesses` setting (`off`/`cisc`/`ppc`/`auto`, see below) pads or groups AS/400's 520/522-byte logical sectors so they land on the SD card's native 512-byte boundaries, trading SD card space for reduced access overhead — CISC pads each 520-byte sector out to its own 1024-byte slot; RISC/PPC groups 8 522-byte sectors into 9 SD-card sectors (4608 bytes). This column shows that padded size; with the setting off (the default), an image occupies its usable size directly (plus whatever slack the SD card's own filesystem allocates). **Images written under one resolved `AlignUnalignedAccesses` mode (off, `cisc`, `ppc`) are not compatible with either of the other two** -- each uses a different on-SD-card byte layout for the same logical disk. Simply changing the setting on an existing image will not reinterpret it correctly and will corrupt reads/writes. Converting an existing image between modes requires the `utils/as400_gapconv` tool (below), or recreating the image from scratch.
+A per-device `AlignUnalignedAccesses` setting (`off`/`cisc`/`ppc`/`auto`, see below) pads or groups AS/400's 520/522-byte logical sectors so they land on the SD card's native 512-byte boundaries, trading SD card space for reduced access overhead — CISC pads each 520-byte sector out to its own 1024-byte slot; RISC/PPC groups 8 522-byte sectors into 9 SD-card sectors (4608 bytes). This column shows that padded size; with the setting off (the default), an image occupies its usable size directly (plus whatever slack the SD card's own filesystem allocates). **Images written under one resolved `AlignUnalignedAccesses` mode (off, `cisc`, `ppc`) are not compatible with either of the other two** -- each uses a different on-SD-card byte layout for the same logical disk. Simply changing the setting on an existing image will not reinterpret it correctly and will corrupt reads/writes. Converting an existing image between modes requires the `utils/as400_gapconv` tool (below), or recreating the image from scratch.
 
 ```ini
 [SCSI6]
@@ -100,60 +105,7 @@ AlignUnalignedAccesses = auto
 
 There is a shell-script `utils/extract_as400_disk_data.sh` in the original source tree on GitHub to generate more *as400_disk_definitions.txt* entries from real disks connected to a SCSI controller when ran under Linux. With that, and a sector copy, you can migrate your real disks to Zulu SCSI, keeping disk metadata and serial numbers intact. Example command line for copying a disk's data: `sg_dd blk_sgio=1 if=/dev/sg0 bs=520 of=outfile_520.dd verbose=2 sync=1`.
 
-Caveats:
-
-- Writes to the emulated disk are very slow compared to reads. This is most apparent with PPC platforms.
-
-Fully tested with Firmware v2026.08.27RC1, 9401-150, V4R4, V5R2.
-
-#### `utils/as400_gapconv` -- converting images for `AlignUnalignedAccesses`
-
-A small standalone host-side C tool (not part of the firmware build; compile with `cc -O2 -o as400_gapconv utils/as400_gapconv.c`) that converts an AS/400 disk image between the tightly-packed logical-sector layout and the "gapped" physical layout `AlignUnalignedAccesses` will use on the SD card. Works identically on a plain image file or a raw partition/block-device node -- both are just opened as a byte stream, no special-casing.
-
-```
-as400_gapconv --scheme=cisc|ppc --mode=insert|strip [--sectors=N] \
-              [--blocksize=N] --input=PATH --output=PATH
-```
-
-- `--scheme=cisc` -- 520-byte logical sectors, each padded to its own 1024-byte physical slot.
-- `--scheme=ppc` -- 522-byte logical sectors, grouped 8-at-a-time into a 4608-byte (9-SD-sector) physical group, matching OS/400's own 8-sector-aligned paging.
-- `--mode=insert` -- tightly-packed logical image (what you have today) → gapped physical layout.
-- `--mode=strip` -- gapped physical layout → tightly-packed logical image (e.g. before moving an image to a card/setting where `AlignUnalignedAccesses` is off).
-- `--sectors=N` -- the disk's logical sector count (from its `as400_disk_definitions.txt` profile). Optional -- auto-derived from `--input`'s size when that's unambiguous (a plain file whose size is an exact multiple of the relevant unit size). Always required for `--scheme=ppc --mode=strip` (a full 8-sector group and a short trailing one occupy the identical physical size, so there's no way to tell them apart from size alone) and whenever `--input` is a raw partition/block device (its tail may be unrelated alignment padding, not real data).
-- `--blocksize=N` -- override the logical sector size; defaults to 520 (`cisc`) or 522 (`ppc`).
-
-#### `utils/as400_part_planner` -- computing exact partition boundaries for `gdisk`
-
-Getting a `PART:n` partition's size exactly right by hand is impractical --
-it needs to be the gapped (not logical) size, rounded up to the SD card's
-own preferred AU_SIZE boundary, and every partition after it needs its own
-start to land on an AU boundary too. This tool does that arithmetic and
-prints ready-to-type `gdisk` sector numbers instead. It never drives
-`gdisk` itself.
-
-Not part of the firmware build; a standalone Python 3 script (standard
-library only, nothing to install or compile -- run it directly):
-
-```
-utils/as400_part_planner.py --total-sectors=N --au-size-sectors=N \
-                             --profile=NAME [--profile=NAME ...]
-```
-
-- `--total-sectors=N` -- the SD card's total sector count (`gdisk -l /dev/sdX` prints this as `Disk /dev/sdX: N sectors`).
-- `--au-size-sectors=N` -- the card's preferred alignment, in 512-byte sectors -- read directly off the Zulu console's own boot log line `SD preferred alignment: N sectors (...)`.
-- `--profile=NAME` -- an `as400_disk_definitions.txt` profile to place, by its section name. Repeat in the order you want them assigned `PART:2`, `PART:3`, ...
-- `--definitions=PATH` -- path to `as400_disk_definitions.txt` (default: in the current directory).
-
-Every requested profile is sized to its exact gapped requirement, rounded
-up to a whole AU_SIZE unit (so every partition starts AU-aligned); the
-remaining space becomes `PART:1`, a FAT32/exFAT admin partition sized to
-whatever's left -- no unallocated space anywhere on the card. Output is a
-plain table (partition number, purpose, start/end sector, size) plus a
-reminder of the exact `gdisk` steps: setting its own alignment to match
-(`x`, `l`, the AU value, `m`) before creating anything, and the
-preliminary ZuluSCSI partition type GUID (see README.md's "Raw
-sector-range and partition access" section) to set on each AS/400
-partition.
+Fully tested with prerelease firmware on 9401-150, V4R4 and 9401-P02, V2R3.
 
 ## Tape drive support
 
@@ -191,6 +143,60 @@ Caveats:
 - When you choose an image file through the USB port's media menu, make sure that you not only choose an image file, but afterwards *insert* it!
 - If you replace a hardware tape drive, make sure to delete your old tape device file first, then IPL, check/set the new device name in DST, and have auto-configuration create the new device file during the following IPL.
 - The amended (with an explicit *Device* statement) tape code as of v2026.09.10 has not yet undergone extensive testing. Initial tests yield mixed results.
+
+---
+
+# Helper tools
+
+## `utils/as400_gapconv` -- converting images for `AlignUnalignedAccesses`
+
+A small standalone host-side C tool (not part of the firmware build; compile with `cc -O2 -o as400_gapconv utils/as400_gapconv.c`) that converts an AS/400 disk image between the tightly-packed logical-sector layout and the "gapped" physical layout `AlignUnalignedAccesses` will use on the SD card. Works identically on a plain image file or a raw partition/block-device node -- both are just opened as a byte stream, no special-casing.
+
+```
+as400_gapconv --scheme=cisc|ppc --mode=insert|strip [--sectors=N] \
+              [--blocksize=N] --input=PATH --output=PATH
+```
+
+- `--scheme=cisc` -- 520-byte logical sectors, each padded to its own 1024-byte physical slot.
+- `--scheme=ppc` -- 522-byte logical sectors, grouped 8-at-a-time into a 4608-byte (9-SD-sector) physical group, matching OS/400's own 8-sector-aligned paging.
+- `--mode=insert` -- tightly-packed logical image (what you have today) → gapped physical layout.
+- `--mode=strip` -- gapped physical layout → tightly-packed logical image (e.g. before moving an image to a card/setting where `AlignUnalignedAccesses` is off).
+- `--sectors=N` -- the disk's logical sector count (from its `as400_disk_definitions.txt` profile). Optional -- auto-derived from `--input`'s size when that's unambiguous (a plain file whose size is an exact multiple of the relevant unit size). Always required for `--scheme=ppc --mode=strip` (a full 8-sector group and a short trailing one occupy the identical physical size, so there's no way to tell them apart from size alone) and whenever `--input` is a raw partition/block device (its tail may be unrelated alignment padding, not real data).
+- `--blocksize=N` -- override the logical sector size; defaults to 520 (`cisc`) or 522 (`ppc`).
+
+## `utils/as400_part_planner` -- computing exact partition boundaries for `gdisk`
+
+Getting a `PART:n` partition's size exactly right by hand is impractical --
+it needs to be the gapped (not logical) size, rounded up to the SD card's
+own preferred AU_SIZE boundary, and every partition after it needs its own
+start to land on an AU boundary too. This tool does that arithmetic and
+prints ready-to-type `gdisk` sector numbers instead. It never drives
+`gdisk` itself.
+
+Not part of the firmware build; a standalone Python 3 script (standard
+library only, nothing to install or compile -- run it directly):
+
+```
+utils/as400_part_planner.py --total-sectors=N --au-size-sectors=N \
+                             --profile=NAME [--profile=NAME ...]
+```
+
+- `--total-sectors=N` -- the SD card's total sector count (`gdisk -l /dev/sdX` prints this as `Disk /dev/sdX: N sectors`).
+- `--au-size-sectors=N` -- the card's preferred alignment, in 512-byte sectors -- read directly off the Zulu console's own boot log line `SD preferred alignment: N sectors (...)`.
+- `--profile=NAME` -- an `as400_disk_definitions.txt` profile to place, by its section name. Repeat in the order you want them assigned `PART:2`, `PART:3`, ...
+- `--definitions=PATH` -- path to `as400_disk_definitions.txt` (default: in the current directory).
+
+Every requested profile is sized to its exact gapped requirement, rounded
+up to a whole AU_SIZE unit (so every partition starts AU-aligned); the
+remaining space becomes `PART:1`, a FAT32/exFAT admin partition sized to
+whatever's left -- no unallocated space anywhere on the card. Output is a
+plain table (partition number, purpose, start/end sector, size) plus a
+reminder of the exact `gdisk` steps: setting its own alignment to match
+(`x`, `l`, the AU value, `m`) before creating anything, and the
+preliminary ZuluSCSI partition type GUID (see README.md's "Raw
+sector-range and partition access" section) to set on each AS/400
+partition.
+
 
 ---
 
