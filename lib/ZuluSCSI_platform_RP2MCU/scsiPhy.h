@@ -43,11 +43,12 @@ bool scsiStatusSEL();
 
 // Get SCSI selection status.
 // This is latched by interrupt when BSY is deasserted while SEL is asserted.
-// Lowest 3 bits are the selected target id.
-// Highest bits are status information.
+// Low target-id bits are the selected target id.
+// Highest bits are status information. Initiator ID is latched separately.
 #define SCSI_STS_SELECTION_SUCCEEDED 0x40
 #define SCSI_STS_SELECTION_ATN 0x80
 extern volatile uint8_t g_scsi_sts_selection;
+extern volatile uint8_t g_scsi_sts_selection_initiator;
 #define SCSI_STS_SELECTED (&g_scsi_sts_selection)
 extern volatile uint8_t g_scsi_ctrl_bsy;
 #define SCSI_CTRL_BSY (&g_scsi_ctrl_bsy)
@@ -64,6 +65,10 @@ uint32_t scsiEnterPhaseImmediate(int phase);
 
 // Release all signals
 void scsiEnterBusFree(void);
+
+// Arbitrate for and perform target reselection of an initiator.
+// Returns true once the initiator responds with BSY.
+bool scsiPhyReselect(uint8_t targetId, uint8_t initiatorId);
 
 // Blocking data transfer
 void scsiWrite(const uint8_t* data, uint32_t count);
