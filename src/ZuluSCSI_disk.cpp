@@ -123,6 +123,25 @@ bool scsiDiskHasDynamicDirs()
     }
     return false;
 }
+
+bool scsiDiskHasDynamicIniImage()
+{
+    // Keys in [SCSIn] that name an image all by themselves. A section that
+    // only carries setting overrides (Vendor, BlockSize, ...) is deliberately
+    // not enough: those only matter once an 'n'-named file or directory has
+    // been found, and that path resolves the ID lazily on its own. Querying
+    // the expander for a section that cannot produce an image would make an
+    // unmated SCA board wait in configDynamicScsiId() for nothing.
+    static const char * const keys[] = {
+        "Partition", "IMG0", "IMG00", "ImgDir"
+    };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
+    {
+        if (ini_haskey(DYNAMIC_SCSI_INI_SECTION, keys[i], CONFIGFILE))
+            return true;
+    }
+    return false;
+}
 #endif
 
 char scsiEncodeID(const uint8_t scsi_id)
@@ -1568,7 +1587,7 @@ void scsiDiskLoadConfig(int target_idx)
     // Apply [SCSIn] on top of the [SCSI<X>] settings that scsiDiskSetConfig loaded,
     // then immediately sync g_scsi_settings → g_DiskImages so that scsiDiskGetNextImageName
     // reads the final device type and settings (not the pre-override values).
-    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id && scsiDiskHasDynamicDirs());
+    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id);
     if (is_dynamic)
     {
         g_scsi_settings.applyDynamicSectionOverrides(target_idx);

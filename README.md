@@ -124,6 +124,9 @@ sector ranges, resolved from the SD card's own MBR or GPT partition table.
 Consistent with the partition utilities, we count from 1! It is also
 **not yet safe with a block size that isn't a multiple of 512 bytes**!
 
+On boards with an SCA connector, `Partition` also works in the `[SCSIn]` section,
+binding the partition to the dynamic SCA-supplied ID.
+
 > **Note:** MBR supports at most 4 partitions (a hard limit of the MBR format
 > itself — logical/extended partitions beyond that are out of scope for
 > `Partition`), while GPT supports more — the exact number will depend on how many

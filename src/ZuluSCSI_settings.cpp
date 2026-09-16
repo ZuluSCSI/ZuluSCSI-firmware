@@ -1039,7 +1039,13 @@ scsi_device_settings_t* ZuluSCSISettings::applyDynamicSectionOverrides(uint8_t s
     {
         log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
         if (log_settings)
+        {
             logmsg("-- [" DYNAMIC_SCSI_INI_SECTION "] settings in ", CONFIGFILE, ":");
+            // Partition is not part of the settings struct (it is read back as
+            // an image name by scsiDiskReadImgX), so log it here the same way
+            // initDevice() does for a [SCSI<X>] section.
+            log_ini_getl(DYNAMIC_SCSI_INI_SECTION, "Partition", 0, CONFIGFILE, log_settings);
+        }
     }
     readIniSCSIDeviceSetting(cfg, DYNAMIC_SCSI_INI_SECTION, log_settings);
     formatDriveInfoField(cfg.vendor, sizeof(cfg.vendor), cfg.rightAlignStrings);
