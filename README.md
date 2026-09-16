@@ -116,22 +116,22 @@ automatically clamped to the SD card's actual size.
 
 ```ini
 [SCSI5]
-IMG0 = PART:2
+PART = 3
 ```
 
-A `PART:n` form lets `IMGn` reference a partition by number instead of
-hand-computed sector ranges, resolved from the SD card's own MBR or GPT
-partition table. Consistent with the partition utilities, we count from 1! It is
-also **not yet safe with a block size that isn't a multiple of 512 bytes**!
+A `PART = n` references a raw partition by number instead of hand-computed
+sector ranges, resolved from the SD card's own MBR or GPT partition table.
+Consistent with the partition utilities, we count from 1! It is also
+**not yet safe with a block size that isn't a multiple of 512 bytes**!
 
 > **Note:** MBR supports at most 4 partitions (a hard limit of the MBR format
 > itself — logical/extended partitions beyond that are out of scope for
-> `PART:n`), while GPT supports more — the exact number will depend on how many
-> partition-table entries this firmware chooses to read, not on any per-model SD
-> card limit. If you expect to need more than 4 partitions on a card, plan on
-> GPT-partitioning it rather than MBR.
+> `PART`), while GPT supports more — the exact number will depend on how many
+> partition-table entries a particular firmware chooses to read on a given Zulu
+> model, not on any per-model SD card limit. If you expect to need more than 4
+> partitions on a card, plan on GPT-partitioning it rather than MBR.
 
-When creating raw `PART:n` partitions with a GPT-aware tool (e.g. `gdisk`),
+When creating raw partitions with a GPT-aware tool (e.g. `gdisk`),
 consider setting their partition type GUID to
 `E5BF00BF-E1B8-4E16-945C-5AB326258BCC` — a preliminary, not yet officially
 adopted marker for "this is a ZuluSCSI raw partition." ZuluSCSI's own firmware
@@ -139,7 +139,7 @@ does not check this GUID for anything; the sole purpose is to stop *other*
 operating systems that read/write the same SD card from recognizing the
 partition as an ordinary data volume and interfere with it. Leave the SD card's
 FAT32/exFAT boot volume itself as the standard `0700` ("Microsoft basic data")
-type. Use "uncommon" partition IDs for MBR.
+type. Use e. g. `da` — Non-FS data — for MBR.
 
 Partitions give best performance when they're aligned to the particular SD card's
 recommended value. A card's alignment value is output on the Zulu's console at

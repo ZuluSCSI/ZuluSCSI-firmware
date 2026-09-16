@@ -1346,6 +1346,20 @@ int scsiDiskReadImgX(const char *section, int index, char *buf, size_t buflen)
         key[4] = '0' + index;
         ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
     }
+
+    // PART=n is a friendlier alias for IMG0 = PART:n (maintainer request,
+    // see README.md's "Raw sector-range and partition access" section) --
+    // only applies to image index 0, and only when IMG0/IMG00 wasn't set
+    // explicitly, which always takes precedence.
+    if (buf[0] == '\0' && index == 0)
+    {
+        long partitionNumber = ini_getl(section, "PART", -1, CONFIGFILE);
+        if (partitionNumber >= 1)
+        {
+            ret = snprintf(buf, buflen, "PART:%ld", partitionNumber);
+        }
+    }
+
     return ret;
 }
 
