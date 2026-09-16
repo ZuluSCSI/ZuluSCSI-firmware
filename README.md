@@ -116,17 +116,17 @@ automatically clamped to the SD card's actual size.
 
 ```ini
 [SCSI5]
-PART = 3
+Partition = 3
 ```
 
-A `PART = n` references a raw partition by number instead of hand-computed
+A `Partition = n` references a raw partition by number instead of hand-computed
 sector ranges, resolved from the SD card's own MBR or GPT partition table.
 Consistent with the partition utilities, we count from 1! It is also
 **not yet safe with a block size that isn't a multiple of 512 bytes**!
 
 > **Note:** MBR supports at most 4 partitions (a hard limit of the MBR format
 > itself — logical/extended partitions beyond that are out of scope for
-> `PART`), while GPT supports more — the exact number will depend on how many
+> `Partition`), while GPT supports more — the exact number will depend on how many
 > partition-table entries a particular firmware chooses to read on a given Zulu
 > model, not on any per-model SD card limit. If you expect to need more than 4
 > partitions on a card, plan on GPT-partitioning it rather than MBR.
