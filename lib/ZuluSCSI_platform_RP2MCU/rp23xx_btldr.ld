@@ -79,6 +79,7 @@ SECTIONS
         setPendingImageLoad = 0;
         platform_poll = 0;
         _vfprintf_r = 0;
+        _svfprintf_r = 0;
 
         __logical_binary_start = .;
         KEEP (*(.btldr_vectors))
