@@ -589,7 +589,6 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.cowButtonInvert =  log_ini_getl(section, "CowButtonInvert", cfg.cowButtonInvert, CONFIGFILE, log_settings);
 #endif
 
-
 }
 
 scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, bool disable_logging)
@@ -977,12 +976,19 @@ scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYP
     else
 #endif
     {
-        if (!disable_logging)
+        int32_t partition = ini_getl(section, "Partition", 0, CONFIGFILE);
+
+        // This is a hack to log ini settings for when partition is set
+        // as logging the settings is disabled when the setting are applied without an image
+        // on the SD card
+        if (!disable_logging || partition > 0)
         {
             log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
             if (log_settings)
             {
                 logmsg("-- [", section,"] settings in ", CONFIGFILE,":");
+                // Log device settings not saved in the setting struct but used else where
+                log_ini_getl(section, "Partition", 0, CONFIGFILE, log_settings);
             }
         }
         log_ini_gets(section, "Device", "", presetName, sizeof(presetName), CONFIGFILE, log_settings);
@@ -1033,7 +1039,13 @@ scsi_device_settings_t* ZuluSCSISettings::applyDynamicSectionOverrides(uint8_t s
     {
         log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
         if (log_settings)
+        {
             logmsg("-- [" DYNAMIC_SCSI_INI_SECTION "] settings in ", CONFIGFILE, ":");
+            // Partition is not part of the settings struct (it is read back as
+            // an image name by scsiDiskReadImgX), so log it here the same way
+            // initDevice() does for a [SCSI<X>] section.
+            log_ini_getl(DYNAMIC_SCSI_INI_SECTION, "Partition", 0, CONFIGFILE, log_settings);
+        }
     }
     readIniSCSIDeviceSetting(cfg, DYNAMIC_SCSI_INI_SECTION, log_settings);
     formatDriveInfoField(cfg.vendor, sizeof(cfg.vendor), cfg.rightAlignStrings);
