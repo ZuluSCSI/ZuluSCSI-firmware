@@ -347,16 +347,23 @@ static void injectSerialIntoLoadedProfile(uint8_t scsiId, int startIdx, bool spd
                (int)g_custom_vpd[idx].length, " bytes, not the expected 52 -- serial override not applied to this page");
     }
 
-    // VPD83 (Device Identification): only the ASCII T10-vendor-ID
-    // designator shape is handled -- codeset 0x02 (ASCII), designator
-    // type 0x01 (T10 vendor ID) in the first descriptor. `08K0304`/
-    // `08K0264` use a binary NAA-type designator instead (codeset 0x01,
-    // type 0x03) and are deliberately left untouched rather than having
-    // ASCII bytes spliced into binary identifier data. The per-model/
-    // revision 2-character prefix seen before the serial (`68`/`F8`/etc.)
-    // is preserved automatically, since it's part of the untouched,
-    // already-captured bytes ahead of the injection point -- its value
-    // never needs to be known here. Injection offset is simply the
+    // VPD83 (Device Identification): the ASCII T10-vendor-ID designator
+    // shape (codeset 0x02, designator type 0x01) gets the same 8-byte
+    // serial substitution as the pages above. `08K0304`/`08K0264` use a
+    // binary NAA/EUI-64 designator instead (codeset 0x01, type 0x02 or
+    // 0x03) -- an ASCII/EBCDIC-style substitution doesn't apply there
+    // (every byte value is legal in a binary field, unlike a character
+    // set), so that shape XORs the descriptor's last byte with the SCSI
+    // ID instead: ID 0 keeps the captured value, every other ID lands on
+    // a distinct one. Cheap and sufficient to stop two SCSI IDs sharing
+    // one profile from reporting an identical logical-unit identifier (an
+    // initiator seeing two targets with the same one may treat them as
+    // two paths to a single device, per SPC-3 7.6.3) without needing to
+    // understand IBM's opaque binary encoding at all. The per-model/
+    // revision 2-character prefix seen before the ASCII serial
+    // (`68`/`F8`/etc.) is preserved automatically either way, since it's
+    // part of the untouched, already-captured bytes ahead of the
+    // injection point. Injection offset for the ASCII case is simply the
     // descriptor's own declared length byte (data[7]): descriptor data
     // starts at a fixed buffer offset 8 (4-byte page header + 4-byte
     // descriptor header, both fixed by the SCSI spec), and the serial is
@@ -375,10 +382,16 @@ static void injectSerialIntoLoadedProfile(uint8_t scsiId, int startIdx, bool spd
             injectSerial(data, descLen, scsiId);
             logmsg("---- Patched custom serial into VPD83 T10-vendor-ID designator for SCSI ID ", (int)scsiId);
         }
+        else if (codeset == 0x01 && (desigType == 0x02 || desigType == 0x03) &&
+                 descLen >= 1 && (8 + descLen) <= g_custom_vpd[idx].length)
+        {
+            data[8 + descLen - 1] ^= (uint8_t)(scsiId & S2S_CFG_TARGET_ID_BITS);
+            logmsg("---- Patched VPD83 binary EUI-64/NAA designator (XOR) for SCSI ID ", (int)scsiId);
+        }
         else
         {
-            logmsg("---- VPD83 for SCSI ID ", (int)scsiId, " is not an ASCII T10-vendor-ID designator "
-                   "(codeset=", (int)codeset, " type=", (int)desigType, ") -- left untouched");
+            logmsg("---- VPD83 for SCSI ID ", (int)scsiId, " is not a recognized T10-vendor-ID/EUI-64/NAA "
+                   "designator shape (codeset=", (int)codeset, " type=", (int)desigType, ") -- left untouched");
         }
     }
 
@@ -681,6 +694,7 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
         if (pageCode == 0x80 && g_custom_vpd[idx].length >= 20)
             injectSerial(g_custom_vpd[idx].data, 12, scsiId); // offset 12 in page data
         else if (pageCode == 0x82 && g_custom_vpd[idx].length >= 24)
+        {
             // Offset 14, not 16 -- landmark-verified (search for the "IBM"
             // string terminator, read the 8 bytes before it) across 7
             // independently captured real drives (59H7001, 59H6611,
@@ -688,6 +702,19 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
             // multiple product families. The shipped offset of 16 was off
             // by 2 relative to every real drive checked.
             injectSerial(g_custom_vpd[idx].data, 14, scsiId);
+            // VPD82's vendor-specific area also carries an EBCDIC copy of
+            // the same serial (SCSI-2 8.3.4.1 table 103 defines the
+            // structure, not IBM's use of it) -- offset 38, same as
+            // injectSerialIntoLoadedProfile()'s named-profile path above,
+            // verified against every VPD82 capture in
+            // as400_disk_definitions.txt. Left unpatched here previously:
+            // this default (no AS400_DiskProfile=) identity path shares
+            // the built-in 09L4044 identity across every SCSI ID that
+            // falls back to it, so its own VPD82 needs the same ASCII+
+            // EBCDIC treatment to stay internally consistent.
+            if (g_custom_vpd[idx].length >= 46)
+                injectSerial(g_custom_vpd[idx].data, 38, scsiId);
+        }
         else if (pageCode == 0x83 && g_custom_vpd[idx].length >= 42)
             injectSerial(g_custom_vpd[idx].data, 34, scsiId);
         else if (pageCode == 0xD1 && g_custom_vpd[idx].length >= 78)
