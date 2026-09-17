@@ -776,6 +776,8 @@ static void configDynamicScsiId()
         }
         check_sd_start = millis();
       }
+
+      platform_reset_watchdog();
       platform_poll();
       save_logfile();
       // if the SD card has been removed and this setting changed to a valid ID
