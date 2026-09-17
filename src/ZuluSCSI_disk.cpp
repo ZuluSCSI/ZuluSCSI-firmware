@@ -3445,6 +3445,33 @@ void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
         // without an access time
         s2s_delay_ms(10);
     }
+#ifdef PLATFORM_AS400
+    // Mirrors scsiDiskStartWrite()'s equivalent check for 0xEA -- the
+    // linked Read10 that must immediately follow a Skip Read (0xE8) is
+    // never validated against the LBA/block count the skip mask was
+    // actually built for. Without this, a stale skip_command (e.g. left
+    // armed by an aborted prior Skip Read or a bus reset -- see the
+    // other fixes alongside this one) would silently apply its mask to
+    // whatever Read10 the host happens to send next, at a completely
+    // unrelated LBA, rather than being rejected. This is also a second,
+    // independent line of defense against that same stale-state class
+    // of bug, not just a mirror of the write side for its own sake.
+    if (g_disk_transfer.skip_command) {
+        if (g_disk_transfer.skip_command == 0xE8)
+        {
+            if ((lba != g_disk_transfer.skip_lba) || (blocks != g_disk_transfer.skip_blocks))
+            {
+                dbgmsg("Skip Read LBA/block mismatch");
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+                scsiDev.phase = STATUS;
+                g_disk_transfer.skip_command = 0;
+                return;
+            }
+        }
+    }
+#endif
 
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
@@ -3581,6 +3608,17 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     platform_set_sd_callback(&diskDataIn_callback, buffer);
 
+    // Guards the diskDataIn_callback() call below: on a read failure,
+    // CHECK_CONDITION/STATUS is already set, but diskDataIn_callback()
+    // unconditionally calls scsiEnterPhase(DATA_IN) and pushes `count`
+    // bytes onto the bus regardless -- flipping the phase straight back
+    // to DATA_IN and shipping whatever is in `buffer` (for a Skip Read
+    // specifically, the unfilled tail is stale data left over from the
+    // *previous* transfer, exactly what the "fail the command instead"
+    // comment below says must not reach the host). Applies to both the
+    // Skip Read and plain-read failure paths.
+    bool transfer_ok = true;
+
 #ifdef PLATFORM_AS400
     if (g_disk_transfer.skip_command == 0xE8)
     {
@@ -3643,6 +3681,7 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
             scsiDev.target->sense.code = MEDIUM_ERROR;
             scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
             scsiDev.phase = STATUS;
+            transfer_ok = false;
         }
     }
     else
@@ -3654,9 +3693,13 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
         scsiDev.target->sense.code = MEDIUM_ERROR;
         scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
         scsiDev.phase = STATUS;
+        transfer_ok = false;
     }
 
-    diskDataIn_callback(count);
+    if (transfer_ok)
+    {
+        diskDataIn_callback(count);
+    }
     platform_set_sd_callback(NULL, NULL);
 
     platform_poll();
@@ -3705,6 +3748,18 @@ static void diskDataIn()
 #ifdef PREFETCH_BUFFER_SIZE
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
         int maxPrefetchBytes = img.prefetchbytes;
+        if (maxPrefetchBytes < 0)
+        {
+            // img.prefetchbytes (int) is compared against maxPrefetchSectors
+            // * bytesPerSector (uint32_t) below -- a negative value gets
+            // converted to a huge unsigned number, defeating the per-image
+            // clamp entirely, even though the boot-time log (elsewhere in
+            // this file) treats "not > 0" as "prefetch disabled". A
+            // negative PrefetchBytes= in the ini would silently run
+            // prefetch at the full PREFETCH_BUFFER_SIZE-derived cap while
+            // the log claims it's off. Clamp here so both agree.
+            maxPrefetchBytes = 0;
+        }
 
 #ifdef PLATFORM_AS400
         if (g_disk_transfer.skip_command)
@@ -3763,8 +3818,19 @@ static void diskDataIn()
                 // We still have time, prefetch next sectors in case this SCSI request
                 // is part of a longer linear read. SCSI callback is still invoked so that
                 // it can process the simultaneously running SCSI transfer.
-                g_disk_transfer.bytes_sd = bytesPerSector;
-                g_disk_transfer.bytes_scsi = bytesPerSector; // Tell callback not to send to SCSI
+                //
+                // "Tell callback not to send to SCSI" -- but diskDataIn_callback()
+                // actually gates on scsiDev.target->transfer.bytes_scsi (its
+                // `bytes_complete > ...bytes_scsi` check), not on
+                // g_disk_transfer's own bytes_sd/bytes_scsi fields, which
+                // nothing in this file ever reads. Setting the g_disk_transfer
+                // copies here was a no-op; this only worked by coincidence
+                // because the real transfer.bytes_scsi left over from the
+                // just-completed main transfer already happened to be
+                // >= bytesPerSector. Set the field the callback actually
+                // checks, so the guard holds regardless of that leftover
+                // value.
+                scsiDev.target->transfer.bytes_scsi = bytesPerSector;
                 platform_set_sd_callback(&diskDataIn_callback, g_disk_transfer.buffer);
                 uint8_t *prefetchSectorPtr = prefetchBuffer + bytesPerSector * prefetchSectors;
                 int status = img.file.read(prefetchSectorPtr, bytesPerSector);
@@ -3790,14 +3856,29 @@ static void diskDataIn()
         }
 
         scsiFinishWrite();
+    }
 
 #ifdef PLATFORM_AS400
-        if(g_disk_transfer.skip_command)
-        {
-            g_disk_transfer.skip_command = 0;
-        }
-#endif
+    // Skip Read (0xE8) may span multiple diskDataIn() invocations across
+    // separate main-loop iterations (masks allow up to 2048 bits, well
+    // beyond one SD-buffer-sized chunk) -- clearing skip_command only
+    // inside the `transfer.currentBlock == transfer.blocks` block above
+    // meant an aborted transfer (a Skip Read failure sets phase=STATUS
+    // and stops further diskDataIn() calls before currentBlock ever
+    // reaches transfer.blocks) left skip_command stuck at 0xE8. The next
+    // command from the host -- an ordinary Read10, which the dispatch
+    // gate at scsiDiskCommand() allows through unchanged -- would then
+    // silently have the stale mask/skip_position applied to it. Mirrors
+    // the equivalent, already-correct clearing condition in
+    // diskDataOut()'s Skip Write path: clear on completion, on the
+    // phase moving away from DATA_IN (any error), or on a bus reset.
+    if (g_disk_transfer.skip_command &&
+        (transfer.currentBlock == transfer.blocks ||
+         scsiDev.phase != DATA_IN || scsiDev.resetFlag))
+    {
+        g_disk_transfer.skip_command = 0;
     }
+#endif
 }
 
 
@@ -4649,6 +4730,20 @@ void scsiDiskReset()
     transfer.multiBlock = 0;
     g_disk_data_out.verify = false;
     g_disk_data_out.write_and_verify = false;
+
+#ifdef PLATFORM_AS400
+    // A bus reset arriving mid-Skip-Read/Skip-Write (routine during a
+    // real AS/400 IPL) previously left skip_command armed across the
+    // reset -- every other piece of in-flight transfer state above is
+    // cleared here, but this wasn't. The next command after the reset
+    // would then have the stale mask/skip_position applied to it by
+    // scsiDiskCommand()'s opcode gate, which only checks the opcode
+    // class, not whether the skip state is stale. skip_position/
+    // skip_mask_length are set fresh by scsiDiskSkip() on the next real
+    // Skip command, so clearing skip_command alone is sufficient to make
+    // the rest of the state inert in the meantime.
+    g_disk_transfer.skip_command = 0;
+#endif
 
     scsiDiskPrefetchInvalidate();
 
