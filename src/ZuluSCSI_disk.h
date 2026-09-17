@@ -270,6 +270,12 @@ int8_t scsiDiskGetDynamicId();
 // readSCSIDeviceConfig() runs.
 bool scsiDiskHasDynamicDirs();
 
+// Return true if the [SCSIn] section in the config file names an image on its
+// own (Partition / IMG0 / IMG00 / ImgDir), i.e. the dynamic target is
+// configured purely from the .ini with no 'n'-named file or directory to
+// trigger the lazy ID lookup.
+bool scsiDiskHasDynamicIniImage();
+
 // Begin writing to prefetch buffer.
 // If the buffer is not available, returns NULL.
 // Otherwise returns pointer to which caller can write up to maxSectors sectors.

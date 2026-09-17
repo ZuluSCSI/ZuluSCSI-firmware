@@ -141,7 +141,7 @@ Further optimization of performance — at the expense of flexibility handling i
 ```ini
 [SCSI6]
 AS400_DiskProfile = "09L4044"
-Part = 2
+Partition = 2
 AlignUnalignedAccesses = auto
 ```
 
@@ -231,7 +231,7 @@ as400_gapconv --ppc --mode=insert --input=HD6.img --output=/dev/sdb2
 
 ### `utils/as400_part_planner` -- computing exact partition boundaries for partitions
 
-Getting a `Part = n` partition's size exactly right by hand is tedious -- it needs to be the gapped size, rounded up to the SD card's own preferred AU_SIZE boundary, and every partition after it needs its own start to land on an AU boundary too. This tool does that arithmetic and prints a table with sector numbers instead.
+Getting a `Partition = n` partition's size exactly right by hand is tedious -- it needs to be the gapped size, rounded up to the SD card's own preferred AU_SIZE boundary, and every partition after it needs its own start to land on an AU boundary too. This tool does that arithmetic and prints a table with sector numbers instead.
 
 It's a standalone Python 3 script:
 
@@ -242,7 +242,7 @@ utils/as400_part_planner.py --total-sectors=N --au-size-sectors=N \
 
 - `--total-sectors=N` -- the SD card's total sector count (`gdisk -l /dev/sdX` prints this as `Disk /dev/sdX: N sectors`).
 - `--au-size-sectors=N` -- the card's preferred alignment, in 512-byte sectors -- read directly off the Zulu console's own boot log line `SD preferred alignment: N sectors (…)`.
-- `--profile=NAME` -- an `as400_disk_definitions.txt` profile to place, by its section name. Repeat in the order you want them assigned `Part = 2`, `Part = 3`, …
+- `--profile=NAME` -- an `as400_disk_definitions.txt` profile to place, by its section name. Repeat in the order you want them assigned `Partition = 2`, `Partition = 3`, …
 - `--definitions=PATH` -- path to `as400_disk_definitions.txt` (default: search current directory).
 
 The remaining space becomes partition 1, the FAT32/exFAT admin partition sized to whatever's left.

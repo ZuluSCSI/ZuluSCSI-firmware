@@ -1433,10 +1433,22 @@ static void reinitSCSI()
   {
 #ifdef DYNAMIC_SCSI_ID
     // Lazily resolve the SCA SCSI ID the first time 'n'-prefixed directories
-    // are found, so the expander is only queried when needed.
-    if (scsiDiskGetDynamicId() < 0 && zuluscsi_is_sca() && scsiDiskHasDynamicDirs())
+    // are found, so the expander is only queried when needed. A [SCSIn]
+    // section that names an image on its own (Partition = n, IMG0, ImgDir)
+    // has to resolve it here too: that target has no 'n'-named file or
+    // directory anywhere on the card, so nothing else would ever trigger the
+    // lookup and readSCSIDeviceConfig() below would skip the section.
+    if (scsiDiskGetDynamicId() < 0 && zuluscsi_is_sca()
+        && (scsiDiskHasDynamicDirs() || scsiDiskHasDynamicIniImage()))
     {
       configDynamicScsiId();
+    }
+    else if (scsiDiskGetDynamicId() < 0 && !zuluscsi_is_sca() && scsiDiskHasDynamicIniImage())
+    {
+      // Same situation as the 'n'-named image files in findHDDImages(), but
+      // nothing later in the boot would mention the ignored section at all.
+      logmsg("-- Ignoring [" DYNAMIC_SCSI_INI_SECTION "]: this board does not support dynamic SCSI IDs,"
+             " use a [SCSI<ID>] section instead");
     }
 #endif
     readSCSIDeviceConfig();
