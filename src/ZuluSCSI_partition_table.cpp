@@ -188,8 +188,19 @@ static bool gptReadHeader(uint32_t headerLba, gpt_header_info_t *info, bool quie
     info->numPartEntries = getLe32(sector + GPT_HDR_NUM_PART_ENTRIES);
     info->partEntrySize = getLe32(sector + GPT_HDR_PART_ENTRY_SIZE);
 
+    // partEntrySize must evenly divide a sector: gptResolve() below reads
+    // exactly one SD_SECTOR_SIZE-byte sector and indexes a single entry
+    // out of it via ((partitionNumber-1)*partEntrySize) % SD_SECTOR_SIZE,
+    // then reads fixed fields up to +48 bytes from there -- both the
+    // "entry never straddles a sector boundary" assumption that math
+    // relies on, and keeping that offset (and +48 from it) inside the
+    // 512-byte buffer at all, depend on this dividing evenly. A
+    // corrupt/malicious partEntrySize that merely passed the old
+    // ">= 128, multiple of 8, <= 1024" check (e.g. 136) would otherwise
+    // read past the end of that stack buffer.
     if (info->partEntrySize < 128 || (info->partEntrySize % 8) != 0 ||
-        info->numPartEntries == 0 || info->numPartEntries > 1024)
+        info->numPartEntries == 0 || info->numPartEntries > 1024 ||
+        (SD_SECTOR_SIZE % info->partEntrySize) != 0)
     {
         logmsg("---- PART: GPT header at LBA ", (int)headerLba, " has implausible partition-entry-array"
                " geometry (", (int)info->numPartEntries, " entries of ", (int)info->partEntrySize,

@@ -119,13 +119,9 @@ automatically clamped to the SD card's actual size.
 Partition = 3
 ```
 
-A `Partition = n` references a raw partition by number instead of hand-computed
+A `Partition = n` references a raw  partition by number instead of hand-computed
 sector ranges, resolved from the SD card's own MBR or GPT partition table.
-Consistent with the partition utilities, we count from 1! It is also
-**not yet safe with a block size that isn't a multiple of 512 bytes**!
-
-On boards with an SCA connector, `Partition` also works in the `[SCSIn]` section,
-binding the partition to the dynamic SCA-supplied ID.
+Consistent with the partition utilities, we count from 1!
 
 > **Note:** MBR supports at most 4 partitions (a hard limit of the MBR format
 > itself — logical/extended partitions beyond that are out of scope for
@@ -133,6 +129,9 @@ binding the partition to the dynamic SCA-supplied ID.
 > partition-table entries a particular firmware chooses to read on a given Zulu
 > model, not on any per-model SD card limit. If you expect to need more than 4
 > partitions on a card, plan on GPT-partitioning it rather than MBR.
+
+On boards with an SCA connector, `Partition` also works in the `[SCSIn]` section,
+binding the partition to the dynamic SCA-supplied ID.
 
 When creating raw partitions with a GPT-aware tool (e.g. `gdisk`),
 consider setting their partition type GUID to

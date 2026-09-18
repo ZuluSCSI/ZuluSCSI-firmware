@@ -37,6 +37,7 @@
 #endif
 #include "ZuluSCSI_cdrom.h"
 #include "ZuluSCSI_tape.h"
+#include "ZuluSCSI_iotrace.h"
 #include "custom_vendor_inquiry.h"
 #include "ZuluSCSI_partition_table.h"
 #include "ImageBackingStore.h"
@@ -412,6 +413,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     scsi_system_settings_t *devSys = g_scsi_settings.getSystem();
     scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(target_idx);
     img.scsiId = target_idx;
+    img.file.setScsiId(target_idx); // IOTrace Layer B tagging only
     memset(img.vendor, 0, sizeof(img.vendor));
     memset(img.prodId, 0, sizeof(img.prodId));
     memset(img.revision, 0, sizeof(img.revision));
@@ -577,6 +579,37 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             return false;
         }
 
+        // The SD card's own mounted FAT/exFAT volume (zuluscsi.ini,
+        // firmware, tape/CD images) is never itself tracked as a PART:n
+        // claim, so nothing above stops a config typo from mapping the
+        // *admin* partition itself as a PART:n disk -- e.g. the
+        // documented layout (utils/as400_part_planner.py) puts the admin
+        // volume at PART:1 and AS/400 disks at PART:2.., so `IMG0 =
+        // PART:1` where `PART:2` was meant would otherwise silently
+        // present zuluscsi.ini/firmware/images as a writable SCSI disk.
+        // Check the resolved extent against SD.vol()'s own already-
+        // mounted data area directly (same public accessors
+        // print_sd_info() already uses) -- refusing this up front is far
+        // better than discovering a corrupted config volume after the
+        // fact.
+        {
+            uint32_t volDataStart = SD.vol()->dataStartSector();
+            uint64_t volDataEnd = (uint64_t)volDataStart +
+                (uint64_t)SD.vol()->clusterCount() * SD.vol()->sectorsPerCluster();
+            uint64_t partEnd = (uint64_t)extent.startSector + extent.sectorCount;
+            if (extent.startSector < volDataEnd && volDataStart < partEnd)
+            {
+                logmsg("---- Partition ", (int)partitionNumber, " (sectors ", (int)extent.startSector,
+                       "-", (int)(extent.startSector + extent.sectorCount - 1),
+                       ") overlaps the SD card's own mounted FAT/exFAT volume (data area starts at sector ",
+                       (int)volDataStart, "). Not presenting as SCSI device ", target_idx,
+                       " -- this would let the host overwrite zuluscsi.ini/firmware/images");
+                img.scsiId = target_idx;
+                partitionTableClearClaim(target_idx);
+                return false;
+            }
+        }
+
         // AU-boundary alignment is a performance hint, not a correctness
         // requirement (unlike the too-small/overlap checks below) -- warn
         // and continue rather than refusing to present the device.
@@ -595,16 +628,18 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         // Too-small check: only meaningful when this target declares an
         // expected capacity (currently: an AS400_DiskProfile). Without
         // one, whatever the partition provides simply becomes the
-        // device's capacity, same as RAW: today. "alignment gapping" in
-        // the message refers to the planned AlignUnalignedAccesses
-        // setting (a separate branch) -- worded now so the message
-        // doesn't need to change once that setting exists and starts
-        // contributing to the required size too.
+        // device's capacity, same as RAW: today. requiredBytes accounts
+        // for AlignUnalignedAccesses's gapped layout (see
+        // ZuluSCSI_gap_layout.h) when the target has it enabled -- a
+        // gapped partition genuinely needs more physical space than
+        // sectors*blockSize alone.
         uint32_t profileBlockSize = 0, profileSectors = 0;
         if (getAS400ProfileCapacity(target_idx, &profileBlockSize, &profileSectors) &&
             profileBlockSize > 0 && profileSectors > 0)
         {
-            uint64_t requiredBytes = (uint64_t)profileSectors * profileBlockSize;
+            zuluscsi_align_unaligned_t alignMode = gapLayoutResolveAuto(
+                (zuluscsi_align_unaligned_t)g_scsi_settings.getDevice(target_idx)->alignUnalignedAccesses, profileBlockSize);
+            uint64_t requiredBytes = gapLayoutPhysicalSize(alignMode, profileBlockSize, profileSectors);
             uint64_t haveBytes = (uint64_t)extent.sectorCount * SD_SECTOR_SIZE;
             if (haveBytes < requiredBytes)
             {
@@ -653,12 +688,59 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
 
     // Close existing file and construct new one in-place
     img.file.~ImageBackingStore();
-    new (&img.file) ImageBackingStore(filename, blocksize, device_config);
+    // scsiId passed directly here (rather than via setScsiId() afterwards)
+    // so it's already known when _internal_open() runs during construction --
+    // see ImageBackingStore's constructor comment.
+    new (&img.file) ImageBackingStore(filename, blocksize, device_config, target_idx);
 
     if (img.file.isOpen())
     {
         img.bytesPerSector = blocksize;
         img.scsiSectors = img.file.size() / blocksize;
+
+        // A RAW:/PART:-backed device's size() naturally reports "however
+        // much physical space is available" (the extent's own size, or --
+        // with AlignUnalignedAccesses on -- however many whole gapped
+        // units fit in it), not the disk's true capacity: PART:n
+        // partitions routinely have some margin beyond what a profile
+        // strictly needs (the too-small check below only validates a
+        // lower bound, never an upper one), and that margin becomes
+        // real, phantom extra sectors reported to the host if left
+        // unclamped. Confirmed as a real bug via hardware testing: a
+        // ~190MB margin on a real partition turned into 345,652 sectors
+        // of capacity beyond a profile's own documented, fixed geometry
+        // -- these are real physical IBM disk models with an exact
+        // capacity OS/400 expects, so overreporting it is a genuine
+        // device-identity mismatch, not just wasted space.
+#ifdef PLATFORM_AS400
+        {
+            uint32_t profileBlockSize = 0, profileSectors = 0;
+            if (getAS400ProfileCapacity(target_idx, &profileBlockSize, &profileSectors) &&
+                profileSectors > 0 && profileSectors < img.scsiSectors)
+            {
+                // img.scsiSectors alone only feeds CHS geometry math below --
+                // ReadCapacity and the read/write bounds check both derive
+                // capacity fresh from img.file.size(), so the clamp has to
+                // land inside ImageBackingStore itself (m_logicalSectorCount,
+                // or m_endsector for a non-gapped raw device) or it never
+                // actually reaches the host. Only log success once the
+                // clamp is confirmed to have actually taken effect --
+                // clampLogicalSectorCount() can decline (e.g. a plain
+                // FsFile-backed image, which has no oversized "extent" to
+                // shrink in the first place), and claiming a clamp
+                // happened when it didn't would actively mislead whoever
+                // is reading the log while the phantom-sector overreporting
+                // this exists to fix silently persists.
+                if (img.file.clampLogicalSectorCount(profileSectors))
+                {
+                    logmsg("---- Clamping reported capacity from ", (int)img.scsiSectors,
+                           " to ", (int)profileSectors, " sectors to match the AS400_DiskProfile's own declared geometry");
+                    img.scsiSectors = img.file.size() / blocksize;
+                }
+            }
+        }
+#endif
+
         img.scsiId = target_idx | S2S_CFG_TARGET_ENABLED;
         img.sdSectorStart = 0;
         bool tape_is_tap_format = false;
@@ -1061,6 +1143,7 @@ static void scsiDiskSetConfig(int target_idx)
 
     image_config_t &img = g_DiskImages[target_idx];
     img.scsiId = target_idx;
+    img.file.setScsiId(target_idx); // IOTrace Layer B tagging only
 
     scsiDiskSetImageConfig(target_idx);
 
@@ -1601,6 +1684,14 @@ void scsiDiskLoadConfig(int target_idx)
     int blocksize = 0;
     if (scsiDiskGetNextImageName(img, filename, sizeof(filename)))
     {
+        // Record that a real image was configured for this ID -- before
+        // the open attempt below, which may fail -- so a failure here
+        // doesn't look identical to "never configured" (see the field's
+        // own comment in ZuluSCSI_disk.h for why that distinction
+        // matters: autoCreateAS400ProfileImages() must not paper over a
+        // failed PART:n/RAW:/file open by creating an unrelated new file).
+        img.image_config_attempted = true;
+
         if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
             // set custom tape density
@@ -2066,6 +2157,13 @@ const S2S_TargetCfg* s2s_getConfigById(int scsiId)
     return NULL;
 }
 
+bool scsiDiskImageWasConfigured(int scsiId)
+{
+    if (scsiId < 0 || scsiId >= S2S_MAX_TARGETS)
+        return false;
+    return g_DiskImages[scsiId].image_config_attempted;
+}
+
 /**********************/
 /* FormatUnit command */
 /**********************/
@@ -2510,6 +2608,12 @@ void scsiDiskPrefetchInvalidate(uint8_t scsiId)
 
 void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
 {
+    // IOTrace Layer A: one record per Write CDB dispatch, regardless of
+    // which specific opcode (Write6/10/12/...) normalized to this common
+    // entry point -- scsiDev.cdb[0] still holds that opcode. No-op
+    // entirely when IOTrace= is off.
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, scsiDev.cdb[0], (uint16_t)blocks, lba);
+
     if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
         // Floppies are supposed to be slow. Some systems can't handle a floppy
         // without an access time
@@ -3119,20 +3223,27 @@ void diskDataOut()
         }
 
 #ifdef PLATFORM_AS400
-        // A Skip Write must commit only whole sectors: it walks the skip mask
-        // sector-by-sector, so any partial trailing sector left in len would
-        // either be dropped or (worse) offset every subsequent sector in the
-        // command by however many bytes were missing. len above is sized by
-        // SD buffer/write-size availability, not by bytesPerSector, so it is
-        // generally not a sector multiple - round it down before it is used
-        // for anything, so scsiFinishRead(), the write below, and the
-        // bytes_sd credit all agree on the same already-aligned amount. The
-        // remainder stays in the SCSI buffer and is picked up whole once the
-        // next chunk has enough bytes to complete the sector.
-        if (g_disk_transfer.skip_command == 0xEA)
-        {
-            len -= len % bytesPerSector;
-        }
+        // len above is sized purely by SD write-size optimization
+        // (PLATFORM_OPTIMAL_MAX/LAST_SD_WRITE_SIZE), with no awareness of
+        // bytesPerSector -- so it is generally not a sector multiple. A
+        // Skip Write must commit only whole sectors regardless (it walks
+        // the skip mask sector-by-sector; a partial trailing sector would
+        // be dropped or offset every following sector). But a gapped
+        // image (AlignUnalignedAccesses) needs exactly the same rounding
+        // for a PLAIN Write10/WriteVerify too: ImageBackingStore::write()
+        // hard-rejects any count that isn't a whole multiple of blockSize
+        // for a gapped device (see gappedTransfer()), and this chunking
+        // can easily produce one that isn't (e.g. exactly
+        // PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE = 8192 bytes, not a
+        // multiple of 522) -- confirmed via real hardware: the write was
+        // silently failing here, contributing to a real IPL halt. Round
+        // down unconditionally so scsiFinishRead(), the write below, and
+        // the bytes_sd credit all agree on the same already-aligned
+        // amount. The remainder stays in the SCSI buffer and is picked up
+        // whole once the next chunk has enough bytes to complete the
+        // sector -- harmless for a non-gapped AS/400 image too, just a
+        // slightly more conservative chunk size.
+        len -= len % bytesPerSector;
 #endif
 
         if (len == 0)
@@ -3219,7 +3330,18 @@ void diskDataOut()
                     int16_t run = skip_next(sectors_remaining);
                     if (run < 0)
                     {
-                        img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
+                        // A rejected seek (out-of-range target) leaves the
+                        // position unchanged, not moved -- if left
+                        // undetected, the next positive run below would
+                        // silently write to the wrong (stale, but still
+                        // in-range) sectors instead of failing the
+                        // command. Fail explicitly instead.
+                        if (!img.file.seek(img.file.position() + (abs(run) * bytesPerSector)))
+                        {
+                            logmsg("Skip Write mask seek past end of device");
+                            write_ok = false;
+                            break;
+                        }
                     }
                     else if (run > 0)
                     {
@@ -3315,6 +3437,9 @@ void diskDataOut()
 
 void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
 {
+    // IOTrace Layer A: see the matching comment in scsiDiskStartWrite().
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, scsiDev.cdb[0], (uint16_t)blocks, lba);
+
     if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
         // Floppies are supposed to be slow. Some systems can't handle a floppy
         // without an access time
@@ -3508,7 +3633,18 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
             int16_t run = skip_next(sectors_remaining);
             if (run < 0)
             {
-                img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
+                // A rejected seek (out-of-range target) leaves the
+                // position unchanged -- if left undetected, the next
+                // positive run below would silently read the wrong
+                // (stale, but still in-range) sectors and deliver them to
+                // the host instead of failing the command. Fail
+                // explicitly instead.
+                if (!img.file.seek(img.file.position() + (abs(run) * bytesPerSector)))
+                {
+                    logmsg("Skip Read mask seek past end of device");
+                    read_ok = false;
+                    break;
+                }
             }
             else if (run > 0)
             {
@@ -3624,6 +3760,22 @@ static void diskDataIn()
             // the log claims it's off. Clamp here so both agree.
             maxPrefetchBytes = 0;
         }
+
+#ifdef PLATFORM_AS400
+        if (g_disk_transfer.skip_command)
+        {
+            // A Skip Read's masked walk leaves img.file's position at
+            // lba+blocks+(interior skipped sectors), not lba+blocks --
+            // prefetchFirstSector below assumes the latter. Filling the
+            // cache from the wrong position would silently poison it: a
+            // later ordinary Read10 covering [lba+blocks, ...) could be
+            // served this mismatched data with GOOD status. The existing
+            // Skip-Read invalidate (scsiDiskSkip()) only covers stale
+            // data already cached *before* the skip started, not this
+            // after-the-fact case -- skip read-ahead entirely instead.
+            maxPrefetchBytes = 0;
+        }
+#endif
 
         uint8_t *prefetchBuffer = NULL;
         uint32_t prefetchFirstSector = transfer.lba + transfer.blocks;
@@ -3862,6 +4014,11 @@ int16_t skip_next(int max) {
 //   - Maximum transfer length is 256 blocks; larger values return Check
 //     Condition / Illegal Request - Invalid Field in CDB.
 void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t skip_command) {
+
+    // IOTrace Layer A: see the matching comment in scsiDiskStartWrite().
+    // Logged even for a request this function is about to reject (blocks
+    // > 256 below) -- that's still a real, informative wire observation.
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, skip_command, (uint16_t)blocks, lba);
 
     if (blocks > 256)
     {
