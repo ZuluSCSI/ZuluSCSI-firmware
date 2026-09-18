@@ -298,7 +298,6 @@ Vendor = IBM
 Product = 0663L12
 Feature = #6104
 Revision = s 62
-Feature = Unknown
 BlockSize = 520
 Sectors = 1931265
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=2463 heads=13 sectors/track=65 (block size per descriptor: 520)

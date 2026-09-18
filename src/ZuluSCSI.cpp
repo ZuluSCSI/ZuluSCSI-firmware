@@ -64,6 +64,7 @@
 #include "ZuluSCSI_blink.h"
 #include "ZuluSCSI_buffer_control.h"
 #include "ZuluSCSI_audio.h"
+#include "ZuluSCSI_iotrace.h"
 #include "ROMDrive.h"
 #include "custom_vendor_inquiry.h"
 #include "vhd_support.h"
@@ -239,6 +240,15 @@ void init_logfile()
   {
     logmsg("Failed to open log file: ", SD.sdErrorCode());
   }
+  else
+  {
+    // Diagnostic only: this function previously had no success-path log
+    // line at all, so a clean open and a silent failure upstream (e.g.
+    // init_logfile() not being reached this boot) were indistinguishable
+    // from the console/screenlog alone -- see the zululog.txt
+    // creation/gating investigation in JOURNAL.md.
+    logmsg("---- Log file opened: ", LOGFILE, truncate ? " (truncated)" : " (appending)");
+  }
 
   bool temp_log_to_sd = ini_getbool("SCSI", "LogToSDCard", 1, CONFIGFILE);
   if (!temp_log_to_sd)
@@ -249,17 +259,26 @@ void init_logfile()
     logmsg("==========================================================");
   }
 
+  iotrace_load_setting();
+  iotrace_init();
+
   if (!g_log_to_sd && temp_log_to_sd)
   {
     logmsg("==========================================================");
     logmsg(" LogToSDCard is has been reenabled, log messages will");
     logmsg(" be written to the SD card ", LOGFILE);
     logmsg("==========================================================");
-    g_log_to_sd = temp_log_to_sd;
   }
 
-  save_logfile(true);
+  // Must be set before the forced save_logfile() below, not after --
+  // otherwise this boot's first (forced) flush always writes regardless
+  // of LogToSDCard, since save_logfile() gates purely on g_log_to_sd's
+  // current value. Confirmed on real hardware: log entries appeared on
+  // the SD card even with LogToSDCard=0, then stopped -- exactly this
+  // one forced flush leaking through before the flag took effect.
   g_log_to_sd = temp_log_to_sd;
+
+  save_logfile(true);
 
   first_open_after_boot = false;
 }
@@ -283,9 +302,23 @@ void print_sd_info()
   }
 
   sds_t sds = {0};
-  if (SD.card()->readSDS(&sds) && sds.speedClass() < SD_SPEED_CLASS_WARN_BELOW)
+  if (SD.card()->readSDS(&sds))
   {
-    logmsg("-- WARNING: Your SD Card Speed Class is ", (int)sds.speedClass(), ". Class ", (int) SD_SPEED_CLASS_WARN_BELOW," or better is recommended for best performance.");
+    if (sds.speedClass() < SD_SPEED_CLASS_WARN_BELOW)
+    {
+      logmsg("-- WARNING: Your SD Card Speed Class is ", (int)sds.speedClass(), ". Class ", (int) SD_SPEED_CLASS_WARN_BELOW," or better is recommended for best performance.");
+    }
+
+    // AU_SIZE is this card's preferred erase/write alignment -- a hint
+    // for partitioning tools, not a requirement (see
+    // ZuluSCSI_partition_table.cpp's alignment check, which only warns,
+    // never blocks, on partitions that don't follow it).
+    uint32_t auSizeKB = sds.auSizeKB();
+    if (auSizeKB > 0)
+    {
+      uint32_t auSizeSectors = (auSizeKB * 1024) / 512; // SD cards use a fixed 512-byte sector size
+      logmsg("SD preferred alignment: ", (int)auSizeSectors, " sectors (", (int)(auSizeKB * 1024), " bytes)");
+    }
   }
 
 }
@@ -652,6 +685,20 @@ static bool autoCreateAS400ProfileImages()
     if (s2s_getConfigById(id))
       continue; // the scan below already found a real image for this ID
 
+    if (scsiDiskImageWasConfigured(id))
+    {
+      // A real image (IMG0=/RAW:/PART:n/directory-scan result) WAS found
+      // and an open WAS attempted for this ID -- it just failed (wrong
+      // block size, partition too small, corrupt file, etc.). Auto-
+      // creating an unrelated new file here would silently paper over
+      // that failure instead of leaving the device disabled the way the
+      // failed open already (correctly) intended -- confirmed as a real
+      // bug via a real screenlog: a PART:n rejected for an incompatible
+      // block size fell through to here and tried to auto-create a
+      // multi-hundred-MB file on a card too small to hold it.
+      continue;
+    }
+
     char section[SCSI_INI_SECTION_SIZE];
     scsiGetIniSection(id, section, sizeof(section));
     char profileName[64];
@@ -681,9 +728,16 @@ static bool autoCreateAS400ProfileImages()
     snprintf(namepart, sizeof(namepart), "HD%c0.hda", scsiEncodeID(id));
     strcat(fullname, namepart);
 
-    uint64_t size = (uint64_t)sectors * blockSize;
+    // Account for AlignUnalignedAccesses: a gapped-layout image needs more
+    // physical SD card space than its logical sectors*blockSize (see
+    // ZuluSCSI_gap_layout.h) -- passing that logical size to
+    // createImageFile() here would silently under-allocate the file.
+    zuluscsi_align_unaligned_t alignMode = gapLayoutResolveAuto(
+        (zuluscsi_align_unaligned_t)g_scsi_settings.getDevice(id)->alignUnalignedAccesses, blockSize);
+    uint64_t size = gapLayoutPhysicalSize(alignMode, blockSize, sectors);
     logmsg("---- No image found for SCSI ID ", id, ", auto-creating ",
-           (int)(size / (1024 * 1024)), " MB per AS400_DiskProfile '", profileName, "'");
+           (int)(size / (1024 * 1024)), " MB per AS400_DiskProfile '", profileName, "'",
+           alignMode != ALIGN_UNALIGNED_OFF ? " (includes AlignUnalignedAccesses padding)" : "");
 
     if (!createImageFile(fullname, size))
     {
@@ -762,6 +816,8 @@ static void configDynamicScsiId()
         }
         check_sd_start = millis();
       }
+
+      platform_reset_watchdog();
       platform_poll();
       save_logfile();
       // if the SD card has been removed and this setting changed to a valid ID
@@ -1379,10 +1435,22 @@ static void reinitSCSI()
   {
 #ifdef DYNAMIC_SCSI_ID
     // Lazily resolve the SCA SCSI ID the first time 'n'-prefixed directories
-    // are found, so the expander is only queried when needed.
-    if (scsiDiskGetDynamicId() < 0 && zuluscsi_is_sca() && scsiDiskHasDynamicDirs())
+    // are found, so the expander is only queried when needed. A [SCSIn]
+    // section that names an image on its own (Partition = n, IMG0, ImgDir)
+    // has to resolve it here too: that target has no 'n'-named file or
+    // directory anywhere on the card, so nothing else would ever trigger the
+    // lookup and readSCSIDeviceConfig() below would skip the section.
+    if (scsiDiskGetDynamicId() < 0 && zuluscsi_is_sca()
+        && (scsiDiskHasDynamicDirs() || scsiDiskHasDynamicIniImage()))
     {
       configDynamicScsiId();
+    }
+    else if (scsiDiskGetDynamicId() < 0 && !zuluscsi_is_sca() && scsiDiskHasDynamicIniImage())
+    {
+      // Same situation as the 'n'-named image files in findHDDImages(), but
+      // nothing later in the boot would mention the ignored section at all.
+      logmsg("-- Ignoring [" DYNAMIC_SCSI_INI_SECTION "]: this board does not support dynamic SCSI IDs,"
+             " use a [SCSI<ID>] section instead");
     }
 #endif
     readSCSIDeviceConfig();
@@ -1854,6 +1922,20 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
       delay(boot_delay_ms);
     }
     platform_post_sd_card_init();
+
+    // IOTrace must be enabled before kiosk_restore_images()/reinitSCSI()
+    // open any images, not just later inside init_logfile() below --
+    // otherwise every IOTRACE_REC_IMAGEOPEN record from the initial boot-time
+    // image open (the only one most sessions ever get -- see
+    // ImageBackingStore::_internal_open()) is silently dropped, because
+    // iotrace_*() calls are no-ops until iotrace_enabled_ref() is set.
+    // Confirmed 2026-09-13: two full real captures with zero IMAGEOPEN
+    // records each. iotrace_init() is idempotent per boot (see its own
+    // first_call_this_boot guard), so the later call inside init_logfile()
+    // is a harmless no-op once this one has already run.
+    iotrace_load_setting();
+    iotrace_init();
+
 #ifdef PLATFORM_HAS_INITIATOR_MODE
     if (!platform_is_initiator_mode_enabled())
 #endif
@@ -2013,13 +2095,37 @@ extern "C" void zuluscsi_main_loop(void)
   static uint32_t sd_card_check_time = 0;
   static uint32_t last_request_time = 0;
 
+  // IOTrace Layer C: five sub-calls are timed directly (platform_poll(),
+  // scsiPoll(), scsiDiskPoll(), save_logfile(), and the SD hotplug check/
+  // remount block) -- save_logfile() and the SD maintenance block were
+  // added 2026-09-13 after a first real capture showed the OTHER bucket
+  // (everything not individually timed) at 34.7% with zero attribution;
+  // both do their own SD-card I/O, the plausible reason to split them out.
+  // Everything else still left in one iteration (control_disk_swap,
+  // blink_poll, controlLoop, etc.) is attributed to IOTRACE_BUCKET_OTHER
+  // by subtraction against the whole iteration's own span, rather than
+  // wrapping every remaining call individually -- this is temporary
+  // falsework, not code meant to stay, so cheaper/lower-risk wins unless a
+  // capture shows a specific remaining call is worth breaking out too. No-ops
+  // entirely when IOTrace= is off (see ZuluSCSI_iotrace.h) or outside
+  // PLATFORM_AS400.
+  uint64_t iotrace_iter_start = iotrace_now_us();
+  uint32_t iotrace_platform_poll_us = 0;
+  uint32_t iotrace_scsi_poll_us = 0;
+  uint32_t iotrace_disk_compute_us = 0;
+  uint32_t iotrace_save_logfile_us = 0;
+  uint32_t iotrace_sd_maintenance_us = 0;
+
   bool is_initiator = false;
 #ifdef PLATFORM_HAS_INITIATOR_MODE
   is_initiator = platform_is_initiator_mode_enabled();
 #endif
 
   platform_reset_watchdog();
+  uint64_t iotrace_t0 = iotrace_now_us();
   platform_poll();
+  iotrace_platform_poll_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+  iotrace_loop_account(IOTRACE_BUCKET_PLATFORM_POLL, iotrace_platform_poll_us);
 
   control_disk_swap();
 
@@ -2046,8 +2152,16 @@ extern "C" void zuluscsi_main_loop(void)
   else
 #endif
   {
+    iotrace_t0 = iotrace_now_us();
     scsiPoll();
+    iotrace_scsi_poll_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+    iotrace_loop_account(IOTRACE_BUCKET_SCSI_POLL, iotrace_scsi_poll_us);
+
+    iotrace_t0 = iotrace_now_us();
     scsiDiskPoll();
+    iotrace_disk_compute_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+    iotrace_loop_account(IOTRACE_BUCKET_DISK_COMPUTE, iotrace_disk_compute_us);
+
     scsiLogPhaseChange(scsiDev.phase);
 
     // Save log periodically during status phase if there are new messages.
@@ -2058,11 +2172,15 @@ extern "C" void zuluscsi_main_loop(void)
     // come through or a request hangs, it's useful to force saving of log.
     if (scsiDev.phase == STATUS || (g_log_debug && (uint32_t)(millis() - last_request_time) > 2000))
     {
+      iotrace_t0 = iotrace_now_us();
       save_logfile();
+      iotrace_save_logfile_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+      iotrace_loop_account(IOTRACE_BUCKET_SAVE_LOGFILE, iotrace_save_logfile_us);
       last_request_time = millis();
     }
   }
 
+  iotrace_t0 = iotrace_now_us();
   if (g_sdcard_present)
   {
     // Check SD card status for hotplug
@@ -2119,6 +2237,26 @@ extern "C" void zuluscsi_main_loop(void)
     {
       blinkStatus(BLINK_ERROR_NO_SD_CARD);
     }
+  }
+  iotrace_sd_maintenance_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
+  iotrace_loop_account(IOTRACE_BUCKET_SD_MAINTENANCE, iotrace_sd_maintenance_us);
+
+  // IOTrace Layer C: OTHER = whatever's left of this iteration's total
+  // span once the five explicitly-timed buckets (captured above into the
+  // iotrace_*_us locals) are subtracted out -- see the comment at the top
+  // of this function. DMA_WAIT isn't part of this subtraction: it's
+  // accounted separately, as a sub-component of iotrace_disk_compute_us's
+  // own span (inside scsiDiskPoll()'s own call chain), not additional time
+  // on top of this iteration's total. iotrace_loop_account()/
+  // iotrace_loop_tick() are no-ops when IOTrace= is off.
+  {
+    uint32_t iotrace_iter_us = (uint32_t)(iotrace_now_us() - iotrace_iter_start);
+    uint32_t iotrace_accounted_us = iotrace_platform_poll_us + iotrace_scsi_poll_us +
+                                     iotrace_disk_compute_us + iotrace_save_logfile_us +
+                                     iotrace_sd_maintenance_us;
+    iotrace_loop_account(IOTRACE_BUCKET_OTHER, iotrace_iter_us > iotrace_accounted_us ?
+                          iotrace_iter_us - iotrace_accounted_us : 0);
+    iotrace_loop_tick();
   }
 }
 
