@@ -68,7 +68,9 @@
 #include "ROMDrive.h"
 #include "custom_vendor_inquiry.h"
 #include "vhd_support.h"
+#ifdef ZULUCONTROL_FIRMWARE
 #include <ZuluSCSI_WebUI.h>
+#endif
 
 #include "ui.h"
 

@@ -634,6 +634,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                    (int)(auSizeSectors / 2), " KB boundary. This will increase read/write latency but is not an error.");
         }
 
+        #ifdef PLATFORM_AS400
         // Too-small check: only meaningful when this target declares an
         // expected capacity (currently: an AS400_DiskProfile). Without
         // one, whatever the partition provides simply becomes the
@@ -661,6 +662,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                 return false;
             }
         }
+        #endif // PLATFORM_AS400
 
         partition_conflict_t conflicts[PARTITION_TABLE_MAX_INDEX];
         int conflictCount = 0;
