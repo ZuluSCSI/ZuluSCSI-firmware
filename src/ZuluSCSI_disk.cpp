@@ -549,6 +549,11 @@ static void autoConfigGeometry(image_config_t &img)
         }
 }
 
+static bool isProcessorDevice(S2S_CFG_TYPE type)
+{
+    return type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_NETWORK || type == S2S_CFG_AUDIO;
+}
+
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)
 {
     image_config_t &img = g_DiskImages[target_idx];
@@ -688,10 +693,18 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
 
     // Close existing file and construct new one in-place
     img.file.~ImageBackingStore();
-    // scsiId passed directly here (rather than via setScsiId() afterwards)
-    // so it's already known when _internal_open() runs during construction --
-    // see ImageBackingStore's constructor comment.
-    new (&img.file) ImageBackingStore(filename, blocksize, device_config, target_idx);
+
+    if (isProcessorDevice(type))
+    {
+        new (&img.file) ImageBackingStore(true);
+    }
+    else
+    {
+        // scsiId passed directly here (rather than via setScsiId() afterwards)
+        // so it's already known when _internal_open() runs during construction --
+        // see ImageBackingStore's constructor comment.
+        new (&img.file) ImageBackingStore(filename, blocksize, device_config, target_idx);
+    }
 
     if (img.file.isOpen())
     {
@@ -759,7 +772,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             tape_is_tap_format = true;
         }
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && type != S2S_CFG_AUDIO && !img.file.isFolder() && !tape_is_tap_format)
+        if (img.scsiSectors == 0 && !isProcessorDevice(type) && !img.file.isFolder() && !tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
@@ -767,7 +780,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         }
 
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO || img.file.isFolder() || tape_is_tap_format)
+        if (img.file.isRom() || isProcessorDevice(type) || img.file.isFolder() || tape_is_tap_format)
         {
             // Contiguous file doesn't matter for these types
         }
@@ -876,7 +889,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Vendor / product id set from image file name");
         }
 
-        if (type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO)
+        if (isProcessorDevice(type))
         {
             // prefetch not used, skip emitting log message
         }
@@ -2240,8 +2253,7 @@ static void doFormatUnitHeader(void)
 
 static uint64_t getCapacityBlocks(image_config_t &img, uint32_t bytesPerSector)
 {
-    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI)
-        || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AUDIO))
+    if (unlikely(isProcessorDevice((S2S_CFG_TYPE)scsiDev.target->cfg->deviceType)))
     {
         return 1;
     }
