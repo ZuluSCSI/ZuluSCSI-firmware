@@ -43,6 +43,7 @@
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
 #include "ZuluSCSI_usb_console_media.h"
+#include "ZuluSCSI_usb_console_erase.h"
 #ifdef ZULUCONTROL_FIRMWARE 
 #include <ZuluSCSI_WebUI.h>
 #include <ZuluSCSI_WebUI_I2CServer.h>
@@ -131,7 +132,8 @@ typedef enum
     USB_INPUT_BUTTON_2,
     USB_INPUT_BUTTON_3,
     USB_INPUT_BUTTON_4,
-    USB_INPUT_MEDIA_SUBMENU
+    USB_INPUT_MEDIA_SUBMENU,
+    USB_INPUT_ERASE_SD_CARD
 }
 usb_input_type_t;
 
@@ -1894,6 +1896,13 @@ static usb_input_type_t serial_menu(menu_context_t context)
             return USB_INPUT_NONE;
         }
 
+        // Route to the erase submenu while it is active
+        if (serialEraseMenuActive())
+        {
+            serialEraseMenuProcess((char)read);
+            return USB_INPUT_NONE;
+        }
+
         switch((char) read)
         {
             case 'X':
@@ -1959,6 +1968,13 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 else
                     match_keyed = false;
                 break;
+            case 'T':
+            case 't':
+                if (context ==  MENU_CONTEXT_TARGET_MAIN)
+                    input_type = USB_INPUT_ERASE_SD_CARD;
+                else
+                    match_keyed = false;
+                break;
             case 'Y':
             case 'y':
                 yes_keyed = true;
@@ -1999,7 +2015,8 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 8)   ? "    '4' - push function button 4 (eject, switch image)\r\n" : "",
                 (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 8)     ? "    '4' - push function button 4 (cow init, currently ": "", (g_enabled_cow_buttons & 8) ? ((g_cow_button_state & 8) ? "enabled)\r\n" : "disabled)\r\n") : "",
 
-                (context == MENU_CONTEXT_TARGET_MAIN) ? "    'm' - media management (image select, eject, insert)\r\n" : ""
+                (context == MENU_CONTEXT_TARGET_MAIN) ? "    'm' - media management (image select, eject, insert)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN) ? "    't' - erase (TRIM) entire SD card -- DESTROYS ALL DATA\r\n" : ""
                 "  press 'y' after a command to confirm and execute"
             );
         }
@@ -2088,6 +2105,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 case USB_INPUT_MEDIA_SUBMENU:
                     serialMediaMenuEnter();
                     break;
+                case USB_INPUT_ERASE_SD_CARD:
+                    serialEraseMenuEnter();
+                    break;
                 default:
                     input_type = USB_INPUT_NONE;
             }
@@ -2157,6 +2177,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     {
                         logmsg(g_cow_button_state & 4 ? "Disable" : "Enable", " cow init on function button 3, press 'y' to engage or any key to clear");
                     }
+                    break;
+                case USB_INPUT_ERASE_SD_CARD:
+                    logmsg("Erase (TRIM) entire SD card requested, press 'y' to engage or any key to clear");
                     break;
                 case USB_INPUT_MEDIA_SUBMENU:
                     logmsg("Enter media management submenu, press 'y' to engage or any key to clear");
