@@ -38,6 +38,8 @@ ImageBackingStore::ImageBackingStore()
     m_iscontiguous = false;
     m_israw = false;
     m_isrom = false;
+    m_isproccesor = false;
+    m_isprocessor_open = false;
     m_isreadonly_attr = false;
     m_blockdev = nullptr;
     m_bgnsector = m_endsector = m_cursector = 0;
@@ -53,6 +55,13 @@ ImageBackingStore::ImageBackingStore()
     // Initialize COW members
     m_iscow = false;
 #endif
+}
+
+
+ImageBackingStore::ImageBackingStore(bool open)  : ImageBackingStore()
+{
+    m_isproccesor = true;
+    m_isprocessor_open = open;
 }
 
 ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_settings, uint8_t scsiId) : ImageBackingStore()
@@ -194,6 +203,7 @@ bool ImageBackingStore::_internal_open(const char *filename)
     {
         m_fsfile = SD.open(filename, open_flag);
     }
+
 
     if (!m_fsfile.isOpen())
     {
@@ -525,6 +535,10 @@ ssize_t ImageBackingStore::gappedTransfer(void *buf, size_t count, bool isWrite)
 
 bool ImageBackingStore::isOpen()
 {
+    if (m_isproccesor)
+    {
+        return m_isprocessor_open;
+    }
 #if ENABLE_COW
     if (m_iscow)
     {
@@ -593,6 +607,10 @@ bool ImageBackingStore::isContiguous()
 
 bool ImageBackingStore::close()
 {
+    if (m_isproccesor)
+    {
+        m_isprocessor_open = false;
+    }
 #if ENABLE_COW
     if (m_iscow)
     {
