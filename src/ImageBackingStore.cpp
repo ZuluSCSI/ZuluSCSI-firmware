@@ -233,7 +233,7 @@ bool ImageBackingStore::_internal_open(const char *filename)
     // without needing a trace to infer it from.
     if (!got_range)
     {
-        logmsg("---- ", filename, ": not contiguous on SD card (contiguousRange() failed) -- ",
+        logmsg("---- ", filename, ": is non-contiguous on SD card  -- ",
                "ImageBackingStore's raw-block fast path is unavailable for this file");
     }
     else if (!range_covers_file)
