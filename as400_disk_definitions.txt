@@ -298,7 +298,6 @@ Vendor = IBM
 Product = 0663L12
 Feature = #6104
 Revision = s 62
-Feature = Unknown
 BlockSize = 520
 Sectors = 1931265
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=2463 heads=13 sectors/track=65 (block size per descriptor: 520)
@@ -353,7 +352,7 @@ SPD_chunks = 2
 ; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
 VPD01 = 00 01 00 2f 18 34 35 47 39 34 36 33 20 20 20 20 20 00 38 39 35 39 38 35 20 20 20 20 00 f4 f5 c7 f9 f4 f6 f3 40 40 40 40 40 f8 f9 f5 f9 f8 f5 40 40 40 40
 VPD02 = 00 02 00 2f 18 34 35 47 39 38 35 31 20 20 20 20 20 00 38 39 35 39 36 33 20 20 20 20 00 f4 f5 c7 f9 f8 f5 f1 40 40 40 40 40 f8 f9 f5 f9 f6 f3 40 40 40 40
-VPD03 = 00 03 00 14 30 00 00 00 a0 90 06 18 00 01 01 b0 00 00 00 00 00 00 00 00
+VPD03 = 00 03 00 14 30 00 00 00 a0 90 06 18 00 01 01 40 00 00 00 00 00 00 00 00
 VPD80 = 00 80 00 10 20 20 20 20 20 20 20 20 30 30 31 37 35 39 39 35
 VPD82 = 00 82 00 30 19 30 36 36 32 00 53 31 32 00 30 30 31 37 35 39 39 35 00 49 42 4d 20 20 20 00 f0 f6 f6 f2 e2 f1 f2 00 f0 f0 f1 f7 f5 f9 f9 f5 c9 c2 d4 40 40 40
 
@@ -392,7 +391,7 @@ SPD_chunks = 2
 ; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
 VPD01 = 00 01 00 2f 18 34 35 47 39 34 36 33 20 20 20 20 20 00 38 39 35 39 38 35 20 20 20 20 00 f4 f5 c7 f9 f4 f6 f3 40 40 40 40 40 f8 f9 f5 f9 f8 f5 40 40 40 40
 VPD02 = 00 02 00 2f 18 34 35 47 39 38 39 39 20 20 20 20 20 00 38 39 35 39 37 34 20 20 20 20 00 f4 f5 c7 f9 f8 f9 f9 40 40 40 40 40 f8 f9 f5 f9 f7 f4 40 40 40 40
-VPD03 = 00 03 00 14 30 00 00 00 a0 90 06 18 00 01 01 b0 00 00 00 00 00 00 00 00
+VPD03 = 00 03 00 14 30 00 00 00 a0 90 06 18 00 01 01 40 00 00 00 00 00 00 00 00
 VPD80 = 00 80 00 10 20 20 20 20 20 20 20 20 30 30 30 35 38 38 38 34
 VPD82 = 00 82 00 30 19 30 36 36 32 00 53 31 32 00 30 30 30 35 38 38 38 34 00 49 42 4d 20 20 20 00 f0 f6 f6 f2 e2 f1 f2 00 f0 f0 f0 f5 f8 f8 f8 f4 c9 c2 d4 40 40 40
 
@@ -949,4 +948,94 @@ LogSense30_1 = 20 30 30 20 30 30 20 30 33 0a 20 20 30 30 20 30 30 20 30 30 20 30
 LogSense30_chunks = 2
 LogSense30PageLength = 44
 LogSense30PageListLength = 0
+
+; ===========================================================================
+; AS/400 disk profile '86G9124', captured from /dev/sg0 on 2026-09-05T22:26:17Z
+; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
+; Feature+Model (e.g. #6607) is a system-level packaging designation, not
+; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; ===========================================================================
+[86G9124-5]
+Vendor = IBMAS400
+Product = DFHSS2W
+Revision = 4I4I
+Feature = #6606
+BlockSize = 520
+Sectors = 4204913
+; Decoded from MODE SENSE pages 0x03/0x04: cylinders=4390 heads=8 sectors/track=128 (block size per descriptor: 520)
+; => implied capacity 4495360 sectors. Compare against Sectors= below (from READ CAPACITY) ---
+; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
+; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
+; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; not the MODE SENSE geometry, when in doubt.
+
+; --- Standard INQUIRY (full response) ---
+SPD_0 = 00 00 02 02 9f 00 00 3e 49 42 4d 41 53 34 30 30 44 46 48 53 53 32 57 20 20 20 20 20 20 20 20 20 34 49 34 49 30 30 45 36 33 35 30 39 52 41 4d 53 41 30 34 52 20 20 20 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 30 36 38 39 36 33 33 32 34 30 30 30 32 32 32 38 36 47 39 31 32 34 20 20 20 20 20 34 38 36 35 30 39 20 20 20 20 32 37 48 30
+SPD_1 = 32 36 32 20 20 20 20 20 34 38 34 35 34 37 20 20 20 20 00 00 00 00 00 00
+SPD_chunks = 2
+
+; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
+VPD01 = 00 01 00 2f 18 38 36 47 39 31 32 34 20 20 20 20 20 00 34 38 36 35 30 39 20 20 20 20 00 f8 f6 c7 f9 f1 f2 f4 40 40 40 40 40 f4 f8 f6 f5 f0 f9 40 40 40 40
+VPD02 = 00 02 00 2f 18 32 37 48 30 32 36 32 20 20 20 20 20 00 34 38 34 35 34 37 20 20 20 20 00 f2 f7 c8 f0 f2 f6 f2 40 40 40 40 40 f4 f8 f4 f5 f4 f7 40 40 40 40
+VPD03 = 00 03 00 24 00 00 00 00 a0 90 06 19 00 01 04 f3 00 00 00 00 00 00 00 00 52 4f 53 53 41 31 34 52 20 20 20 20 30 45 34 38
+VPD80 = 00 80 00 10 20 20 20 20 20 20 20 20 30 30 45 36 33 35 30 39
+VPD82 = 00 82 00 30 19 44 46 48 53 00 53 32 57 00 30 30 45 36 33 35 30 39 00 49 42 4d 20 20 20 00 c4 c6 c8 e2 e2 f2 e6 00 c5 f6 f3 f5 f0 f9 40 40 c9 c2 d4 40 40 40
+
+; --- MODE SENSE(6), page 0x3F (all pages) ---
+ModeSense3F_0 = a7 00 10 08 00 40 29 71 00 00 02 08 81 0a 04 01 70 00 00 00 01 00 00 00 82 0e 00 00 00 00 00 00 00 00 00 19 00 00 00 00 03 16 00 08 00 13 00 00 00 00 00 80 02 08 00 01 00 0c 00 1e 40 00 00 00 84 16 00 11 26 08 00 00 00 00 00 00 00 00 00 12 07 00 00 00 1c 20 00 00 87 0a 04 01 30 00 00 00 00 00 00 00 88 12 00 01 ff ff 00 00 ff ff ff ff 00 08 00 00 00 00 00 00 8a 06 00 00 00 00 00 00 8c 16 80 00 00 0a 00 00 00 00 0f 00
+ModeSense3F_1 = 00 11 3d 07 00 00 00 00 00 00 10 0c 80 0e 80 80 08 10 00 00 00 00 00 00 00 00 00 00
+ModeSense3F_chunks = 2
+
+; --- LOG SENSE pages ---
+LogSense00 = 00 00 00 0a 00 01 02 03 05 06 30 32 33 35
+LogSense30 = 30 00 00 30 00 00 00 2c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+LogSense30PageLength = 48
+LogSense30PageListLength = 44
+LogSense31 = 00 00 00 00
+LogSense31PageLength = 0
+
+; ===========================================================================
+; AS/400 disk profile '74G6978', captured from /dev/sg1 on 2026-09-05T22:26:21Z
+; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
+; Feature+Model (e.g. #6607) is a system-level packaging designation, not
+; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; ===========================================================================
+[74G6978-6]
+Vendor = IBMAS400
+Product = DFHSS2W
+Feature = #6606
+Revision = 4I4I
+BlockSize = 520
+Sectors = 4204913
+; Decoded from MODE SENSE pages 0x03/0x04: cylinders=4390 heads=8 sectors/track=128 (block size per descriptor: 520)
+; => implied capacity 4495360 sectors. Compare against Sectors= below (from READ CAPACITY) ---
+; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
+; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
+; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; not the MODE SENSE geometry, when in doubt.
+
+; --- Standard INQUIRY (full response) ---
+SPD_0 = 00 00 02 02 9f 00 00 3e 49 42 4d 41 53 34 30 30 44 46 48 53 53 32 57 20 20 20 20 20 20 20 20 20 34 49 34 49 30 30 35 30 38 39 32 39 52 41 4d 53 41 30 34 52 20 20 20 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 30 36 38 39 36 31 31 31 20 30 30 30 32 32 32 37 34 47 36 39 37 38 20 20 20 20 20 34 38 36 35 30 36 20 20 20 20 32 31 48 30
+SPD_1 = 39 31 31 20 20 20 20 20 45 33 38 34 31 31 20 20 20 20 00 00 00 00 00 00
+SPD_chunks = 2
+
+; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
+VPD01 = 00 01 00 2f 18 37 34 47 36 39 37 38 20 20 20 20 20 00 34 38 36 35 30 36 20 20 20 20 00 f7 f4 c7 f6 f9 f7 f8 40 40 40 40 40 f4 f8 f6 f5 f0 f6 40 40 40 40
+VPD02 = 00 02 00 2f 18 32 31 48 30 39 31 31 20 20 20 20 20 00 45 33 38 34 31 31 20 20 20 20 00 f2 f1 c8 f0 f9 f1 f1 40 40 40 40 40 c5 f3 f8 f4 f1 f1 40 40 40 40
+VPD03 = 00 03 00 24 00 00 00 00 a0 90 06 19 00 01 04 f3 00 00 00 00 00 00 00 00 52 4f 53 53 41 31 34 52 20 20 20 20 30 45 34 37
+VPD80 = 00 80 00 10 20 20 20 20 20 20 20 20 30 30 35 30 38 39 32 39
+VPD82 = 00 82 00 30 19 44 46 48 53 00 53 32 57 00 30 30 35 30 38 39 32 39 00 49 42 4d 20 20 20 00 c4 c6 c8 e2 e2 f2 e6 00 f5 f0 f8 f9 f2 f9 40 40 c9 c2 d4 40 40 40
+
+; --- MODE SENSE(6), page 0x3F (all pages) ---
+ModeSense3F_0 = a7 00 10 08 00 40 29 71 00 00 02 08 81 0a 04 01 70 00 00 00 01 00 00 00 82 0e 00 00 00 00 00 00 00 00 00 19 00 00 00 00 03 16 00 08 00 13 00 00 00 00 00 80 02 08 00 01 00 0c 00 1e 40 00 00 00 84 16 00 11 26 08 00 00 00 00 00 00 00 00 00 12 07 00 00 00 1c 20 00 00 87 0a 04 01 30 00 00 00 00 00 00 00 88 12 00 01 ff ff 00 00 ff ff ff ff 00 08 00 00 00 00 00 00 8a 06 00 00 00 00 00 00 8c 16 80 00 00 0a 00 00 00 00 0f 00
+ModeSense3F_1 = 00 11 3d 07 00 00 00 00 00 00 10 0c 80 0e 80 80 08 10 00 00 00 00 00 00 00 00 00 00
+ModeSense3F_chunks = 2
+
+; --- LOG SENSE pages ---
+LogSense00 = 00 00 00 0a 00 01 02 03 05 06 30 32 33 35
+LogSense30 = 30 00 00 30 00 00 00 2c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+LogSense30PageLength = 48
+LogSense30PageListLength = 44
+LogSense31 = 00 00 00 00
+LogSense31PageLength = 0
 

@@ -80,10 +80,21 @@ struct image_config_t: public S2S_TargetCfg
     bool ejectFixedDiskWriteBlocked;
 
     // True if there is a subdirectory of images for this target
-    bool image_directory;
+    bool has_image_directory;
 
     // True if the device type was determined by the drive prefix
     bool use_prefix;
+
+    // True once a real filename (IMG0=/RAW:/PART:n/directory-scan result)
+    // was found and an open was attempted for this ID this boot --
+    // regardless of whether that open actually succeeded. Distinguishes
+    // "an image was configured but failed to open" (this ID should stay
+    // disabled) from "no image was configured at all" (eligible for
+    // autoCreateAS400ProfileImages()'s auto-create fallback) -- both
+    // cases otherwise look identical to s2s_getConfigById() (only the
+    // enabled bit tells success from failure, and failure clears it the
+    // same as never having been configured).
+    bool image_config_attempted;
 
     // the name of the currently mounted image in a dynamic image directory
     char current_image[MAX_FILE_PATH];
@@ -106,6 +117,9 @@ struct image_config_t: public S2S_TargetCfg
 
     // the bin file for the cue sheet, the directory for multi bin files, or closed if neither
     FsFile bin_container;
+
+    // Directory that holds images. If not open, assume images reside on root
+    FsFile image_directory;
 
 
     inline bool is_multi_bin_cue() {return bin_container.isOpen() && bin_container.isDir();}
@@ -149,6 +163,12 @@ void scsiDiskResetImages();
 
 // Close any files opened from SD card (prepare for remounting SD)
 void scsiDiskCloseSDCardImages();
+
+// True if a real image was found and an open was attempted for this SCSI
+// ID this boot (regardless of whether the open succeeded) -- see
+// image_config_t::image_config_attempted's own comment for why this is
+// distinct from s2s_getConfigById() (which only reflects success).
+bool scsiDiskImageWasConfigured(int scsiId);
 
 // Get blocksize from filename or use device setting in ini file
 uint32_t getBlockSize(const char *filename, uint8_t scsi_id);
@@ -252,6 +272,12 @@ int8_t scsiDiskGetDynamicId();
 // Used to decide whether to query the SCA hardware for a dynamic SCSI ID before
 // readSCSIDeviceConfig() runs.
 bool scsiDiskHasDynamicDirs();
+
+// Return true if the [SCSIn] section in the config file names an image on its
+// own (Partition / IMG0 / IMG00 / ImgDir), i.e. the dynamic target is
+// configured purely from the .ini with no 'n'-named file or directory to
+// trigger the lazy ID lookup.
+bool scsiDiskHasDynamicIniImage();
 
 // Begin writing to prefetch buffer.
 // If the buffer is not available, returns NULL.

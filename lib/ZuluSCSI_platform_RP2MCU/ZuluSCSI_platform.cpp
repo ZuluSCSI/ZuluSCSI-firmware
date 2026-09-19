@@ -1072,6 +1072,11 @@ uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
 }
 
 
+// How often platform_reset_watchdog() below is allowed to push the log to USB.
+// It is called from the SCSI command path, so this is what keeps the USB stack
+// off that hot path while still letting long-running loops report progress.
+#define USB_LOG_POLL_INTERVAL_MS 50
+
 // Send log data to USB UART if USB is connected.
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.
@@ -1431,9 +1436,26 @@ void platform_reset_watchdog()
         g_watchdog_initialized = true;
     }
 
-    // USB log is polled here also to make sure any log messages in fault states
-    // get passed to USB.
-    usb_log_poll();
+    // USB log is polled here as well, not only from platform_poll(). Every
+    // loop that can run for a while kicks the watchdog -- the SCSI command
+    // path, image creation, the SD-card-absent wait in zuluscsi_setup(), the
+    // SCA dynamic-ID poll -- and several of those never reach platform_poll(),
+    // so without this they produce no USB serial output at all while they run.
+    // The SD-card-absent wait is the one users meet first: with no card there
+    // is nowhere to write zululog.txt either, so USB is the only way to see
+    // why the board is unhappy.
+    //
+    // Rate-limited because the SCSI command path calls this often enough that
+    // polling every time walks into the TinyUSB stack thousands of times a
+    // second. That is where a "ep 80 was already available" panic came from,
+    // and it is far more often than a CDC endpoint can drain regardless.
+    static uint32_t last_usb_log_poll = 0;
+    uint32_t now = millis();
+    if ((uint32_t)(now - last_usb_log_poll) >= USB_LOG_POLL_INTERVAL_MS)
+    {
+        last_usb_log_poll = now;
+        usb_log_poll();
+    }
 }
 
 // Poll function that is called every few milliseconds.
@@ -1879,7 +1901,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 if (context ==  MENU_CONTEXT_TARGET_MSC)
                     input_type = USB_INPUT_EXIT_MSC;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
             case 'R':
             case 'r':
@@ -1906,33 +1928,36 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 input_type = USB_INPUT_LOG_TO_SD;
                 break;
             case '1':
-                if (g_enabled_eject_buttons & 1 || g_enabled_cow_buttons & 1)
+                if (context ==  MENU_CONTEXT_TARGET_MAIN && (g_enabled_eject_buttons & 1 || g_enabled_cow_buttons & 1))
                     input_type = USB_INPUT_BUTTON_1;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
             case '2':
-                if (g_enabled_eject_buttons & 2 || g_enabled_cow_buttons & 2)
+                if (context ==  MENU_CONTEXT_TARGET_MAIN && (g_enabled_eject_buttons & 2 || g_enabled_cow_buttons & 2))
                     input_type = USB_INPUT_BUTTON_2;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
                 break;
             case '3':
-                if (g_enabled_eject_buttons & 4 || g_enabled_cow_buttons & 4)
+                if (context ==  MENU_CONTEXT_TARGET_MAIN && (g_enabled_eject_buttons & 4 || g_enabled_cow_buttons & 4))
                     input_type = USB_INPUT_BUTTON_3;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
             case '4':
-                if (g_enabled_eject_buttons & 8 || g_enabled_cow_buttons & 8)
+                if (context ==  MENU_CONTEXT_TARGET_MAIN && (g_enabled_eject_buttons & 8 || g_enabled_cow_buttons & 8))
                     input_type = USB_INPUT_BUTTON_4;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
             case 'M':
             case 'm':
-                input_type = USB_INPUT_MEDIA_SUBMENU;
+                if (context ==  MENU_CONTEXT_TARGET_MAIN)
+                    input_type = USB_INPUT_MEDIA_SUBMENU;
+                else
+                    match_keyed = false;
                 break;
             case 'Y':
             case 'y':
@@ -1965,16 +1990,16 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'u' - reboot into the UF2 bootloader\r\n"
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
                 "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
-                (g_enabled_eject_buttons & 1)   ? "    '1' - push function button 1 (eject, switch image)\r\n" : "",
-                (g_enabled_cow_buttons & 1)     ? "    '1' - push function button 1 (cow init, currently " : "", (g_enabled_cow_buttons & 1) ? ((g_cow_button_state & 1) ? "enabled)\r\n" : "disabled)\r\n") : "",
-                (g_enabled_eject_buttons & 2)   ? "    '2' - push function button 2 (eject, switch image)\r\n" : "",
-                (g_enabled_cow_buttons & 2)     ? "    '2' - push function button 2 (cow init, currently ": "",  (g_enabled_cow_buttons & 2) ? ((g_cow_button_state & 2) ? "enabled)\r\n)\r\n" : "disabled)\r\n") : "",
-                (g_enabled_eject_buttons & 4)   ? "    '3' - push function button 3 (eject, switch image)\r\n" : "",
-                (g_enabled_cow_buttons & 4)     ? "    '3' - push function button 3 (cow init, currently ": "", (g_enabled_cow_buttons & 4) ? ((g_cow_button_state & 4) ? "enabled)\r\n" : "disabled)\r\n") : "",
-                (g_enabled_eject_buttons & 8)   ? "    '4' - push function button 4 (eject, switch image)\r\n" : "",
-                (g_enabled_cow_buttons & 8)     ? "    '4' - push function button 4 (cow init, currently ": "", (g_enabled_cow_buttons & 8) ? ((g_cow_button_state & 8) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 1)   ? "    '1' - push function button 1 (eject, switch image)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 1)     ? "    '1' - push function button 1 (cow init, currently " : "", (g_enabled_cow_buttons & 1) ? ((g_cow_button_state & 1) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 2)   ? "    '2' - push function button 2 (eject, switch image)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 2)     ? "    '2' - push function button 2 (cow init, currently ": "",  (g_enabled_cow_buttons & 2) ? ((g_cow_button_state & 2) ? "enabled)\r\n)\r\n" : "disabled)\r\n") : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 4)   ? "    '3' - push function button 3 (eject, switch image)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 4)     ? "    '3' - push function button 3 (cow init, currently ": "", (g_enabled_cow_buttons & 4) ? ((g_cow_button_state & 4) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 8)   ? "    '4' - push function button 4 (eject, switch image)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 8)     ? "    '4' - push function button 4 (cow init, currently ": "", (g_enabled_cow_buttons & 8) ? ((g_cow_button_state & 8) ? "enabled)\r\n" : "disabled)\r\n") : "",
 
-                "    'm' - media management (image select, eject, insert)\r\n"
+                (context == MENU_CONTEXT_TARGET_MAIN) ? "    'm' - media management (image select, eject, insert)\r\n" : ""
                 "  press 'y' after a command to confirm and execute"
             );
         }
@@ -2011,7 +2036,6 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     logmsg("Turning logging to SD card ", g_log_to_sd ? "on" : "off");
                     break;
                 case USB_INPUT_EXIT_MSC:
-                    logmsg("Exiting mass storage");
                     break;
                 case USB_INPUT_BUTTON_1:
                     if (g_enabled_eject_buttons & 1)
@@ -2151,7 +2175,14 @@ static usb_input_type_t serial_menu(menu_context_t context)
 #ifdef PLATFORM_MASS_STORAGE
 bool platform_stop_msc()
 {
-    return serial_menu(MENU_CONTEXT_TARGET_MSC) == USB_INPUT_EXIT_MSC;
+    usb_input_type_t input = serial_menu(MENU_CONTEXT_TARGET_MSC);
+    if (input == USB_INPUT_EXIT_MSC || g_rebooting)
+    {
+        logmsg("Exiting mass storage");
+        return true;
+    }
+    return false;
+
 }
 #endif // PLATFORM_MASS_STORAGE
 

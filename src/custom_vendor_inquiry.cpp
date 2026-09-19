@@ -652,7 +652,18 @@ void resetCustomInquiryData()
 
 void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
 {
-    char tmp[512];
+    // static, not a stack local: this function calls into
+    // loadAS400ProfileFromFile() (AS400_DiskProfile=) with this buffer still
+    // live on the stack, which itself nests further into
+    // readProfileHexField()'s SD-card I/O -- the exact "sizable buffer
+    // stacked on top of an already-deep call chain" shape that overflowed
+    // the stack once already (see readProfileHexField()'s own tmp[], fixed
+    // in 582e57a) -- just one frame further out, and missed by that fix.
+    // Confirmed via a real crash log (CFSR StackOverflow, RP2350) with
+    // AS400_DiskProfile = "45G9463" configured on the crashing ID. Safe as
+    // static: this function is only ever called sequentially, never
+    // reentrantly, from the single-threaded boot-time SCSI ID scan.
+    static char tmp[512];
     char section[SCSI_INI_SECTION_SIZE];
     char key[8];
 

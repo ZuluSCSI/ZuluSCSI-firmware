@@ -1,6 +1,6 @@
 /**
  * ZuluSCSI™ - Copyright (c) 2023-2025 Rabbit Hole Computing™
- * Copyright (c) 2023 Eric Helgeson
+ * Copyright (c) 2023-2026 Eric Helgeson <eric@bluescsi.com>
  * 
  * This file is licensed under the GPL version 3 or any later version.  
  * 
@@ -38,12 +38,30 @@ typedef enum
     SPEED_GRADE_BASE_155MHZ,
 } zuluscsi_speed_grade_t;
 
+// Wi-Fi security mode requested by the WiFiSecurity setting.
+// WIFI_SECURITY_WPA2 must stay 0 so a zeroed S2S_BoardCfg keeps the
+// long-standing default when the setting is absent.
+// must be in the same order as wifi_security_strings[] in ZuluSCSI_settings.cpp
+typedef enum
+{
+    WIFI_SECURITY_WPA2 = 0,  // WPA/WPA2 mixed PSK, widest compatibility
+    WIFI_SECURITY_WPA2_AES,  // WPA2 AES PSK only, refuses TKIP
+    WIFI_SECURITY_WPA3,      // WPA3 SAE only
+    WIFI_SECURITY_WPA3_WPA2, // WPA3 SAE, also programming the WPA2 PSK
+} zuluscsi_wifi_security_t;
+
 
 typedef enum {
     MASS_STORAGE_MODE_NONE,
     MASS_STORAGE_MODE_SD,
     MASS_STORAGE_MODE_IMAGES
 } mass_storage_mode;
+
+// zuluscsi_align_unaligned_t (AlignUnalignedAccesses=) lives in
+// ZuluSCSI_gap_layout.h, not here -- it's the settings-facing enum for a
+// lower-level, hardware-independent translation module that has no other
+// reason to depend on this (much larger) settings header.
+#include "ZuluSCSI_gap_layout.h"
 
 #ifdef __cplusplus
 
@@ -191,6 +209,8 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     int16_t mediumType;
     uint8_t tapeDensity;
     uint8_t tapeBufferedMode;
+
+    uint8_t alignUnalignedAccesses; // memory allocation for zuluscsi_align_unaligned_t enum
 } scsi_device_settings_t;
 
 
@@ -226,6 +246,16 @@ public:
 
     // convert string to speed grade
     zuluscsi_speed_grade_t stringToSpeedGrade(const char *speed_grade_str, size_t length);
+
+    // convert string to Wi-Fi security mode
+    zuluscsi_wifi_security_t stringToWifiSecurity(const char *wifi_security_str);
+
+    // convert string to AlignUnalignedAccesses mode -- static because it's
+    // called from readIniSCSIDeviceSetting(), a free function with no
+    // ZuluSCSISettings instance of its own (unlike stringToSpeedGrade()/
+    // stringToWifiSecurity() above, which are only ever called from
+    // instance methods)
+    static zuluscsi_align_unaligned_t stringToAlignUnalignedAccesses(const char *align_str);
 
     const char* getSpeedGradeString();
 

@@ -1,6 +1,6 @@
 /**
- * ZuluSCSI™ - Copyright (c) 2023-2025 Rabbit Hole Computing™
- * Copyright (c) 2023 Eric Helgeson
+ * ZuluSCSI™ - Copyright (c) 2023-2026 Rabbit Hole Computing™
+ * Copyright (c) 2023-2026 Eric Helgeson <eric@bluescsi.com>
  * 
  * This file is licensed under the GPL version 3 or any later version.  
  * 
@@ -61,6 +61,26 @@ const char * const speed_grade_strings[] =
     "C",
     "WifiRM2"
 };
+
+// must be in the same order as zuluscsi_wifi_security_t in ZuluSCSI_settings.h
+const char * const wifi_security_strings[] =
+{
+    "WPA2",
+    "WPA2AES",
+    "WPA3",
+    "WPA3WPA2"
+};
+
+#ifdef PLATFORM_AS400
+// must be in the same order as zuluscsi_align_unaligned_t in ZuluSCSI_gap_layout.h
+const char * const align_unaligned_strings[] =
+{
+    "Off",
+    "CISC",
+    "PPC",
+    "Auto"
+};
+#endif
 
 // Helper function for case-insensitive string compare
 static bool strequals(const char *a, const char *b)
@@ -573,13 +593,19 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings, &log_getl_8bit_hex);
     cfg.tapeBufferedMode = log_ini_getl(section, "TapeBufferedMode", cfg.tapeBufferedMode, CONFIGFILE, log_settings, &log_getl_8bit_hex);
 
+#ifdef PLATFORM_AS400
+    log_ini_gets(section, "AlignUnalignedAccesses", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
+    if (tmp[0])
+    {
+        cfg.alignUnalignedAccesses = ZuluSCSISettings::stringToAlignUnalignedAccesses(tmp);
+    }
+#endif
 
 #if ENABLE_COW
     cfg.cowBitmapSize =  log_ini_getl(section, "CowBitmapSize", cfg.cowBitmapSize, CONFIGFILE, log_settings);
     cfg.cowButton =  log_ini_getl(section, "CowButton", cfg.cowButton, CONFIGFILE, log_settings);
     cfg.cowButtonInvert =  log_ini_getl(section, "CowButtonInvert", cfg.cowButtonInvert, CONFIGFILE, log_settings);
 #endif
-
 
 }
 
@@ -911,6 +937,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     log_ini_gets("SCSI", "WiFiMACAddress", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     log_ini_gets("SCSI", "WiFiSSID", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     log_ini_gets("SCSI", "WiFiPassword", "", tmp, sizeof(tmp), CONFIGFILE, log_settings, &log_gets_password);
+    log_ini_gets("SCSI", "WiFiSecurity", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
 
     log_ini_getbool("SCSI", "DisableROMDrive", 0, CONFIGFILE, log_settings);
     log_ini_getl("SCSI", "ROMDriveSCSIID", -1, CONFIGFILE, log_settings);
@@ -967,12 +994,19 @@ scsi_device_settings_t* ZuluSCSISettings::initDevice(uint8_t scsiId, S2S_CFG_TYP
     else
 #endif
     {
-        if (!disable_logging)
+        int32_t partition = ini_getl(section, "Partition", 0, CONFIGFILE);
+
+        // This is a hack to log ini settings for when partition is set
+        // as logging the settings is disabled when the setting are applied without an image
+        // on the SD card
+        if (!disable_logging || partition > 0)
         {
             log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
             if (log_settings)
             {
                 logmsg("-- [", section,"] settings in ", CONFIGFILE,":");
+                // Log device settings not saved in the setting struct but used else where
+                log_ini_getl(section, "Partition", 0, CONFIGFILE, log_settings);
             }
         }
         log_ini_gets(section, "Device", "", presetName, sizeof(presetName), CONFIGFILE, log_settings);
@@ -1023,7 +1057,13 @@ scsi_device_settings_t* ZuluSCSISettings::applyDynamicSectionOverrides(uint8_t s
     {
         log_settings = ini_getbool("SCSI", "LogIniSettings", true, CONFIGFILE);
         if (log_settings)
+        {
             logmsg("-- [" DYNAMIC_SCSI_INI_SECTION "] settings in ", CONFIGFILE, ":");
+            // Partition is not part of the settings struct (it is read back as
+            // an image name by scsiDiskReadImgX), so log it here the same way
+            // initDevice() does for a [SCSI<X>] section.
+            log_ini_getl(DYNAMIC_SCSI_INI_SECTION, "Partition", 0, CONFIGFILE, log_settings);
+        }
     }
     readIniSCSIDeviceSetting(cfg, DYNAMIC_SCSI_INI_SECTION, log_settings);
     formatDriveInfoField(cfg.vendor, sizeof(cfg.vendor), cfg.rightAlignStrings);
@@ -1087,6 +1127,45 @@ zuluscsi_speed_grade_t ZuluSCSISettings::stringToSpeedGrade(const char *speed_gr
 
     return grade;
 }
+
+zuluscsi_wifi_security_t ZuluSCSISettings::stringToWifiSecurity(const char *wifi_security_target)
+{
+    for (uint8_t i = 0; i < sizeof(wifi_security_strings)/sizeof(wifi_security_strings[0]); i++)
+    {
+        if (strequals(wifi_security_target, wifi_security_strings[i]))
+        {
+            return (zuluscsi_wifi_security_t)i;
+        }
+    }
+
+    logmsg("Setting \"", wifi_security_target, "\" does not match any known Wi-Fi security mode, using WPA2");
+    return WIFI_SECURITY_WPA2;
+}
+
+#ifdef PLATFORM_AS400
+zuluscsi_align_unaligned_t ZuluSCSISettings::stringToAlignUnalignedAccesses(const char *align_target)
+{
+    // "0"/"no" and "1"/"yes" are accepted as plain boolean-style synonyms
+    // for off/auto (part of this setting's original design, alongside the
+    // named off/cisc/ppc/auto values below) -- checked first since they
+    // don't fit the same one-string-per-enum-value scan.
+    if (strequals(align_target, "0") || strequals(align_target, "no"))
+        return ALIGN_UNALIGNED_OFF;
+    if (strequals(align_target, "1") || strequals(align_target, "yes"))
+        return ALIGN_UNALIGNED_AUTO;
+
+    for (uint8_t i = 0; i < sizeof(align_unaligned_strings)/sizeof(align_unaligned_strings[0]); i++)
+    {
+        if (strequals(align_target, align_unaligned_strings[i]))
+        {
+            return (zuluscsi_align_unaligned_t)i;
+        }
+    }
+
+    logmsg("Setting \"", align_target, "\" does not match any known AlignUnalignedAccesses mode, using Off");
+    return ALIGN_UNALIGNED_OFF;
+}
+#endif
 
 const char *ZuluSCSISettings::getSpeedGradeString()
 {

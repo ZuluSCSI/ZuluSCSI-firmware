@@ -1,7 +1,7 @@
 /**
  * SCSI2SD V6 - Copyright (C) 2013 Michael McMaster <michael@codesrc.com>
  * Portions Copyright (C) 2014 Doug Brown <doug@downtowndougbrown.com>
- * Portions Copyright (C) 2023 Eric Helgeson
+ * Portions Copyright (C) 2023-2026 Eric Helgeson <eric@bluescsi.com>
  * ZuluSCSI™ - Copyright (c) 2022-2026 Rabbit Hole Computing™
  *
  * This file is licensed under the GPL version 3 or any later version. 
@@ -37,7 +37,9 @@
 #endif
 #include "ZuluSCSI_cdrom.h"
 #include "ZuluSCSI_tape.h"
+#include "ZuluSCSI_iotrace.h"
 #include "custom_vendor_inquiry.h"
+#include "ZuluSCSI_partition_table.h"
 #include "ImageBackingStore.h"
 #include "ROMDrive.h"
 #include <new> // For placement new
@@ -118,6 +120,25 @@ bool scsiDiskHasDynamicDirs()
     for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++)
     {
         if (SD.exists(dirs[i]))
+            return true;
+    }
+    return false;
+}
+
+bool scsiDiskHasDynamicIniImage()
+{
+    // Keys in [SCSIn] that name an image all by themselves. A section that
+    // only carries setting overrides (Vendor, BlockSize, ...) is deliberately
+    // not enough: those only matter once an 'n'-named file or directory has
+    // been found, and that path resolves the ID lazily on its own. Querying
+    // the expander for a section that cannot produce an image would make an
+    // unmated SCA board wait in configDynamicScsiId() for nothing.
+    static const char * const keys[] = {
+        "Partition", "IMG0", "IMG00", "ImgDir"
+    };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
+    {
+        if (ini_haskey(DYNAMIC_SCSI_INI_SECTION, keys[i], CONFIGFILE))
             return true;
     }
     return false;
@@ -284,6 +305,10 @@ void image_config_t::clear()
     {
         tapeDeinit(S2S_CFG_TARGET_ID_BITS & scsiId);
     }
+    image_directory.isOpen();
+    {
+        image_directory.close();
+    }
     this->~image_config_t();
     new (this) image_config_t();
     memset((S2S_TargetCfg*)this, 0, sizeof(image_config_t));
@@ -345,7 +370,7 @@ void scsiDiskCloseSDCardImages()
         if (!g_DiskImages[i].file.isRom())
         {
             g_DiskImages[i].file.close();
-            g_DiskImages[i].image_directory = false;
+            g_DiskImages[i].has_image_directory = false;
             g_DiskImages[i].bin_container.close();
             g_DiskImages[i].cuesheetfile.close();
         }
@@ -392,6 +417,7 @@ static void scsiDiskSetImageConfig(uint8_t target_idx)
     scsi_system_settings_t *devSys = g_scsi_settings.getSystem();
     scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(target_idx);
     img.scsiId = target_idx;
+    img.file.setScsiId(target_idx); // IOTrace Layer B tagging only
     memset(img.vendor, 0, sizeof(img.vendor));
     memset(img.prodId, 0, sizeof(img.prodId));
     memset(img.revision, 0, sizeof(img.revision));
@@ -527,6 +553,11 @@ static void autoConfigGeometry(image_config_t &img)
         }
 }
 
+static bool isProcessorDevice(S2S_CFG_TYPE type)
+{
+    return type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_NETWORK || type == S2S_CFG_AUDIO;
+}
+
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)
 {
     image_config_t &img = g_DiskImages[target_idx];
@@ -536,16 +567,199 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
     img.cdrom_track_end_lba = 0;
     scsiDiskSetImageConfig(target_idx);
 
+    // PART:n resolves to a RAW:start:end mapping via the SD card's own
+    // MBR/GPT partition table (see ZuluSCSI_partition_table.h) -- checked
+    // and validated here, before ImageBackingStore ever gets involved, so
+    // a failed check can refuse to present the SCSI ID at all rather than
+    // opening a bad mapping. `resolvedFilename` must outlive the
+    // ImageBackingStore construction below, hence it's declared in this
+    // function's own scope rather than the `if` block's.
+    char resolvedFilename[32];
+    if (strncasecmp(filename, "PART:", 5) == 0)
+    {
+        uint32_t partitionNumber = strtoul(filename + 5, NULL, 0);
+        partition_extent_t extent;
+
+        if (!partitionTableResolve(partitionNumber, &extent))
+        {
+            logmsg("---- Partition ", (int)partitionNumber, " not found on SD card, not presenting as SCSI device ", target_idx);
+            img.scsiId = target_idx;
+            partitionTableClearClaim(target_idx);
+            return false;
+        }
+
+        // The SD card's own mounted FAT/exFAT volume (zuluscsi.ini,
+        // firmware, tape/CD images) is never itself tracked as a PART:n
+        // claim, so nothing above stops a config typo from mapping the
+        // *admin* partition itself as a PART:n disk -- e.g. the
+        // documented layout (utils/as400_part_planner.py) puts the admin
+        // volume at PART:1 and AS/400 disks at PART:2.., so `IMG0 =
+        // PART:1` where `PART:2` was meant would otherwise silently
+        // present zuluscsi.ini/firmware/images as a writable SCSI disk.
+        // Check the resolved extent against SD.vol()'s own already-
+        // mounted data area directly (same public accessors
+        // print_sd_info() already uses) -- refusing this up front is far
+        // better than discovering a corrupted config volume after the
+        // fact.
+        {
+            uint32_t volDataStart = SD.vol()->dataStartSector();
+            uint64_t volDataEnd = (uint64_t)volDataStart +
+                (uint64_t)SD.vol()->clusterCount() * SD.vol()->sectorsPerCluster();
+            uint64_t partEnd = (uint64_t)extent.startSector + extent.sectorCount;
+            if (extent.startSector < volDataEnd && volDataStart < partEnd)
+            {
+                logmsg("---- Partition ", (int)partitionNumber, " (sectors ", (int)extent.startSector,
+                       "-", (int)(extent.startSector + extent.sectorCount - 1),
+                       ") overlaps the SD card's own mounted FAT/exFAT volume (data area starts at sector ",
+                       (int)volDataStart, "). Not presenting as SCSI device ", target_idx,
+                       " -- this would let the host overwrite zuluscsi.ini/firmware/images");
+                img.scsiId = target_idx;
+                partitionTableClearClaim(target_idx);
+                return false;
+            }
+        }
+
+        // AU-boundary alignment is a performance hint, not a correctness
+        // requirement (unlike the too-small/overlap checks below) -- warn
+        // and continue rather than refusing to present the device.
+        // Standard partitioning tools (gdisk, fdisk, etc.) commonly align
+        // to 1 MiB, which is smaller than some SD cards' preferred AU
+        // size (observed: 4096 KB), so a hard block here would reject
+        // correctly, conventionally-partitioned cards for no functional
+        // reason.
+        uint32_t auSizeSectors = 0;
+        if (!partitionTableCheckAlignment(extent.startSector, &auSizeSectors))
+        {
+            logmsg("---- WARNING: Partition ", (int)partitionNumber, "'s start is unaligned to the SD card's preferred ",
+                   (int)(auSizeSectors / 2), " KB boundary. This will increase read/write latency but is not an error.");
+        }
+
+        #ifdef PLATFORM_AS400
+        // Too-small check: only meaningful when this target declares an
+        // expected capacity (currently: an AS400_DiskProfile). Without
+        // one, whatever the partition provides simply becomes the
+        // device's capacity, same as RAW: today. requiredBytes accounts
+        // for AlignUnalignedAccesses's gapped layout (see
+        // ZuluSCSI_gap_layout.h) when the target has it enabled -- a
+        // gapped partition genuinely needs more physical space than
+        // sectors*blockSize alone.
+        uint32_t profileBlockSize = 0, profileSectors = 0;
+        if (getAS400ProfileCapacity(target_idx, &profileBlockSize, &profileSectors) &&
+            profileBlockSize > 0 && profileSectors > 0)
+        {
+            zuluscsi_align_unaligned_t alignMode = gapLayoutResolveAuto(
+                (zuluscsi_align_unaligned_t)g_scsi_settings.getDevice(target_idx)->alignUnalignedAccesses, profileBlockSize);
+            uint64_t requiredBytes = gapLayoutPhysicalSize(alignMode, profileBlockSize, profileSectors);
+            uint64_t haveBytes = (uint64_t)extent.sectorCount * SD_SECTOR_SIZE;
+            if (haveBytes < requiredBytes)
+            {
+                logmsg("---- Partition is too small, disk profile + alignment gapping require ",
+                       (int)(requiredBytes / (1024 * 1024)), " MB (", (unsigned long long)requiredBytes,
+                       " bytes), partition only has ", (int)(haveBytes / (1024 * 1024)), " MB (",
+                       (unsigned long long)haveBytes, " bytes). Not presenting as SCSI device ", target_idx);
+                img.scsiId = target_idx;
+                partitionTableClearClaim(target_idx);
+                return false;
+            }
+        }
+        #endif // PLATFORM_AS400
+
+        partition_conflict_t conflicts[PARTITION_TABLE_MAX_INDEX];
+        int conflictCount = 0;
+        if (partitionTableCheckOverlap(target_idx, extent.startSector, extent.sectorCount,
+                                        conflicts, PARTITION_TABLE_MAX_INDEX, &conflictCount))
+        {
+            char list[128] = {0};
+            for (int i = 0; i < conflictCount && i < PARTITION_TABLE_MAX_INDEX; i++)
+            {
+                char one[32];
+                snprintf(one, sizeof(one), "%s%d (SCSI ID %d)", i == 0 ? "" : ", ",
+                         (int)conflicts[i].partitionNumber, conflicts[i].targetIdx);
+                strncat(list, one, sizeof(list) - strlen(list) - 1);
+            }
+            logmsg("---- Partition ", (int)partitionNumber, " overlaps with partition(s) ", list,
+                   ". Not presenting as SCSI device ", target_idx);
+            img.scsiId = target_idx;
+            partitionTableClearClaim(target_idx);
+            return false;
+        }
+
+        partitionTableRegisterClaim(target_idx, partitionNumber, extent.startSector, extent.sectorCount);
+
+        snprintf(resolvedFilename, sizeof(resolvedFilename), "RAW:0x%lX:0x%lX",
+                 (unsigned long)extent.startSector, (unsigned long)(extent.startSector + extent.sectorCount - 1));
+        filename = resolvedFilename;
+    }
+    else
+    {
+        partitionTableClearClaim(target_idx);
+    }
+
     auto device_config = g_scsi_settings.getDevice(target_idx);
 
     // Close existing file and construct new one in-place
     img.file.~ImageBackingStore();
-    new (&img.file) ImageBackingStore(filename, blocksize, device_config);
+
+    if (isProcessorDevice(type))
+    {
+        new (&img.file) ImageBackingStore(true);
+    }
+    else
+    {
+        // scsiId passed directly here (rather than via setScsiId() afterwards)
+        // so it's already known when _internal_open() runs during construction --
+        // see ImageBackingStore's constructor comment.
+        new (&img.file) ImageBackingStore(filename, blocksize, device_config, target_idx);
+    }
 
     if (img.file.isOpen())
     {
         img.bytesPerSector = blocksize;
         img.scsiSectors = img.file.size() / blocksize;
+
+        // A RAW:/PART:-backed device's size() naturally reports "however
+        // much physical space is available" (the extent's own size, or --
+        // with AlignUnalignedAccesses on -- however many whole gapped
+        // units fit in it), not the disk's true capacity: PART:n
+        // partitions routinely have some margin beyond what a profile
+        // strictly needs (the too-small check below only validates a
+        // lower bound, never an upper one), and that margin becomes
+        // real, phantom extra sectors reported to the host if left
+        // unclamped. Confirmed as a real bug via hardware testing: a
+        // ~190MB margin on a real partition turned into 345,652 sectors
+        // of capacity beyond a profile's own documented, fixed geometry
+        // -- these are real physical IBM disk models with an exact
+        // capacity OS/400 expects, so overreporting it is a genuine
+        // device-identity mismatch, not just wasted space.
+#ifdef PLATFORM_AS400
+        {
+            uint32_t profileBlockSize = 0, profileSectors = 0;
+            if (getAS400ProfileCapacity(target_idx, &profileBlockSize, &profileSectors) &&
+                profileSectors > 0 && profileSectors < img.scsiSectors)
+            {
+                // img.scsiSectors alone only feeds CHS geometry math below --
+                // ReadCapacity and the read/write bounds check both derive
+                // capacity fresh from img.file.size(), so the clamp has to
+                // land inside ImageBackingStore itself (m_logicalSectorCount,
+                // or m_endsector for a non-gapped raw device) or it never
+                // actually reaches the host. Only log success once the
+                // clamp is confirmed to have actually taken effect --
+                // clampLogicalSectorCount() can decline (e.g. a plain
+                // FsFile-backed image, which has no oversized "extent" to
+                // shrink in the first place), and claiming a clamp
+                // happened when it didn't would actively mislead whoever
+                // is reading the log while the phantom-sector overreporting
+                // this exists to fix silently persists.
+                if (img.file.clampLogicalSectorCount(profileSectors))
+                {
+                    logmsg("---- Clamping reported capacity from ", (int)img.scsiSectors,
+                           " to ", (int)profileSectors, " sectors to match the AS400_DiskProfile's own declared geometry");
+                    img.scsiSectors = img.file.size() / blocksize;
+                }
+            }
+        }
+#endif
+
         img.scsiId = target_idx | S2S_CFG_TARGET_ENABLED;
         img.sdSectorStart = 0;
         bool tape_is_tap_format = false;
@@ -564,7 +778,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             tape_is_tap_format = true;
         }
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && type != S2S_CFG_AUDIO && !img.file.isFolder() && !tape_is_tap_format)
+        if (img.scsiSectors == 0 && !isProcessorDevice(type) && !img.file.isFolder() && !tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
@@ -572,7 +786,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         }
 
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO || img.file.isFolder() || tape_is_tap_format)
+        if (img.file.isRom() || isProcessorDevice(type) || img.file.isFolder() || tape_is_tap_format)
         {
             // Contiguous file doesn't matter for these types
         }
@@ -681,7 +895,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Vendor / product id set from image file name");
         }
 
-        if (type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO)
+        if (isProcessorDevice(type))
         {
             // prefetch not used, skip emitting log message
         }
@@ -698,9 +912,9 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             strncasecmp(filename + strlen(filename) - 4, ".bin", 4) == 0)
         {
             // Check for .cue sheet with single .bin file
-            char cuesheetname[MAX_FILE_PATH + 1] = {0};
+            char *cuesheetname = new char[MAX_FILE_PATH + 1];
             strncpy(cuesheetname, filename, strlen(filename) - 4);
-            strlcat(cuesheetname, ".cue", sizeof(cuesheetname));
+            strlcat(cuesheetname, ".cue", MAX_FILE_PATH + 1);
             img.cuesheetfile = SD.open(cuesheetname, O_RDONLY);
 
             if (img.cuesheetfile.isOpen())
@@ -736,19 +950,21 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             {
                 logmsg("---- No CUE sheet found at ", cuesheetname, ", using as plain binary image");
             }
+            delete[] cuesheetname;
+            cuesheetname = nullptr;
         }
         else if (img.deviceType == S2S_CFG_OPTICAL && img.file.isFolder())
         {
             // The folder should contain .cue sheet and one or several .bin files
-            char foldername[MAX_FILE_PATH + 1] = {0};
-            char cuesheetname[MAX_FILE_PATH + 1] = {0};
-            img.file.getFoldername(foldername, sizeof(foldername));
+            char *foldername = new char[MAX_FILE_PATH + 1];
+            char *cuesheetname = new char[MAX_FILE_PATH + 1];
+            img.file.getFoldername(foldername, MAX_FILE_PATH + 1);
             FsFile folder = SD.open(foldername, O_RDONLY);
             bool valid = false;
             img.cuesheetfile.close();
             while (!valid && img.cuesheetfile.openNext(&folder, O_RDONLY))
             {
-                img.cuesheetfile.getName(cuesheetname, sizeof(cuesheetname));
+                img.cuesheetfile.getName(cuesheetname, MAX_FILE_PATH + 1);
 
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
@@ -759,21 +975,32 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                     }
                 }
             }
+            delete[] cuesheetname;
+            cuesheetname = nullptr;
 
             if (valid)
             {
                 img.bin_container.open(foldername);
                 memset(&img.cdrom_trackinfo, 0, sizeof(img.cdrom_trackinfo));
                 img.cdrom_track_end_lba = 0;
+                img.bin_container.getName(img.current_image, sizeof(img.current_image));
 #ifdef ENABLE_AUDIO_OUTPUT                
                 audio_reset(target_idx);
 #endif
             }
             else
             {
-                logmsg("No valid .cue sheet found in folder '", foldername, "'");
+                logmsg("---- No valid .cue sheet found in folder '", foldername, "'");
+                logmsg("!! Please fix or remove folder, invalid .cue sheet can cause image handling issues. !!" );
                 img.cuesheetfile.close();
+                img.file.close();
+                img.scsiId = target_idx & (~S2S_CFG_TARGET_ENABLED);
+
             }
+            delete[] foldername;
+            foldername = nullptr;
+
+            return valid;
         }
         else if (img.deviceType == S2S_CFG_SEQUENTIAL && img.file.isFolder())
         {
@@ -922,21 +1149,36 @@ bool scsiDiskFolderIsTapeFolder(FsFile *dir)
 
 static void scsiDiskCheckDir(const char * dir_name, int target_idx, image_config_t* img, S2S_CFG_TYPE type, const char* type_name)
 {
-    if (SD.exists(dir_name))
+    bool found = false;
+    if (!img->has_image_directory)
     {
-        if (img->image_directory)
+        FsFile root = SD.open("/");
+        FsFile &file = img->image_directory;  
+        while (file.openNext(&root))
         {
-            logmsg("-- Already found an image directory, skipping '", dir_name, "'");
+            char filename[MAX_FILE_PATH + 1];
+            file.getName(filename, sizeof(filename));
+            if (file.isDir() && strncasecmp(dir_name, filename, 3) == 0)
+            {
+                if (type == S2S_CFG_OPTICAL && scsiDiskFolderContainsCueSheet(&file))
+                {
+                    logmsg("-- Treating ", filename, " directory as a bin/cue folder");
+                }
+                else
+                {
+                    found = true;
+                    img->deviceType = type;
+                    img->has_image_directory = true;
+                    logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", filename, "'");
+                    setRootFolder(target_idx, false, filename);
+                    g_scsi_settings.initDevice(target_idx, type);
+                    break;
+                }
+            }
         }
-        else
-        {
-            img->deviceType = type;
-            img->image_directory = true;
-            logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
-
-            setRootFolder(target_idx, false, dir_name);
-            g_scsi_settings.initDevice(target_idx, type);
-        }
+        if (!found)
+            file.close();
+        root.close();
     }
 }
 
@@ -948,6 +1190,7 @@ static void scsiDiskSetConfig(int target_idx)
 
     image_config_t &img = g_DiskImages[target_idx];
     img.scsiId = target_idx;
+    img.file.setScsiId(target_idx); // IOTrace Layer B tagging only
 
     scsiDiskSetImageConfig(target_idx);
 
@@ -971,7 +1214,7 @@ static void scsiDiskSetConfig(int target_idx)
     if (tmp[0])
     {
         logmsg("SCSI", target_idx, " using image directory '", tmp, "'");
-        img.image_directory = true;
+        img.has_image_directory = true;
 
         setRootFolder(target_idx, true, tmp);
     }
@@ -1221,7 +1464,7 @@ int findNextImageAfter(image_config_t &img,
     else
     {
         logmsg("Image directory '", dirname, "' was empty");
-        img.image_directory = false;
+        img.has_image_directory = false;
         return 0;
     }
 }
@@ -1252,6 +1495,20 @@ int scsiDiskReadImgX(const char *section, int index, char *buf, size_t buflen)
         key[4] = '0' + index;
         ret = ini_gets(section, key, "", buf, buflen, CONFIGFILE);
     }
+
+    // Partition=n is a friendlier alias for IMG0 = PART:n (maintainer request,
+    // see README.md's "Raw sector-range and partition access" section) --
+    // only applies to image index 0, and only when IMG0/IMG00 wasn't set
+    // explicitly, which always takes precedence.
+    if (buf[0] == '\0' && index == 0)
+    {
+        long partitionNumber = ini_getl(section, "Partition", 0, CONFIGFILE);
+        if (partitionNumber >= 1)
+        {
+            ret = snprintf(buf, buflen, "PART:%ld", partitionNumber);
+        }
+    }
+
     return ret;
 }
 
@@ -1282,10 +1539,10 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
         strcpy(currentname, img.current_image);
     }
 
-    if (img.image_directory)
+    if (img.has_image_directory)
     {
         // image directory was found during startup
-        char dirname[MAX_FILE_PATH];
+        char dirname[MAX_FILE_PATH + 1];
         char key[] = "ImgDir";
         int dirlen = 0;
 #ifdef DYNAMIC_SCSI_ID
@@ -1297,45 +1554,12 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
             dirlen = ini_gets(section, key, "", dirname, sizeof(dirname), CONFIGFILE);
         if (!dirlen)
         {
-            // Reconstruct the default directory name from the device type.
-            // Dynamic targets use the 'n' suffix (HDn, CDn, …); others use the hex ID.
-            switch (img.deviceType)
+            if (!img.image_directory.isOpen())
             {
-                case S2S_CFG_FIXED:
-                    strcpy(dirname, "HD0");
-                    break;
-                case S2S_CFG_OPTICAL:
-                    strcpy(dirname, "CD0");
-                    break;
-                case S2S_CFG_REMOVABLE:
-                    strcpy(dirname, "RE0");
-                    break;
-                case S2S_CFG_MO:
-                    strcpy(dirname, "MO0");
-                    break;
-                case S2S_CFG_SEQUENTIAL:
-                    strcpy(dirname, "TP0");
-                    break;
-                case S2S_CFG_FLOPPY_14MB:
-                    strcpy(dirname, "FD0");
-                    break;
-                case S2S_CFG_ZIP100:
-                    strcpy(dirname, "ZP0");
-                    break;
-                default:
-                    logmsg("No matching device type for default directory found");
-                    return 0;
-            }
-#ifdef DYNAMIC_SCSI_ID
-            dirname[2] = is_dynamic ? DYNAMIC_SCSI_ID_CHAR : scsiEncodeID(target_idx);
-#else
-            dirname[2] = scsiEncodeID(target_idx);
-#endif
-            if (!SD.exists(dirname))
-            {
-                logmsg("Default image directory, ", dirname, " does not exist");
+                logmsg("Default image directory is not open");
                 return 0;
             }
+            dirlen = img.image_directory.getName(dirname, sizeof(dirname));
         }
 
         // find the next filename
@@ -1364,7 +1588,7 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
                 setFolder(target_idx, path);
 
                 logmsg("Found file: ", buf);
-                img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
+                img.has_image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
                 return strlen(buf);
             }
             else
@@ -1460,7 +1684,7 @@ void scsiDiskLoadConfig(int target_idx)
     // Apply [SCSIn] on top of the [SCSI<X>] settings that scsiDiskSetConfig loaded,
     // then immediately sync g_scsi_settings → g_DiskImages so that scsiDiskGetNextImageName
     // reads the final device type and settings (not the pre-override values).
-    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id && scsiDiskHasDynamicDirs());
+    bool is_dynamic = (g_dynamic_scsi_id >= 0 && target_idx == (int)g_dynamic_scsi_id);
     if (is_dynamic)
     {
         g_scsi_settings.applyDynamicSectionOverrides(target_idx);
@@ -1474,6 +1698,14 @@ void scsiDiskLoadConfig(int target_idx)
     int blocksize = 0;
     if (scsiDiskGetNextImageName(img, filename, sizeof(filename)))
     {
+        // Record that a real image was configured for this ID -- before
+        // the open attempt below, which may fail -- so a failure here
+        // doesn't look identical to "never configured" (see the field's
+        // own comment in ZuluSCSI_disk.h for why that distinction
+        // matters: autoCreateAS400ProfileImages() must not paper over a
+        // failed PART:n/RAW:/file open by creating an unrelated new file).
+        img.image_config_attempted = true;
+
         if (img.deviceType == S2S_CFG_SEQUENTIAL)
         {
             // set custom tape density
@@ -1884,6 +2116,14 @@ void s2s_configInit(S2S_BoardCfg* config)
     ini_gets("SCSI", "WiFiPassword", "", tmp, sizeof(tmp), CONFIGFILE);
     if (tmp[0]) memcpy(config->wifiPassword, tmp, sizeof(config->wifiPassword));
 
+    memset(tmp, 0, sizeof(tmp));
+    ini_gets("SCSI", "WiFiSecurity", "", tmp, sizeof(tmp), CONFIGFILE);
+    if (tmp[0])
+    {
+        config->wifiSecurity = g_scsi_settings.stringToWifiSecurity(tmp);
+        logmsg("-- WiFiSecurity = ", tmp);
+    }
+
 }
 
 extern "C"
@@ -1929,6 +2169,13 @@ const S2S_TargetCfg* s2s_getConfigById(int scsiId)
         }
     }
     return NULL;
+}
+
+bool scsiDiskImageWasConfigured(int scsiId)
+{
+    if (scsiId < 0 || scsiId >= S2S_MAX_TARGETS)
+        return false;
+    return g_DiskImages[scsiId].image_config_attempted;
 }
 
 /**********************/
@@ -2007,8 +2254,7 @@ static void doFormatUnitHeader(void)
 
 static uint64_t getCapacityBlocks(image_config_t &img, uint32_t bytesPerSector)
 {
-    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI)
-        || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AUDIO))
+    if (unlikely(isProcessorDevice((S2S_CFG_TYPE)scsiDev.target->cfg->deviceType)))
     {
         return 1;
     }
@@ -2375,6 +2621,12 @@ void scsiDiskPrefetchInvalidate(uint8_t scsiId)
 
 void scsiDiskStartWrite(uint32_t lba, uint32_t blocks)
 {
+    // IOTrace Layer A: one record per Write CDB dispatch, regardless of
+    // which specific opcode (Write6/10/12/...) normalized to this common
+    // entry point -- scsiDev.cdb[0] still holds that opcode. No-op
+    // entirely when IOTrace= is off.
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, scsiDev.cdb[0], (uint16_t)blocks, lba);
+
     if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
         // Floppies are supposed to be slow. Some systems can't handle a floppy
         // without an access time
@@ -2984,20 +3236,27 @@ void diskDataOut()
         }
 
 #ifdef PLATFORM_AS400
-        // A Skip Write must commit only whole sectors: it walks the skip mask
-        // sector-by-sector, so any partial trailing sector left in len would
-        // either be dropped or (worse) offset every subsequent sector in the
-        // command by however many bytes were missing. len above is sized by
-        // SD buffer/write-size availability, not by bytesPerSector, so it is
-        // generally not a sector multiple - round it down before it is used
-        // for anything, so scsiFinishRead(), the write below, and the
-        // bytes_sd credit all agree on the same already-aligned amount. The
-        // remainder stays in the SCSI buffer and is picked up whole once the
-        // next chunk has enough bytes to complete the sector.
-        if (g_disk_transfer.skip_command == 0xEA)
-        {
-            len -= len % bytesPerSector;
-        }
+        // len above is sized purely by SD write-size optimization
+        // (PLATFORM_OPTIMAL_MAX/LAST_SD_WRITE_SIZE), with no awareness of
+        // bytesPerSector -- so it is generally not a sector multiple. A
+        // Skip Write must commit only whole sectors regardless (it walks
+        // the skip mask sector-by-sector; a partial trailing sector would
+        // be dropped or offset every following sector). But a gapped
+        // image (AlignUnalignedAccesses) needs exactly the same rounding
+        // for a PLAIN Write10/WriteVerify too: ImageBackingStore::write()
+        // hard-rejects any count that isn't a whole multiple of blockSize
+        // for a gapped device (see gappedTransfer()), and this chunking
+        // can easily produce one that isn't (e.g. exactly
+        // PLATFORM_OPTIMAL_LAST_SD_WRITE_SIZE = 8192 bytes, not a
+        // multiple of 522) -- confirmed via real hardware: the write was
+        // silently failing here, contributing to a real IPL halt. Round
+        // down unconditionally so scsiFinishRead(), the write below, and
+        // the bytes_sd credit all agree on the same already-aligned
+        // amount. The remainder stays in the SCSI buffer and is picked up
+        // whole once the next chunk has enough bytes to complete the
+        // sector -- harmless for a non-gapped AS/400 image too, just a
+        // slightly more conservative chunk size.
+        len -= len % bytesPerSector;
 #endif
 
         if (len == 0)
@@ -3084,7 +3343,18 @@ void diskDataOut()
                     int16_t run = skip_next(sectors_remaining);
                     if (run < 0)
                     {
-                        img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
+                        // A rejected seek (out-of-range target) leaves the
+                        // position unchanged, not moved -- if left
+                        // undetected, the next positive run below would
+                        // silently write to the wrong (stale, but still
+                        // in-range) sectors instead of failing the
+                        // command. Fail explicitly instead.
+                        if (!img.file.seek(img.file.position() + (abs(run) * bytesPerSector)))
+                        {
+                            logmsg("Skip Write mask seek past end of device");
+                            write_ok = false;
+                            break;
+                        }
                     }
                     else if (run > 0)
                     {
@@ -3180,11 +3450,41 @@ void diskDataOut()
 
 void scsiDiskStartRead(uint32_t lba, uint32_t blocks)
 {
+    // IOTrace Layer A: see the matching comment in scsiDiskStartWrite().
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, scsiDev.cdb[0], (uint16_t)blocks, lba);
+
     if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_FLOPPY_14MB)) {
         // Floppies are supposed to be slow. Some systems can't handle a floppy
         // without an access time
         s2s_delay_ms(10);
     }
+#ifdef PLATFORM_AS400
+    // Mirrors scsiDiskStartWrite()'s equivalent check for 0xEA -- the
+    // linked Read10 that must immediately follow a Skip Read (0xE8) is
+    // never validated against the LBA/block count the skip mask was
+    // actually built for. Without this, a stale skip_command (e.g. left
+    // armed by an aborted prior Skip Read or a bus reset -- see the
+    // other fixes alongside this one) would silently apply its mask to
+    // whatever Read10 the host happens to send next, at a completely
+    // unrelated LBA, rather than being rejected. This is also a second,
+    // independent line of defense against that same stale-state class
+    // of bug, not just a mirror of the write side for its own sake.
+    if (g_disk_transfer.skip_command) {
+        if (g_disk_transfer.skip_command == 0xE8)
+        {
+            if ((lba != g_disk_transfer.skip_lba) || (blocks != g_disk_transfer.skip_blocks))
+            {
+                dbgmsg("Skip Read LBA/block mismatch");
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+                scsiDev.phase = STATUS;
+                g_disk_transfer.skip_command = 0;
+                return;
+            }
+        }
+    }
+#endif
 
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
@@ -3321,6 +3621,17 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
     image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
     platform_set_sd_callback(&diskDataIn_callback, buffer);
 
+    // Guards the diskDataIn_callback() call below: on a read failure,
+    // CHECK_CONDITION/STATUS is already set, but diskDataIn_callback()
+    // unconditionally calls scsiEnterPhase(DATA_IN) and pushes `count`
+    // bytes onto the bus regardless -- flipping the phase straight back
+    // to DATA_IN and shipping whatever is in `buffer` (for a Skip Read
+    // specifically, the unfilled tail is stale data left over from the
+    // *previous* transfer, exactly what the "fail the command instead"
+    // comment below says must not reach the host). Applies to both the
+    // Skip Read and plain-read failure paths.
+    bool transfer_ok = true;
+
 #ifdef PLATFORM_AS400
     if (g_disk_transfer.skip_command == 0xE8)
     {
@@ -3335,7 +3646,18 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
             int16_t run = skip_next(sectors_remaining);
             if (run < 0)
             {
-                img.file.seek(img.file.position() + (abs(run) * bytesPerSector));
+                // A rejected seek (out-of-range target) leaves the
+                // position unchanged -- if left undetected, the next
+                // positive run below would silently read the wrong
+                // (stale, but still in-range) sectors and deliver them to
+                // the host instead of failing the command. Fail
+                // explicitly instead.
+                if (!img.file.seek(img.file.position() + (abs(run) * bytesPerSector)))
+                {
+                    logmsg("Skip Read mask seek past end of device");
+                    read_ok = false;
+                    break;
+                }
             }
             else if (run > 0)
             {
@@ -3372,6 +3694,7 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
             scsiDev.target->sense.code = MEDIUM_ERROR;
             scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
             scsiDev.phase = STATUS;
+            transfer_ok = false;
         }
     }
     else
@@ -3383,9 +3706,13 @@ static void start_dataInTransfer(uint8_t *buffer, uint32_t count)
         scsiDev.target->sense.code = MEDIUM_ERROR;
         scsiDev.target->sense.asc = UNRECOVERED_READ_ERROR;
         scsiDev.phase = STATUS;
+        transfer_ok = false;
     }
 
-    diskDataIn_callback(count);
+    if (transfer_ok)
+    {
+        diskDataIn_callback(count);
+    }
     platform_set_sd_callback(NULL, NULL);
 
     platform_poll();
@@ -3434,6 +3761,34 @@ static void diskDataIn()
 #ifdef PREFETCH_BUFFER_SIZE
         image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
         int maxPrefetchBytes = img.prefetchbytes;
+        if (maxPrefetchBytes < 0)
+        {
+            // img.prefetchbytes (int) is compared against maxPrefetchSectors
+            // * bytesPerSector (uint32_t) below -- a negative value gets
+            // converted to a huge unsigned number, defeating the per-image
+            // clamp entirely, even though the boot-time log (elsewhere in
+            // this file) treats "not > 0" as "prefetch disabled". A
+            // negative PrefetchBytes= in the ini would silently run
+            // prefetch at the full PREFETCH_BUFFER_SIZE-derived cap while
+            // the log claims it's off. Clamp here so both agree.
+            maxPrefetchBytes = 0;
+        }
+
+#ifdef PLATFORM_AS400
+        if (g_disk_transfer.skip_command)
+        {
+            // A Skip Read's masked walk leaves img.file's position at
+            // lba+blocks+(interior skipped sectors), not lba+blocks --
+            // prefetchFirstSector below assumes the latter. Filling the
+            // cache from the wrong position would silently poison it: a
+            // later ordinary Read10 covering [lba+blocks, ...) could be
+            // served this mismatched data with GOOD status. The existing
+            // Skip-Read invalidate (scsiDiskSkip()) only covers stale
+            // data already cached *before* the skip started, not this
+            // after-the-fact case -- skip read-ahead entirely instead.
+            maxPrefetchBytes = 0;
+        }
+#endif
 
         uint8_t *prefetchBuffer = NULL;
         uint32_t prefetchFirstSector = transfer.lba + transfer.blocks;
@@ -3476,8 +3831,19 @@ static void diskDataIn()
                 // We still have time, prefetch next sectors in case this SCSI request
                 // is part of a longer linear read. SCSI callback is still invoked so that
                 // it can process the simultaneously running SCSI transfer.
-                g_disk_transfer.bytes_sd = bytesPerSector;
-                g_disk_transfer.bytes_scsi = bytesPerSector; // Tell callback not to send to SCSI
+                //
+                // "Tell callback not to send to SCSI" -- but diskDataIn_callback()
+                // actually gates on scsiDev.target->transfer.bytes_scsi (its
+                // `bytes_complete > ...bytes_scsi` check), not on
+                // g_disk_transfer's own bytes_sd/bytes_scsi fields, which
+                // nothing in this file ever reads. Setting the g_disk_transfer
+                // copies here was a no-op; this only worked by coincidence
+                // because the real transfer.bytes_scsi left over from the
+                // just-completed main transfer already happened to be
+                // >= bytesPerSector. Set the field the callback actually
+                // checks, so the guard holds regardless of that leftover
+                // value.
+                scsiDev.target->transfer.bytes_scsi = bytesPerSector;
                 platform_set_sd_callback(&diskDataIn_callback, g_disk_transfer.buffer);
                 uint8_t *prefetchSectorPtr = prefetchBuffer + bytesPerSector * prefetchSectors;
                 int status = img.file.read(prefetchSectorPtr, bytesPerSector);
@@ -3503,14 +3869,29 @@ static void diskDataIn()
         }
 
         scsiFinishWrite();
+    }
 
 #ifdef PLATFORM_AS400
-        if(g_disk_transfer.skip_command)
-        {
-            g_disk_transfer.skip_command = 0;
-        }
-#endif
+    // Skip Read (0xE8) may span multiple diskDataIn() invocations across
+    // separate main-loop iterations (masks allow up to 2048 bits, well
+    // beyond one SD-buffer-sized chunk) -- clearing skip_command only
+    // inside the `transfer.currentBlock == transfer.blocks` block above
+    // meant an aborted transfer (a Skip Read failure sets phase=STATUS
+    // and stops further diskDataIn() calls before currentBlock ever
+    // reaches transfer.blocks) left skip_command stuck at 0xE8. The next
+    // command from the host -- an ordinary Read10, which the dispatch
+    // gate at scsiDiskCommand() allows through unchanged -- would then
+    // silently have the stale mask/skip_position applied to it. Mirrors
+    // the equivalent, already-correct clearing condition in
+    // diskDataOut()'s Skip Write path: clear on completion, on the
+    // phase moving away from DATA_IN (any error), or on a bus reset.
+    if (g_disk_transfer.skip_command &&
+        (transfer.currentBlock == transfer.blocks ||
+         scsiDev.phase != DATA_IN || scsiDev.resetFlag))
+    {
+        g_disk_transfer.skip_command = 0;
     }
+#endif
 }
 
 
@@ -3646,6 +4027,11 @@ int16_t skip_next(int max) {
 //   - Maximum transfer length is 256 blocks; larger values return Check
 //     Condition / Illegal Request - Invalid Field in CDB.
 void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t skip_command) {
+
+    // IOTrace Layer A: see the matching comment in scsiDiskStartWrite().
+    // Logged even for a request this function is about to reject (blocks
+    // > 256 below) -- that's still a real, informative wire observation.
+    iotrace_cdb(scsiDev.target->targetId & S2S_CFG_TARGET_ID_BITS, skip_command, (uint16_t)blocks, lba);
 
     if (blocks > 256)
     {
@@ -4357,6 +4743,20 @@ void scsiDiskReset()
     transfer.multiBlock = 0;
     g_disk_data_out.verify = false;
     g_disk_data_out.write_and_verify = false;
+
+#ifdef PLATFORM_AS400
+    // A bus reset arriving mid-Skip-Read/Skip-Write (routine during a
+    // real AS/400 IPL) previously left skip_command armed across the
+    // reset -- every other piece of in-flight transfer state above is
+    // cleared here, but this wasn't. The next command after the reset
+    // would then have the stale mask/skip_position applied to it by
+    // scsiDiskCommand()'s opcode gate, which only checks the opcode
+    // class, not whether the skip state is stale. skip_position/
+    // skip_mask_length are set fresh by scsiDiskSkip() on the next real
+    // Skip command, so clearing skip_command alone is sufficient to make
+    // the rest of the state inert in the meantime.
+    g_disk_transfer.skip_command = 0;
+#endif
 
     scsiDiskPrefetchInvalidate();
 

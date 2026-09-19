@@ -1,4 +1,5 @@
 .pio
+src/ZuluSCSI_build_info_generated.h
 .vscode
 .DS_Store
 venv

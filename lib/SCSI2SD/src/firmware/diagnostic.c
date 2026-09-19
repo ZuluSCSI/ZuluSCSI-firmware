@@ -210,15 +210,34 @@ void doWriteBuffer(void)
 void scsiWriteBuffer()
 {
 	// WRITE BUFFER
-	// Used for testing the speed of the SCSI interface.
-	uint8_t mode = scsiDev.data[1] & 7;
+	// Modes 0 (combined header and data) and 2 (data) are used for
+	// testing the speed of the SCSI interface. Modes 4/5 (download
+	// microcode / download microcode and save) are accepted too --
+	// confirmed on real AS/400 hardware (9401-P02 CISC) that OS/400's
+	// "reload Licensed Internal Code" IPL step sends WRITE BUFFER mode
+	// 5. Zulu has no real on-disk microcode to update, so the payload
+	// is simply accepted and discarded, matching doWriteBuffer() below,
+	// which never persists received data anywhere regardless of mode.
+	//
+	// The mode field lives in the CDB (byte 1, bits 2:0), not in
+	// scsiDev.data -- that's the DATA_OUT payload buffer, still holding
+	// whatever the previous command left there at this point, since the
+	// DATA_OUT phase for *this* command hasn't happened yet. Reading it
+	// from scsiDev.data[1] here was effectively reading uninitialized/
+	// stale garbage instead of the actual requested mode: confirmed via
+	// a real-hardware log where the identical WRITE BUFFER mode-5 CDB
+	// was rejected with ILLEGAL_REQUEST/INVALID_FIELD_IN_CDB the first
+	// time and then succeeded on an immediate retry, once an
+	// intervening REQUEST SENSE had overwritten scsiDev.data with
+	// different leftover content.
+	uint8_t mode = scsiDev.cdb[1] & 7;
 
 	int allocLength =
 		(((uint32_t) scsiDev.cdb[6]) << 16) +
 		(((uint32_t) scsiDev.cdb[7]) << 8) +
 		scsiDev.cdb[8];
 
-	if ((mode == 0 || mode == 2) && allocLength <= sizeof(scsiDev.data))
+	if ((mode == 0 || mode == 2 || mode == 4 || mode == 5) && allocLength <= sizeof(scsiDev.data))
 	{
 		scsiDev.dataLen = allocLength;
 		scsiDev.phase = DATA_OUT;

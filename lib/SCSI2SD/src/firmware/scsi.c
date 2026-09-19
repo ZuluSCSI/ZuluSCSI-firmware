@@ -59,6 +59,13 @@ static void process_Command(void);
 
 static void doReserveRelease(void);
 
+static struct {
+	int active;
+	int phase;
+	uint8_t cdbLen;
+	uint32_t disconnectTime_ms;
+} g_scsi_disconnect_state;
+
 void enter_BusFree()
 {
 	// This delay probably isn't needed for most SCSI hosts, but it won't
@@ -828,32 +835,75 @@ static void scsiReset()
 	scsiDev.lun = -1;
 	scsiDev.compatMode = COMPAT_UNKNOWN;
 
-	if (scsiDev.target)
+	scsiDev.target = NULL;
+
+	// Must refresh EVERY target's state here, not just whichever one
+	// scsiDev.target happened to point to -- that pointer is NULL
+	// whenever a reset arrives on an idle bus (e.g. the initiator's own
+	// power-cycle, with Zulu itself staying powered via USB throughout),
+	// which is the common case for a bus reset, not the exception. The
+	// old single-pointer version silently skipped this whole block in
+	// that case, leaving every target's unitAttention/sense/started
+	// state exactly as the previous connection left it -- confirmed on
+	// real AS/400 hardware: power-cycling the P02 while Zulu stayed up
+	// produced a second connection whose first TEST UNIT READY returned
+	// Status GOOD immediately (no unit attention, no not-ready, no
+	// START STOP UNIT), unlike a fresh boot or a mid-connection reset.
+	// Same bug shape as the scsiInit() fix earlier this session.
+	for (int i = 0; i < S2S_MAX_TARGETS; ++i)
 	{
-		if (scsiDev.target->unitAttention != POWER_ON_RESET)
+		if (scsiDev.targets[i].unitAttention != POWER_ON_RESET)
 		{
-			scsiDev.target->unitAttention = SCSI_BUS_RESET;
+			scsiDev.targets[i].unitAttention = SCSI_BUS_RESET;
 		}
-		scsiDev.target->reservedId = -1;
-		scsiDev.target->reserverId = -1;
+		scsiDev.targets[i].reservedId = -1;
+		scsiDev.targets[i].reserverId = -1;
 #ifdef PLATFORM_AS400
-		const S2S_TargetCfg* config = scsiDev.target->cfg;
-		if (config->quirks == S2S_CFG_QUIRKS_AS400 && config->deviceType == S2S_CFG_FIXED)
+		// Gated on EnableUnitAttention (not a specific quirk) and no
+		// longer restricted to deviceType==FIXED, 2026-09-08: originally
+		// AS400+disk-only, generalized because (a) this flag, not the
+		// AS400 quirk specifically, is what actually means "this host
+		// wants unit attention" everywhere else in this file, and (b)
+		// doTestUnitReady() (ZuluSCSI_disk.cpp)'s !started gate and its
+		// "preserve pending sense" branch apply uniformly to every
+		// device type -- restricting this priming to FIXED disks left
+		// tape/CD-ROM/etc. under the same quirk with the identical
+		// latent bug this whole block exists to fix, just not yet
+		// observed on hardware. Still #ifdef PLATFORM_AS400-gated: the
+		// flag itself is general-purpose (e.g. the DOS preset also sets
+		// it), but this exact priming mechanism has only been verified
+		// against AS/400 hardware, not tested for any other quirk.
+		if ((scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) &&
+			(!scsiDev.targets[i].cfg || scsiDev.targets[i].cfg->deviceType != S2S_CFG_OPTICAL))
 		{
-			scsiDev.target->sense.code = UNIT_ATTENTION;
-			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			// CD-ROM excluded, 2026-09-09: see the matching comment in
+			// process_SelectionPhase() -- real AS/400 Model 600 (RISC)
+			// regression (SRC B1014507), confirmed by the maintainers.
+			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
+			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			// Confirmed necessary on real hardware, 2026-09-08: without
+			// this, doTestUnitReady() never revisits the sense/
+			// unitAttention state re-armed above at all -- it gates its
+			// entire CHECK_CONDITION/NOT_READY branch on !started, and
+			// started stays 1 forever after the first successful START
+			// STOP UNIT (set generically, not reset anywhere else).
+			// Tried dropping this same day, on the theory that
+			// correctly-raised unit attention alone (the fix a few
+			// lines above / in process_SelectionPhase()) would be
+			// enough and the full re-spin-up dance was unnecessary --
+			// disproven immediately: TEST UNIT READY went back to
+			// returning GOOD immediately on every reset after the
+			// first, identical to the original bug, confirmed via a
+			// live hardware retest.
+			scsiDev.targets[i].started = 0;
 		}
 		else
 #endif
 		{
-			scsiDev.target->sense.code = NO_SENSE;
-			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+			scsiDev.targets[i].sense.code = NO_SENSE;
+			scsiDev.targets[i].sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
 		}
-	}
-	scsiDev.target = NULL;
 
-	for (int i = 0; i < S2S_MAX_TARGETS; ++i)
-	{
 		if (g_force_sync > 0)
 		{
 			scsiDev.targets[i].syncPeriod = g_force_sync;
@@ -868,6 +918,7 @@ static void scsiReset()
 		scsiDev.targets[i].busWidth = 0;
 	}
 	scsiDev.minSyncPeriod = 0;
+	g_scsi_disconnect_state.active = 0;
 
 	scsiDiskReset();
 
@@ -908,6 +959,8 @@ static void enter_SelectionPhase()
 	scsiDev.postDataOutHook = NULL;
 
 	scsiDev.needSyncNegotiationAck = 0;
+	g_scsi_disconnect_state.active = 0;
+	g_scsi_sts_selection_initiator = 0xFF;
 }
 
 static void process_SelectionPhase()
@@ -968,13 +1021,54 @@ static void process_SelectionPhase()
 		scsiDev.atnFlag = selStatus & 0x80;
 
 
-		// Unit attention breaks many older SCSI hosts. Disable it completely
-		// for SCSI-1 (and older) hosts, regardless of our configured setting.
-		// Enable the compatability mode also as many SASI and SCSI1
-		// controllers don't generate parity bits.
+		// Unit attention breaks many older SCSI hosts (eg. the Mac Plus --
+		// see the comment on the general UA-check below). The historical
+		// fix was to disable it completely for any host selecting without
+		// ATN (old-style SCSI-1-ish selection), regardless of the
+		// configured EnableUnitAttention setting.
+		//
+		// That default is too broad: EnableUnitAttention=Yes is explicitly
+		// set by two presets in ZuluSCSISettings -- AS/400 (deviceInitAS400())
+		// and DOS (SYS_PRESET_DOS) -- and both are known to select without
+		// ATN despite being SCSI-2-capable hosts that do want unit
+		// attention reported, not broken SCSI-1 hosts. A real AS/400 P02's
+		// Ancot baseline shows its SP correctly consuming a genuine
+		// POWER_ON_RESET unit attention on its very first TEST UNIT READY
+		// (sense 06/2900) before a second TUR/REQUEST SENSE cycle reports
+		// NOT_READY (02/0402) and START STOP UNIT succeeds -- unconditional
+		// suppression here wiped the pending condition on the very first
+		// SELECT (for INQUIRY, before any command byte is read), so Zulu's
+		// first TUR jumped straight to the "second cycle" NOT_READY state
+		// the real disk only reaches after the initiator has already seen
+		// and cleared the power-on attention, a sequence this SP's ROM
+		// likely never anticipated (confirmed via real-hardware Ancot
+		// trace comparison, 2026-09-07). Gating on the same
+		// EnableUnitAttention flag the deferred UA-check below already
+		// uses -- instead of a platform-specific quirks check -- fixes
+		// this for AS/400 and for DOS (same preset, not yet confirmed on
+		// real DOS hardware, but the identical shape of bug) without
+		// touching the historical default (EnableUnitAttention=No) that
+		// still protects genuinely ATN-less-and-broken hosts.
 		if (!scsiDev.atnFlag)
 		{
-			target->unitAttention = 0;
+			// CD-ROM excluded, 2026-09-09: a real AS/400 Model 600 (RISC)
+			// manual D-mode IPL from CD-ROM (SRC B1014507, a generic
+			// CD-ROM read error) regressed once this exemption's gate
+			// widened from AS400+FIXED-only to EnableUnitAttention-for-
+			// any-device-type -- confirmed by the maintainers reverting
+			// just this file's #952 changes and reporting it fixes their
+			// hardware. Unlike disk (and tape, per the P02 baseline),
+			// real optical drives auto-spin-up with no expected START
+			// UNIT handshake; this RISC boot ROM's minimal CD-boot path
+			// evidently can't tolerate a real unit attention it never
+			// saw before. Keep the fix for FIXED/SEQUENTIAL (still
+			// needed, still hardware-confirmed); suppress again for
+			// OPTICAL specifically rather than reverting to disk-only.
+			if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) ||
+				target->cfg->deviceType == S2S_CFG_OPTICAL)
+			{
+				target->unitAttention = 0;
+			}
 			scsiDev.compatMode = COMPAT_SCSI1;
 		}
 		else if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_SCSI2))
@@ -992,7 +1086,8 @@ static void process_SelectionPhase()
 		// Save our initiator now that we're no longer in a time-critical
 		// section.
 		// SCSI1/SASI initiators may not set their own ID.
-		scsiDev.initiatorId = (selStatus >> 3) & 0x7;
+		scsiDev.initiatorId =
+			(g_scsi_sts_selection_initiator < S2S_MAX_TARGETS) ? g_scsi_sts_selection_initiator : -1;
 
 		// Wait until the end of the selection phase.
 		uint32_t selTimerBegin = s2s_getTime_ms();
@@ -1355,7 +1450,8 @@ void scsiPoll(void)
 	break;
 
 	case RESELECTION:
-		// Not currently supported!
+		// Command-specific code performs the actual reconnect once it is ready
+		// to resume the disconnected command.
 	break;
 
 	case COMMAND:
@@ -1452,6 +1548,7 @@ void scsiInit()
 			scsiDev.targets[i].liveCfg.bytesPerSector = cfg->bytesPerSector;
 			scsiDev.targets[i].liveCfg.tapeDensity = cfg->tapeDensity;
 			scsiDev.targets[i].liveCfg.tapeBufferedMode = cfg->tapeBufferedMode;
+			scsiDev.targets[i].liveCfg.disconnectTimeLimit = 0;
 		}
 		else
 		{
@@ -1489,17 +1586,31 @@ void scsiInit()
 		}
 
 #ifdef PLATFORM_AS400
-		if (cfg && cfg->quirks == S2S_CFG_QUIRKS_AS400 && cfg->deviceType == S2S_CFG_FIXED)
+		// Gated on EnableUnitAttention, not a specific quirk, and not
+		// restricted to deviceType==FIXED -- see the matching comment in
+		// scsiReset() for the full reasoning (same generalization, same
+		// investigation, 2026-09-08).
+		if ((scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) &&
+			(!cfg || cfg->deviceType != S2S_CFG_OPTICAL))
 		{
-			scsiDev.target->sense.code = UNIT_ATTENTION;
-			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+			// scsiDev.target (the currently-selected-target pointer) is
+			// NULL throughout this whole init loop -- these must prime
+			// this target's own (array-indexed) sense state, or the write
+			// silently goes nowhere and this priming never actually takes
+			// effect. Found alongside the ATN/unitAttention fix above,
+			// same investigation.
+			// CD-ROM excluded, 2026-09-09: see the matching comment in
+			// process_SelectionPhase() -- real AS/400 Model 600 (RISC)
+			// regression (SRC B1014507), confirmed by the maintainers.
+			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
+			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
 			scsiDev.targets[i].started = 0;
 		}
 		else
 #endif
 		{
-			scsiDev.target->sense.code = NO_SENSE;
-			scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+			scsiDev.targets[i].sense.code = NO_SENSE;
+			scsiDev.targets[i].sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
 			// Always "start" the device. Many systems (eg. Apple System 7)
 			// won't respond properly to
 			// LOGICAL_UNIT_NOT_READY_INITIALIZING_COMMAND_REQUIRED sense
@@ -1510,109 +1621,110 @@ void scsiInit()
 	firstInit = 0;
 }
 
-/* TODO REENABLE
 void scsiDisconnect()
 {
+	if (!scsiDev.target || !scsiDev.discPriv || g_scsi_disconnect_state.active)
+	{
+		return;
+	}
+
+	g_scsi_disconnect_state.active = 1;
+	g_scsi_disconnect_state.phase = scsiDev.phase;
+	g_scsi_disconnect_state.cdbLen = scsiDev.cdbLen;
+	scsiDev.savedDataPtr = scsiDev.dataPtr;
+
 	scsiEnterPhase(MESSAGE_IN);
-	scsiWriteByte(0x02); // save data pointer
-	scsiWriteByte(0x04); // disconnect msg.
+	scsiWriteByte(0x02); // SAVE DATA POINTER
+	scsiWriteByte(0x04); // DISCONNECT
 
-	// For now, the caller is responsible for tracking the disconnected
-	// state, and calling scsiReconnect.
-	// Ideally the client would exit their loop and we'd implement this
-	// as part of scsiPoll
-	int phase = scsiDev.phase;
+	if (scsiDev.resetFlag)
+	{
+		g_scsi_disconnect_state.active = 0;
+		return;
+	}
+
 	enter_BusFree();
-	scsiDev.phase = phase;
+	scsiDev.phase = RESELECTION;
+	scsiDev.cdbLen = g_scsi_disconnect_state.cdbLen;
+	g_scsi_disconnect_state.disconnectTime_ms = s2s_getTime_ms();
 }
-*/
 
-/* TODO REENABLE
 int scsiReconnect()
 {
-	int reconnected = 0;
-
-	int sel = SCSI_ReadFilt(SCSI_Filt_SEL);
-	int bsy = SCSI_ReadFilt(SCSI_Filt_BSY);
-	if (!sel && !bsy)
+	if (!g_scsi_disconnect_state.active ||
+		!scsiDev.target ||
+		scsiDev.initiatorId < 0 ||
+		scsiDev.resetFlag)
 	{
-		s2s_delay_us(1);
-		sel = SCSI_ReadFilt(SCSI_Filt_SEL);
-		bsy = SCSI_ReadFilt(SCSI_Filt_BSY);
+		return 0;
 	}
 
-	if (!sel && !bsy)
+	// SCSI-2 6.6.6: the target shall not participate in another
+	// ARBITRATION phase for at least a disconnection delay (200us,
+	// table 7) or the disconnect time limit negotiated via the
+	// Disconnect-Reconnect mode page (8.3.3.2), whichever is greater.
+	// Our timer's granularity is 1ms; rounding up is harmless,
+	// arbitrating early is not.
+	uint32_t negotiatedLimitUs =
+		(uint32_t)scsiDev.target->liveCfg.disconnectTimeLimit * 100;
+	uint32_t requiredWaitUs = (negotiatedLimitUs > 200) ? negotiatedLimitUs : 200;
+	uint32_t requiredWaitMs = (requiredWaitUs + 999) / 1000;
+
+	uint32_t elapsedSinceDisconnect_ms =
+		s2s_elapsedTime_ms(g_scsi_disconnect_state.disconnectTime_ms);
+	if (elapsedSinceDisconnect_ms < requiredWaitMs)
 	{
-		// Arbitrate.
-		s2s_ledOn();
-		uint8_t scsiIdMask = 1 << scsiDev.target->targetId;
-		SCSI_Out_Bits_Write(scsiIdMask);
-		SCSI_Out_Ctl_Write(1); // Write bits manually.
-		SCSI_SetPin(SCSI_Out_BSY);
-
-		s2s_delay_us(3); // arbitrate delay. 2.4us.
-
-		uint8_t dbx = scsiReadDBxPins();
-		sel = SCSI_ReadFilt(SCSI_Filt_SEL);
-		if (sel || ((dbx ^ scsiIdMask) > scsiIdMask))
-		{
-			// Lost arbitration.
-			SCSI_Out_Ctl_Write(0);
-			SCSI_ClearPin(SCSI_Out_BSY);
-			s2s_ledOff();
-		}
-		else
-		{
-			// Won arbitration
-			SCSI_SetPin(SCSI_Out_SEL);
-			s2s_delay_us(1); // Bus clear + Bus settle.
-
-			// Reselection phase
-			SCSI_CTL_PHASE_Write(__scsiphase_io);
-			SCSI_Out_Bits_Write(scsiIdMask | (1 << scsiDev.initiatorId));
-			scsiDeskewDelay(); // 2 deskew delays
-			scsiDeskewDelay(); // 2 deskew delays
-			SCSI_ClearPin(SCSI_Out_BSY);
-			s2s_delay_us(1);  // Bus Settle Delay
-
-			uint32_t waitStart_ms = getTime_ms();
-			bsy = SCSI_ReadFilt(SCSI_Filt_BSY);
-			// Wait for initiator.
-			while (
-				!bsy &&
-				!scsiDev.resetFlag &&
-				(elapsedTime_ms(waitStart_ms) < 250))
-			{
-				bsy = SCSI_ReadFilt(SCSI_Filt_BSY);
-			}
-
-			if (bsy)
-			{
-				SCSI_SetPin(SCSI_Out_BSY);
-				scsiDeskewDelay(); // 2 deskew delays
-				scsiDeskewDelay(); // 2 deskew delays
-				SCSI_ClearPin(SCSI_Out_SEL);
-
-				// Prepare for the initial IDENTIFY message.
-				SCSI_Out_Ctl_Write(0);
-				scsiEnterPhase(MESSAGE_IN);
-
-				// Send identify command
-				scsiWriteByte(0x80);
-
-				scsiEnterPhase(scsiDev.phase);
-				reconnected = 1;
-			}
-			else
-			{
-				// reselect timeout.
-				SCSI_Out_Ctl_Write(0);
-				SCSI_ClearPin(SCSI_Out_SEL);
-				SCSI_CTL_PHASE_Write(0);
-				s2s_ledOff();
-			}
-		}
+		s2s_delay_ms(requiredWaitMs - elapsedSinceDisconnect_ms);
 	}
-	return reconnected;
+
+	if (!scsiPhyReselect(scsiDev.target->targetId, scsiDev.initiatorId))
+	{
+		return 0;
+	}
+
+	// Prepare for the initial IDENTIFY message.
+	scsiDev.atnFlag = 0;
+	scsiDev.selFlag = 0;
+	scsiDev.cdbLen = g_scsi_disconnect_state.cdbLen;
+	scsiDev.dataPtr = scsiDev.savedDataPtr;
+	scsiEnterPhase(MESSAGE_IN);
+	scsiWriteByte(0x80 | (scsiDev.lun & 0x7));
+
+	if (scsiDev.resetFlag)
+	{
+		g_scsi_disconnect_state.active = 0;
+		return 0;
+	}
+
+	// SCSI-2 6.2.1(f): if ATN is true, the initiator wants to send a
+	// message before we resume the disconnected command -- most likely
+	// ABORT, ABORT TAG, or BUS DEVICE RESET for this exact nexus right
+	// at reconnection (note 29 anticipates exactly this). Service it the
+	// same way every other phase already does in scsiPoll(), rather than
+	// silently discarding it.
+	scsiDev.atnFlag |= scsiStatusATN();
+	while (scsiDev.atnFlag && !scsiDev.resetFlag)
+	{
+		process_MessageOut();
+		scsiDev.atnFlag |= scsiStatusATN();
+	}
+
+	if (scsiDev.resetFlag || scsiDev.phase == BUS_FREE)
+	{
+		// A reset, or the message just handled (e.g. ABORT, BUS DEVICE
+		// RESET), already tore down this nexus -- do not resume it.
+		g_scsi_disconnect_state.active = 0;
+		return 0;
+	}
+
+	scsiDev.phase = g_scsi_disconnect_state.phase;
+	scsiDev.cdbLen = g_scsi_disconnect_state.cdbLen;
+	scsiDev.dataPtr = scsiDev.savedDataPtr;
+	if (scsiDev.phase >= 0)
+	{
+		scsiEnterPhase(scsiDev.phase);
+	}
+
+	g_scsi_disconnect_state.active = 0;
+	return 1;
 }
-*/
