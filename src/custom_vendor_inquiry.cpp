@@ -271,31 +271,24 @@ static void injectSerialIntoLoadedProfile(uint8_t scsiId, int startIdx, bool spd
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
     if (g_as400_serial_override[id].length != 8) return;
 
-    // SPD (standard INQUIRY response) patching -- DISABLED, 2026-09-12,
-    // confirmed harmful on real hardware (Fiona). Offset 36 is
-    // structurally guaranteed by the SCSI-2 INQUIRY format (8-byte header
-    // + 8-byte Vendor ID + 16-byte Product ID + 4-byte Revision, all
-    // fixed-width), and the byte-visible serial does sit there in every
-    // capture checked -- but a real IPL test patching only that 8-byte
-    // slice made DST's "Display Non-Configured Units" screen show
-    // `00-********` (masked/invalid) for ALL FOUR test units, including
-    // the two that previously displayed clean (if duplicated) real
-    // serials before this patch existed. That's a regression, not just
-    // "still not fixed" -- something past offset 36 (the trailing bytes
-    // seen after the serial in every real capture, e.g. `99F9820` for
-    // `45G9463`, `6475668` for `55F9806`) is very likely a structured
-    // field DST cross-validates against the serial (a checksum or
-    // duplicate reference), and overwriting only the 8-byte slice broke
-    // that consistency. Do not re-enable without first understanding that
-    // trailing structure -- ideally via a real bus trace (Ancot analyzer)
-    // showing exactly what DST reads/validates, not more blind offset
-    // guessing on live hardware. See
-    // project_as400_serial_collision_investigation.md for the full
-    // writeup.
-#if 0
+    // SPD (standard INQUIRY response) patching at offset 36 -- structurally
+    // guaranteed by the SCSI-2 INQUIRY format (8-byte header + 8-byte
+    // Vendor ID + 16-byte Product ID + 4-byte Revision, all fixed-width),
+    // and the byte-visible serial sits there in every real capture
+    // checked. Hardware-confirmed (2026-09-20, CISC): whatever consumes
+    // this specific field reads it as a 28-bit binary value, not free
+    // text -- an unconstrained value made DST's "Display Non-Configured
+    // Units" screen show a masked/invalid serial. Force the leading
+    // character to '0' right here, at this SPD write only -- NOT inside
+    // as400_get_serial_8() itself, which also backs LOG SENSE page 0x31
+    // for every AS/400 FIXED disk regardless of override; forcing it
+    // there broke real PPC load-source recognition (SRC B1014504) the
+    // first time this was tried, since page 0x31 does not share this
+    // constraint.
     if (spdWasEmpty && g_custom_spd[scsiId].length >= 44)
     {
         injectSerial(g_custom_spd[scsiId].data, 36, scsiId);
+        g_custom_spd[scsiId].data[36] = '0';
         logmsg("---- Patched custom serial into SPD for SCSI ID ", (int)scsiId, " at offset 36");
     }
     else if (spdWasEmpty && g_custom_spd[scsiId].length > 0)
@@ -303,9 +296,6 @@ static void injectSerialIntoLoadedProfile(uint8_t scsiId, int startIdx, bool spd
         logmsg("---- WARNING: SPD for SCSI ID ", (int)scsiId, " is only ",
                (int)g_custom_spd[scsiId].length, " bytes -- too short to patch, serial override not applied to SPD");
     }
-#else
-    (void)spdWasEmpty;
-#endif
 
     // VPD80 (Unit Serial Number): the real captured field width varies
     // (8 or 10 ASCII characters observed so far, always right-justified,
@@ -658,7 +648,17 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
         if (len >= 32)
             memcpy(g_custom_spd[scsiId].data + 16, devCfg->prodId, sizeof(devCfg->prodId));
         if (len >= 46)
+        {
+            // Same 28-bit-value SPD constraint as
+            // injectSerialIntoLoadedProfile()'s named-profile path above --
+            // force the leading character here at the SPD write only, not
+            // inside as400_get_serial_8() itself. See that function's own
+            // comment for why: it also backs LOG SENSE page 0x31, which
+            // does not share this constraint and broke on real PPC
+            // hardware when this was forced there instead.
             injectSerial(g_custom_spd[scsiId].data, 38, scsiId);
+            g_custom_spd[scsiId].data[38] = '0';
+        }
         if (len >= 121)
             injectPartNumber(g_custom_spd[scsiId].data, 114, -1, scsiId);
         g_custom_spd[scsiId].length = len;
