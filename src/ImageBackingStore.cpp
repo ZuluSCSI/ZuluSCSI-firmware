@@ -38,6 +38,8 @@ ImageBackingStore::ImageBackingStore()
     m_iscontiguous = false;
     m_israw = false;
     m_isrom = false;
+    m_isproccesor = false;
+    m_isprocessor_open = false;
     m_isreadonly_attr = false;
     m_blockdev = nullptr;
     m_bgnsector = m_endsector = m_cursector = 0;
@@ -53,6 +55,13 @@ ImageBackingStore::ImageBackingStore()
     // Initialize COW members
     m_iscow = false;
 #endif
+}
+
+
+ImageBackingStore::ImageBackingStore(bool open)  : ImageBackingStore()
+{
+    m_isproccesor = true;
+    m_isprocessor_open = open;
 }
 
 ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_settings, uint8_t scsiId) : ImageBackingStore()
@@ -195,6 +204,7 @@ bool ImageBackingStore::_internal_open(const char *filename)
         m_fsfile = SD.open(filename, open_flag);
     }
 
+
     if (!m_fsfile.isOpen())
     {
 #ifdef CONTAINER_IMAGE_SUPPORT
@@ -214,8 +224,7 @@ bool ImageBackingStore::_internal_open(const char *filename)
     bool got_range = m_fsfile.contiguousRange(&begin, &end);
     bool range_covers_file = got_range && end >= begin + sectorcount - 1;
 
-    // Diagnostic for the AS/400 performance investigation (see project
-    // memory: project_as400_write_performance.md) -- logged unconditionally
+    // Diagnostic for the AS/400 performance investigation -- logged unconditionally
     // at open time, independent of IOTrace, since this is the actual root
     // decision point for whether ImageBackingStore's raw-block fast path
     // is even reachable for this file at all. A trace showing 0% fast-path
@@ -223,7 +232,7 @@ bool ImageBackingStore::_internal_open(const char *filename)
     // without needing a trace to infer it from.
     if (!got_range)
     {
-        logmsg("---- ", filename, ": not contiguous on SD card (contiguousRange() failed) -- ",
+        logmsg("---- ", filename, ": is non-contiguous on SD card  -- ",
                "ImageBackingStore's raw-block fast path is unavailable for this file");
     }
     else if (!range_covers_file)
@@ -303,7 +312,7 @@ void ImageBackingStore::setupGapLayout(uint64_t physicalSizeBytes)
 // gappedTransfer() (the only caller) is only ever invoked from the main
 // loop's own blocking SCSI command dispatch, never reentrantly (matches
 // this codebase's established precedent for stack-tight buffers, e.g. the
-// static conversions in custom_vendor_inquiry.cpp -- see JOURNAL.md).
+// static conversions in custom_vendor_inquiry.cpp).
 //
 // Batches several CISC slots/PPC groups per SD transaction instead of one
 // at a time -- physical media has no real "gaps" (units sit back-to-back),
@@ -329,7 +338,7 @@ static uint8_t s_gapStagingBuffer[GAP_TRANSFER_BUFFER_SIZE];
 
 bool ImageBackingStore::gapUnitTransfer(uint64_t physOffset, uint32_t physSize, uint8_t *stagingBuf, bool isWrite)
 {
-    // IOTrace Layer B/DMA_WAIT: previously a deliberate gap (see JOURNAL.md)
+    // IOTrace Layer B/DMA_WAIT: previously a deliberate gap
     // -- gappedTransfer()/gapUnitTransfer() bypassed both entirely, so any
     // AlignUnalignedAccesses device's SD-access latency, sequentiality and
     // fast-path status were invisible to a capture, unlike every other
@@ -525,6 +534,10 @@ ssize_t ImageBackingStore::gappedTransfer(void *buf, size_t count, bool isWrite)
 
 bool ImageBackingStore::isOpen()
 {
+    if (m_isproccesor)
+    {
+        return m_isprocessor_open;
+    }
 #if ENABLE_COW
     if (m_iscow)
     {
@@ -593,6 +606,10 @@ bool ImageBackingStore::isContiguous()
 
 bool ImageBackingStore::close()
 {
+    if (m_isproccesor)
+    {
+        m_isprocessor_open = false;
+    }
 #if ENABLE_COW
     if (m_iscow)
     {

@@ -115,7 +115,7 @@ static void send_status_json()
 
     char json[480] = {0};
     int pos = 0;
-    pos += snprintf(json + pos, sizeof(json) - pos, "{\"devices\":[");
+    pos += snprintf(json + pos, sizeof(json) - pos, "{\"sdPresent\":%s, \"devices\":[", g_sd_ready ? "true": "false");
 
     for (int d = 0; d < dev_count && pos < (int)sizeof(json) - 80; d++)
     {

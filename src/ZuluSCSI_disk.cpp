@@ -305,6 +305,10 @@ void image_config_t::clear()
     {
         tapeDeinit(S2S_CFG_TARGET_ID_BITS & scsiId);
     }
+    image_directory.isOpen();
+    {
+        image_directory.close();
+    }
     this->~image_config_t();
     new (this) image_config_t();
     memset((S2S_TargetCfg*)this, 0, sizeof(image_config_t));
@@ -366,7 +370,7 @@ void scsiDiskCloseSDCardImages()
         if (!g_DiskImages[i].file.isRom())
         {
             g_DiskImages[i].file.close();
-            g_DiskImages[i].image_directory = false;
+            g_DiskImages[i].has_image_directory = false;
             g_DiskImages[i].bin_container.close();
             g_DiskImages[i].cuesheetfile.close();
         }
@@ -549,6 +553,11 @@ static void autoConfigGeometry(image_config_t &img)
         }
 }
 
+static bool isProcessorDevice(S2S_CFG_TYPE type)
+{
+    return type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_NETWORK || type == S2S_CFG_AUDIO;
+}
+
 bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, int blocksize, S2S_CFG_TYPE type, bool use_prefix)
 {
     image_config_t &img = g_DiskImages[target_idx];
@@ -625,6 +634,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                    (int)(auSizeSectors / 2), " KB boundary. This will increase read/write latency but is not an error.");
         }
 
+        #ifdef PLATFORM_AS400
         // Too-small check: only meaningful when this target declares an
         // expected capacity (currently: an AS400_DiskProfile). Without
         // one, whatever the partition provides simply becomes the
@@ -652,6 +662,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                 return false;
             }
         }
+        #endif // PLATFORM_AS400
 
         partition_conflict_t conflicts[PARTITION_TABLE_MAX_INDEX];
         int conflictCount = 0;
@@ -688,10 +699,18 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
 
     // Close existing file and construct new one in-place
     img.file.~ImageBackingStore();
-    // scsiId passed directly here (rather than via setScsiId() afterwards)
-    // so it's already known when _internal_open() runs during construction --
-    // see ImageBackingStore's constructor comment.
-    new (&img.file) ImageBackingStore(filename, blocksize, device_config, target_idx);
+
+    if (isProcessorDevice(type))
+    {
+        new (&img.file) ImageBackingStore(true);
+    }
+    else
+    {
+        // scsiId passed directly here (rather than via setScsiId() afterwards)
+        // so it's already known when _internal_open() runs during construction --
+        // see ImageBackingStore's constructor comment.
+        new (&img.file) ImageBackingStore(filename, blocksize, device_config, target_idx);
+    }
 
     if (img.file.isOpen())
     {
@@ -759,7 +778,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             tape_is_tap_format = true;
         }
 
-        if (img.scsiSectors == 0 && type != S2S_CFG_NETWORK && type != S2S_CFG_AMIGAWIFI && type != S2S_CFG_AUDIO && !img.file.isFolder() && !tape_is_tap_format)
+        if (img.scsiSectors == 0 && !isProcessorDevice(type) && !img.file.isFolder() && !tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");
             img.file.close();
@@ -767,7 +786,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
         }
 
         uint32_t sector_begin = 0, sector_end = 0;
-        if (img.file.isRom() || type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO || img.file.isFolder() || tape_is_tap_format)
+        if (img.file.isRom() || isProcessorDevice(type) || img.file.isFolder() || tape_is_tap_format)
         {
             // Contiguous file doesn't matter for these types
         }
@@ -876,7 +895,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Vendor / product id set from image file name");
         }
 
-        if (type == S2S_CFG_NETWORK || type == S2S_CFG_AMIGAWIFI || type == S2S_CFG_AUDIO)
+        if (isProcessorDevice(type))
         {
             // prefetch not used, skip emitting log message
         }
@@ -893,9 +912,9 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             strncasecmp(filename + strlen(filename) - 4, ".bin", 4) == 0)
         {
             // Check for .cue sheet with single .bin file
-            char cuesheetname[MAX_FILE_PATH + 1] = {0};
+            char *cuesheetname = new char[MAX_FILE_PATH + 1];
             strncpy(cuesheetname, filename, strlen(filename) - 4);
-            strlcat(cuesheetname, ".cue", sizeof(cuesheetname));
+            strlcat(cuesheetname, ".cue", MAX_FILE_PATH + 1);
             img.cuesheetfile = SD.open(cuesheetname, O_RDONLY);
 
             if (img.cuesheetfile.isOpen())
@@ -931,19 +950,21 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             {
                 logmsg("---- No CUE sheet found at ", cuesheetname, ", using as plain binary image");
             }
+            delete[] cuesheetname;
+            cuesheetname = nullptr;
         }
         else if (img.deviceType == S2S_CFG_OPTICAL && img.file.isFolder())
         {
             // The folder should contain .cue sheet and one or several .bin files
-            char foldername[MAX_FILE_PATH + 1] = {0};
-            char cuesheetname[MAX_FILE_PATH + 1] = {0};
-            img.file.getFoldername(foldername, sizeof(foldername));
+            char *foldername = new char[MAX_FILE_PATH + 1];
+            char *cuesheetname = new char[MAX_FILE_PATH + 1];
+            img.file.getFoldername(foldername, MAX_FILE_PATH + 1);
             FsFile folder = SD.open(foldername, O_RDONLY);
             bool valid = false;
             img.cuesheetfile.close();
             while (!valid && img.cuesheetfile.openNext(&folder, O_RDONLY))
             {
-                img.cuesheetfile.getName(cuesheetname, sizeof(cuesheetname));
+                img.cuesheetfile.getName(cuesheetname, MAX_FILE_PATH + 1);
 
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
@@ -954,21 +975,32 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                     }
                 }
             }
+            delete[] cuesheetname;
+            cuesheetname = nullptr;
 
             if (valid)
             {
                 img.bin_container.open(foldername);
                 memset(&img.cdrom_trackinfo, 0, sizeof(img.cdrom_trackinfo));
                 img.cdrom_track_end_lba = 0;
+                img.bin_container.getName(img.current_image, sizeof(img.current_image));
 #ifdef ENABLE_AUDIO_OUTPUT                
                 audio_reset(target_idx);
 #endif
             }
             else
             {
-                logmsg("No valid .cue sheet found in folder '", foldername, "'");
+                logmsg("---- No valid .cue sheet found in folder '", foldername, "'");
+                logmsg("!! Please fix or remove folder, invalid .cue sheet can cause image handling issues. !!" );
                 img.cuesheetfile.close();
+                img.file.close();
+                img.scsiId = target_idx & (~S2S_CFG_TARGET_ENABLED);
+
             }
+            delete[] foldername;
+            foldername = nullptr;
+
+            return valid;
         }
         else if (img.deviceType == S2S_CFG_SEQUENTIAL && img.file.isFolder())
         {
@@ -1117,21 +1149,36 @@ bool scsiDiskFolderIsTapeFolder(FsFile *dir)
 
 static void scsiDiskCheckDir(const char * dir_name, int target_idx, image_config_t* img, S2S_CFG_TYPE type, const char* type_name)
 {
-    if (SD.exists(dir_name))
+    bool found = false;
+    if (!img->has_image_directory)
     {
-        if (img->image_directory)
+        FsFile root = SD.open("/");
+        FsFile &file = img->image_directory;  
+        while (file.openNext(&root))
         {
-            logmsg("-- Already found an image directory, skipping '", dir_name, "'");
+            char filename[MAX_FILE_PATH + 1];
+            file.getName(filename, sizeof(filename));
+            if (file.isDir() && strncasecmp(dir_name, filename, 3) == 0)
+            {
+                if (type == S2S_CFG_OPTICAL && scsiDiskFolderContainsCueSheet(&file))
+                {
+                    logmsg("-- Treating ", filename, " directory as a bin/cue folder");
+                }
+                else
+                {
+                    found = true;
+                    img->deviceType = type;
+                    img->has_image_directory = true;
+                    logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", filename, "'");
+                    setRootFolder(target_idx, false, filename);
+                    g_scsi_settings.initDevice(target_idx, type);
+                    break;
+                }
+            }
         }
-        else
-        {
-            img->deviceType = type;
-            img->image_directory = true;
-            logmsg("SCSI", target_idx, " searching default ", type_name, " image directory '", dir_name, "'");
-
-            setRootFolder(target_idx, false, dir_name);
-            g_scsi_settings.initDevice(target_idx, type);
-        }
+        if (!found)
+            file.close();
+        root.close();
     }
 }
 
@@ -1167,7 +1214,7 @@ static void scsiDiskSetConfig(int target_idx)
     if (tmp[0])
     {
         logmsg("SCSI", target_idx, " using image directory '", tmp, "'");
-        img.image_directory = true;
+        img.has_image_directory = true;
 
         setRootFolder(target_idx, true, tmp);
     }
@@ -1417,7 +1464,7 @@ int findNextImageAfter(image_config_t &img,
     else
     {
         logmsg("Image directory '", dirname, "' was empty");
-        img.image_directory = false;
+        img.has_image_directory = false;
         return 0;
     }
 }
@@ -1492,10 +1539,10 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
         strcpy(currentname, img.current_image);
     }
 
-    if (img.image_directory)
+    if (img.has_image_directory)
     {
         // image directory was found during startup
-        char dirname[MAX_FILE_PATH];
+        char dirname[MAX_FILE_PATH + 1];
         char key[] = "ImgDir";
         int dirlen = 0;
 #ifdef DYNAMIC_SCSI_ID
@@ -1507,45 +1554,12 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
             dirlen = ini_gets(section, key, "", dirname, sizeof(dirname), CONFIGFILE);
         if (!dirlen)
         {
-            // Reconstruct the default directory name from the device type.
-            // Dynamic targets use the 'n' suffix (HDn, CDn, …); others use the hex ID.
-            switch (img.deviceType)
+            if (!img.image_directory.isOpen())
             {
-                case S2S_CFG_FIXED:
-                    strcpy(dirname, "HD0");
-                    break;
-                case S2S_CFG_OPTICAL:
-                    strcpy(dirname, "CD0");
-                    break;
-                case S2S_CFG_REMOVABLE:
-                    strcpy(dirname, "RE0");
-                    break;
-                case S2S_CFG_MO:
-                    strcpy(dirname, "MO0");
-                    break;
-                case S2S_CFG_SEQUENTIAL:
-                    strcpy(dirname, "TP0");
-                    break;
-                case S2S_CFG_FLOPPY_14MB:
-                    strcpy(dirname, "FD0");
-                    break;
-                case S2S_CFG_ZIP100:
-                    strcpy(dirname, "ZP0");
-                    break;
-                default:
-                    logmsg("No matching device type for default directory found");
-                    return 0;
-            }
-#ifdef DYNAMIC_SCSI_ID
-            dirname[2] = is_dynamic ? DYNAMIC_SCSI_ID_CHAR : scsiEncodeID(target_idx);
-#else
-            dirname[2] = scsiEncodeID(target_idx);
-#endif
-            if (!SD.exists(dirname))
-            {
-                logmsg("Default image directory, ", dirname, " does not exist");
+                logmsg("Default image directory is not open");
                 return 0;
             }
+            dirlen = img.image_directory.getName(dirname, sizeof(dirname));
         }
 
         // find the next filename
@@ -1574,7 +1588,7 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
                 setFolder(target_idx, path);
 
                 logmsg("Found file: ", buf);
-                img.image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
+                img.has_image_directory = true; // findNextImageAfter cleared this if we got here, so restore it as we did actually find something
                 return strlen(buf);
             }
             else
@@ -2240,8 +2254,7 @@ static void doFormatUnitHeader(void)
 
 static uint64_t getCapacityBlocks(image_config_t &img, uint32_t bytesPerSector)
 {
-    if (unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_NETWORK) || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AMIGAWIFI)
-        || unlikely(scsiDev.target->cfg->deviceType == S2S_CFG_AUDIO))
+    if (unlikely(isProcessorDevice((S2S_CFG_TYPE)scsiDev.target->cfg->deviceType)))
     {
         return 1;
     }

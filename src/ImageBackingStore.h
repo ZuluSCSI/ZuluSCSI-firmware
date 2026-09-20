@@ -65,6 +65,10 @@ public:
     // Empty image, cannot be accessed
     ImageBackingStore();
 
+
+    // For virtual devices, currently network only devices
+    ImageBackingStore(bool open);
+
     // Parse image file parameters from filename.
     // Special filename formats:
     //    RAW:start:end
@@ -77,6 +81,8 @@ public:
     // object (i.e. don't need _internal_open() to run again) can keep using
     // setScsiId() instead.
     ImageBackingStore(const char *filename, uint32_t scsi_block_size, scsi_device_settings_t *device_config, uint8_t scsiId = 0xFF);
+
+
 
     // Disable copy and move operations entirely
     ImageBackingStore(const ImageBackingStore &) = delete;
@@ -166,6 +172,8 @@ protected:
     bool m_iscontiguous;
     bool m_israw;
     bool m_isrom;
+    bool m_isproccesor;
+    bool m_isprocessor_open;
     bool m_isreadonly_attr;
     romdrive_hdr_t m_romhdr;
 #ifdef CONTAINER_IMAGE_SUPPORT

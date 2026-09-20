@@ -68,7 +68,9 @@
 #include "ROMDrive.h"
 #include "custom_vendor_inquiry.h"
 #include "vhd_support.h"
+#ifdef ZULUCONTROL_FIRMWARE
 #include <ZuluSCSI_WebUI.h>
+#endif
 
 #include "ui.h"
 
@@ -245,8 +247,7 @@ void init_logfile()
     // Diagnostic only: this function previously had no success-path log
     // line at all, so a clean open and a silent failure upstream (e.g.
     // init_logfile() not being reached this boot) were indistinguishable
-    // from the console/screenlog alone -- see the zululog.txt
-    // creation/gating investigation in JOURNAL.md.
+    // from the console/screenlog alone.
     logmsg("---- Log file opened: ", LOGFILE, truncate ? " (truncated)" : " (appending)");
   }
 
@@ -908,7 +909,8 @@ bool findHDDImages()
     }
 
     char name[MAX_FILE_PATH+1];
-    if(!file.isDir() || scsiDiskFolderContainsCueSheet(&file) || scsiDiskFolderIsTapeFolder(&file)) {
+    if(!file.isDir() || scsiDiskFolderContainsCueSheet(&file) || scsiDiskFolderIsTapeFolder(&file))
+    {
       file.getName(name, MAX_FILE_PATH+1);
       file.close();
 
@@ -1119,9 +1121,11 @@ bool findHDDImages()
           else
           {
             logmsg("---- Failed to load image");
+            continue;
           }
         } else {
           logmsg("-- Invalid lun or id for image ", fullname);
+          continue;
         }
       }
     }

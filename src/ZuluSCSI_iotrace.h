@@ -1,6 +1,6 @@
 /**
  * Temporary I/O pattern instrumentation for the AS/400 performance
- * investigation (see project memory: project_as400_write_performance.md).
+ * investigation.
  *
  * Three fixed-size binary record types, appended directly to an open file
  * (same buffered-append/periodic-flush pattern as zululog.txt), gated by
@@ -76,8 +76,7 @@
 // from DISK_COMPUTE specifically because it answers two questions at once:
 // how much of scsiDiskPoll()'s time is genuine CPU work vs. spinning on
 // SD DMA completion, and (the same number) how long the SCSI bus is held
-// BSY while genuinely stalled rather than transferring -- see the
-// "channel busy" discussion in project_as400_write_performance.md.
+// BSY while genuinely stalled rather than transferring.
 enum IOTraceLoopBucket : uint8_t
 {
     IOTRACE_BUCKET_PLATFORM_POLL = 0,

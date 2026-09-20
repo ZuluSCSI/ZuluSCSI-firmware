@@ -80,7 +80,7 @@ struct image_config_t: public S2S_TargetCfg
     bool ejectFixedDiskWriteBlocked;
 
     // True if there is a subdirectory of images for this target
-    bool image_directory;
+    bool has_image_directory;
 
     // True if the device type was determined by the drive prefix
     bool use_prefix;
@@ -117,6 +117,9 @@ struct image_config_t: public S2S_TargetCfg
 
     // the bin file for the cue sheet, the directory for multi bin files, or closed if neither
     FsFile bin_container;
+
+    // Directory that holds images. If not open, assume images reside on root
+    FsFile image_directory;
 
 
     inline bool is_multi_bin_cue() {return bin_container.isOpen() && bin_container.isDir();}

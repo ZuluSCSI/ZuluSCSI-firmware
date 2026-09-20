@@ -6,9 +6,9 @@ Configuration of presented SCSI devices itself is usually automatic, according t
 
 > **Note:** If storage containers ("images as files") in excess of 4 GiB in size are to be used, the card must be reinitialized ("formatted") with ExFAT. This only pertains to *files*, not on direct access via partitions.
 
-It's usually easier to use the SD card with a card reader on a separate computer to create configurations and files. The SD card is hotplug capable, and upon reinsertation, the ZuluSCSI reinitializes itself according to the SD card's content.
+It's usually easier to use the SD card with a card reader on a separate computer to create configurations and files. The SD card is hotplug capable, and upon reinsertion, the ZuluSCSI reinitializes itself according to the SD card's content.
 
-If you pull the card, the presented SCSI IDs are gone. What the host makes out of this situation purely depends on the host OS.
+If you physically remove the  card, the presented SCSI IDs are gone. What the host makes out of this situation purely depends on the host OS.
 
 From all of the device classes the Zulu offers, three are of general interest in the AS/400 world:
 
