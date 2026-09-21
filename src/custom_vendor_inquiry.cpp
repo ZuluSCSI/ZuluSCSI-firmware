@@ -213,8 +213,11 @@ static int findCustomVPDIndex(uint8_t scsiId, uint8_t pageCode, int startIdx = 0
 }
 
 #ifdef PLATFORM_AS400
-// Inject the generated serial number into a VPD page at the given offset
-static void injectSerial(uint8_t *data, int offset, uint8_t scsiId)
+// Inject the generated serial number into a VPD page at the given offset.
+// Pass ebcdic=true for a slot documented as carrying an EBCDIC copy (e.g.
+// VPD82 offset 38) -- the serial digits are converted via asciiToEbcdic()
+// rather than copied verbatim, which is what an ASCII slot needs instead.
+static void injectSerial(uint8_t *data, int offset, uint8_t scsiId, bool ebcdic = false)
 {
     uint8_t serial[8];
     char string[9] = {0};
@@ -229,7 +232,15 @@ static void injectSerial(uint8_t *data, int offset, uint8_t scsiId)
         as400_get_serial_8(scsiId, serial);
     }
 
-    memcpy(data + offset, serial, 8);
+    if (ebcdic)
+    {
+        for (int i = 0; i < 8; i++)
+            data[offset + i] = asciiToEbcdic((char)serial[i]);
+    }
+    else
+    {
+        memcpy(data + offset, serial, 8);
+    }
     memcpy(string, serial, 8);
 }
 
@@ -328,7 +339,7 @@ static void injectSerialIntoLoadedProfile(uint8_t scsiId, int startIdx, bool spd
     if (idx >= 0 && g_custom_vpd[idx].length == 52)
     {
         injectSerial(g_custom_vpd[idx].data, 14, scsiId);
-        injectSerial(g_custom_vpd[idx].data, 38, scsiId);
+        injectSerial(g_custom_vpd[idx].data, 38, scsiId, true);
         logmsg("---- Patched custom serial into VPD82 (ASCII+EBCDIC) for SCSI ID ", (int)scsiId);
     }
     else if (idx >= 0)
@@ -713,7 +724,7 @@ static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
             // falls back to it, so its own VPD82 needs the same ASCII+
             // EBCDIC treatment to stay internally consistent.
             if (g_custom_vpd[idx].length >= 46)
-                injectSerial(g_custom_vpd[idx].data, 38, scsiId);
+                injectSerial(g_custom_vpd[idx].data, 38, scsiId, true);
         }
         else if (pageCode == 0x83 && g_custom_vpd[idx].length >= 42)
             injectSerial(g_custom_vpd[idx].data, 34, scsiId);
