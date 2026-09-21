@@ -58,7 +58,9 @@ Tested with Firmware 2026-08-07, 9401-150, V4R4, V5R2: IPL only so far, but that
 To use,
 
 - copy *as400_disk_definitions.txt* from the official GitHub repository to the SD card.
-  - Because of serial numbers currently being hard coded, only one disk per type should be used for now!
+  - Multiple SCSI IDs sharing the same `AS400_DiskProfile` need a distinct `AS400_DiskSerialNumber` set on each, or OS/400 sees identical serial numbers and cannot tell the units apart -- see [Differentiating same-profile disks](#differentiating-same-profile-disks) below.
+
+> **Note:** This functionality has been verified to work for CISC only, but should also work for PPC.
 
 ### PPC
 
@@ -111,6 +113,26 @@ When an *AS400_DiskProfile* is configured for a given SCSI ID, and the associate
 See below for the meaning of the *padded size*.
 
 Check your machine model's individual platform restrictions which types of DASD is supported with your given machine and OS release.
+
+### Differentiating same-profile disks
+
+When two or more SCSI IDs use the same `AS400_DiskProfile`, set a distinct `AS400_DiskSerialNumber` on each so OS/400 sees separate units instead of a serial-number collision:
+
+```ini
+[SCSI6]
+AS400_DiskProfile = "86G9124"
+AS400_DiskSerialNumber = "01111111"
+
+[SCSI5]
+AS400_DiskProfile = "86G9124"
+AS400_DiskSerialNumber = "02222222"
+```
+
+The value must be exactly 8 characters: hexadecimal digits only (`0`-`9`, `A`-`F`), with the first character always `0`. This isn't an arbitrary style choice -- the field is read back as a 28-bit binary value, not free text. A value that doesn't fit this shape shows as a masked serial (`00-********`) in DST's "Display Non-Configured Units" screen instead of a usable one, and possibly yields an unusable device.
+
+Without an `AS400_DiskSerialNumber` override, a named profile's own originally-captured serial is used verbatim and unchanged -- fine for a single disk of that profile, but two or more SCSI IDs sharing the same profile with no override will show the exact same serial to OS/400. An override is required, not just recommended, whenever a profile is used more than once.
+
+> **Note:** Hardware-confirmed working on CISC (9401-P03). Not yet tested on PPC/RISC machines.
 
 ### Performance optimization through `AlignUnalignedAccesses`
 
