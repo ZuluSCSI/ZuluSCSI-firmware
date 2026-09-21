@@ -18,7 +18,31 @@
  * 
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
-**/
+ *
+ *
+ * SDFat - Copyright (c) 2011-2025 Bill Greiman
+ *
+ * MIT License
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
+
 
 // Driver for accessing SD card in SDIO mode on RP2040 and RP23XX.
 
@@ -382,6 +406,22 @@ bool SdioCard::writeStop()
 
 bool SdioCard::erase(uint32_t firstSector, uint32_t lastSector)
 {
+    if (m_curState != IDLE_STATE)
+    {
+        stopTransmission(true);
+    }
+
+
+    if (!g_sdio_csd.eraseSingleBlock()) {
+        // erase size mask
+        uint8_t m = g_sdio_csd.eraseSize() - 1;
+        if ((firstSector & m) != 0 || ((lastSector + 1) & m) != 0) {
+                // error card can't erase specified area
+            logmsg("Can't erase specified area from sector ", (int)firstSector, "-", (int)lastSector, " with erase size of ", (int)(m + 1), " sectors");
+            return false;
+        }
+    }
+
     uint32_t reply;
 
     // Cards up to 2GB use byte addressing, SDHC cards use sector addressing
