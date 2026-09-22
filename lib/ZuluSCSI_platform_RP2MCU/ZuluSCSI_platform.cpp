@@ -1623,11 +1623,6 @@ bool platform_is_sca()
 
 #ifdef PLATFORM_HAS_ROM_DRIVE
 
-# ifndef ROMDRIVE_OFFSET
-    // Reserve up to 352 kB for firmware by default.
-    #define ROMDRIVE_OFFSET (352 * 1024)
-# endif
-
 uint32_t platform_get_romdrive_maxsize()
 {
     if (g_flash_chip_size >= ROMDRIVE_OFFSET)
@@ -1695,6 +1690,135 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
 }
 
 #endif // PLATFORM_HAS_ROM_DRIVE
+
+/*******************************************/
+/* Direct flash region access              */
+/*******************************************/
+
+// ROMDRIVE_OFFSET comes from the flash map in ZuluSCSI_platform.h. It is the
+// first byte past the profile store, and the map is only self-consistent if
+// the firmware really is limited to the space ahead of the settings area --
+// which is the linker's job, driven by program_flash_allocation. Check that
+// the two descriptions of the same boundary still agree.
+#ifdef PLATFORM_FLASH_PROGRAM_ALLOCATION
+static_assert(PLATFORM_FLASH_PROGRAM_ALLOCATION == PLATFORM_FLASH_FIRMWARE_SIZE,
+              "program_flash_allocation in platformio.ini and "
+              "PLATFORM_FLASH_FIRMWARE_SIZE in ZuluSCSI_platform.h disagree; the "
+              "firmware would run into the settings area or waste flash ahead of it");
+#endif
+static_assert(ROMDRIVE_OFFSET == 1273856,
+              "the ROM drive has moved -- boards already carrying a ROM drive in "
+              "flash would no longer find it");
+static_assert((PLATFORM_FLASH_SETTINGS_OFFSET % PLATFORM_FLASH_SECTOR_SIZE) == 0 &&
+              (PLATFORM_FLASH_SETTINGS_SIZE % PLATFORM_FLASH_SECTOR_SIZE) == 0 &&
+              (PLATFORM_FLASH_PROFILES_OFFSET % PLATFORM_FLASH_SECTOR_SIZE) == 0 &&
+              (PLATFORM_FLASH_PROFILES_SIZE % PLATFORM_FLASH_SECTOR_SIZE) == 0,
+              "every flash region has to start and end on an erase sector");
+
+// Reads bypass the XIP cache and the memory-mapped window entirely by
+// streaming the flash controller's FIFO, the same mechanism
+// platform_read_romdrive() uses. Nothing is cached on the way, so a read
+// issued right after a program never returns a stale line.
+//
+// Like platform_read_romdrive(), this does not lock g_core1_mutex: the
+// stream FIFO is a single shared resource, so callers must not stream from
+// both cores at once.
+bool platform_flash_read(uint32_t flash_offset, void *dest, uint32_t count)
+{
+    uint8_t *out = (uint8_t *)dest;
+
+    while (count > 0)
+    {
+        // The FIFO deals in whole words at word-aligned addresses; anything
+        // else is handled by reading around the request and copying out the
+        // part that was asked for.
+        uint32_t aligned = flash_offset & ~3u;
+        uint32_t skip = flash_offset - aligned;
+        uint32_t words = (skip + count + 3) / 4;
+        uint32_t buffer[64];
+
+        const uint32_t max_words = sizeof(buffer) / sizeof(buffer[0]);
+        if (words > max_words) words = max_words;
+
+        xip_ctrl_hw->stream_ctr = 0;
+        while (!(xip_ctrl_hw->stat & XIP_STAT_FIFO_EMPTY))
+        {
+            (void) xip_ctrl_hw->stream_fifo;
+        }
+
+        xip_ctrl_hw->stream_addr = aligned;
+        xip_ctrl_hw->stream_ctr = words;
+
+        uint32_t got = 0;
+        while (got < words)
+        {
+            if (!(xip_ctrl_hw->stat & XIP_STAT_FIFO_EMPTY))
+            {
+                buffer[got++] = xip_ctrl_hw->stream_fifo;
+            }
+        }
+
+        uint32_t available = words * 4 - skip;
+        uint32_t n = (count < available) ? count : available;
+        memcpy(out, (const uint8_t *)buffer + skip, n);
+
+        out += n;
+        flash_offset += n;
+        count -= n;
+    }
+
+    return true;
+}
+
+bool platform_flash_erase(uint32_t flash_offset, uint32_t count)
+{
+    if ((flash_offset % PLATFORM_FLASH_SECTOR_SIZE) != 0 ||
+        (count % PLATFORM_FLASH_SECTOR_SIZE) != 0)
+    {
+        logmsg("platform_flash_erase(): offset ", (int)flash_offset, " count ", (int)count,
+               " is not sector aligned");
+        return false;
+    }
+
+    // XIP is disabled during flashing so interrupts and
+    // core1 handlers must be blocked.
+    mutex_enter_blocking(&g_core1_mutex);
+    uint32_t saved_irq = save_and_disable_interrupts();
+
+    flash_range_erase(flash_offset, count);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    set_flash_clock();
+#endif
+
+    restore_interrupts(saved_irq);
+    mutex_exit(&g_core1_mutex);
+    return true;
+}
+
+bool platform_flash_program(uint32_t flash_offset, const uint8_t *data, uint32_t count)
+{
+    if ((flash_offset % PLATFORM_FLASH_PROGRAM_SIZE) != 0 ||
+        (count % PLATFORM_FLASH_PROGRAM_SIZE) != 0)
+    {
+        logmsg("platform_flash_program(): offset ", (int)flash_offset, " count ", (int)count,
+               " is not program-page aligned");
+        return false;
+    }
+
+    mutex_enter_blocking(&g_core1_mutex);
+    uint32_t saved_irq = save_and_disable_interrupts();
+
+    flash_range_program(flash_offset, data, count);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    set_flash_clock();
+#endif
+
+    restore_interrupts(saved_irq);
+    mutex_exit(&g_core1_mutex);
+    return true;
+}
 
 #ifdef PLATFORM_AUTH_CHECK_ENABLE
 
