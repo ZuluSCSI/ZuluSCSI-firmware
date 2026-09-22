@@ -18,7 +18,31 @@
  * 
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
-**/
+ *
+ *
+ * SDFat - Copyright (c) 2011-2025 Bill Greiman
+ *
+ * MIT License
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
+
 
 // Driver for accessing SD card in SDIO mode on RP2040 and RP23XX.
 
@@ -369,10 +393,69 @@ bool SdioCard::writeStop()
     return false;
 }
 
+// One low-level erase call, i.e. one CMD32/CMD33/CMD38 sequence over
+// [firstSector, lastSector]. Callers needing to erase a large range
+// (e.g. a whole SD card) should chunk into several bounded-size calls
+// rather than pass a huge range here directly -- see
+// ZuluSCSI_usb_console_erase.cpp for why (progress feedback and a
+// bounded worst-case wait per step, since SD's erase gives no native
+// progress indication at all). SD_ERASE_TIMEOUT_MS below is a safety net
+// for this one call specifically, not a substitute for keeping the
+// caller's own chunks reasonably sized.
+#define SD_ERASE_TIMEOUT_MS 30000
+
 bool SdioCard::erase(uint32_t firstSector, uint32_t lastSector)
 {
-    logmsg("SdioCard::erase() not implemented");
-    return false;
+    if (m_curState != IDLE_STATE)
+    {
+        stopTransmission(true);
+    }
+
+
+    if (!g_sdio_csd.eraseSingleBlock()) {
+        // erase size mask
+        uint8_t m = g_sdio_csd.eraseSize() - 1;
+        if ((firstSector & m) != 0 || ((lastSector + 1) & m) != 0) {
+                // error card can't erase specified area
+            logmsg("Can't erase specified area from sector ", (int)firstSector, "-", (int)lastSector, " with erase size of ", (int)(m + 1), " sectors");
+            return false;
+        }
+    }
+
+    uint32_t reply;
+
+    // Cards up to 2GB use byte addressing, SDHC cards use sector addressing
+    // (same convention as readSectors()/writeSectors() above).
+    uint32_t firstAddr = (type() == SD_CARD_TYPE_SDHC) ? firstSector : (firstSector * 512);
+    uint32_t lastAddr = (type() == SD_CARD_TYPE_SDHC) ? lastSector : (lastSector * 512);
+
+    if (!checkReturnOk(rp2040_sdio_command_R1(CMD32, firstAddr, &reply)) || // SET_ERASE_START
+        !checkReturnOk(rp2040_sdio_command_R1(CMD33, lastAddr, &reply)) || // SET_ERASE_END
+        !checkReturnOk(rp2040_sdio_command_R1(CMD38, 0, &reply))) // ERASE
+    {
+        logmsg("SdioCard::erase() command failed for sectors ", (int)firstSector, "-", (int)lastSector);
+        return false;
+    }
+
+    // Erase can legitimately take much longer than the ~5s busy waits
+    // elsewhere in this file assume is enough (e.g. stopTransmission()
+    // above) -- pet the watchdog on every iteration rather than assume
+    // the whole wait fits inside one watchdog window.
+    uint32_t start = millis();
+    while (isBusy())
+    {
+        platform_reset_watchdog();
+
+        if ((uint32_t)(millis() - start) > SD_ERASE_TIMEOUT_MS)
+        {
+            logmsg("SdioCard::erase() timed out waiting for sectors ", (int)firstSector, "-", (int)lastSector, " to finish erasing");
+            return false;
+        }
+
+        delay(1);
+    }
+
+    return true;
 }
 
 bool SdioCard::cardCMD6(uint32_t arg, uint8_t* status) {

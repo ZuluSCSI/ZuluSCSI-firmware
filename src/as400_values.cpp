@@ -164,6 +164,15 @@ extern "C" void as400_get_serial_8(uint8_t scsi_id, uint8_t* serial_buf)
         sd_sn = sd_cid.psn();
     }
 	const char hex[] = "0123456789ABCDEF";
+	// Deliberately NOT forcing byte 0 to '0' here -- this function also
+	// backs LOG SENSE page 0x31 (src/ZuluSCSI_disk.cpp, unconditional for
+	// every AS/400 FIXED disk, no override check), a separate, pre-existing
+	// mechanism already proven working on real PPC hardware. An earlier
+	// attempt to force this globally fixed the unrelated SPD masking issue
+	// on CISC but broke real PPC load-source recognition (SRC B1014504) --
+	// page 0x31 evidently does not share the SPD field's 28-bit-value
+	// constraint. Leave this generator's raw output alone; the SPD-specific
+	// fix lives at its own call sites in custom_vendor_inquiry.cpp instead.
 	if (sd_sn == 0)
 	{
 		const uint8_t *board_id = platform_get_8byte_mcu_id();

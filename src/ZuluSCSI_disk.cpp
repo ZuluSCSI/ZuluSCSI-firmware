@@ -908,12 +908,14 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             logmsg("---- Read prefetch disabled");
         }
 
+        size_t base_filename_len = strlen(filename) - 4;
         if (img.deviceType == S2S_CFG_OPTICAL &&
-            strncasecmp(filename + strlen(filename) - 4, ".bin", 4) == 0)
+            strncasecmp(filename + base_filename_len, ".bin", 4) == 0)
         {
             // Check for .cue sheet with single .bin file
             char *cuesheetname = new char[MAX_FILE_PATH + 1];
-            strncpy(cuesheetname, filename, strlen(filename) - 4);
+            strncpy(cuesheetname, filename, base_filename_len);
+            cuesheetname[base_filename_len] = '\0';
             strlcat(cuesheetname, ".cue", MAX_FILE_PATH + 1);
             img.cuesheetfile = SD.open(cuesheetname, O_RDONLY);
 
