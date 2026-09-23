@@ -27,10 +27,10 @@ We have to differ three hardware generations when considering Zulu vs. AS/400 ov
 | Device | CISC/IMPI, 520 bytes/block disks | PPC/SPD, 520/522 bytes/block disks   | PPC/PCI, 522 bytes/block disks |
 | ------ | -------------------------------- | ------------------------------------ | ------------------------------ |
 | CD-ROM | Not supported                    | Works                                | Works                          |
-| Tape   | Fails for `savlib` and more      | Fails/Lack of feedback               | Works                          |
+| Tape   | Fails for `savlib` and more      | Fails for `savlib` and more          | Works                          |
 | Disk   | Works                            | Fails/Lack of feedback               | Works                          |
 
-There are success reports of more 150's working, and one of a 9406-270 becoming stuck with A6000244, *Contact was lost with device indicated*.
+There are success reports of more 150's working, and one of a 9406-270 becoming stuck with A6000244, *Contact was lost with device indicated*, as well as another model 270 unable to IPL from emulated CD-ROM with a medium read error.
 
 ---
 
@@ -59,8 +59,6 @@ To use,
 
 - copy *as400_disk_definitions.txt* from the official GitHub repository to the SD card.
   - Multiple SCSI IDs sharing the same `AS400_DiskProfile` need a distinct `AS400_DiskSerialNumber` set on each, or OS/400 sees identical serial numbers and cannot tell the units apart -- see [Differentiating same-profile disks](#differentiating-same-profile-disks) below.
-
-> **Note:** This functionality has been verified to work for CISC only, but should also work for PPC.
 
 ### PPC
 
@@ -131,8 +129,6 @@ AS400_DiskSerialNumber = "02222222"
 The value must be exactly 8 characters: hexadecimal digits only (`0`-`9`, `A`-`F`), with the first character always `0`. This isn't an arbitrary style choice -- the field is read back as a 28-bit binary value, not free text. A value that doesn't fit this shape shows as a masked serial (`00-********`) in DST's "Display Non-Configured Units" screen instead of a usable one, and possibly yields an unusable device.
 
 Without an `AS400_DiskSerialNumber` override, a named profile's own originally-captured serial is used verbatim and unchanged -- fine for a single disk of that profile, but two or more SCSI IDs sharing the same profile with no override will show the exact same serial to OS/400. An override is required, not just recommended, whenever a profile is used more than once.
-
-> **Note:** Hardware-confirmed working on CISC (9401-P03). Not yet tested on PPC/RISC machines.
 
 ### Performance optimization through `AlignUnalignedAccesses`
 
@@ -288,3 +284,7 @@ There is a shell-script `utils/extract_as400_disk_data.sh` in the original sourc
 ```shell
 sg_dd blk_sgio=1 if=/dev/sg0 bs=522 of=id6.dd verbose=2 sync=1
 ```
+
+> **Note:** For CISC disks, use `bs=520`.
+
+Another way of imaging disks is to use the ZuluSCSI's initiator mode. See [README](README.md#scsi-initiator-mode) for more information.
