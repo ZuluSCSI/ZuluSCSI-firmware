@@ -164,13 +164,15 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
     uint8_t header[4];
 
     // Check if we're at end of data
-    //  dbgmsg("------ TAP read forward: file_pos=", (int)tape_info->file_pos, " file_size=", (int)img.file.size());
+    dbgmsg("------ TAP read forward: file_pos=", (int)tape_info->file_pos, " file_size=", (int)img.file.size());
     if (tape_info->file_pos + 1 >= img.file.size()) {
         return TAP_END_OF_DATA;
     }
 
     // Read 4-byte header
     if (!img.file.seek(tape_info->file_pos) || img.file.read(header, sizeof(header)) != sizeof(header)) {
+        logmsg("------ TAP failed to seek and/or read header at file_pos=", (int)tape_info->file_pos,
+               " file_size=", (int)img.file.size());
         record.is_error = true;
         return TAP_ERROR;
     }
@@ -453,7 +455,21 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
                         ++actual;
             }
         } else if (result == TAP_FILEMARK) {
-            if (fixed && started_read && records_read != 0 && records_read < blocksize) {
+            bool short_record_before_filemark =
+                fixed && started_read && records_read != 0 && records_read < blocksize;
+#ifdef PLATFORM_AS400
+            if (short_record_before_filemark && img.quirks == S2S_CFG_QUIRKS_AS400)
+            {
+                // A short final record (e.g. INZTAP's 80-byte VOL1 label)
+                // immediately followed by a filemark is normal tape
+                // structure, not truncation -- confirmed 2026-09-11 via a
+                // real SAVLIB failure (CPF4120/SRC 3010) traced to this
+                // guard misfiring during SPACE. Fall through to normal
+                // filemark handling instead of reporting TAP_ERROR.
+                short_record_before_filemark = false;
+            }
+#endif
+            if (short_record_before_filemark) {
                 // The fixed block started but never finished being filled
                 return TAP_ERROR;
             }
@@ -531,7 +547,18 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
                     tape_info->logical_object_number--;
             }
         } else if (result == TAP_FILEMARK) {
-            if (fixed && started_read && records_read < blocksize) {
+            bool short_record_before_filemark =
+                fixed && started_read && records_read < blocksize;
+#ifdef PLATFORM_AS400
+            if (short_record_before_filemark && img.quirks == S2S_CFG_QUIRKS_AS400)
+            {
+                // See the matching comment in tapSpaceForward() -- a short
+                // final record immediately followed by a filemark is
+                // normal tape structure, not truncation.
+                short_record_before_filemark = false;
+            }
+#endif
+            if (short_record_before_filemark) {
                 // The fixed block started but never finished being filled
                 return TAP_ERROR;
             }
@@ -700,7 +727,23 @@ static void tapReadFixed(image_config_t &img, uint32_t blocks)
                 }
 
                 scsiDev.status = CHECK_CONDITION;
-                scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+#ifdef PLATFORM_AS400
+                if (img.quirks == S2S_CFG_QUIRKS_AS400)
+                {
+                    // Preserve the specific ASC/ASCQ computed above instead
+                    // of the generic reset below. Real AS/400 tape drive
+                    // wire captures (2026-09-11) show a specific code here
+                    // for TAP_FILEMARK -- 00/0Bh, not the Tandberg-manual-
+                    // documented 00/01h (FILEMARK_DETECTED) -- this drive's
+                    // real firmware deviates from its own vendor
+                    // documentation, same as its Medium Type quirk.
+                    if (result == TAP_FILEMARK) scsiDev.target->sense.asc = 0x000B;
+                }
+                else
+#endif
+                {
+                    scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+                }
                 scsiDev.target->sense.info = info;
                 scsiDev.phase = STATUS;
                 return;
@@ -774,7 +817,20 @@ static void tapReadVariable(image_config_t &img, uint32_t block_size, bool sili)
         }
 
         scsiDev.status = CHECK_CONDITION;
-        scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+#ifdef PLATFORM_AS400
+        if (img.quirks == S2S_CFG_QUIRKS_AS400)
+        {
+            // See the matching comment in tapReadFixed() -- preserve the
+            // specific ASC/ASCQ computed above (and match the real AS/400
+            // tape drive's own wire-observed 00/0Bh for TAP_FILEMARK)
+            // instead of the generic reset below.
+            if (result == TAP_FILEMARK) scsiDev.target->sense.asc = 0x000B;
+        }
+        else
+#endif
+        {
+            scsiDev.target->sense.asc = NO_ADDITIONAL_SENSE_INFORMATION;
+        }
         scsiDev.target->sense.info = info;
         scsiDev.phase = STATUS;
     } else {
@@ -1722,6 +1778,18 @@ extern "C" int scsiTapeCommand()
                 scsiDev.status = CHECK_CONDITION;
                 scsiDev.target->sense.code = NO_SENSE;
                 scsiDev.target->sense.asc = FILEMARK_DETECTED;
+#ifdef PLATFORM_AS400
+                if (img.quirks == S2S_CFG_QUIRKS_AS400)
+                {
+                    // Match the real AS/400 tape drive's wire-observed
+                    // ASC/ASCQ for hitting a filemark (see the identical
+                    // override in tapReadFixed()/tapReadVariable()) --
+                    // SPACE previously reported the generic 00/01h here,
+                    // which real-hardware-conditioned host software may
+                    // not recognize the same way.
+                    scsiDev.target->sense.asc = 0x000B;
+                }
+#endif
                 if (set_sense_info)
                     scsiDev.target->sense.info = count - actual;
                 scsiDev.phase = STATUS;
