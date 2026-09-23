@@ -21,6 +21,7 @@
 
 #include "custom_vendor_inquiry.h"
 
+#include "zpdb_profiles.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_settings.h"
@@ -36,90 +37,40 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Storage for custom VPD pages: entries shared across all SCSI IDs (not
-// per-device -- an ID with more declared pages than another just uses more
-// of the shared pool). Each entry: [0]=scsiId, [1]=pageCode, [2]=length, [3..]=data
+// Custom inquiry data is not cached in RAM. A page comes from one of two
+// places, in this order:
 //
-// MAX_CUSTOM_VPD_ENTRIES is sized per S2S_MAX_TARGETS rather than a flat
-// guess: real AS/400 disk-profile captures declare up to ~13 VPD pages each
-// (see as400_disk_definitions.txt), so a flat 16-entry table -- fine for a
-// single profiled ID -- silently overflows with just 2-3 profiled IDs
-// loaded at once. Adding the PPC tape identity (loadAS400TapeDefaults(), up
-// to 14 pages of its own, same shared pool) fits comfortably within this
-// same formula-based sizing -- the most ordinary combined config (one
-// AS/400 disk on its default identity plus one PPC tape unit) needs up to
-// 22 entries, well under the default's 96 on a board with no override.
+//   1. the flash profile store, when a profile is bound to the SCSI ID
+//      (see zpdb_profiles.h)
+//   2. the built-in AS/400 identities, which are const arrays already in
+//      flash (as400_values.h, as400_tape_values.h)
 //
-// The multiplier is deliberately modest (6, not enough for every possible
-// SCSI ID to carry a full 13-page profile simultaneously) rather than a
-// larger "cover every worst case" number: each entry costs 258 bytes
-// (see MAX_VPD_DATA_SIZE below), and this table is static RAM on a
-// platform with no swap. S2S_MAX_TARGETS*10 (160 entries on ZuluSCSI_Wide,
-// ~41.3KB) was tried and overflowed the linker's fixed 512KB RAM region by
-// 544 bytes on real hardware -- this firmware's other features (FreeRTOS,
-// lwIP, display/UI, USB, WebUI, audio) already consume most of the ~36.6KB
-// that was actually free before this table grew. *10 was sized from a
-// percentage of total RAM without accounting for that; *6 (96 entries,
-// ~24.8KB on Wide, a ~20.6KB growth) leaves real margin instead of just
-// barely fitting. Covers ~7 fully-profiled SCSI IDs at once, comfortably
-// above the "3+ IDs" scenario this fix was written to support.
-//
-// *6 assumed RAM headroom tracks S2S_MAX_TARGETS, which turned out false
-// too: ZuluSCSI_Blaster is an 8-target board (same class as plain RP2040
-// boards, which build fine at 48 entries) but also carries the full
-// networking stack, DaynaPORT, audio, display/UI, and the logic sniffer on
-// top -- far less headroom than its target count alone would suggest, and
-// it overflowed the same 512KB RAM region by 6516 bytes at 48 entries on
-// real CI. Board RAM headroom depends on each board's whole feature set,
-// not just its bus width, so a single S2S_MAX_TARGETS-scaled formula can't
-// fit every board -- overridable per-board via a build flag (see
-// ZuluSCSI_Blaster's build_flags in platformio.ini), same pattern already
-// used for PREFETCH_BUFFER_SIZE. (This branch originally carried its own,
-// smaller, non-overridable literal here (32) to avoid a rebase collision
-// with the disk-profile-loader branch's independent, larger fix to this
-// same constant -- now that both are combined, the formula-based value
-// above supersedes it, since it already exceeds what tape alone needs.)
-//
-// MAX_VPD_DATA_SIZE is 255 -- the maximum representable in the `length`
-// field below (uint8_t). The largest AS/400 disk-profile capture in tree
-// today is XCPR036 page 0xC3 at 250 bytes; pages 0xD1 / 0xD2 are 244 B.
-// Going to 255 leaves a few bytes of headroom without widening `length`.
-#ifndef MAX_CUSTOM_VPD_ENTRIES
-#define MAX_CUSTOM_VPD_ENTRIES (S2S_MAX_TARGETS * 6)
-#endif
+// Either way the bytes are copied straight into the destination buffer --
+// normally scsiDev.data -- and patched there. What used to be three static
+// tables holding a mutable per-target copy of every page is now the one byte
+// per target below, recording which built-in identity applies.
 #define MAX_VPD_DATA_SIZE 255
-static struct {
-    uint8_t scsiId;
-    uint8_t pageCode;
-    uint8_t length;
-    uint8_t data[MAX_VPD_DATA_SIZE];
-} g_custom_vpd[MAX_CUSTOM_VPD_ENTRIES];
-static int g_custom_vpd_count = 0;
 
-// Storage for custom standard inquiry data per SCSI ID
-//
-// MAX_SPD_SIZE is sized to fit the AS/400 standard INQUIRY captures
-// (DGVS09U and XCPR036 are both 164 bytes) with headroom.
-#define MAX_SPD_SIZE 192
-static struct {
-    uint8_t length;
-    uint8_t data[MAX_SPD_SIZE];
-} g_custom_spd[S2S_MAX_TARGETS];
+// Cap used when serving into the caller's buffer (scsiDev.data, at least
+// 4 kB on every real board). Deliberately larger than the 255 the old static
+// MODE SENSE table used: the captured MODE SENSE 0x3F responses run to 274
+// bytes, which that table silently truncated.
+#define ZPDB_SERVE_MAX 512
 
-// Storage for a custom MODE SENSE page 0x3F ("all pages") response per SCSI ID.
-//
-// MAX_MODESENSE_SIZE matches MAX_VPD_DATA_SIZE: the firmware's built-in
-// as400_mode_sense_all_pages blob is 220 bytes, and the extractor script
-// captures MODE SENSE(6) with an allocation length of 0xFF (255).
-#define MAX_MODESENSE_SIZE 255
-static struct {
-    uint16_t length;
-    uint8_t data[MAX_MODESENSE_SIZE];
-} g_custom_modesense[S2S_MAX_TARGETS];
+// Which built-in identity applies to a SCSI ID, chosen once when the ID is
+// configured. The data itself never leaves its const array.
+enum builtin_identity_t : uint8_t
+{
+    BUILTIN_NONE = 0,
+    BUILTIN_AS400_DISK,
+    BUILTIN_AS400_TAPE_CISC,
+    BUILTIN_AS400_TAPE_PPC
+};
+static uint8_t g_builtin[S2S_MAX_TARGETS];
 
 #ifdef PLATFORM_AS400
 // Per-SCSI-ID override for the 8-byte AS/400 serial, supplied via the
-// `AS400_DiskSerialNumber` key in [SCSI<n>] sections. When length == 8,
+// `AS400_DiskSerialNumber` key in [SCSI<X>] sections. When length == 8,
 // injectSerial() uses this value instead of the SD CID / MCU-derived default.
 static struct {
     uint8_t length;
@@ -128,7 +79,7 @@ static struct {
 
 // Per-SCSI-ID override for the 7-character IBM disk part number (FRU)
 // embedded in VPD page 0x01 at ASCII offset 5 and EBCDIC offset 29.
-// Supplied via the `AS400_DiskPartNumber` key in [SCSI<n>] sections.
+// Supplied via the `AS400_DiskPartNumber` key in [SCSI<X>] sections.
 // When length == 7, injectPartNumber() patches both ASCII and EBCDIC slots.
 static struct {
     uint8_t length;
@@ -136,21 +87,38 @@ static struct {
     uint8_t ebcdic[7];
 } g_as400_part_override[S2S_MAX_TARGETS];
 
-// BlockSize/Sectors captured from a loaded AS/400 disk profile (see
-// loadAS400ProfileFromFile() below), for a given SCSI ID. blockSize/sectors
-// are not consumed by anything yet -- live capacity reporting is always
-// computed from the actual backing image file's size, never from this. They
-// are here for the upcoming auto-image-creation feature, which needs to know
-// a profile's real capacity before it can create a correctly-sized image for
-// it. `loaded` is consumed immediately, by loadAS400Defaults() below: a
-// named profile's declared VPD page set is authoritative for that SCSI ID,
-// so any page IT doesn't have should stay absent rather than being patched
-// in from the built-in default's unrelated physical drive.
+// BlockSize/Sectors captured from a bound AS/400 disk profile (see
+// zpdbBindProfile(), below), for a given SCSI ID. They are read back by
+// getAS400ProfileCapacity(), which auto-image-creation uses to size a new
+// image for a profiled ID that has none yet; live capacity reporting is
+// always computed from the actual backing image file's size, never from
+// this. `loaded` is consumed by selectAS400Builtin() below: a named
+// profile's declared VPD page set is authoritative for that SCSI ID, so any
+// page IT doesn't have should stay absent rather than being patched in from
+// the built-in default's unrelated physical drive.
 static struct {
     uint32_t blockSize;
     uint32_t sectors;
     bool loaded;
 } g_as400_profile_info[S2S_MAX_TARGETS];
+
+// A page is now patched every time it is served, so a page whose shape the
+// serial override cannot be applied to would otherwise log the same warning
+// on every INQUIRY the host sends. One bit per page per target, so each such
+// warning is said once per boot and then stays quiet.
+#define PATCH_WARNED_SPD    0x01
+#define PATCH_WARNED_VPD80  0x02
+#define PATCH_WARNED_VPD82  0x04
+#define PATCH_WARNED_VPD83  0x08
+static uint8_t g_patch_warned[S2S_MAX_TARGETS];
+
+static bool warnOnce(uint8_t scsiId, uint8_t bit)
+{
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (g_patch_warned[id] & bit) return false;
+    g_patch_warned[id] |= bit;
+    return true;
+}
 
 // Convert a single ASCII character to IBM EBCDIC (CP037 subset).
 // Supports digits, uppercase A-Z, and space. Lowercase is uppercased first.
@@ -164,65 +132,20 @@ static uint8_t asciiToEbcdic(char c)
     if (c >= 'S' && c <= 'Z') return (uint8_t)(0xE2 + (c - 'S'));
     return 0x40;
 }
-#endif
 
-// Parse space/comma-separated hex values from a string into a byte buffer.
-// Returns number of bytes parsed.
-static int parseHexString(const char *str, uint8_t *buf, int maxlen)
-{
-    const char *ptr = str;
-    char *end;
-    int count = 0;
 
-    while (*ptr != '\0' && count < maxlen)
-    {
-        buf[count++] = (uint8_t)strtol(ptr, &end, 16);
-        if (ptr == end) break; // No conversion possible
-        ptr = end;
-        while (*ptr == ' ' || *ptr == ',') ptr++;
-    }
-    return count;
-}
-
-// Check if a custom VPD page already exists for a given SCSI ID and page code
-static bool hasCustomVPD(uint8_t scsiId, uint8_t pageCode)
-{
-    for (int i = 0; i < g_custom_vpd_count; i++)
-    {
-        if (g_custom_vpd[i].scsiId == scsiId && g_custom_vpd[i].pageCode == pageCode)
-            return true;
-    }
-    return false;
-}
-
-// Index of an already-loaded custom VPD page for a given SCSI ID and page
-// code, for in-place mutation (unlike getCustomVPD(), which copies out).
-// `startIdx` restricts the search to entries at or after that index --
-// used to distinguish pages a profile just loaded from pages that already
-// existed beforehand via an explicit [SCSI<n>] vpdXX= override, which must
-// never be touched here (it's meant to be the final, most-authoritative
-// word on that page's bytes). Returns -1 if not found.
-static int findCustomVPDIndex(uint8_t scsiId, uint8_t pageCode, int startIdx = 0)
-{
-    for (int i = startIdx; i < g_custom_vpd_count; i++)
-    {
-        if (g_custom_vpd[i].scsiId == scsiId && g_custom_vpd[i].pageCode == pageCode)
-            return i;
-    }
-    return -1;
-}
-
-#ifdef PLATFORM_AS400
-// Inject the generated serial number into a VPD page at the given offset.
+// Inject the serial number into a page at the given offset: the configured
+// AS400_DiskSerialNumber when there is one, otherwise the generated default
+// (which already mixes the SCSI ID in, see as400_get_serial_8()).
+//
 // Pass ebcdic=true for a slot documented as carrying an EBCDIC copy (e.g.
 // VPD82 offset 38) -- the serial digits are converted via asciiToEbcdic()
 // rather than copied verbatim, which is what an ASCII slot needs instead.
 static void injectSerial(uint8_t *data, int offset, uint8_t scsiId, bool ebcdic = false)
 {
     uint8_t serial[8];
-    char string[9] = {0};
-
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+
     if (g_as400_serial_override[id].length == 8)
     {
         memcpy(serial, g_as400_serial_override[id].data, 8);
@@ -241,7 +164,6 @@ static void injectSerial(uint8_t *data, int offset, uint8_t scsiId, bool ebcdic 
     {
         memcpy(data + offset, serial, 8);
     }
-    memcpy(string, serial, 8);
 }
 
 // Inject the configured 7-char IBM disk part number (FRU) into the ASCII slot
@@ -258,593 +180,84 @@ static void injectPartNumber(uint8_t *data, int asciiOffset, int ebcdicOffset, u
     if (ebcdicOffset >= 0)
         memcpy(data + ebcdicOffset, g_as400_part_override[id].ebcdic, 7);
 }
+#endif // PLATFORM_AS400
 
-// Patch a per-ID AS400_DiskSerialNumber override into an already-loaded
-// AS/400 disk profile's VPD pages (see loadAS400ProfileFromFile() below).
-// Unlike loadAS400Defaults()'s injectSerial() calls, which use offsets
-// hardcoded for the ONE built-in profile's own known page layout, this
-// works on ANY captured profile by deriving each page's injection offset
-// from the page's own self-reported length/descriptor-length bytes --
-// verified generic across every profile in as400_disk_definitions.txt as
-// of 2026-09-12 (see project memory:
-// project_as400_serial_collision_investigation.md). No-op if no
-// AS400_DiskSerialNumber override is configured for this ID.
-//
-// `startIdx` must be the value of `g_custom_vpd_count` from *before* the
-// profile started loading its pages -- restricts every lookup here to
-// pages the profile itself just added, so an explicit [SCSI<n>] vpdXX=
-// override (parsed earlier, always at a lower index) is never touched.
-// That key is documented as the final, most-authoritative word on a
-// page's bytes; silently patching serial bytes into a hand-crafted
-// override the user typed in themselves would violate that.
-static void injectSerialIntoLoadedProfile(uint8_t scsiId, int startIdx, bool spdWasEmpty)
+
+#ifdef PLATFORM_AS400
+// Decide which built-in AS/400 identity a SCSI ID falls back to when the
+// profile store has nothing for it. This used to copy the whole identity into
+// the static tables; it now only records the choice, and the getters below
+// read the const arrays directly when a page is actually asked for.
+static void selectAS400Builtin(uint8_t scsiId, S2S_CFG_TYPE type)
 {
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
-    if (g_as400_serial_override[id].length != 8) return;
 
-    // SPD (standard INQUIRY response) patching at offset 36 -- structurally
-    // guaranteed by the SCSI-2 INQUIRY format (8-byte header + 8-byte
-    // Vendor ID + 16-byte Product ID + 4-byte Revision, all fixed-width),
-    // and the byte-visible serial sits there in every real capture
-    // checked. Hardware-confirmed (2026-09-20, CISC): whatever consumes
-    // this specific field reads it as a 28-bit binary value, not free
-    // text -- an unconstrained value made DST's "Display Non-Configured
-    // Units" screen show a masked/invalid serial. Force the leading
-    // character to '0' right here, at this SPD write only -- NOT inside
-    // as400_get_serial_8() itself, which also backs LOG SENSE page 0x31
-    // for every AS/400 FIXED disk regardless of override; forcing it
-    // there broke real PPC load-source recognition (SRC B1014504) the
-    // first time this was tried, since page 0x31 does not share this
-    // constraint.
-    if (spdWasEmpty && g_custom_spd[scsiId].length >= 44)
+    if (!(g_scsi_settings.getSystem()->quirks & S2S_CFG_QUIRKS_AS400))
+        return;
+
+    if (type == S2S_CFG_FIXED)
     {
-        injectSerial(g_custom_spd[scsiId].data, 36, scsiId);
-        g_custom_spd[scsiId].data[36] = '0';
-        logmsg("---- Patched custom serial into SPD for SCSI ID ", (int)scsiId, " at offset 36");
-    }
-    else if (spdWasEmpty && g_custom_spd[scsiId].length > 0)
-    {
-        logmsg("---- WARNING: SPD for SCSI ID ", (int)scsiId, " is only ",
-               (int)g_custom_spd[scsiId].length, " bytes -- too short to patch, serial override not applied to SPD");
-    }
+        // A bound profile is authoritative for the ID: its captured page set
+        // stands on its own, and filling in a page it does not have from the
+        // built-in default would splice a different physical drive's identity
+        // into an otherwise self-consistent profile -- confirmed in practice
+        // for VPD pages 0x01/0x82/0x83.
+        if (g_as400_profile_info[id].loaded)
+            return;
 
-    // VPD80 (Unit Serial Number): the real captured field width varies
-    // (8 or 10 ASCII characters observed so far, always right-justified,
-    // space/zero-padded on the left), but the actual per-drive-varying
-    // digits are always the LAST 8 bytes of the page -- confirmed across
-    // every VPD80 capture in the definitions file regardless of its
-    // declared length (16 or 20 bytes seen so far). Requires at least 12
-    // bytes total (4-byte page header + >=8 payload) so the write can
-    // never reach into the header itself.
-    int idx = findCustomVPDIndex(scsiId, 0x80, startIdx);
-    if (idx >= 0 && g_custom_vpd[idx].length >= 12)
-    {
-        injectSerial(g_custom_vpd[idx].data, g_custom_vpd[idx].length - 8, scsiId);
-        logmsg("---- Patched custom serial into VPD80 for SCSI ID ", (int)scsiId,
-               " at offset ", (int)(g_custom_vpd[idx].length - 8));
-    }
-    else if (idx >= 0)
-    {
-        logmsg("---- WARNING: VPD80 for SCSI ID ", (int)scsiId, " is only ",
-               (int)g_custom_vpd[idx].length, " bytes -- too short to patch, serial override not applied to this page");
-    }
-
-    // VPD82: a fixed-format IBM page, always exactly 48 bytes of payload
-    // (52 with the page header) in every real capture seen -- ASCII copy
-    // of the serial at offset 14, an EBCDIC copy at offset 38. Gate
-    // strictly on the expected length so an unexpected future capture
-    // with a differently-shaped VPD82 gets skipped, not silently
-    // corrupted.
-    idx = findCustomVPDIndex(scsiId, 0x82, startIdx);
-    if (idx >= 0 && g_custom_vpd[idx].length == 52)
-    {
-        injectSerial(g_custom_vpd[idx].data, 14, scsiId);
-        injectSerial(g_custom_vpd[idx].data, 38, scsiId, true);
-        logmsg("---- Patched custom serial into VPD82 (ASCII+EBCDIC) for SCSI ID ", (int)scsiId);
-    }
-    else if (idx >= 0)
-    {
-        logmsg("---- WARNING: VPD82 for SCSI ID ", (int)scsiId, " is ",
-               (int)g_custom_vpd[idx].length, " bytes, not the expected 52 -- serial override not applied to this page");
-    }
-
-    // VPD83 (Device Identification): the ASCII T10-vendor-ID designator
-    // shape (codeset 0x02, designator type 0x01) gets the same 8-byte
-    // serial substitution as the pages above. `08K0304`/`08K0264` use a
-    // binary NAA/EUI-64 designator instead (codeset 0x01, type 0x02 or
-    // 0x03) -- an ASCII/EBCDIC-style substitution doesn't apply there
-    // (every byte value is legal in a binary field, unlike a character
-    // set), so that shape XORs the descriptor's last byte with the SCSI
-    // ID instead: ID 0 keeps the captured value, every other ID lands on
-    // a distinct one. Cheap and sufficient to stop two SCSI IDs sharing
-    // one profile from reporting an identical logical-unit identifier (an
-    // initiator seeing two targets with the same one may treat them as
-    // two paths to a single device, per SPC-3 7.6.3) without needing to
-    // understand IBM's opaque binary encoding at all. The per-model/
-    // revision 2-character prefix seen before the ASCII serial
-    // (`68`/`F8`/etc.) is preserved automatically either way, since it's
-    // part of the untouched, already-captured bytes ahead of the
-    // injection point. Injection offset for the ASCII case is simply the
-    // descriptor's own declared length byte (data[7]): descriptor data
-    // starts at a fixed buffer offset 8 (4-byte page header + 4-byte
-    // descriptor header, both fixed by the SCSI spec), and the serial is
-    // the descriptor's own last 8 bytes, so offset = 8 + desc_len - 8 ==
-    // desc_len.
-    idx = findCustomVPDIndex(scsiId, 0x83, startIdx);
-    if (idx >= 0 && g_custom_vpd[idx].length >= 16)
-    {
-        uint8_t *data = g_custom_vpd[idx].data;
-        uint8_t codeset = data[4] & 0x0F;
-        uint8_t desigType = data[5] & 0x0F;
-        uint8_t descLen = data[7];
-        if (codeset == 0x02 && desigType == 0x01 && descLen >= 8 &&
-            (8 + descLen) <= g_custom_vpd[idx].length)
-        {
-            injectSerial(data, descLen, scsiId);
-            logmsg("---- Patched custom serial into VPD83 T10-vendor-ID designator for SCSI ID ", (int)scsiId);
-        }
-        else if (codeset == 0x01 && (desigType == 0x02 || desigType == 0x03) &&
-                 descLen >= 1 && (8 + descLen) <= g_custom_vpd[idx].length)
-        {
-            data[8 + descLen - 1] ^= (uint8_t)(scsiId & S2S_CFG_TARGET_ID_BITS);
-            logmsg("---- Patched VPD83 binary EUI-64/NAA designator (XOR) for SCSI ID ", (int)scsiId);
-        }
-        else
-        {
-            logmsg("---- VPD83 for SCSI ID ", (int)scsiId, " is not a recognized T10-vendor-ID/EUI-64/NAA "
-                   "designator shape (codeset=", (int)codeset, " type=", (int)desigType, ") -- left untouched");
-        }
-    }
-
-    logmsg("---- injectSerialIntoLoadedProfile() done for SCSI ID ", (int)scsiId,
-           " (VPD80 idx=", findCustomVPDIndex(scsiId, 0x80, startIdx),
-           " VPD82 idx=", findCustomVPDIndex(scsiId, 0x82, startIdx),
-           " VPD83 idx=", findCustomVPDIndex(scsiId, 0x83, startIdx), ")");
-}
-#endif
-
-#ifdef PLATFORM_AS400
-// Read a hex-byte field from a captured AS/400 disk profile section,
-// reassembling it if the extractor split it into <field>_0, <field>_1, ...
-// <field>_chunks (see emit_hex_field() in utils/extract_as400_disk_data.sh --
-// fields short enough to fit one INI line are stored plain under <field>).
-// Returns the number of bytes decoded, 0 if the field is absent entirely.
-static int readProfileHexField(const char *section, const char *field, uint8_t *buf, int maxlen)
-{
-    // static, not a stack local: this is called up to 255 times in a row from
-    // loadAS400ProfileFromFile()'s VPD-page loop, nested several calls deep
-    // inside the boot-time SCSI ID scan. A 512-byte stack local here, on top
-    // of that scan's own buffers, was enough to overflow the stack on real
-    // hardware (CFSR StackOverflow, RP2350, confirmed via a real crash log).
-    // Safe as static: this function is only ever called sequentially, never
-    // reentrantly, from this single-threaded boot-time scan.
-    static char tmp[512];
-
-    if (ini_gets(section, field, "", tmp, sizeof(tmp), AS400_PROFILES_FILE) && tmp[0] != '\0')
-    {
-        return parseHexString(tmp, buf, maxlen);
-    }
-
-    char chunkKey[24];
-    snprintf(chunkKey, sizeof(chunkKey), "%s_chunks", field);
-    long numChunks = ini_getl(section, chunkKey, 0, AS400_PROFILES_FILE);
-    if (numChunks <= 0) return 0;
-
-    int total = 0;
-    for (long i = 0; i < numChunks && total < maxlen; i++)
-    {
-        snprintf(chunkKey, sizeof(chunkKey), "%s_%ld", field, i);
-        if (!ini_gets(section, chunkKey, "", tmp, sizeof(tmp), AS400_PROFILES_FILE))
-            break;
-        total += parseHexString(tmp, buf + total, maxlen - total);
-    }
-    return total;
-}
-
-// Load a named AS/400 disk profile from AS400_PROFILES_FILE
-// (as400_disk_definitions.txt, captured by utils/extract_as400_disk_data.sh)
-// into this SCSI ID's custom SPD/VPD/MODE SENSE storage. Only fills in data
-// not already supplied by this ID's own [SCSI<n>] vpdXX/spd keys -- those
-// still take precedence, same as loadAS400Defaults() below.
-//
-// Fails loud rather than silently falling back to the single built-in
-// profile: a missing/empty definitions file or a typo'd profile name should
-// be an obvious, logged error, not a quiet switch to the wrong drive.
-static void loadAS400ProfileFromFile(uint8_t scsiId, const char *profileName)
-{
-    // Captured before this profile adds any pages of its own, so
-    // injectSerialIntoLoadedProfile() at the end of this function only
-    // ever touches pages loaded from the profile itself -- never an
-    // explicit [SCSI<n>] vpdXX= override, which was already parsed (and
-    // would already occupy a lower index) before this function was called.
-    int vpdStartIdx = g_custom_vpd_count;
-
-    // Same idea for SPD, which has no per-entry index to compare against
-    // (it's a single flat per-ID slot, not an appendable list like VPD) --
-    // a plain before/after emptiness check serves the same purpose: only
-    // patch it if THIS call is the one that filled it in.
-    bool spdWasEmpty = (g_custom_spd[scsiId].length == 0);
-
-    FsFile f = SD.open(AS400_PROFILES_FILE, O_RDONLY);
-    bool fileUsable = f.isOpen() && f.fileSize() > 0;
-    if (f.isOpen()) f.close();
-    if (!fileUsable)
-    {
-        logmsg("---- ERROR: AS/400 disk profile '", profileName, "' requested for SCSI ID ",
-               (int)scsiId, " but ", AS400_PROFILES_FILE, " is missing or empty");
+        g_builtin[id] = BUILTIN_AS400_DISK;
+        logmsg("---- Using built-in AS/400 disk inquiry data for SCSI ID ", (int)scsiId);
         return;
     }
 
-    if (!ini_hassection(profileName, AS400_PROFILES_FILE))
-    {
-        logmsg("---- ERROR: AS/400 disk profile '", profileName, "' not found in ",
-               AS400_PROFILES_FILE, " for SCSI ID ", (int)scsiId);
-        return;
-    }
-
-    // static for the same reason as readProfileHexField()'s tmp[] above --
-    // one less sizable buffer stacked on top of an already-deep call chain.
-    static uint8_t tmpbuf[MAX_MODESENSE_SIZE]; // MAX_MODESENSE_SIZE == MAX_VPD_DATA_SIZE (255)
-    int len;
-
-    if (g_custom_spd[scsiId].length == 0)
-    {
-        len = readProfileHexField(profileName, "SPD", g_custom_spd[scsiId].data, MAX_SPD_SIZE);
-        if (len > 0) g_custom_spd[scsiId].length = len;
-    }
-
-    // Read VPD page 0x00 (the standard "supported pages" list, SPC format:
-    // byte 0 periph qualifier/type, byte 1 page code, bytes 2-3 page list
-    // length, bytes 4.. the actual page codes) first, and only attempt the
-    // specific pages it declares - typically ~8 - instead of blindly trying
-    // all 255 possible page codes. minIni has no index and re-scans the
-    // whole file from the start on every single query, so trying all 255
-    // costs ~247 wasted full-file scans per profile load: measured at ~9
-    // seconds against a real, 400+-line as400_disk_definitions.txt on real
-    // hardware, long enough to matter for AS/400 DASD-discovery timing.
-    if (!hasCustomVPD(scsiId, 0x00))
-    {
-        len = readProfileHexField(profileName, "VPD00", tmpbuf, MAX_VPD_DATA_SIZE);
-        if (len > 0 && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES)
-        {
-            int idx = g_custom_vpd_count;
-            g_custom_vpd[idx].scsiId = scsiId;
-            g_custom_vpd[idx].pageCode = 0x00;
-            g_custom_vpd[idx].length = len;
-            memcpy(g_custom_vpd[idx].data, tmpbuf, len);
-            g_custom_vpd_count++;
-        }
-        else if (len > 0)
-        {
-            logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
-                   " entries), VPD page 0x00 for SCSI ID ", (int)scsiId, " was not loaded");
-        }
-    }
-
-    uint8_t vpd00[MAX_VPD_DATA_SIZE];
-    uint8_t vpd00_len = 0;
-    getCustomVPD(scsiId, 0x00, vpd00, &vpd00_len);
-
-    if (vpd00_len >= 4)
-    {
-        int declared_len = (vpd00[2] << 8) | vpd00[3];
-        int available = vpd00_len - 4;
-        if (declared_len > available) declared_len = available;
-
-        int i;
-        for (i = 0; i < declared_len && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; i++)
-        {
-            int page = vpd00[4 + i];
-            if (page == 0x00 || hasCustomVPD(scsiId, page))
-                continue; // page 0 already handled above; others already set via [SCSI<n>] vpdXX
-
-            char field[8];
-            snprintf(field, sizeof(field), "VPD%02X", page);
-            len = readProfileHexField(profileName, field, tmpbuf, MAX_VPD_DATA_SIZE);
-            if (len > 0)
-            {
-                int idx = g_custom_vpd_count;
-                g_custom_vpd[idx].scsiId = scsiId;
-                g_custom_vpd[idx].pageCode = page;
-                g_custom_vpd[idx].length = len;
-                memcpy(g_custom_vpd[idx].data, tmpbuf, len);
-                g_custom_vpd_count++;
-            }
-        }
-
-        if (i < declared_len)
-        {
-            logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
-                   " entries), some VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
-        }
-    }
-    else
-    {
-        // No VPD page 0x00 ("supported pages") in this capture -- some
-        // CISC-era drives (e.g. 45G9463/45G9463-1/86G9124/55F9806) genuinely
-        // don't support it as a discovery mechanism, even though they still
-        // carry real data on other pages (see as400_disk_definitions.txt).
-        // Without VPD00 the discovery loop above never runs at all, so
-        // VPD01/02/03/80/82 etc. were unreachable through AS400_DiskProfile=
-        // for these profiles even though the bytes are sitting right there
-        // in the file -- confirmed on real 9401-P02 hardware: a profile
-        // like this loaded its SPD fine but served zero VPD pages, and IPL
-        // halted early. Fall back to a small, curated list of page codes
-        // actually seen across the captured dataset, instead of the full
-        // 255-code brute force the VPD00 path exists specifically to avoid
-        // (~9s on real hardware against a 400+-line definitions file).
-        static const uint8_t curatedPages[] = {
-            0x01, 0x02, 0x03, 0x80, 0x81, 0x82, 0x83,
-            0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC7, 0xC8, 0xD1, 0xD2
-        };
-        size_t i;
-        for (i = 0; i < sizeof(curatedPages) && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; i++)
-        {
-            int page = curatedPages[i];
-            if (hasCustomVPD(scsiId, page))
-                continue; // already set via [SCSI<n>] vpdXX override
-
-            char field[8];
-            snprintf(field, sizeof(field), "VPD%02X", page);
-            len = readProfileHexField(profileName, field, tmpbuf, MAX_VPD_DATA_SIZE);
-            if (len > 0)
-            {
-                int idx = g_custom_vpd_count;
-                g_custom_vpd[idx].scsiId = scsiId;
-                g_custom_vpd[idx].pageCode = page;
-                g_custom_vpd[idx].length = len;
-                memcpy(g_custom_vpd[idx].data, tmpbuf, len);
-                g_custom_vpd_count++;
-            }
-        }
-        if (i < sizeof(curatedPages))
-        {
-            logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
-                   " entries), some VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
-        }
-    }
-
-    if (g_custom_modesense[scsiId].length == 0)
-    {
-        len = readProfileHexField(profileName, "ModeSense3F", tmpbuf, MAX_MODESENSE_SIZE);
-        if (len > 0)
-        {
-            g_custom_modesense[scsiId].length = len;
-            memcpy(g_custom_modesense[scsiId].data, tmpbuf, len);
-        }
-    }
-
-    long blockSize = ini_getl(profileName, "BlockSize", 0, AS400_PROFILES_FILE);
-    long sectors = ini_getl(profileName, "Sectors", 0, AS400_PROFILES_FILE);
-    if (blockSize > 0) g_as400_profile_info[scsiId].blockSize = (uint32_t)blockSize;
-    if (sectors > 0) g_as400_profile_info[scsiId].sectors = (uint32_t)sectors;
-    g_as400_profile_info[scsiId].loaded = true;
-
-    // Apply this ID's own AS400_DiskSerialNumber override (parsed earlier
-    // in parseCustomInquiryData(), before this function runs) on top of
-    // whatever the profile just supplied -- lets two SCSI IDs share the
-    // same AS400_DiskProfile= without OS/400 seeing identical serials.
-    // No-op if no override is configured for this ID.
-    injectSerialIntoLoadedProfile(scsiId, vpdStartIdx, spdWasEmpty);
-
-    logmsg("---- Loaded AS/400 disk profile '", profileName, "' for SCSI ID ", (int)scsiId,
-           " (BlockSize=", (int)blockSize, " Sectors=", (int)sectors, ")");
-}
-#endif
-
-#ifdef PLATFORM_AS400
-// Populate default AS/400 inquiry and VPD data
-// Only fills in data that wasn't already provided via INI.
-static void loadAS400Defaults(uint8_t scsiId,S2S_CFG_TYPE type)
-{
-    bool loaded_default_data = false;
-
-    if (!((g_scsi_settings.getSystem()->quirks & S2S_CFG_QUIRKS_AS400) && type== S2S_CFG_FIXED))
+    if (type != S2S_CFG_SEQUENTIAL)
         return;
 
-        // Default standard inquiry (SPD) with serial and part number injected.
-    // The SPD carries only an ASCII copy of the 7-char IBM disk part number
-    // at offsets 114-120 — there is no EBCDIC slot here, unlike VPD page 0x01.
-    if (g_custom_spd[scsiId].length == 0)
-    {
-        size_t len = AS400VendorInquiryLen;
-        if (len > MAX_SPD_SIZE) len = MAX_SPD_SIZE;
-        memcpy(g_custom_spd[scsiId].data, AS400VendorInquiry, len);
-        // Patch vendor (bytes 8-15) and product ID (bytes 16-31) from device
-        // settings so that [SCSI<X>] and [SCSIn] Vendor/Product overrides take
-        // effect even when the AS/400 default SPD is active.
-        const scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(scsiId);
-        if (len >= 16)
-            memcpy(g_custom_spd[scsiId].data + 8, devCfg->vendor, sizeof(devCfg->vendor));
-        if (len >= 32)
-            memcpy(g_custom_spd[scsiId].data + 16, devCfg->prodId, sizeof(devCfg->prodId));
-        if (len >= 46)
-        {
-            // Same 28-bit-value SPD constraint as
-            // injectSerialIntoLoadedProfile()'s named-profile path above --
-            // force the leading character here at the SPD write only, not
-            // inside as400_get_serial_8() itself. See that function's own
-            // comment for why: it also backs LOG SENSE page 0x31, which
-            // does not share this constraint and broke on real PPC
-            // hardware when this was forced there instead.
-            injectSerial(g_custom_spd[scsiId].data, 38, scsiId);
-            g_custom_spd[scsiId].data[38] = '0';
-        }
-        if (len >= 121)
-            injectPartNumber(g_custom_spd[scsiId].data, 114, -1, scsiId);
-        g_custom_spd[scsiId].length = len;
-        loaded_default_data = true;
-    }
-
-    // Default VPD pages. Skipped entirely once a named profile is active for
-    // this ID (see loadAS400ProfileFromFile()): that profile's own captured
-    // page set is authoritative, and patching in a page it doesn't have from
-    // the built-in default would splice a different, unrelated physical
-    // drive's identity data into an otherwise self-consistent profile -
-    // confirmed in practice for VPD pages 0x01/0x82/0x83 on a profile that
-    // doesn't happen to capture them.
-    size_t p;
-    for (p = 0; p < AS400VitalPagesLen && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; p++)
-    {
-        uint8_t pageLen = AS400VitalPages[p][0]; // first byte is length
-        if (pageLen < 2) continue;
-        uint8_t pageCode = AS400VitalPages[p][2]; // page code at offset 2 in data
-
-        if (hasCustomVPD(scsiId, pageCode) || g_as400_profile_info[scsiId].loaded)
-            continue; // INI override, or an active named profile, takes precedence
-
-        loaded_default_data = true;
-        int idx = g_custom_vpd_count;
-        g_custom_vpd[idx].scsiId = scsiId;
-        g_custom_vpd[idx].pageCode = pageCode;
-        g_custom_vpd[idx].length = pageLen;
-        if (pageLen > MAX_VPD_DATA_SIZE) g_custom_vpd[idx].length = MAX_VPD_DATA_SIZE;
-        memcpy(g_custom_vpd[idx].data, &AS400VitalPages[p][1], g_custom_vpd[idx].length);
-
-        // Inject serial into pages that contain it
-        if (pageCode == 0x80 && g_custom_vpd[idx].length >= 20)
-            injectSerial(g_custom_vpd[idx].data, 12, scsiId); // offset 12 in page data
-        else if (pageCode == 0x82 && g_custom_vpd[idx].length >= 24)
-        {
-            // Offset 14, not 16 -- landmark-verified (search for the "IBM"
-            // string terminator, read the 8 bytes before it) across 7
-            // independently captured real drives (59H7001, 59H6611,
-            // 9V8006-041, 86G9124, 55F9806, 45G9463, 45G9463-1), spanning
-            // multiple product families. The shipped offset of 16 was off
-            // by 2 relative to every real drive checked.
-            injectSerial(g_custom_vpd[idx].data, 14, scsiId);
-            // VPD82's vendor-specific area also carries an EBCDIC copy of
-            // the same serial (SCSI-2 8.3.4.1 table 103 defines the
-            // structure, not IBM's use of it) -- offset 38, same as
-            // injectSerialIntoLoadedProfile()'s named-profile path above,
-            // verified against every VPD82 capture in
-            // as400_disk_definitions.txt. Left unpatched here previously:
-            // this default (no AS400_DiskProfile=) identity path shares
-            // the built-in 09L4044 identity across every SCSI ID that
-            // falls back to it, so its own VPD82 needs the same ASCII+
-            // EBCDIC treatment to stay internally consistent.
-            if (g_custom_vpd[idx].length >= 46)
-                injectSerial(g_custom_vpd[idx].data, 38, scsiId, true);
-        }
-        else if (pageCode == 0x83 && g_custom_vpd[idx].length >= 42)
-            injectSerial(g_custom_vpd[idx].data, 34, scsiId);
-        else if (pageCode == 0xD1 && g_custom_vpd[idx].length >= 78)
-            injectSerial(g_custom_vpd[idx].data, 70, scsiId);
-
-        // Inject configured IBM disk part number (FRU) into VPD page 0x01.
-        // ASCII slot at offset 5 and EBCDIC slot at offset 29, 7 bytes each.
-        if (pageCode == 0x01 && g_custom_vpd[idx].length >= 36)
-            injectPartNumber(g_custom_vpd[idx].data, 5, 29, scsiId);
-
-        g_custom_vpd_count++;
-    }
-    if (p < AS400VitalPagesLen)
-    {
-        logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
-               " entries), some default VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
-    }
-    if (loaded_default_data)
-    {
-        logmsg("---- Loaded default AS/400 inquiry data for SCSI ID ", (int) scsiId);
-    }
-}
-
-// Populate default AS/400 tape identity data (real captures from a real
-// CISC-era and a real PPC-era tape drive, see as400_tape_values.h). Kept
-// separate from loadAS400Defaults() above rather than folding tape branches
-// into it -- the data shape and injection semantics differ enough (no
-// per-page serial injection for tape; the CISC variant has no VPD at all)
-// that sharing the function would risk the disk path for no benefit. Only
-// fills in data that wasn't already provided via INI (mirrors
-// loadAS400Defaults()'s own precedence rules).
-static void loadAS400TapeDefaults(uint8_t scsiId, S2S_CFG_TYPE type)
-{
-    if (!((g_scsi_settings.getSystem()->quirks & S2S_CFG_QUIRKS_AS400) && type == S2S_CFG_SEQUENTIAL))
-        return;
-
-    scsi_device_preset_t preset = g_scsi_settings.getDevicePreset(scsiId);
-
-    const uint8_t *inquiry = nullptr; size_t inquiryLen = 0;
-    const uint8_t *modeSense = nullptr; size_t modeSenseLen = 0;
-    const uint8_t (*vitalPages)[255] = nullptr; size_t vitalPagesLen = 0;
-    const char *presetName = nullptr;
-
-    switch (preset)
+    switch (g_scsi_settings.getDevicePreset(scsiId))
     {
         case DEV_PRESET_AS400_BS520: [[fallthrough]];
         case DEV_PRESET_AS400_CISC:
-            inquiry = AS400TapeCISCVendorInquiry; inquiryLen = AS400TapeCISCVendorInquiryLen;
-            modeSense = as400_tape_cisc_mode_sense_all_pages; modeSenseLen = as400_tape_cisc_mode_sense_all_pagesLen;
-            // No VPD table -- the real captured CISC drive doesn't support VPD/EVPD at all.
-            presetName = "CISC";
+            // The real captured CISC drive does not support VPD/EVPD at all,
+            // so this identity is standard INQUIRY and MODE SENSE only.
+            g_builtin[id] = BUILTIN_AS400_TAPE_CISC;
+            logmsg("---- Using built-in AS/400 CISC tape inquiry data for SCSI ID ",
+                   (int)scsiId);
             break;
+
         case DEV_PRESET_AS400_BS522: [[fallthrough]];
         case DEV_PRESET_AS400_PPC:
-            inquiry = AS400TapePPCVendorInquiry; inquiryLen = AS400TapePPCVendorInquiryLen;
-            modeSense = as400_tape_ppc_mode_sense_all_pages; modeSenseLen = as400_tape_ppc_mode_sense_all_pagesLen;
-            vitalPages = AS400TapePPCVitalPages; vitalPagesLen = AS400TapePPCVitalPagesLen;
-            presetName = "PPC";
+            g_builtin[id] = BUILTIN_AS400_TAPE_PPC;
+            logmsg("---- Using built-in AS/400 PPC tape inquiry data for SCSI ID ",
+                   (int)scsiId);
             break;
+
         default:
             logmsg("---- AS/400 tape quirk active for SCSI ID ", (int)scsiId,
                    " but no Device=AS400_CISC/AS400_PPC set for this ID -- leaving generic tape identity");
-            return;
-    }
-
-    bool loaded_default_data = false;
-
-    if (g_custom_spd[scsiId].length == 0)
-    {
-        size_t len = inquiryLen;
-        if (len > MAX_SPD_SIZE) len = MAX_SPD_SIZE;
-        memcpy(g_custom_spd[scsiId].data, inquiry, len);
-        g_custom_spd[scsiId].length = len;
-        loaded_default_data = true;
-    }
-
-    if (g_custom_modesense[scsiId].length == 0)
-    {
-        size_t len = modeSenseLen;
-        if (len > MAX_MODESENSE_SIZE) len = MAX_MODESENSE_SIZE;
-        memcpy(g_custom_modesense[scsiId].data, modeSense, len);
-        g_custom_modesense[scsiId].length = len;
-        loaded_default_data = true;
-    }
-
-    if (vitalPages != nullptr)
-    {
-        size_t p;
-        for (p = 0; p < vitalPagesLen && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; p++)
-        {
-            uint8_t pageLen = vitalPages[p][0]; // first byte is length
-            if (pageLen < 2) continue;
-            uint8_t pageCode = vitalPages[p][2]; // page code at offset 2 in data
-
-            if (hasCustomVPD(scsiId, pageCode))
-                continue; // an explicit [SCSI<n>] vpdXX override takes precedence
-
-            loaded_default_data = true;
-            int idx = g_custom_vpd_count;
-            g_custom_vpd[idx].scsiId = scsiId;
-            g_custom_vpd[idx].pageCode = pageCode;
-            g_custom_vpd[idx].length = pageLen;
-            if (pageLen > MAX_VPD_DATA_SIZE) g_custom_vpd[idx].length = MAX_VPD_DATA_SIZE;
-            memcpy(g_custom_vpd[idx].data, &vitalPages[p][1], g_custom_vpd[idx].length);
-            g_custom_vpd_count++;
-        }
-        if (p < vitalPagesLen)
-        {
-            logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
-                   " entries), some default tape VPD pages for SCSI ID ", (int)scsiId, " were not loaded");
-        }
-    }
-
-    if (loaded_default_data)
-    {
-        logmsg("---- Loaded default AS/400 ", presetName, " tape inquiry data for SCSI ID ", (int)scsiId);
+            break;
     }
 }
-#endif
+
+// Look up one page in a built-in vital-product-data table. Each entry is
+// [0] = length, [1..] = the page itself, so the page code sits at offset 1
+// of the page data.
+static const uint8_t *findBuiltinVPD(const uint8_t (*pages)[255], size_t count,
+                                     uint8_t pageCode, uint8_t *length)
+{
+    for (size_t p = 0; p < count; p++)
+    {
+        uint8_t pageLen = pages[p][0];
+        if (pageLen < 2) continue;
+
+        if (pages[p][2] == pageCode)
+        {
+            *length = (pageLen > MAX_VPD_DATA_SIZE) ? MAX_VPD_DATA_SIZE : pageLen;
+            return &pages[p][1];
+        }
+    }
+    return nullptr;
+}
+#endif // PLATFORM_AS400
 
 // Resets shared storage for ALL SCSI IDs. Must be called exactly once before
 // the scan loop that calls parseCustomInquiryData() once per discovered ID --
@@ -855,75 +268,72 @@ static void loadAS400TapeDefaults(uint8_t scsiId, S2S_CFG_TYPE type)
 // data differing across multiple IDs at once.
 void resetCustomInquiryData()
 {
-    g_custom_vpd_count = 0;
-    memset(g_custom_spd, 0, sizeof(g_custom_spd));
-    memset(g_custom_modesense, 0, sizeof(g_custom_modesense));
+    zpdbUnbindAll();
+    memset(g_builtin, 0, sizeof(g_builtin));
 #ifdef PLATFORM_AS400
     memset(g_as400_serial_override, 0, sizeof(g_as400_serial_override));
     memset(g_as400_part_override, 0, sizeof(g_as400_part_override));
     memset(g_as400_profile_info, 0, sizeof(g_as400_profile_info));
+    memset(g_patch_warned, 0, sizeof(g_patch_warned));
 #endif
 }
 
+#ifdef PLATFORM_AS400
+// Read one AS400_* key for a SCSI ID. `dynamic_section` is [SCSIn] when this
+// ID is the one an SCA backplane handed out at boot, and NULL otherwise; a key
+// set there wins over the same key in the ID's own [SCSI<X>] section. That is
+// the precedence ZuluSCSISettings::applyDynamicSectionOverrides() already
+// gives ordinary device settings, and it is what lets a card keep working in
+// any backplane slot: [SCSIn] describes "whichever ID I turn out to be".
+//
+// Resolved per key rather than per section, so a config can keep some keys in
+// [SCSIn] and the rest in [SCSI<X>] without the mere presence of [SCSIn]
+// hiding the latter.
+static int readAS400Key(const char *section, const char *dynamic_section,
+                        const char *key, char *out, size_t outlen)
+{
+    if (dynamic_section != NULL)
+    {
+        int len = ini_gets(dynamic_section, key, "", out, outlen, CONFIGFILE);
+        if (len > 0 && out[0] != '\0')
+        {
+            return len;
+        }
+    }
+    return ini_gets(section, key, "", out, outlen, CONFIGFILE);
+}
+#endif // PLATFORM_AS400
+
 void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
 {
-    // static, not a stack local: this function calls into
-    // loadAS400ProfileFromFile() (AS400_DiskProfile=) with this buffer still
-    // live on the stack, which itself nests further into
-    // readProfileHexField()'s SD-card I/O -- the exact "sizable buffer
-    // stacked on top of an already-deep call chain" shape that overflowed
-    // the stack once already (see readProfileHexField()'s own tmp[], fixed
-    // in 582e57a) -- just one frame further out, and missed by that fix.
-    // Confirmed via a real crash log (CFSR StackOverflow, RP2350) with
-    // AS400_DiskProfile = "45G9463" configured on the crashing ID. Safe as
-    // static: this function is only ever called sequentially, never
-    // reentrantly, from the single-threaded boot-time SCSI ID scan.
+#ifdef PLATFORM_AS400
+    // static, not a stack local: this runs from the boot-time SCSI ID scan,
+    // on a call chain that has overflowed the stack on real hardware once
+    // already with a buffer this size stacked on top of it (CFSR
+    // StackOverflow, RP2350, fixed in 582e57a). Safe as static: this function
+    // is only ever called sequentially, never reentrantly, from that
+    // single-threaded scan.
     static char tmp[512];
     char section[SCSI_INI_SECTION_SIZE];
-    char key[8];
 
     scsiGetIniSection(scsiId, section, sizeof(section));
 
-    // Parse VPD pages: vpd00, vpd80, etc.
-    int page;
-    for (page = 0; page < 0xFF && g_custom_vpd_count < MAX_CUSTOM_VPD_ENTRIES; page++)
+    // The run-time acquired ID also answers to [SCSIn], which is where a config
+    // that has to survive being moved between backplane slots keeps its AS400_*
+    // keys. readAS400Key() below lets those override this ID's own [SCSI<X>]
+    // section.
+    const char *dynamic_section = NULL;
+#ifdef DYNAMIC_SCSI_ID
+    int8_t dynamic_id = scsiDiskGetDynamicId();
+    if (dynamic_id >= 0 && (scsiId & S2S_CFG_TARGET_ID_BITS) == (uint8_t)dynamic_id)
     {
-        snprintf(key, sizeof(key), "vpd%02x", page);
-        if (ini_gets(section, key, "", tmp, sizeof(tmp), CONFIGFILE))
-        {
-            int idx = g_custom_vpd_count;
-            g_custom_vpd[idx].scsiId = scsiId;
-            g_custom_vpd[idx].pageCode = page;
-            g_custom_vpd[idx].length = parseHexString(tmp, g_custom_vpd[idx].data, MAX_VPD_DATA_SIZE);
-            if (g_custom_vpd[idx].length > 0)
-            {
-                logmsg("---- Custom VPD page 0x", key + 3, " for SCSI ID ", scsiId,
-                        ": ", (int)g_custom_vpd[idx].length, " bytes");
-                g_custom_vpd_count++;
-            }
-        }
+        dynamic_section = DYNAMIC_SCSI_INI_SECTION;
     }
+#endif // DYNAMIC_SCSI_ID
 
-    if (page < 0xFF)
-    {
-        logmsg("---- WARNING: custom VPD table full (", MAX_CUSTOM_VPD_ENTRIES,
-               " entries), SCSI ID ", scsiId, " vpdXX overrides for page number ",
-               page, " and above were not checked");
-    }
-
-    // Parse standard inquiry override: spd=
-    if (ini_gets(section, "spd", "", tmp, sizeof(tmp), CONFIGFILE))
-    {
-        g_custom_spd[scsiId].length = parseHexString(tmp, g_custom_spd[scsiId].data, MAX_SPD_SIZE);
-        if (g_custom_spd[scsiId].length > 0)
-        {
-            logmsg("---- Custom SPD for SCSI ID ", scsiId, ": ", (int)g_custom_spd[scsiId].length, " bytes");
-        }
-    }
-#ifdef PLATFORM_AS400
     // Parse AS/400 serial override: AS400_DiskSerialNumber=<up to 8 chars>
     // Shorter values are right-padded with ASCII spaces; longer values are truncated.
-    if (ini_gets(section, "AS400_DiskSerialNumber", "", tmp, sizeof(tmp), CONFIGFILE))
+    if (readAS400Key(section, dynamic_section, "AS400_DiskSerialNumber", tmp, sizeof(tmp)))
     {
         size_t slen = strlen(tmp);
         if (slen > 0)
@@ -941,7 +351,7 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
     // Accepts [0-9 A-Z] (lowercase is uppercased). Shorter values are right-padded
     // with spaces; longer values are truncated to 7 characters. The same 7 chars
     // are injected into both the ASCII and EBCDIC slots of VPD page 0x01.
-    if (ini_gets(section, "AS400_DiskPartNumber", "", tmp, sizeof(tmp), CONFIGFILE))
+    if (readAS400Key(section, dynamic_section, "AS400_DiskPartNumber", tmp, sizeof(tmp)))
     {
         size_t slen = strlen(tmp);
         if (slen > 0)
@@ -963,57 +373,431 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
         }
     }
 
-    // Load a named AS/400 disk profile: AS400_DiskProfile=<section name in
-    // as400_disk_definitions.txt, e.g. "59H7001">. Runs after this section's
-    // own vpdXX/spd keys above (which still win) and before the built-in
-    // defaults below (which fill in anything the profile doesn't supply).
-    if (ini_gets(section, "AS400_DiskProfile", "", tmp, sizeof(tmp), CONFIGFILE))
+    // Bind a named AS/400 disk profile: AS400_DiskProfile=<name of a profile
+    // in the flash store, e.g. "59H7001">. Binding is one linear scan of the
+    // store's section headers and costs no RAM -- the pages themselves stay
+    // in flash until they are served. Fails loud: an ID that names a profile
+    // the store does not hold is logged rather than quietly falling back to
+    // the built-in identity, which would be a different drive.
+    if (readAS400Key(section, dynamic_section, "AS400_DiskProfile", tmp, sizeof(tmp)))
     {
         if (tmp[0] != '\0')
-            loadAS400ProfileFromFile(scsiId, tmp);
+        {
+            if (zpdbBindProfile(scsiId, tmp))
+            {
+                uint8_t bound_id = scsiId & S2S_CFG_TARGET_ID_BITS;
+                uint32_t blockSize = 0;
+                uint64_t sectors = 0;
+
+                if (zpdbReadCapacity(scsiId, &blockSize, &sectors))
+                {
+                    if (blockSize > 0) g_as400_profile_info[bound_id].blockSize = blockSize;
+                    if (sectors > 0) g_as400_profile_info[bound_id].sectors = (uint32_t)sectors;
+                }
+
+                // This ID's profile is authoritative, so the built-in
+                // defaults must not fill in pages the profile deliberately
+                // does not have.
+                g_as400_profile_info[bound_id].loaded = true;
+
+                logmsg("---- Bound AS/400 disk profile '", tmp, "' to SCSI ID ", (int)scsiId,
+                       " (BlockSize=", (int)blockSize, " Sectors=", (int)sectors, ")");
+            }
+            else
+            {
+                logmsg("---- ERROR: AS/400 disk profile ", tmp, " requested for SCSI ID ",
+                       (int)scsiId, " but it is not in the profile store");
+            }
+        }
     }
 
-    // Load AS/400 defaults for any IDs that don't have INI overrides
-    loadAS400Defaults(scsiId, type);
-    loadAS400TapeDefaults(scsiId, type);
+    // Fall back to a built-in AS/400 identity when nothing else supplies one.
+    selectAS400Builtin(scsiId, type);
+#else
+    (void)scsiId;
+    (void)type;
+#endif
+}
+
+// Identity fields are applied to the buffer the response is about to be
+// served from (scsiDev.data), rather than being baked into a per-target copy
+// at load time. That is what lets a profile page stay in flash: nothing needs
+// a writable copy of the page just to carry a unique serial or FRU.
+//
+// `pageCode` is a VPD page code, or ZPDB_SERVE_SPD for the standard INQUIRY
+// response.
+#define ZPDB_SERVE_SPD 0x100
+
+#ifdef PLATFORM_AS400
+// Patch a per-ID AS400_DiskSerialNumber override into a page just read out of
+// a bound profile in the flash store.
+//
+// Unlike applyBuiltinIdentityFields() below, whose offsets are hardcoded for
+// the ONE built-in profile's own known page layout, this works on ANY
+// captured profile by deriving each page's injection offset from the page's
+// own self-reported length / descriptor-length bytes -- verified generic
+// across every profile in as400_disk_definitions.txt.
+//
+// No-op unless an AS400_DiskSerialNumber override is configured for this ID:
+// without one, a named profile's own originally-captured serial is served
+// verbatim and unchanged. That is why two SCSI IDs sharing one profile need a
+// distinct override on each -- see README-as400.md, "Differentiating
+// same-profile disks".
+static void applyProfileIdentityFields(int pageCode, uint8_t *buf, uint32_t len, uint8_t scsiId)
+{
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (g_as400_serial_override[id].length != 8) return;
+
+    switch (pageCode)
+    {
+        // SPD (standard INQUIRY response) patching at offset 36 --
+        // structurally guaranteed by the SCSI-2 INQUIRY format (8-byte
+        // header + 8-byte Vendor ID + 16-byte Product ID + 4-byte Revision,
+        // all fixed-width), and the byte-visible serial sits there in every
+        // real capture checked. Hardware-confirmed (2026-09-20, CISC):
+        // whatever consumes this specific field reads it as a 28-bit binary
+        // value, not free text -- an unconstrained value made DST's "Display
+        // Non-Configured Units" screen show a masked/invalid serial. Force
+        // the leading character to '0' right here, at this SPD write only --
+        // NOT inside as400_get_serial_8() itself, which also backs LOG SENSE
+        // page 0x31 for every AS/400 FIXED disk regardless of override;
+        // forcing it there broke real PPC load-source recognition (SRC
+        // B1014504) the first time this was tried, since page 0x31 does not
+        // share this constraint.
+        case ZPDB_SERVE_SPD:
+            if (len >= 44)
+            {
+                injectSerial(buf, 36, scsiId);
+                buf[36] = '0';
+            }
+            else if (len > 0 && warnOnce(scsiId, PATCH_WARNED_SPD))
+            {
+                logmsg("---- WARNING: profile SPD for SCSI ID ", (int)scsiId, " is only ",
+                       (int)len, " bytes -- too short to patch, serial override not applied to SPD");
+            }
+            break;
+
+        // VPD80 (Unit Serial Number): the real captured field width varies
+        // (8 or 10 ASCII characters observed so far, always right-justified,
+        // space/zero-padded on the left), but the actual per-drive-varying
+        // digits are always the LAST 8 bytes of the page -- confirmed across
+        // every VPD80 capture in the definitions file regardless of its
+        // declared length (20 or 24 bytes seen so far). Requires at least 12
+        // bytes total (4-byte page header + >=8 payload) so the write can
+        // never reach into the header itself.
+        case 0x80:
+            if (len >= 12)
+            {
+                injectSerial(buf, (int)(len - 8), scsiId);
+            }
+            else if (warnOnce(scsiId, PATCH_WARNED_VPD80))
+            {
+                logmsg("---- WARNING: profile VPD80 for SCSI ID ", (int)scsiId, " is only ",
+                       (int)len, " bytes -- too short to patch, serial override not applied to this page");
+            }
+            break;
+
+        // VPD82: a fixed-format IBM page, always exactly 48 bytes of payload
+        // (52 with the page header) in every real capture seen -- ASCII copy
+        // of the serial at offset 14, an EBCDIC copy at offset 38. Gate
+        // strictly on the expected length so an unexpected future capture
+        // with a differently-shaped VPD82 gets skipped, not silently
+        // corrupted.
+        case 0x82:
+            if (len == 52)
+            {
+                injectSerial(buf, 14, scsiId);
+                injectSerial(buf, 38, scsiId, true);
+            }
+            else if (warnOnce(scsiId, PATCH_WARNED_VPD82))
+            {
+                logmsg("---- WARNING: profile VPD82 for SCSI ID ", (int)scsiId, " is ",
+                       (int)len, " bytes, not the expected 52 -- serial override not applied to this page");
+            }
+            break;
+
+        // VPD83 (Device Identification): the ASCII T10-vendor-ID designator
+        // shape (codeset 0x02, designator type 0x01) gets the same 8-byte
+        // serial substitution as the pages above. `08K0304`/`08K0264` use a
+        // binary NAA/EUI-64 designator instead (codeset 0x01, type 0x02 or
+        // 0x03) -- an ASCII/EBCDIC-style substitution doesn't apply there
+        // (every byte value is legal in a binary field, unlike a character
+        // set), so that shape XORs the descriptor's last byte with the SCSI
+        // ID instead: ID 0 keeps the captured value, every other ID lands on
+        // a distinct one. Cheap and sufficient to stop two SCSI IDs sharing
+        // one profile from reporting an identical logical-unit identifier (an
+        // initiator seeing two targets with the same one may treat them as
+        // two paths to a single device, per SPC-3 7.6.3) without needing to
+        // understand IBM's opaque binary encoding at all. The per-model /
+        // revision 2-character prefix seen before the ASCII serial
+        // (`68`/`F8`/etc.) is preserved automatically either way, since it's
+        // part of the untouched, already-captured bytes ahead of the
+        // injection point. Injection offset for the ASCII case is simply the
+        // descriptor's own declared length byte (buf[7]): descriptor data
+        // starts at a fixed buffer offset 8 (4-byte page header + 4-byte
+        // descriptor header, both fixed by the SCSI spec), and the serial is
+        // the descriptor's own last 8 bytes, so offset = 8 + desc_len - 8 ==
+        // desc_len.
+        case 0x83:
+            if (len >= 16)
+            {
+                uint8_t codeset = buf[4] & 0x0F;
+                uint8_t desigType = buf[5] & 0x0F;
+                uint32_t descLen = buf[7];
+                if (codeset == 0x02 && desigType == 0x01 && descLen >= 8 &&
+                    (8 + descLen) <= len)
+                {
+                    injectSerial(buf, (int)descLen, scsiId);
+                }
+                else if (codeset == 0x01 && (desigType == 0x02 || desigType == 0x03) &&
+                         descLen >= 1 && (8 + descLen) <= len)
+                {
+                    buf[8 + descLen - 1] ^= (uint8_t)(scsiId & S2S_CFG_TARGET_ID_BITS);
+                }
+                else if (warnOnce(scsiId, PATCH_WARNED_VPD83))
+                {
+                    logmsg("---- profile VPD83 for SCSI ID ", (int)scsiId, " is not a recognized "
+                           "T10-vendor-ID/EUI-64/NAA designator shape (codeset=", (int)codeset,
+                           " type=", (int)desigType, ") -- left untouched");
+                }
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+// Patch the serial and FRU into a page copied out of the built-in AS/400 disk
+// identity. These offsets are that one capture's own, not a general property
+// of the page shapes -- see applyProfileIdentityFields() above for the path
+// that has to cope with any capture.
+//
+// Unlike the profile path, this runs whether or not an override is
+// configured: the built-in identity is a single physical drive's, shared by
+// every SCSI ID that falls back to it, so the generated per-ID serial (see
+// as400_get_serial_8()) is what keeps those IDs distinct.
+static void applyBuiltinIdentityFields(int pageCode, uint8_t *buf, uint32_t len, uint8_t scsiId)
+{
+    switch (pageCode)
+    {
+        case ZPDB_SERVE_SPD:
+            if (len >= 46)
+            {
+                // Same 28-bit-value SPD constraint as
+                // applyProfileIdentityFields()'s named-profile path above --
+                // force the leading character here at the SPD write only, not
+                // inside as400_get_serial_8() itself. See that function's own
+                // comment for why: it also backs LOG SENSE page 0x31, which
+                // does not share this constraint and broke on real PPC
+                // hardware when this was forced there instead.
+                injectSerial(buf, 38, scsiId);
+                buf[38] = '0';
+            }
+            // The SPD carries only an ASCII copy of the 7-char IBM disk part
+            // number at offsets 114-120 -- there is no EBCDIC slot here,
+            // unlike VPD page 0x01.
+            if (len >= 121) injectPartNumber(buf, 114, -1, scsiId);
+            break;
+
+        // ASCII slot at offset 5 and EBCDIC slot at offset 29, 7 bytes each.
+        case 0x01: if (len >= 36) injectPartNumber(buf, 5, 29, scsiId); break;
+
+        case 0x80: if (len >= 20) injectSerial(buf, 12, scsiId); break;
+
+        case 0x82:
+            // Offset 14, not 16 -- landmark-verified (search for the "IBM"
+            // string terminator, read the 8 bytes before it) across 7
+            // independently captured real drives (59H7001, 59H6611,
+            // 9V8006-041, 86G9124, 55F9806, 45G9463, 45G9463-1), spanning
+            // multiple product families. The shipped offset of 16 was off by
+            // 2 relative to every real drive checked.
+            if (len >= 24) injectSerial(buf, 14, scsiId);
+            // VPD82's vendor-specific area also carries an EBCDIC copy of the
+            // same serial (SCSI-2 8.3.4.1 table 103 defines the structure,
+            // not IBM's use of it) -- offset 38, same as
+            // applyProfileIdentityFields()'s named-profile path above,
+            // verified against every VPD82 capture in
+            // as400_disk_definitions.txt. This built-in identity is shared
+            // across every SCSI ID that falls back to it, so its own VPD82
+            // needs the same ASCII+EBCDIC treatment to stay internally
+            // consistent.
+            if (len >= 46) injectSerial(buf, 38, scsiId, true);
+            break;
+
+        case 0x83: if (len >= 42) injectSerial(buf, 34, scsiId); break;
+        case 0xD1: if (len >= 78) injectSerial(buf, 70, scsiId); break;
+        default: break;
+    }
+}
+#endif // PLATFORM_AS400
+
+// Wrapper so the profile-serving paths below stay free of #ifdefs: on a
+// non-AS/400 build the flash store can still serve pages, there is simply no
+// identity to inject into them.
+static void applyProfileIdentity(int pageCode, uint8_t *buf, uint32_t len, uint8_t scsiId)
+{
+#ifdef PLATFORM_AS400
+    applyProfileIdentityFields(pageCode, buf, len, scsiId);
+#else
+    (void)pageCode;
+    (void)buf;
+    (void)len;
+    (void)scsiId;
 #endif
 }
 
 bool getCustomVPD(uint8_t scsiId, uint8_t pageCode, uint8_t *buf, uint8_t *length)
 {
-    for (int i = 0; i < g_custom_vpd_count; i++)
+    uint32_t zlen = 0;
+    if (zpdbReadVPD(scsiId, pageCode, buf, MAX_VPD_DATA_SIZE, &zlen) && zlen > 0)
     {
-        if (g_custom_vpd[i].scsiId == (scsiId & S2S_CFG_TARGET_ID_BITS) && g_custom_vpd[i].pageCode == pageCode)
-        {
-            *length = g_custom_vpd[i].length;
-            memcpy(buf, g_custom_vpd[i].data, g_custom_vpd[i].length);
-            return true;
-        }
+        applyProfileIdentity(pageCode, buf, zlen, scsiId);
+        *length = (uint8_t)zlen;
+        return true;
     }
+
+#ifdef PLATFORM_AS400
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    const uint8_t *page = nullptr;
+    uint8_t len = 0;
+
+    if (g_builtin[id] == BUILTIN_AS400_DISK)
+    {
+        page = findBuiltinVPD(AS400VitalPages, AS400VitalPagesLen, pageCode, &len);
+    }
+    else if (g_builtin[id] == BUILTIN_AS400_TAPE_PPC)
+    {
+        page = findBuiltinVPD(AS400TapePPCVitalPages, AS400TapePPCVitalPagesLen,
+                              pageCode, &len);
+    }
+
+    if (page != nullptr)
+    {
+        memcpy(buf, page, len);
+
+        // Tape pages carry no per-drive serial or FRU, matching what the tape
+        // loader did when it filled the old table.
+        if (g_builtin[id] == BUILTIN_AS400_DISK)
+            applyBuiltinIdentityFields(pageCode, buf, len, scsiId);
+
+        *length = len;
+        return true;
+    }
+#endif
+
     return false;
 }
 
 bool getCustomSPD(uint8_t scsiId, uint8_t *buf, uint16_t *length)
 {
-    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
-    if (g_custom_spd[id].length > 0)
+    uint32_t zlen = 0;
+    if (zpdbReadSPD(scsiId, buf, ZPDB_SERVE_MAX, &zlen) && zlen > 0)
     {
-        *length = g_custom_spd[id].length;
-        memcpy(buf, g_custom_spd[id].data, g_custom_spd[id].length);
+        applyProfileIdentity(ZPDB_SERVE_SPD, buf, zlen, scsiId);
+        *length = (uint16_t)zlen;
         return true;
     }
+
+#ifdef PLATFORM_AS400
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    const uint8_t *inquiry = nullptr;
+    size_t len = 0;
+
+    switch (g_builtin[id])
+    {
+        case BUILTIN_AS400_DISK:
+            inquiry = AS400VendorInquiry;
+            len = AS400VendorInquiryLen;
+            break;
+
+        case BUILTIN_AS400_TAPE_CISC:
+            inquiry = AS400TapeCISCVendorInquiry;
+            len = AS400TapeCISCVendorInquiryLen;
+            break;
+
+        case BUILTIN_AS400_TAPE_PPC:
+            inquiry = AS400TapePPCVendorInquiry;
+            len = AS400TapePPCVendorInquiryLen;
+            break;
+
+        default:
+            break;
+    }
+
+    if (inquiry != nullptr && len > 0)
+    {
+        if (len > ZPDB_SERVE_MAX) len = ZPDB_SERVE_MAX;
+        memcpy(buf, inquiry, len);
+
+        if (g_builtin[id] == BUILTIN_AS400_DISK)
+        {
+            // Vendor (bytes 8-15) and product ID (bytes 16-31) come from the
+            // device settings, so a [SCSI<X>] Vendor/Product override takes
+            // effect even on the built-in AS/400 identity.
+            //
+            // Index with the masked `id`, never the raw scsiId: this function
+            // is called from scsiInquiry() (inquiry.c) with cfg->scsiId, which
+            // carries S2S_CFG_TARGET_ENABLED (0x80) on every enabled target --
+            // so ID 5 arrives here as 0x85. getDevice() does no bounds check and
+            // m_dev[] only has S2S_MAX_TARGETS+1 entries, so getDevice(0x85) read
+            // roughly 12 kB past the end of g_scsi_settings and spliced whatever
+            // BSS followed it into the vendor/product fields of every standard
+            // INQUIRY -- confirmed against a real AS/400 that rejected the drive
+            // while reads and writes kept working. Not caught before because this
+            // patch used to run at load time, from parseCustomInquiryData(), which
+            // is only ever called with a bare 0..n target index.
+            const scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(id);
+            if (len >= 16)
+                memcpy(buf + 8, devCfg->vendor, sizeof(devCfg->vendor));
+            if (len >= 32)
+                memcpy(buf + 16, devCfg->prodId, sizeof(devCfg->prodId));
+
+            applyBuiltinIdentityFields(ZPDB_SERVE_SPD, buf, len, scsiId);
+        }
+
+        *length = (uint16_t)len;
+        return true;
+    }
+#endif
+
     return false;
 }
 
 bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length)
 {
-    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
-    if (g_custom_modesense[id].length > 0)
+    uint32_t zlen = 0;
+    if (zpdbReadModeSense(scsiId, buf, ZPDB_SERVE_MAX, &zlen) && zlen > 0)
     {
-        *length = g_custom_modesense[id].length;
-        memcpy(buf, g_custom_modesense[id].data, g_custom_modesense[id].length);
+        *length = (uint16_t)zlen;
         return true;
     }
+
+#ifdef PLATFORM_AS400
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    const uint8_t *modeSense = nullptr;
+    size_t len = 0;
+
+    if (g_builtin[id] == BUILTIN_AS400_TAPE_CISC)
+    {
+        modeSense = as400_tape_cisc_mode_sense_all_pages;
+        len = as400_tape_cisc_mode_sense_all_pagesLen;
+    }
+    else if (g_builtin[id] == BUILTIN_AS400_TAPE_PPC)
+    {
+        modeSense = as400_tape_ppc_mode_sense_all_pages;
+        len = as400_tape_ppc_mode_sense_all_pagesLen;
+    }
+
+    if (modeSense != nullptr && len > 0)
+    {
+        if (len > ZPDB_SERVE_MAX) len = ZPDB_SERVE_MAX;
+        memcpy(buf, modeSense, len);
+        *length = (uint16_t)len;
+        return true;
+    }
+#endif
+
     return false;
 }
 
@@ -1029,4 +813,3 @@ bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sect
     return true;
 }
 #endif
-

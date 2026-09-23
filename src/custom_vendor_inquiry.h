@@ -38,10 +38,14 @@ extern "C" {
 // every previously-processed ID's custom data.
 void resetCustomInquiryData();
 
-// Parse custom inquiry data from zuluscsi.ini for one SCSI ID.
+// Work out where one SCSI ID's custom inquiry data comes from: an
+// AS400_DiskProfile= binding into the flash profile store, the per-ID
+// AS400_DiskSerialNumber / AS400_DiskPartNumber overrides, and failing those
+// a built-in AS/400 identity. Nothing is copied here -- the pages themselves
+// are read when they are served.
+//
 // Called once per discovered SCSI ID during initialization, after
 // resetCustomInquiryData() has been called once for the whole scan.
-// INI format: [SCSI<id>] vpd00=XX XX XX, spd=XX XX XX (hex values)
 void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type);
 
 // Check if custom VPD (Vital Product Data) exists for a given SCSI ID and page code.

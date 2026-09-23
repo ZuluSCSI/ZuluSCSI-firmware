@@ -49,6 +49,8 @@
 #include <minIni_cache.h>
 #include <string.h>
 #include <strings.h>
+#include <memory>
+#include <new>
 #include <ctype.h>
 #include <zip_parser.h>
 #include "ZuluSCSI_config.h"
@@ -67,6 +69,8 @@
 #include "ZuluSCSI_iotrace.h"
 #include "ROMDrive.h"
 #include "custom_vendor_inquiry.h"
+#include "zpdb_profiles.h"
+#include "custom_profiles.h"
 #include "vhd_support.h"
 #ifdef ZULUCONTROL_FIRMWARE
 #include <ZuluSCSI_WebUI.h>
@@ -666,20 +670,242 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
 }
 
 #ifdef PLATFORM_AS400
+#ifdef DYNAMIC_SCSI_ID
+static void configDynamicScsiId();
+
+// Does the image directory already carry something that claims the dynamic
+// SCSI ID? `prefix` is "HDn".
+//
+// The pass below runs before findHDDImages(), so it cannot lean on
+// s2s_getConfigById() the way autoCreateAS400ProfileImages() does -- nothing
+// has scanned the card yet. It has to look for itself, and it matches on the
+// prefix rather than the exact name: the LUN digit is optional in an image
+// name, so "HDn.hda" and "HDn - my disk.hda" claim the ID just as much as
+// "HDn0.hda" does, and an exact check would walk straight past them and write
+// a second image for the same target.
+//
+// Directories count too, on their name alone: a directory is how a target is
+// handed a set of images to cycle through, so creating an image beside one
+// would claim the same ID twice. Worth knowing that the scan itself only
+// adopts a directory named exactly HDn, or one named by an ImgDir= key -- a
+// suffixed name like "HDn - dynamic dir" is taken here as the user having
+// spoken for the ID, but the firmware will not serve images out of it. That
+// case is logged rather than passed over quietly, since an ID that ends up
+// with no image at all is otherwise a puzzle to track down.
+__attribute__((noinline))
+static bool as400DynamicIdIsClaimed(const char *imgdir, const char *prefix)
+{
+  FsFile dir;
+  if (!dir.open(imgdir))
+  {
+    return false;
+  }
+
+  FsFile file;
+  char name[MAX_FILE_PATH + 1];
+  size_t prefixlen = strlen(prefix);
+  bool claimed = false;
+
+  while (!claimed && file.openNext(&dir, O_READ))
+  {
+    if (file.getName(name, MAX_FILE_PATH + 1)
+        && strncasecmp(name, prefix, prefixlen) == 0)
+    {
+      if (file.isDir())
+      {
+        logmsg("-- The directory '", name, "' already claims the dynamic SCSI ID, not "
+               "auto-creating an AS/400 image for it");
+        claimed = true;
+      }
+      else if (scsiDiskFilenameValid(name, true))
+      {
+        claimed = true;
+      }
+    }
+    file.close();
+  }
+
+  dir.close();
+  return claimed;
+}
+
+// Create the dynamic target's AS/400 image before anything asks the backplane
+// which SCSI ID this board is.
+//
+// Neither half of the job needs the ID: the file is named HDn0.hda, with the
+// dynamic 'n' standing in for it, and the size comes from the profile's own
+// captured capacity. Resolving the ID does need the backplane -- an SCA board
+// that is not mated polls for it indefinitely, by design, so that a half-
+// seated connector is reported rather than the board silently booting on the
+// wrong ID. Creating the image first means a card can be prepared on a board
+// sitting on the bench: power it up with the profile configured, let it write
+// the image, then move the card or the board to the backplane.
+//
+// Called from reinitSCSI(), ahead of both places that can resolve the ID: the
+// 'n'-prefixed directory check there, and findHDDImages()'s scan, which polls
+// as soon as it meets any 'n'-prefixed image file -- a CDn or TPn image
+// belonging to some other device would otherwise block this one from ever
+// being written.
+__attribute__((noinline))
+static void autoCreateDynamicAS400Image()
+{
+  // On the heap, not the stack: core 0's stack is a couple of kB, this frame
+  // stays live while the calls it makes descend into createImageFile() and
+  // SdFat, and MAX_FILE_PATH is 260 on a control-board build, which makes
+  // these buffers close to a kilobyte between them. Static storage would
+  // solve it too but would hold that kilobyte for the life of the firmware to
+  // serve a pass that runs once per config load. nothrow placement rather
+  // than a plain new: a throw here means abort, and there is nothing worth
+  // aborting a boot over -- a null pointer lets the pass say what happened
+  // and leave the rest of the boot alone. The () value-initializes, and the
+  // unique_ptr releases the block however this function returns, of which
+  // there are several ways.
+  struct buffers_t
+  {
+    char imgdir[MAX_FILE_PATH];
+    char profileName[64];
+    char fullname[MAX_FILE_PATH * 2 + 2];
+  };
+
+  std::unique_ptr<buffers_t> buf(new (std::nothrow) buffers_t());
+  if (!buf)
+  {
+    logmsg("-- Could not allocate ", (int)sizeof(buffers_t),
+           " bytes to auto-create the dynamic SCSI ID's AS/400 image, skipping it");
+    return;
+  }
+
+  ini_gets(DYNAMIC_SCSI_INI_SECTION, "AS400_DiskProfile", "", buf->profileName,
+           sizeof(buf->profileName), CONFIGFILE);
+  if (buf->profileName[0] == '\0')
+    return;
+
+  if (!zuluscsi_is_sca())
+  {
+    // Reported by autoCreateAS400ProfileImages() below, which is where the
+    // rest of the dynamic-ID handling lives -- no need to say it twice.
+    return;
+  }
+
+  ini_gets("SCSI", "Dir", "/", buf->imgdir, sizeof(buf->imgdir), CONFIGFILE);
+
+  char prefix[8];
+  snprintf(prefix, sizeof(prefix), "HD%c", DYNAMIC_SCSI_ID_CHAR);
+  if (as400DynamicIdIsClaimed(buf->imgdir, prefix))
+    return; // written on an earlier boot, or a directory claims the ID
+
+  uint32_t blockSize = 0;
+  uint64_t sectors = 0;
+  if (!zpdbReadCapacityByName(buf->profileName, &blockSize, &sectors)
+      || blockSize == 0 || sectors == 0)
+  {
+    logmsg("-- [" DYNAMIC_SCSI_INI_SECTION "] AS400_DiskProfile '", buf->profileName,
+           "' has no usable BlockSize/Sectors, cannot auto-create an image for the "
+           "dynamic SCSI ID");
+    return;
+  }
+
+  // AlignUnalignedAccesses decides whether the file needs gapped-layout
+  // padding on top of sectors*blockSize (see ZuluSCSI_gap_layout.h), and
+  // getting it wrong here under-allocates the image. The usual resolution is
+  // [SCSIn] > [SCSI<X>] > [SCSI] > off, but this pass runs before the ID is
+  // known, so the ID's own section cannot be consulted -- a card configured
+  // through [SCSIn] is slot-portable by definition, so a slot-specific
+  // [SCSI<X>] setting would contradict that anyway. Logged below so a card
+  // that was set up that way is diagnosable from the boot log.
+  char alignName[16];
+  ini_gets(DYNAMIC_SCSI_INI_SECTION, "AlignUnalignedAccesses", "", alignName,
+           sizeof(alignName), CONFIGFILE);
+  if (alignName[0] == '\0')
+  {
+    ini_gets("SCSI", "AlignUnalignedAccesses", "", alignName, sizeof(alignName), CONFIGFILE);
+  }
+  zuluscsi_align_unaligned_t alignMode = ALIGN_UNALIGNED_OFF;
+  if (alignName[0] != '\0')
+  {
+    alignMode = ZuluSCSISettings::stringToAlignUnalignedAccesses(alignName);
+  }
+  alignMode = gapLayoutResolveAuto(alignMode, blockSize);
+
+  char namepart[16];
+  snprintf(namepart, sizeof(namepart), "HD%c0.hda", DYNAMIC_SCSI_ID_CHAR);
+
+  memset(buf->fullname, 0, sizeof(buf->fullname));
+  strncpy(buf->fullname, buf->imgdir, MAX_FILE_PATH);
+  if (buf->fullname[strlen(buf->fullname) - 1] != '/') strcat(buf->fullname, "/");
+  strcat(buf->fullname, namepart);
+
+  uint64_t size = gapLayoutPhysicalSize(alignMode, blockSize, (uint32_t)sectors);
+  logmsg("-- No image found for the dynamic SCSI ID, auto-creating ",
+         (int)(size / (1024 * 1024)), " MB as '", namepart, "' per AS400_DiskProfile '",
+         buf->profileName, "' in [" DYNAMIC_SCSI_INI_SECTION "]",
+         alignMode != ALIGN_UNALIGNED_OFF ? " (includes AlignUnalignedAccesses padding)" : "");
+
+  if (!createImageFile(buf->fullname, size))
+  {
+    logmsg("---- Failed to auto-create ", buf->fullname);
+    return;
+  }
+
+  logmsg("---- ", buf->fullname, " is ready; the SCSI ID it answers to is read from the "
+         "SCA backplane at boot");
+}
+#endif // DYNAMIC_SCSI_ID
+
 // Config-driven auto-creation of correctly-sized AS/400 disk images.
 // findHDDImages()'s main scan below is entirely file-driven -- it only
 // learns about a SCSI ID once a matching image file already exists on the
-// card, and only then consults that ID's [SCSIn] config. This pass runs
+// card, and only then consults that ID's [SCSI<X>] config. This pass runs
 // after that scan and catches the opposite case: a SCSI ID names an
 // AS400_DiskProfile but has no backing image yet. The profile itself
 // already carries the drive's real captured capacity (BlockSize/Sectors,
 // see custom_vendor_inquiry.cpp), so the image can be created at the exact
 // right size instead of requiring a hand-crafted Create*.txt file.
+//
+// The dynamic SCSI ID is covered too: a profile named in [SCSIn] belongs to
+// whichever ID the SCA backplane hands out at boot, and the image created for
+// it keeps the 'n' in place of the ID (HDn0.hda) -- the spelling the main scan
+// resolves back to the dynamic ID -- so the card stays portable between
+// backplane slots instead of carrying an image named for the slot it happened
+// to be in when the image was made.
 static bool autoCreateAS400ProfileImages()
 {
   bool foundImage = false;
   char imgdir[MAX_FILE_PATH];
   ini_gets("SCSI", "Dir", "/", imgdir, sizeof(imgdir), CONFIGFILE);
+
+#ifdef DYNAMIC_SCSI_ID
+  // [SCSIn] is not any one ID's section, so the per-ID loop below never sees
+  // it. Resolve the ID it stands for up front, and only when it actually
+  // carries a profile: the main scan resolves the dynamic ID lazily, the first
+  // time it meets an 'n'-prefixed image file, and in this path there is no such
+  // file yet -- that is the whole point of the pass.
+  int8_t dynamic_id = -1;
+  char dynamicProfile[64];
+  ini_gets(DYNAMIC_SCSI_INI_SECTION, "AS400_DiskProfile", "", dynamicProfile,
+           sizeof(dynamicProfile), CONFIGFILE);
+  if (dynamicProfile[0] != '\0')
+  {
+    if (zuluscsi_is_sca())
+    {
+      if (scsiDiskGetDynamicId() < 0)
+      {
+        configDynamicScsiId();
+      }
+      dynamic_id = scsiDiskGetDynamicId();
+      if (dynamic_id < 0)
+      {
+        logmsg("---- [" DYNAMIC_SCSI_INI_SECTION "] sets AS400_DiskProfile '", dynamicProfile,
+               "' but the query for the dynamic SCSI ID failed, cannot auto-create image");
+      }
+    }
+    else
+    {
+      logmsg("---- Ignoring AS400_DiskProfile in [" DYNAMIC_SCSI_INI_SECTION "]: this board does"
+             " not support dynamic SCSI IDs, use a [SCSI<X>] section with a fixed ID instead");
+    }
+  }
+#endif // DYNAMIC_SCSI_ID
 
   for (int id = 0; id < S2S_MAX_TARGETS; id++)
   {
@@ -704,10 +930,32 @@ static bool autoCreateAS400ProfileImages()
     scsiGetIniSection(id, section, sizeof(section));
     char profileName[64];
     ini_gets(section, "AS400_DiskProfile", "", profileName, sizeof(profileName), CONFIGFILE);
+
+    bool is_dynamic = false;
+#ifdef DYNAMIC_SCSI_ID
+    if (dynamic_id >= 0 && id == (int)dynamic_id)
+    {
+      // [SCSIn] wins over this ID's own [SCSI<X>] section, the same precedence
+      // applyDynamicSectionOverrides() gives the ordinary device settings and
+      // readAS400Key() (custom_vendor_inquiry.cpp) gives the AS400_* keys.
+      is_dynamic = true;
+      strncpy(profileName, dynamicProfile, sizeof(profileName) - 1);
+      profileName[sizeof(profileName) - 1] = '\0';
+    }
+#endif // DYNAMIC_SCSI_ID
+
     if (profileName[0] == '\0')
       continue;
 
     g_scsi_settings.initDevice(id, S2S_CFG_FIXED);
+#ifdef DYNAMIC_SCSI_ID
+    if (is_dynamic)
+    {
+      // Pick up [SCSIn]'s BlockSize / AlignUnalignedAccesses / etc. before the
+      // image is sized from them below.
+      g_scsi_settings.applyDynamicSectionOverrides(id);
+    }
+#endif // DYNAMIC_SCSI_ID
     if (g_scsi_settings.getDevice(id)->blockSize == 0)
     {
       g_scsi_settings.getDevice(id)->blockSize = DEFAULT_BLOCKSIZE;
@@ -726,7 +974,8 @@ static bool autoCreateAS400ProfileImages()
     strncpy(fullname, imgdir, MAX_FILE_PATH);
     if (fullname[strlen(fullname) - 1] != '/') strcat(fullname, "/");
     char namepart[16];
-    snprintf(namepart, sizeof(namepart), "HD%c0.hda", scsiEncodeID(id));
+    char idchar = is_dynamic ? DYNAMIC_SCSI_ID_CHAR : scsiEncodeID(id);
+    snprintf(namepart, sizeof(namepart), "HD%c0.hda", idchar);
     strcat(fullname, namepart);
 
     // Account for AlignUnalignedAccesses: a gapped-layout image needs more
@@ -737,7 +986,8 @@ static bool autoCreateAS400ProfileImages()
         (zuluscsi_align_unaligned_t)g_scsi_settings.getDevice(id)->alignUnalignedAccesses, blockSize);
     uint64_t size = gapLayoutPhysicalSize(alignMode, blockSize, sectors);
     logmsg("---- No image found for SCSI ID ", id, ", auto-creating ",
-           (int)(size / (1024 * 1024)), " MB per AS400_DiskProfile '", profileName, "'",
+           (int)(size / (1024 * 1024)), " MB as '", namepart, "' per AS400_DiskProfile '",
+           profileName, "' in [", is_dynamic ? DYNAMIC_SCSI_INI_SECTION : section, "]",
            alignMode != ALIGN_UNALIGNED_OFF ? " (includes AlignUnalignedAccesses padding)" : "");
 
     if (!createImageFile(fullname, size))
@@ -1351,7 +1601,12 @@ static bool mountSDCard()
   return true;
 }
 
-static void reinitSCSI()
+// `power_on_with_sd` is true only for the power-on call, made once the card
+// has mounted and before the SCSI bus has been served. It is what lends
+// scsiDev.data to zpdbProfilesInit() so it can ingest /zulu_profiles. The
+// ROM-drive call and the hot-insert call in the main loop pass false: by then
+// that buffer is the host's, and the flash store they open is unaffected.
+static void reinitSCSI(bool power_on_with_sd)
 {
 #if defined(ZULUSCSI_HARDWARE_CONFIG)
   if (!g_hw_config.is_active())
@@ -1399,6 +1654,19 @@ static void reinitSCSI()
 #endif
   }
 
+  // Ingest any profile .ini files the card carries into the flash profile
+  // store, then open it. Runs before any target configuration is read, since
+  // AS400_DiskProfile= bindings resolve against the store.
+  // The profile store keeps no buffer of its own, so lend it the SCSI command
+  // buffer for the length of the call -- on this path nothing has been served
+  // yet, and the scsiInit() further down re-initialises it afterwards anyway.
+  // createImageFile() borrows the same buffer a little later in this same
+  // function; the two uses are sequential, never overlapping.
+  static_assert(sizeof(scsiDev.data) >= ZPDB_REBUILD_SCRATCH_SIZE,
+                "scsiDev.data is too small to lend the ZPDB rebuild its scratch");
+  zpdbProfilesInit(power_on_with_sd ? scsiDev.data : nullptr,
+                   power_on_with_sd ? sizeof(scsiDev.data) : 0);
+
   scsiDiskResetImages();
 #if defined(ZULUSCSI_HARDWARE_CONFIG)
   if (g_hw_config.is_active())
@@ -1437,6 +1705,11 @@ static void reinitSCSI()
   else
 #endif // ZULUSCSI_HARDWARE_CONFIG
   {
+#if defined(PLATFORM_AS400) && defined(DYNAMIC_SCSI_ID)
+    // Write the dynamic target's image while the ID is still unknown, so a
+    // card can be prepared on a board that is not plugged into a backplane.
+    autoCreateDynamicAS400Image();
+#endif
 #ifdef DYNAMIC_SCSI_ID
     // Lazily resolve the SCA SCSI ID the first time 'n'-prefixed directories
     // are found, so the expander is only queried when needed. A [SCSIn]
@@ -1835,7 +2108,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
     if (romDriveCheckPresent())
     {
-      reinitSCSI();
+      reinitSCSI(false); // no card was present, so there is nothing to ingest
       if (g_romdrive_active)
       {
         if (g_displayEnabled)
@@ -1894,6 +2167,10 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
     print_sd_info();
 
+#if defined(PLATFORM_AS400) && defined(ZULUSCSI_MCU_RP23XX)
+    splitCustomProfileDefinitions();
+#endif
+
     char presetName[32];
     ini_gets("SCSI", "System", "", presetName, sizeof(presetName), CONFIGFILE);
     scsi_system_settings_t *cfg = g_scsi_settings.initSystem(presetName, true);
@@ -1944,7 +2221,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     if (!platform_is_initiator_mode_enabled())
 #endif
       kiosk_restore_images();
-    reinitSCSI();
+    reinitSCSI(true); // power-on with a card: the one place profiles are ingested
 
     boot_delay_ms = cfg->initPostDelay;
     if (boot_delay_ms > 0)
@@ -2229,7 +2506,7 @@ extern "C" void zuluscsi_main_loop(void)
       {
         sdCardStateChanged(g_sdcard_present, g_romdrive_active);
       }
-      reinitSCSI();
+      reinitSCSI(false); // card inserted while running -- scsiDev.data is in use
       init_logfile();
       init_eject_button();
       blinkStatus(BLINK_STATUS_OK);

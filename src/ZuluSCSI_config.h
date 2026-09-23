@@ -60,6 +60,16 @@
 // AS/400 disk profile definitions, captured by utils/extract_as400_disk_data.sh
 // and selected per-[SCSIn] via the AS400_DiskProfile key.
 #define AS400_PROFILES_FILE "as400_disk_definitions.txt"
+// Directory the individual per-profile .ini files are split out into, one
+// "<SectionName>.ini" per [SectionName] of the definitions file. Nothing
+// about the split is AS/400 specific, it just happens to be what
+// AS400_PROFILES_FILE currently holds.
+#define CUSTOM_PROFILES_DIR "zulu_profiles"
+// AS400_PROFILES_FILE is renamed to this once splitCustomProfileDefinitions()
+// has processed it, so the split does not re-run on every boot. The original
+// name stays legible in the new one, and the split-out copies under
+// CUSTOM_PROFILES_DIR are what the profile store is ingested from afterwards.
+#define AS400_PROFILES_FILE_PROCESSED "-processed-" AS400_PROFILES_FILE
 #define CRASHFILE   "zuluerr.txt"
 #define STARTUPSOUND "zulustartup.wav"
 #define FIRMWARE_PREFIX "ZuluSCSI-FW"
