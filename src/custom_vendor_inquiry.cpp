@@ -840,4 +840,10 @@ bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sect
     *sectors = g_as400_profile_info[id].sectors;
     return true;
 }
+
+bool isAS400CapturedTapeIdentity(uint8_t scsiId)
+{
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    return g_builtin[id] == BUILTIN_AS400_TAPE_CISC || g_builtin[id] == BUILTIN_AS400_TAPE_PPC;
+}
 #endif

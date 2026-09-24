@@ -30,6 +30,7 @@
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_tape.h"
+#include "custom_vendor_inquiry.h"
 #include <ZuluSCSI_platform.h>
 #include <ZuluSCSI_platform_config.h>
 #include <scsiPhy.h>
@@ -458,7 +459,16 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
             bool short_record_before_filemark =
                 fixed && started_read && records_read != 0 && records_read < blocksize;
 #ifdef PLATFORM_AS400
-            if (short_record_before_filemark && img.quirks == S2S_CFG_QUIRKS_AS400)
+            // isAS400CapturedTapeIdentity() added 2026-09-25, here and at
+            // every other img.quirks==AS400 site in this file: these quirks
+            // were derived from and hardware-verified against the specific
+            // real Tandberg-manufactured drives this project captured
+            // (Device=AS400_CISC/AS400_PPC), but img.quirks is board-wide
+            // (set by System=AS400_*) and says nothing about which tape
+            // identity is actually in use. Applying them unconditionally
+            // broke a real PPC/PCI machine's generic-identity tape (INZTAP
+            // CPF4119) that worked before these quirks existed.
+            if (short_record_before_filemark && img.quirks == S2S_CFG_QUIRKS_AS400 && isAS400CapturedTapeIdentity(scsiDev.target->targetId))
             {
                 // A short final record (e.g. INZTAP's 80-byte VOL1 label)
                 // immediately followed by a filemark is normal tape
@@ -550,7 +560,7 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
             bool short_record_before_filemark =
                 fixed && started_read && records_read < blocksize;
 #ifdef PLATFORM_AS400
-            if (short_record_before_filemark && img.quirks == S2S_CFG_QUIRKS_AS400)
+            if (short_record_before_filemark && img.quirks == S2S_CFG_QUIRKS_AS400 && isAS400CapturedTapeIdentity(scsiDev.target->targetId))
             {
                 // See the matching comment in tapSpaceForward() -- a short
                 // final record immediately followed by a filemark is
@@ -728,7 +738,7 @@ static void tapReadFixed(image_config_t &img, uint32_t blocks)
 
                 scsiDev.status = CHECK_CONDITION;
 #ifdef PLATFORM_AS400
-                if (img.quirks == S2S_CFG_QUIRKS_AS400)
+                if (img.quirks == S2S_CFG_QUIRKS_AS400 && isAS400CapturedTapeIdentity(scsiDev.target->targetId))
                 {
                     // Preserve the specific ASC/ASCQ computed above instead
                     // of the generic reset below. Real AS/400 tape drive
@@ -818,7 +828,7 @@ static void tapReadVariable(image_config_t &img, uint32_t block_size, bool sili)
 
         scsiDev.status = CHECK_CONDITION;
 #ifdef PLATFORM_AS400
-        if (img.quirks == S2S_CFG_QUIRKS_AS400)
+        if (img.quirks == S2S_CFG_QUIRKS_AS400 && isAS400CapturedTapeIdentity(scsiDev.target->targetId))
         {
             // See the matching comment in tapReadFixed() -- preserve the
             // specific ASC/ASCQ computed above (and match the real AS/400
@@ -1779,7 +1789,7 @@ extern "C" int scsiTapeCommand()
                 scsiDev.target->sense.code = NO_SENSE;
                 scsiDev.target->sense.asc = FILEMARK_DETECTED;
 #ifdef PLATFORM_AS400
-                if (img.quirks == S2S_CFG_QUIRKS_AS400)
+                if (img.quirks == S2S_CFG_QUIRKS_AS400 && isAS400CapturedTapeIdentity(scsiDev.target->targetId))
                 {
                     // Match the real AS/400 tape drive's wire-observed
                     // ASC/ASCQ for hitting a filemark (see the identical
