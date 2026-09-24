@@ -670,6 +670,13 @@ bool createImage(const char *cmd_filename, char imgname[MAX_FILE_PATH + 1])
 }
 
 #ifdef PLATFORM_AS400
+struct name_buffers_t
+{
+  char imgdir[MAX_FILE_PATH];
+  char profileName[64];
+  char imageName[sizeof(name_buffers_t::profileName) + 9];
+  char fullname[MAX_FILE_PATH * 2 + 2];
+};
 #ifdef DYNAMIC_SCSI_ID
 static void configDynamicScsiId();
 
@@ -760,17 +767,11 @@ static void autoCreateDynamicAS400Image()
   // and leave the rest of the boot alone. The () value-initializes, and the
   // unique_ptr releases the block however this function returns, of which
   // there are several ways.
-  struct buffers_t
-  {
-    char imgdir[MAX_FILE_PATH];
-    char profileName[64];
-    char fullname[MAX_FILE_PATH * 2 + 2];
-  };
 
-  std::unique_ptr<buffers_t> buf(new (std::nothrow) buffers_t());
+  std::unique_ptr<name_buffers_t> buf(new (std::nothrow) name_buffers_t());
   if (!buf)
   {
-    logmsg("-- Could not allocate ", (int)sizeof(buffers_t),
+    logmsg("-- Could not allocate ", (int)sizeof(name_buffers_t),
            " bytes to auto-create the dynamic SCSI ID's AS/400 image, skipping it");
     return;
   }
@@ -827,17 +828,16 @@ static void autoCreateDynamicAS400Image()
   }
   alignMode = gapLayoutResolveAuto(alignMode, blockSize);
 
-  char namepart[16];
-  snprintf(namepart, sizeof(namepart), "HD%c0.hda", DYNAMIC_SCSI_ID_CHAR);
+  snprintf(buf->imageName, sizeof(buf->imageName), "HD%c0-%s.hda", DYNAMIC_SCSI_ID_CHAR, buf->profileName);
 
   memset(buf->fullname, 0, sizeof(buf->fullname));
   strncpy(buf->fullname, buf->imgdir, MAX_FILE_PATH);
   if (buf->fullname[strlen(buf->fullname) - 1] != '/') strcat(buf->fullname, "/");
-  strcat(buf->fullname, namepart);
+  strcat(buf->fullname, buf->imageName);
 
   uint64_t size = gapLayoutPhysicalSize(alignMode, blockSize, (uint32_t)sectors);
   logmsg("-- No image found for the dynamic SCSI ID, auto-creating ",
-         (int)(size / (1024 * 1024)), " MB as '", namepart, "' per AS400_DiskProfile '",
+         (int)(size / (1024 * 1024)), " MB as '", buf->imageName, "' per AS400_DiskProfile '",
          buf->profileName, "' in [" DYNAMIC_SCSI_INI_SECTION "]",
          alignMode != ALIGN_UNALIGNED_OFF ? " (includes AlignUnalignedAccesses padding)" : "");
 
@@ -871,8 +871,16 @@ static void autoCreateDynamicAS400Image()
 static bool autoCreateAS400ProfileImages()
 {
   bool foundImage = false;
-  char imgdir[MAX_FILE_PATH];
-  ini_gets("SCSI", "Dir", "/", imgdir, sizeof(imgdir), CONFIGFILE);
+
+  // Create name buffers on the heap to avoid filling the stack.
+  std::unique_ptr<name_buffers_t> buf(new (std::nothrow) name_buffers_t());
+  if (!buf)
+  {
+    logmsg("-- Could not allocate ", (int)sizeof(name_buffers_t),
+           " bytes to auto-create AS/400 image(s), skipping it");
+    return false;
+  }
+  ini_gets("SCSI", "Dir", "/", buf->imgdir, sizeof(buf->imgdir), CONFIGFILE);
 
 #ifdef DYNAMIC_SCSI_ID
   // [SCSIn] is not any one ID's section, so the per-ID loop below never sees
@@ -928,8 +936,7 @@ static bool autoCreateAS400ProfileImages()
 
     char section[SCSI_INI_SECTION_SIZE];
     scsiGetIniSection(id, section, sizeof(section));
-    char profileName[64];
-    ini_gets(section, "AS400_DiskProfile", "", profileName, sizeof(profileName), CONFIGFILE);
+    ini_gets(section, "AS400_DiskProfile", "", buf->profileName, sizeof(buf->profileName), CONFIGFILE);
 
     bool is_dynamic = false;
 #ifdef DYNAMIC_SCSI_ID
@@ -939,12 +946,12 @@ static bool autoCreateAS400ProfileImages()
       // applyDynamicSectionOverrides() gives the ordinary device settings and
       // readAS400Key() (custom_vendor_inquiry.cpp) gives the AS400_* keys.
       is_dynamic = true;
-      strncpy(profileName, dynamicProfile, sizeof(profileName) - 1);
-      profileName[sizeof(profileName) - 1] = '\0';
+      strncpy(buf->profileName, dynamicProfile, sizeof(buf->profileName) - 1);
+      buf->profileName[sizeof(buf->profileName) - 1] = '\0';
     }
 #endif // DYNAMIC_SCSI_ID
 
-    if (profileName[0] == '\0')
+    if (buf->profileName[0] == '\0')
       continue;
 
     g_scsi_settings.initDevice(id, S2S_CFG_FIXED);
@@ -965,18 +972,17 @@ static bool autoCreateAS400ProfileImages()
     uint32_t blockSize = 0, sectors = 0;
     if (!getAS400ProfileCapacity(id, &blockSize, &sectors) || blockSize == 0 || sectors == 0)
     {
-      logmsg("---- SCSI ID ", id, ": AS400_DiskProfile '", profileName,
+      logmsg("---- SCSI ID ", id, ": AS400_DiskProfile '", buf->profileName,
              "' has no usable BlockSize/Sectors, cannot auto-create image");
       continue;
     }
 
-    char fullname[MAX_FILE_PATH * 2 + 2] = {0};
-    strncpy(fullname, imgdir, MAX_FILE_PATH);
-    if (fullname[strlen(fullname) - 1] != '/') strcat(fullname, "/");
-    char namepart[16];
+    memset(buf->fullname, '\0', sizeof(buf->fullname));
+    strncpy(buf->fullname, buf->imgdir, MAX_FILE_PATH);
+    if (buf->fullname[strlen(buf->fullname) - 1] != '/') strcat(buf->fullname, "/");
     char idchar = is_dynamic ? DYNAMIC_SCSI_ID_CHAR : scsiEncodeID(id);
-    snprintf(namepart, sizeof(namepart), "HD%c0.hda", idchar);
-    strcat(fullname, namepart);
+    snprintf(buf->imageName, sizeof(buf->imageName), "HD%c0-%s.hda", idchar, buf->profileName);
+    strcat(buf->fullname, buf->imageName);
 
     // Account for AlignUnalignedAccesses: a gapped-layout image needs more
     // physical SD card space than its logical sectors*blockSize (see
@@ -986,17 +992,17 @@ static bool autoCreateAS400ProfileImages()
         (zuluscsi_align_unaligned_t)g_scsi_settings.getDevice(id)->alignUnalignedAccesses, blockSize);
     uint64_t size = gapLayoutPhysicalSize(alignMode, blockSize, sectors);
     logmsg("---- No image found for SCSI ID ", id, ", auto-creating ",
-           (int)(size / (1024 * 1024)), " MB as '", namepart, "' per AS400_DiskProfile '",
-           profileName, "' in [", is_dynamic ? DYNAMIC_SCSI_INI_SECTION : section, "]",
+           (int)(size / (1024 * 1024)), " MB as '", buf->imageName, "' per AS400_DiskProfile '",
+           buf->profileName, "' in [", is_dynamic ? DYNAMIC_SCSI_INI_SECTION : section, "]",
            alignMode != ALIGN_UNALIGNED_OFF ? " (includes AlignUnalignedAccesses padding)" : "");
 
-    if (!createImageFile(fullname, size))
+    if (!createImageFile(buf->imageName, size))
     {
       logmsg("---- Failed to auto-create image for SCSI ID ", id);
       continue;
     }
 
-    if (scsiDiskOpenHDDImage(id, fullname, 0, blockSize, S2S_CFG_FIXED, true))
+    if (scsiDiskOpenHDDImage(id, buf->fullname, 0, blockSize, S2S_CFG_FIXED, true))
     {
       foundImage = true;
     }
