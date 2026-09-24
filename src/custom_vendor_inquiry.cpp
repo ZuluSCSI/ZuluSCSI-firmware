@@ -793,6 +793,34 @@ bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length)
     {
         if (len > ZPDB_SERVE_MAX) len = ZPDB_SERVE_MAX;
         memcpy(buf, modeSense, len);
+
+        // MODE SENSE(6) header offset 1 is Medium Type. The compiled-in
+        // capture was taken with no cartridge loaded (0x00, "no
+        // cartridge") -- real hardware only reports 0x00 when genuinely
+        // empty (see AS400TapeCISCMediumType/AS400TapePPCMediumType's own
+        // comments), so serving it as-is once a tape image is actually
+        // configured makes every density request fail identically,
+        // regardless of which density is asked for. An explicit
+        // MediumType= override in this ID's ini section (the same generic
+        // per-device key doModeSense()'s non-AS/400 fallback path honors)
+        // takes precedence over the compiled-in default.
+        if (len >= 2)
+        {
+            const scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(id);
+            if (devCfg->mediumType >= 0)
+            {
+                buf[1] = (uint8_t)devCfg->mediumType;
+            }
+            else if (g_builtin[id] == BUILTIN_AS400_TAPE_CISC)
+            {
+                buf[1] = AS400TapeCISCMediumType;
+            }
+            else
+            {
+                buf[1] = AS400TapePPCMediumType;
+            }
+        }
+
         *length = (uint16_t)len;
         return true;
     }
