@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 **/
 
-// ZPDB -- Zulu Profile DataBase, a key/value store for drive profiles held
+// ZPDB -- ZuluSCSI Profile DataBase, a key/value store for drive profiles held
 // in flash. See docs/ZPDB_FORMAT.md for the on-flash layout; the
 // short version:
 //

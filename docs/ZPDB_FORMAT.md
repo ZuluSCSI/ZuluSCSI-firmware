@@ -1,4 +1,4 @@
-# ZPDB — Zulu Profile DataBase, on-flash format v1.0
+# ZPDB — ZuluSCSI Profile DataBase, on-flash format v1.0
 
 A container for the `data/zulu_profiles/*.ini` drive profiles (and any other
 key/value profile data of the same shape). It replaced the statically allocated

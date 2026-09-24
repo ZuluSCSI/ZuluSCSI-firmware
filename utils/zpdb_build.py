@@ -2,7 +2,7 @@
 """
 zpdb_build.py -- compile ZuluSCSI .ini profiles into a ZPDB flash blob.
 
-ZPDB ("Zulu Profile DataBase") is a uint32-aligned container that replaces the
+ZPDB ("ZuluSCSI Profile DataBase") is a uint32-aligned container that replaces the
 statically allocated g_custom_vpd / g_custom_spd / g_custom_modesense tables:
 once a section+key is located, the value is a flash offset and a byte length,
 read straight into the buffer the response is served from.
