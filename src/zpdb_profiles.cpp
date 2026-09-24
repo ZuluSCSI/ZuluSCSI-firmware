@@ -256,7 +256,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
 
         if (overflow)
         {
-            logmsg("---- ZPDB: ", filename, ":", (int)lineno, " is longer than ",
+            dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " is longer than ",
                    (int)ZPDB_INI_LINE_MAX, " characters");
             file_ok = false;
             break;
@@ -271,7 +271,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
             char *close = strchr(line, ']');
             if (close == nullptr)
             {
-                logmsg("---- ZPDB: ", filename, ":", (int)lineno, " has no closing ']'");
+                dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " has no closing ']'");
                 file_ok = false;
                 break;
             }
@@ -291,7 +291,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
             {
                 if (hashes[i] == hash)
                 {
-                    logmsg("---- ZPDB: ", filename, " defines profile '", name,
+                    dbgmsg("---- ZPDB: ", filename, " defines profile '", name,
                            "' which another file already defined");
                     file_ok = false;
                     break;
@@ -301,7 +301,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
 
             if (*hash_count >= ZPDB_MAX_PROFILES)
             {
-                logmsg("---- ZPDB: more than ", (int)ZPDB_MAX_PROFILES,
+                dbgmsg("---- ZPDB: more than ", (int)ZPDB_MAX_PROFILES,
                        " profiles, '", name, "' was not stored");
                 file_ok = false;
                 break;
@@ -321,7 +321,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
         char *equals = strchr(line, '=');
         if (equals == nullptr)
         {
-            logmsg("---- ZPDB: ", filename, ":", (int)lineno, " has no '='");
+            dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " has no '='");
             file_ok = false;
             break;
         }
@@ -332,7 +332,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
 
         if (!in_section)
         {
-            logmsg("---- ZPDB: ", filename, ":", (int)lineno, " has key '", key,
+            dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " has key '", key,
                    "' outside any [profile] section");
             file_ok = false;
             break;
@@ -352,7 +352,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
             int len = parseHexLine(value, scratch.binary, (int)scratch.binary_size);
             if (len < 0)
             {
-                logmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
+                dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
                        "' is not a list of hex bytes");
                 file_ok = false;
                 break;
@@ -372,7 +372,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
             }
             else
             {
-                logmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
+                dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
                        "' is out of chunk order, expected ", (int)expect_chunk);
                 file_ok = false;
                 break;
@@ -405,7 +405,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
                     int len = parseHexLine(value, scratch.binary, (int)scratch.binary_size);
                     if (len < 0)
                     {
-                        logmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
+                        dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
                                "' is not a list of hex bytes");
                         file_ok = false;
                         ok = false;
@@ -421,7 +421,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
         {
             if (file_ok)
             {
-                logmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
+                dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
                        "' could not be stored");
             }
             file_ok = false;
@@ -470,7 +470,7 @@ static bool nextProfileFile(char *name, size_t name_size)
             }
             else
             {
-                logmsg("---- ZPDB: file name '", candidate, "' is too long, skipped");
+                dbgmsg("---- ZPDB: file name '", candidate, "' is too long, skipped");
             }
         }
         file.close();
@@ -510,7 +510,7 @@ static void moveProfileFile(const char *name, bool ok)
 
     if (!SD.exists(dir) && !SD.mkdir(dir))
     {
-        logmsg("---- ZPDB: could not create ", dir, ", leaving ", name, " in place");
+        dbgmsg("---- ZPDB: could not create ", dir, ", leaving ", name, " in place");
         return;
     }
 
@@ -519,19 +519,19 @@ static void moveProfileFile(const char *name, bool ok)
 
     if (SD.exists(to) && !SD.remove(to))
     {
-        logmsg("---- ZPDB: could not replace ", to, ", leaving ", name, " in place");
+        dbgmsg("---- ZPDB: could not replace ", to, ", leaving ", name, " in place");
         return;
     }
 
     if (!SD.rename(from, to))
-        logmsg("---- ZPDB: could not move ", from, " to ", to);
+        dbgmsg("---- ZPDB: could not move ", from, " to ", to);
     else
-        logmsg("---- ZPDB: ", name, " -> ", dir);
+        dbgmsg("---- ZPDB: ", name, " -> ", dir);
 }
 
 static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
 {
-    logmsg("-- ZPDB: rebuilding the profile store from ", (int)file_count,
+    logmsg("-- ZuluSCSI Profile Database erasing and rebuilding the profile store from ", (int)file_count,
            " file(s) in ", ZPDB_PROFILE_DIR);
 
     // Everything below works in the caller's buffer; the store allocates
@@ -576,7 +576,7 @@ static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
 
         if (!file.open(path, O_RDONLY))
         {
-            logmsg("---- ZPDB: could not open ", path);
+            dbgmsg("---- ZPDB: could not open ", path);
         }
         else
         {
@@ -591,7 +591,7 @@ static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
         {
             // The writer latches on a flash-level failure, so nothing further
             // can be stored -- move the rest to /failed rather than looping.
-            logmsg("---- ZPDB: the store write failed, remaining files will be skipped");
+            dbgmsg("---- ZPDB: the store write failed, remaining files will be skipped");
             while (nextProfileFile(name, sizeof(name)))
             {
                 moveProfileFile(name, false);
@@ -603,7 +603,7 @@ static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
 
     if (writer.failed() || !writer.finish())
     {
-        logmsg("---- ZPDB: the profile store was not written");
+        logmsg("---- ZPDB: error occured attempting to write the profile store, retry with debug on to see further error messages");
     }
     else
     {
@@ -635,7 +635,7 @@ static void logStoredProfiles()
     {
         if (!g_store.sectionName(section, name, sizeof(name)))
         {
-            logmsg("---- ZPDB: profile ", (int)index, " has an unreadable name");
+            dbgmsg("---- ZPDB: profile ", (int)index, " has an unreadable name");
             break;
         }
 
@@ -662,7 +662,7 @@ void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size)
 
     if (scratch != nullptr && !can_ingest)
     {
-        logmsg("-- ZPDB: ", (int)scratch_size, " bytes of scratch were offered but a rebuild "
+        dbgmsg("-- ZPDB: ", (int)scratch_size, " bytes of scratch were offered but a rebuild "
                "needs ", (int)ZPDB_REBUILD_SCRATCH_SIZE, ", not ingesting ", ZPDB_PROFILE_DIR);
     }
 
@@ -678,14 +678,15 @@ void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size)
 
     if (!g_store.open(zpdbFlashRead, nullptr, zpdbFlashSize()))
     {
+        dbgmsg("-- No ZuluSCSI Profile Database (ZPDB) found in Flash");
         if (!can_ingest)
         {
             // Nothing was scanned, so say only what is actually known.
-            logmsg("-- ZPDB: no profile store in flash");
+            dbgmsg("-- ZPDB: no profile store in flash");
         }
         else if (file_count == 0)
         {
-            logmsg("-- ZPDB: no profile store in flash and no .ini files in ",
+            dbgmsg("-- ZPDB: no profile store in flash and no .ini files in ",
                    ZPDB_PROFILE_DIR);
         }
         return;
@@ -697,15 +698,14 @@ void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size)
     uint32_t used = g_store.totalSize();
     uint32_t region = zpdbFlashSize();
     uint32_t free_bytes = (region > used) ? (region - used) : 0;
-
-    logmsg("-- ZPDB: ", (int)g_store.sectionCount(), " profile(s) in flash, using ",
+    logmsg("-- ZuluSCSI Profile Database (ZPDB) found in Flash");
+    logmsg("---- ZPDB: ", (int)g_store.sectionCount(), " profile(s) in flash, using ",
            (int)used, " of ", (int)region, " bytes (", (int)((used * 100) / region),
            "%), ", (int)free_bytes, " bytes free");
 
     if (free_bytes < ZPDB_MAX_SECTION_SIZE)
     {
-        logmsg("-- ZPDB: WARNING: fewer than ", (int)ZPDB_MAX_SECTION_SIZE,
-               " bytes are left, so the next profile added may not fit");
+        dbgmsg("---- ZPDB: WARNING: nearing end of usable flash, ", free_bytes, " bytes left.");
     }
 
     logStoredProfiles();
