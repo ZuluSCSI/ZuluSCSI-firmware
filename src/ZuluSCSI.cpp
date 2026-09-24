@@ -246,14 +246,6 @@ void init_logfile()
   {
     logmsg("Failed to open log file: ", SD.sdErrorCode());
   }
-  else
-  {
-    // Diagnostic only: this function previously had no success-path log
-    // line at all, so a clean open and a silent failure upstream (e.g.
-    // init_logfile() not being reached this boot) were indistinguishable
-    // from the console/screenlog alone.
-    logmsg("---- Log file opened: ", LOGFILE, truncate ? " (truncated)" : " (appending)");
-  }
 
   bool temp_log_to_sd = ini_getbool("SCSI", "LogToSDCard", 1, CONFIGFILE);
   if (!temp_log_to_sd)
