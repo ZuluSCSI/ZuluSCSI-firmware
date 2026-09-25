@@ -441,15 +441,15 @@ bool audio_is_playing(uint8_t id) {
     return audio_owner == (id & AUDIO_OWNER_MASK) && audio_playing;
 }
 
-void audio_setup() {
+void audio_setup(uint bclk_pin, uint ws_pin, uint dout_pin) {
     // setup GPIOs
-    pio_gpio_init(I2S_PIO_HW, GPIO_I2S_BCLK);
-    pio_gpio_init(I2S_PIO_HW, GPIO_I2S_WS);
-    pio_gpio_init(I2S_PIO_HW, GPIO_I2S_DOUT);
+    pio_gpio_init(I2S_PIO_HW, bclk_pin);
+    pio_gpio_init(I2S_PIO_HW, ws_pin);
+    pio_gpio_init(I2S_PIO_HW, dout_pin);
 
     // setup Arduino-Pico I2S library
-    i2s.setBCLK(GPIO_I2S_BCLK);
-    i2s.setDATA(GPIO_I2S_DOUT);
+    i2s.setBCLK(bclk_pin);
+    i2s.setDATA(dout_pin);
     i2s.setBitsPerSample(16);
     i2s.setDivider(g_zuluscsi_timings->audio.clk_div_pio, 0);
     i2s.begin(I2S_PIO_HW, I2S_PIO_SM);

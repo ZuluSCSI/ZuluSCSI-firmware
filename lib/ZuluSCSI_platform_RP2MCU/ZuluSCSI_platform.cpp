@@ -369,14 +369,64 @@ static void __no_inline_not_in_flash_func(set_flash_clock)()
 }
 #endif
 
+
 #ifdef ZULUSCSI_BLASTER
-static int platform_get_led_pin()
+enum board_variant_t
 {
+    BOARD_VARIANT_UNKNOWN = -1,
+    BOARD_VARIANT_NORMAL = 0,
+    BOARD_VARIANT_LITE,
+};
+
+
+// Some boards pull down or pull up a GPIO to differentiate a board variants.
+// The variant may have signals that are on different GPIOs or different features.
+static board_variant_t platform_get_board_variant()
+{
+    static board_variant_t s_variant = BOARD_VARIANT_UNKNOWN;
+    if (s_variant != BOARD_VARIANT_UNKNOWN)
+        return s_variant;
+    // If the pull up stays ground, device is a Blaster Lite board
+    gpio_put(GPIO_VARIANT_DETECT, true);
+    gpio_set_function(GPIO_VARIANT_DETECT, GPIO_FUNC_SIO);
+    gpio_set_pulls(GPIO_VARIANT_DETECT, true, false);
+    gpio_set_dir(GPIO_VARIANT_DETECT, false);
+    // Let pull up charge
+    delayMicroseconds(10);
+    bool is_lite = gpio_get(GPIO_VARIANT_DETECT) == VARIANT_DETECT_VALUE_LITE;
+    gpio_set_pulls(GPIO_VARIANT_DETECT, false, false);
+    if (is_lite)
+        s_variant = BOARD_VARIANT_LITE;
+    else
+        s_variant = BOARD_VARIANT_NORMAL;
+    return s_variant;
+}
+#else
+enum board_variant_t
+{
+    BOARD_VARIANT_UNKNOWN = -1,
+    BOARD_VARIANT_NORMAL = 0,
+};
+static board_variant_t platform_get_board_variant()
+{
+    return BOARD_VARIANT_NORMAL;
+}
+#endif
+
+
+#ifdef ZULUSCSI_BLASTER
+static int platform_get_led_pin(bool skip_test = false)
+{
+
+    if (skip_test)
+    {
+        return LED_PIN;
+    }
+
     // Workaround for LED pin connection issue on PCB revision 2026c.
     // The normal LED pin GPIO33 is shorted to GND, and LED is connected to GPIO5 instead.
     // Use a short pulse at low drive strength to detect the misconnection.
     // GPIO pull-up itself is too weak to overcome 74LVTH125 hold current.
-
     int led_pin = LED_PIN;
     gpio_put(led_pin, false);
     gpio_set_function(led_pin, GPIO_FUNC_SIO);
@@ -594,8 +644,19 @@ void platform_init()
     gpio_conf(SDIO_D1,        GPIO_FUNC_SIO, true, false, false, true, true);
     gpio_conf(SDIO_D2,        GPIO_FUNC_SIO, true, false, false, true, true);
 
+
     // LED pin
+#ifdef ZULUSCSI_BLASTER
+    // Detect Lite
+    bool is_lite = platform_get_board_variant() == BOARD_VARIANT_LITE;
+    int led_pin = platform_get_led_pin(is_lite);
+    if (is_lite)
+    {
+        logmsg("ZuluSCSI Blaster Ultra Lite variant detected");
+    }
+#else
     int led_pin = platform_get_led_pin();
+#endif
     gpio_conf(led_pin,        GPIO_FUNC_PWM, false,false, true,  false, false);
     g_led_pwm.slice = pwm_gpio_to_slice_num(led_pin);
     g_led_pwm.chan = pwm_gpio_to_channel(led_pin);
@@ -732,7 +793,17 @@ void platform_late_init()
     if (!g_scsi_initiator)
     {
         logmsg("ZuluSCSI CD Audio enabled - requires DAC");
-        audio_setup();
+#  ifdef ZULUSCSI_BLASTER
+        bool is_lite = platform_get_board_variant() == BOARD_VARIANT_LITE;
+        if (is_lite)
+        {
+            audio_setup(GPIO_I2S_BCLK_LITE, GPIO_I2S_WS_LITE, GPIO_I2S_DOUT_LITE);
+        }
+        else
+#  endif
+        {
+            audio_setup(GPIO_I2S_BCLK, GPIO_I2S_WS, GPIO_I2S_DOUT);
+        }
     }
 #endif
 
@@ -864,8 +935,13 @@ void platform_led_breath(bool breath, uint32_t period_ms)
 
 void platform_disable_led(void)
 {
-    //        pin      function       pup   pdown  out    state fast
+#ifdef ZULUSCSI_BLASTER
+    bool skip_test = platform_get_board_variant() == BOARD_VARIANT_LITE;
+    int led_pin = platform_get_led_pin(skip_test);
+#else
     int led_pin = platform_get_led_pin();
+#endif
+    //        pin      function       pup   pdown  out    state fast
     gpio_conf(led_pin, GPIO_FUNC_SIO, false,false, false, false, false);
     logmsg("Disabling status LED");
 }
