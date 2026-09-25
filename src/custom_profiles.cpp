@@ -24,8 +24,7 @@
 
 #include "custom_profiles.h"
 
-#if defined(PLATFORM_AS400) && defined(ZULUSCSI_MCU_RP23XX)
-
+#ifdef PLATFORM_AS400
 #include "ZuluSCSI_config.h"
 #include "ZuluSCSI_log.h"
 #include "ZuluSCSI_platform.h"
@@ -265,4 +264,4 @@ void splitCustomProfileDefinitions()
     logmsg("---- ", AS400_PROFILES_FILE, " -> ", AS400_PROFILES_FILE_PROCESSED);
 }
 
-#endif // PLATFORM_AS400 && ZULUSCSI_MCU_RP23XX
+#endif // PLATFORM_AS400

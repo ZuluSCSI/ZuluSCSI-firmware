@@ -26,7 +26,7 @@
 
 #include <ZuluSCSI_platform_config.h>
 
-#if defined(PLATFORM_AS400) && defined(ZULUSCSI_MCU_RP23XX)
+#ifdef PLATFORM_AS400
 
 // Split a multi-section definitions file into one .ini file per [Section]
 // under CUSTOM_PROFILES_DIR/, so each profile is also available as a
@@ -46,4 +46,4 @@
 // once.
 void splitCustomProfileDefinitions();
 
-#endif // PLATFORM_AS400 && ZULUSCSI_MCU_RP23XX
+#endif // PLATFORM_AS400

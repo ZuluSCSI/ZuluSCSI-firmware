@@ -2159,7 +2159,7 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
 
     print_sd_info();
 
-#if defined(PLATFORM_AS400) && defined(ZULUSCSI_MCU_RP23XX)
+#ifdef PLATFORM_AS400
     splitCustomProfileDefinitions();
 #endif
 
