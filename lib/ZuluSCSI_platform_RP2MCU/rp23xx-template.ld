@@ -24,6 +24,7 @@
 MEMORY
 {
     FLASH(rx) : ORIGIN = 0x10000000, LENGTH = $program_size
+    PROFILES(r) : ORIGIN = 0x10000000 + $profiles_bin_offset, LENGTH = $profiles_bin_length
     PSRAM(rwx) : ORIGIN = 0x11000000, LENGTH = 0
     RAM(rwx) : ORIGIN = 0x20000000, LENGTH = 512k  /* Leave space for pico-debug */
     SCRATCH_X(rwx) : ORIGIN = 0x20080000, LENGTH = 4k
@@ -36,8 +37,27 @@ PROVIDE ( _FS_end       = __FS_END__ );
 
 ENTRY(_entry_point)
 
+/* Switch the linker's input reader to binary mode */
+TARGET(binary)
+
+/* Define the raw binary file(s) to pull in */
+INPUT(profiles.bin)
+
+/* Restore the default output format for the rest of your files */
+OUTPUT_FORMAT(default)
+
 SECTIONS
 {
+    .rodata :
+    {
+        . = ALIGN(4);
+        _profiles_binary_start = .;   /* Custom start symbol */
+
+        profiles.bin                 /* Map the binary directly */
+
+        _profiles_binary_start_end = .;     /* Custom end symbol */
+    } > PROFILES
+
     .flash_begin : {
         __flash_binary_start = .;
     } > FLASH

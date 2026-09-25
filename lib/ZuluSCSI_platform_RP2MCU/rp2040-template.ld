@@ -22,13 +22,34 @@
 MEMORY
 {
     FLASH(rx) : ORIGIN = 0x10000000, LENGTH = $program_size
+    PROFILES(r) : ORIGIN = 0x10000000 + $profiles_bin_offset, LENGTH = $profiles_bin_length
     RAM(rwx) : ORIGIN = 0x20000000, LENGTH = 256k  /* Leave space for pico-debug */
     SCRATCH_X(rwx) : ORIGIN = 0x20040000, LENGTH = 4k
     SCRATCH_Y(rwx) : ORIGIN = 0x20041000, LENGTH = 4k
 }
 ENTRY(_entry_point)
+
+/* Switch the linker's input reader to binary mode */
+TARGET(binary)
+
+/* Define the raw binary file(s) to pull in */
+INPUT(profiles.bin)
+
+/* Restore the default output format for the rest of your files */
+OUTPUT_FORMAT(default)
+
 SECTIONS
 {
+    .profiles_binary_section :
+    {
+        . = ALIGN(4);
+        PROVIDE(_profiles_binary_start = .);   /* Custom start symbol */
+
+        profiles.bin                 /* Map the binary directly */
+
+        PROVIDE(_profiles_binary_start_end = .);     /* Custom end symbol */
+    } > PROFILES
+
     .flash_begin : {
         __flash_binary_start = .;
     } > FLASH

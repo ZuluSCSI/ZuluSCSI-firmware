@@ -17,22 +17,36 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from string import Template 
+import subprocess
 Import ("env")
 
 template_file =  env.GetProjectOption('linker_script_template')
 linker_file = env.subst('$BUILD_DIR') + '/rp_linker.ld'
+profiles_bin_file = env.subst('$BUILD_DIR') + '/profiles.bin'
 
 def process_template(source, target, env):
     values = {
         'program_size': env.GetProjectOption('program_flash_allocation'),
-        'project_name': env.subst('$PIOENV')
-        }
+        'project_name': env.subst('$PIOENV'),
+        'profiles_bin_offset': env.GetProjectOption('profiles_bin_offset'),
+        'profiles_bin_length': env.GetProjectOption('profiles_bin_length')
+    }
+
     with open(template_file, 'r') as t:
         src = Template(t.read())
         result = src.substitute(values)
 
     with open(linker_file, 'w') as linker_script:
         linker_script.write(result)
+
+    create_profiles_bin = [
+        "python",
+        "utils/zpdb_build.py",
+        "-o", profiles_bin_file,
+        "as400_disk_definitions.txt"
+    ]
+
+    subprocess.run(create_profiles_bin)
 
 env.AddPreAction("${BUILD_DIR}/${PROGNAME}.elf",
         env.VerboseAction(process_template, 
