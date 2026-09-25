@@ -2213,6 +2213,8 @@ static void zuluscsi_setup_sd_card(bool wait_for_card = true)
     if (!platform_is_initiator_mode_enabled())
 #endif
       kiosk_restore_images();
+
+    init_logfile();
     reinitSCSI(true); // power-on with a card: the one place profiles are ingested
 
     boot_delay_ms = cfg->initPostDelay;

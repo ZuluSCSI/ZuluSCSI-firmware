@@ -22,6 +22,7 @@
 #include "zpdb_flash.h"
 
 #include "ZuluSCSI_log.h"
+#include <ZuluSCSI_platform.h>
 
 #include <SdFat.h>
 #include <ctype.h>
@@ -643,6 +644,7 @@ static void logStoredProfiles()
                (int)section.entry_count, " key(s), ", (int)section.sect_len,
                " bytes at store offset ", (int)section.offset);
         index++;
+        platform_poll();
     } while (g_store.nextSection(&section));
 }
 
