@@ -26,6 +26,7 @@
 #include "diagnostic.h"
 #include "disk.h"
 #include "inquiry.h"
+#include <custom_vendor_inquiry.h>
 #include "led.h"
 #include "mode.h"
 #include "scsi2sd_time.h"
@@ -606,7 +607,7 @@ static void process_Command()
 				// Byte 9 bit 3: BOM (Beginning of Medium)
 				scsiDev.data[9] = scsiDev.target->tapeBOM ? (1 << 3) : 0;
 #ifdef PLATFORM_AS400
-				if (cfg->quirks == S2S_CFG_QUIRKS_AS400)
+				if (cfg->quirks == S2S_CFG_QUIRKS_AS400 && isAS400CapturedTapeIdentity(scsiDev.target->targetId))
 				{
 					// Real AS/400 tape drive wire captures (2026-09-11, see
 					// AS/400 tape investigation) diverge from both the
@@ -619,6 +620,14 @@ static void process_Command()
 					//   a general BOM flag borrowed from a different
 					//   vendor's convention -- real hardware always sends 0
 					//   here outside COPY.
+					//
+					// isAS400CapturedTapeIdentity() added 2026-09-25: this
+					// drive-specific quirk was gated on cfg->quirks alone
+					// (board-wide, set by System=AS400_*) with no check for
+					// which tape identity is actually in use -- forced these
+					// Tandberg-specific values onto a real PPC/PCI machine's
+					// generic-identity tape too, breaking INZTAP (CPF4119)
+					// on a config that worked before this quirk existed.
 					scsiDev.data[0] = scsiDev.target->sense.info ? 0xF0 : 0x70;
 					scsiDev.data[9] = 0;
 				}
@@ -638,10 +647,13 @@ static void process_Command()
 			// Additional bytes if there are errors to report
 			scsiDev.data[7] = 10; // additional length
 #ifdef PLATFORM_AS400
-			if (cfg->deviceType == S2S_CFG_SEQUENTIAL && cfg->quirks == S2S_CFG_QUIRKS_AS400)
+			if (cfg->deviceType == S2S_CFG_SEQUENTIAL && cfg->quirks == S2S_CFG_QUIRKS_AS400 &&
+				isAS400CapturedTapeIdentity(scsiDev.target->targetId))
 			{
 				// Matches real AS/400 tape drive wire captures, which
 				// consistently declare 19 (not this generic default of 10).
+				// Scoped to captured identities only, 2026-09-25 -- see the
+				// matching comment above for why.
 				scsiDev.data[7] = 19;
 			}
 #endif

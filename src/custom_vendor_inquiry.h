@@ -66,6 +66,16 @@ bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length);
 // so, fills *blockSize/*sectors and returns true -- used to auto-create a
 // correctly-sized image file when none exists yet for a profiled ID.
 bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sectors);
+
+// True only when this SCSI ID is presenting one of the captured AS/400 tape
+// identities (Device=AS400_CISC/AS400_PPC) -- i.e. the specific real
+// Tandberg-manufactured drives this project's sense-data/SPACE-logic quirks
+// were derived from and hardware-verified against. False for every other
+// tape on an AS/400-preset board, including one with no Device= override at
+// all (S2S_CFG_QUIRKS_AS400 is board-wide, set by System=AS400_*, so quirks
+// alone can't tell a captured identity apart from a generic one -- see the
+// PPC/PCI CPF4119 regression this was added to fix).
+bool isAS400CapturedTapeIdentity(uint8_t scsiId);
 #endif
 
 #ifdef __cplusplus
