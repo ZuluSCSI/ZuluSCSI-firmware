@@ -20,17 +20,28 @@
 // Drive profiles in flash: boot-time ingest from the SD card, and the
 // per-target binding that makes a lookup cheap at INQUIRY time.
 //
-// At boot zpdbProfilesInit() looks in /zulu_profiles for .ini files:
+// Profiles come from two ZPDB stores, searched in this order:
 //
-//   - no .ini files: the store already in flash is used as-is
-//   - one or more:   the flash region is erased and rebuilt from them, then
-//                    each file is moved into /zulu_profiles/loaded or
-//                    /zulu_profiles/failed depending on how it went
+//   1. the custom store, in the flash profile region. At boot
+//      zpdbProfilesInit() looks in /zulu_profiles for .ini files --
+//      custom_profiles.cpp splits the card's definitions file out there:
+//
+//        - no .ini files: the store already in flash is used as-is
+//        - one or more:   the flash region is erased and rebuilt from them,
+//                         then each file is moved into /zulu_profiles/loaded
+//                         or /zulu_profiles/failed depending on how it went
+//
+//   2. the built-in store, compiled into the firmware image from the
+//      `profile_definitions` file named in platformio.ini (see
+//      src/generate-embedded-profiles.py)
+//
+// So a profile in the custom overrides a built-in one of the same name, and a
+// card needs no profile files at all to use a built-in profile.
 //
 // A profile is bound to a SCSI ID once (zpdbBindProfile), which resolves and
-// caches its section. Serving a page after that reads the value straight out
-// of flash into the destination buffer -- normally scsiDev.data -- so no
-// per-target copy of the profile data is held in RAM.
+// caches its section and the store it is in. Serving a page after that reads
+// the value straight out of flash into the destination buffer -- normally
+// scsiDev.data -- so no per-target copy of the profile data is held in RAM.
 
 #pragma once
 
@@ -72,9 +83,9 @@
 #define ZPDB_REBUILD_SCRATCH_SIZE (3u * ZPDB_MAX_SECTION_SIZE                                         + ZPDB_INI_LINE_MAX                                                + 1024u                                                            + ZPDB_MAX_PROFILES * sizeof(uint32_t))
 
 // Open whatever store is in flash and, when `scratch` is given, first ingest
-// any .ini files waiting in /zulu_profiles.
+// any .ini files waiting in /zulu_profiles. Also opens the built-in store.
 //
-// Opening is unconditional -- the store lives in flash and survives the card
+// Opening is unconditional -- both stores live in flash and survive the card
 // being pulled. Ingesting is the part that needs memory, and the caller
 // supplies it: pass a buffer of at least ZPDB_REBUILD_SCRATCH_SIZE bytes,
 // 4-byte aligned, that is free for the duration of the call. Passing nullptr
@@ -88,17 +99,19 @@
 // ingest them.
 void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size);
 
-// True when a valid store is open and can be queried.
+// True when either store is open and can be queried.
 bool zpdbProfilesAvailable();
 
-// Number of profiles in the open store.
+// Number of profiles across both open stores. A name present in both is
+// counted twice, although only the custom store copy is ever bound.
 uint32_t zpdbProfileCount();
 
 // Forget every binding. Call alongside resetCustomInquiryData().
 void zpdbUnbindAll();
 
-// Resolve `profileName` to a section and remember it for this SCSI ID.
-// Returns false (and logs) when the store has no such profile.
+// Resolve `profileName` to a section -- custom store first, then the
+// built-in one -- and remember it for this SCSI ID. Returns false (and logs)
+// when neither store has such a profile.
 bool zpdbBindProfile(uint8_t scsiId, const char *profileName);
 
 // True when this SCSI ID has a profile bound.
@@ -123,7 +136,8 @@ bool zpdbReadLogSense(uint8_t scsiId, uint8_t pageCode, uint8_t *buf, uint32_t b
 // BlockSize / Sectors from the bound profile, when it declares them.
 bool zpdbReadCapacity(uint8_t scsiId, uint32_t *blockSize, uint64_t *sectors);
 
-// BlockSize / Sectors of a profile named directly, binding nothing. For the
+// BlockSize / Sectors of a profile named directly, binding nothing, resolved
+// in the same store order as zpdbBindProfile(). For the
 // dynamic SCSI ID, whose image has to be sized and created before the ID it
 // will answer to is known -- binding is per SCSI ID, and the ID only arrives
 // once the SCA backplane can be read.

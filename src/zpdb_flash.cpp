@@ -58,7 +58,7 @@ bool zpdbFlashInit()
 
 #ifdef ZPDB_HAVE_REGION
     g_zpdb_ready = true;
-    dbgmsg("---- ZPDB: profile store at flash offset ", (int)ZPDB_BASE,
+    dbgmsg("-- ZPDB: profile store at flash offset ", (int)ZPDB_BASE,
            " B , ", (int)(ZPDB_SIZE / 1024), " kB");
 #endif
 
@@ -89,7 +89,7 @@ bool zpdbFlashRead(uint32_t offset, void *dest, uint32_t len, void *ctx)
 
     if (len > ZPDB_SIZE || offset > ZPDB_SIZE - len)
     {
-        dbgmsg("---- ZPDB: read of ", (int)len, " bytes at ", (int)offset,
+        dbgmsg("-- ZPDB: read of ", (int)len, " bytes at ", (int)offset,
                " is outside the ", (int)ZPDB_SIZE, "-byte store");
         return false;
     }
@@ -108,7 +108,7 @@ bool zpdbFlashErase()
         return false;
 
 #ifdef ZPDB_HAVE_REGION
-    dbgmsg("---- ZPDB: erasing ", (int)(ZPDB_SIZE / 1024), " kB at flash offset ",
+    dbgmsg("-- ZPDB: erasing ", (int)(ZPDB_SIZE / 1024), " kB at flash offset ",
            (int)ZPDB_BASE);
     return platform_flash_erase(ZPDB_BASE, ZPDB_SIZE);
 #else
@@ -126,7 +126,7 @@ bool zpdbFlashProgramPage(uint32_t offset, const uint8_t *page, void *ctx)
     if (offset > ZPDB_SIZE - ZPDB_MAX_SECTION_SIZE ||
         (offset % PLATFORM_FLASH_SECTOR_SIZE) != 0)
     {
-        dbgmsg("---- ZPDB: page write at ", (int)offset, " is outside the ",
+        dbgmsg("-- ZPDB: page write at ", (int)offset, " is outside the ",
                (int)ZPDB_SIZE, "-byte store");
         return false;
     }

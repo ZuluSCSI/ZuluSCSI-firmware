@@ -39,7 +39,8 @@ extern "C" {
 void resetCustomInquiryData();
 
 // Work out where one SCSI ID's custom inquiry data comes from: an
-// AS400_DiskProfile= binding into the flash profile store, the per-ID
+// AS400_DiskProfile= binding into a profile store (the custom one, else the
+// built-in one -- see zpdb_profiles.h), the per-ID
 // AS400_DiskSerialNumber / AS400_DiskPartNumber overrides, and failing those
 // a built-in AS/400 identity. Nothing is copied here -- the pages themselves
 // are read when they are served.

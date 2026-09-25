@@ -115,7 +115,7 @@ static int custom_profile_split_callback(const char *section, const char *key, c
         state->out = SD.open(path, O_WRONLY | O_CREAT | O_TRUNC);
         if (!state->out.isOpen())
         {
-            logmsg("---- ERROR: could not create custom profile file '", path,
+            logmsg("-- ERROR: could not create custom profile file '", path,
                    "', sdErrorCode: ", (int)SD.sdErrorCode());
             state->section_failed = true;
             state->error = true;
@@ -225,7 +225,7 @@ void splitCustomProfileDefinitions()
         state.out.close();
     }
 
-    logmsg("---- Wrote ", state.sections, " custom profile file(s), ", state.keys, " key/value pairs");
+    logmsg("-- Wrote ", state.sections, " custom profile file(s), ", state.keys, " key/value pairs");
 
     if (state.error)
     {
@@ -261,7 +261,7 @@ void splitCustomProfileDefinitions()
         return;
     }
 
-    logmsg("---- ", AS400_PROFILES_FILE, " -> ", AS400_PROFILES_FILE_PROCESSED);
+    logmsg("-- ", AS400_PROFILES_FILE, " -> ", AS400_PROFILES_FILE_PROCESSED);
 }
 
 #endif // PLATFORM_AS400
