@@ -421,6 +421,19 @@ tap_result_t tapSpaceForward(image_config_t &img, uint32_t &actual, uint32_t cou
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     uint32_t blocksize = scsiDev.target->liveCfg.bytesPerSector;
     bool fixed = (blocksize != 0);
+#ifdef PLATFORM_AS400
+    // Hardware-tested on a 9404-B10 during D-mode IPL (2026-09-19):
+    // the AS/400 can issue SPACE over variable-length logical tape blocks
+    // while the emulated drive still reports a default 512-byte block size.
+    // For the captured AS/400 tape identities, non-LOCATE SPACE must count
+    // each SIMH .TAP record as one logical block instead of reassembling
+    // records according to bytesPerSector.
+    if (!locate && img.quirks == S2S_CFG_QUIRKS_AS400 &&
+        isAS400CapturedTapeIdentity(scsiDev.target->targetId))
+    {
+        fixed = false;
+    }
+#endif
 
     uint32_t records_read = 0;
     tap_record_t record;
@@ -519,6 +532,19 @@ tap_result_t tapSpaceBackward(image_config_t &img, uint32_t &actual, uint32_t co
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
     uint32_t blocksize = scsiDev.target->liveCfg.bytesPerSector;
     bool fixed = (blocksize != 0);
+#ifdef PLATFORM_AS400
+    // Hardware-tested on a 9404-B10 during D-mode IPL (2026-09-19):
+    // the AS/400 can issue SPACE over variable-length logical tape blocks
+    // while the emulated drive still reports a default 512-byte block size.
+    // For the captured AS/400 tape identities, non-LOCATE SPACE must count
+    // each SIMH .TAP record as one logical block instead of reassembling
+    // records according to bytesPerSector.
+    if (!locate && img.quirks == S2S_CFG_QUIRKS_AS400 &&
+        isAS400CapturedTapeIdentity(scsiDev.target->targetId))
+    {
+        fixed = false;
+    }
+#endif
     uint32_t records_read = 0;
     tap_record_t record;
     bool started_read;
