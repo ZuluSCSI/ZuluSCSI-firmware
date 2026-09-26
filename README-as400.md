@@ -18,6 +18,13 @@ From all of the device classes the Zulu offers, three are of general interest in
 
 > **Note:** RISC and PPC (PowerPC) are referring to the same class of processor.
 
+For single-bus machines, the SCSI-IDs are often assigned like this:
+- 6 = Load source disk
+- 1 = Optical drive
+- 0 = Tape drive
+
+Other IDs can be used for additional DASD.
+
 ## Current state
 
 As of firmware release v2026.09.10. All successful tests so far have been based on a ZuluSCSI wide board on a 9401-150, while the CISC tests have been done with a ZuluSCSI Blaster on a 9401-P02, and a Zulu Wide on 9401-P03.
@@ -27,7 +34,7 @@ We have to differ three hardware generations when considering Zulu vs. AS/400 ov
 | Device | CISC/IMPI, 520 bytes/block disks | PPC/SPD, 520/522 bytes/block disks   | PPC/PCI, 522 bytes/block disks |
 | ------ | -------------------------------- | ------------------------------------ | ------------------------------ |
 | CD-ROM | Not supported                    | Works                                | Works                          |
-| Tape   | Fails for `savlib` and more      | Fails for `savlib` and more          | Works                          |
+| Tape   | Fails for `savlib` and more      | Fails for `savlib` and more          | Works (generic device)         |
 | Disk   | Works                            | Fails/Lack of feedback               | Works                          |
 
 There are success reports of more 150's working, and one of a 9406-270 becoming stuck with A6000244, *Contact was lost with device indicated*, as well as another model 270 unable to IPL from emulated CD-ROM with a medium read error.
@@ -126,9 +133,9 @@ AS400_DiskProfile = "86G9124"
 AS400_DiskSerialNumber = "02222222"
 ```
 
-The value must be exactly 8 characters: hexadecimal digits only (`0`-`9`, `A`-`F`), with the first character always `0`. This isn't an arbitrary style choice -- the field is read back as a 28-bit binary value, not free text. A value that doesn't fit this shape shows as a masked serial (`00-********`) in DST's "Display Non-Configured Units" screen instead of a usable one, and possibly yields an unusable device.
+The value must be exactly 8 characters: hexadecimal digits only (`0`-`9`, `A`-`F`), with the first character always `0`. This isn't an arbitrary style choice -- the field is read back as a 28-bit binary value, not free text. A value that doesn't fit this shape shows as a masked serial (`00-********`) in DST's "Display Non-Configured Units" screen, and possibly yields an unusable device.
 
-Without an `AS400_DiskSerialNumber` override, a named profile's own originally-captured serial is used verbatim and unchanged -- fine for a single disk of that profile, but two or more SCSI IDs sharing the same profile with no override will show the exact same serial to OS/400. An override is required, not just recommended, whenever a profile is used more than once.
+Without an `AS400_DiskSerialNumber` override, a named profile's own originally-captured serial is used verbatim and unchanged — good for a single disk of that profile, but two or more SCSI IDs sharing the same profile with no override will show the exact same serial to OS/400. An override is required, not just recommended, whenever a profile is used more than once.
 
 ### Performance optimization through `AlignUnalignedAccesses`
 
@@ -174,7 +181,9 @@ Fully tested with prerelease firmware on 9401-150, V4R4 and 9401-P02, V2R3.
 Currently, two AS/400 specific tape drives are emulated:
 
 - a CISC era QIC1000, FC #6343,
-- a PCI/PPC era SLR5 drive.
+- a PCI/PPC era SLR5, FC #6382.
+
+> **Note:** Both emulation targets are currently **broken**. The only reliably working tape emulation is the standard (generic) tape device — no `Device` statement for the SCSI ID itself, and this only works with comparably new PPC/PCI machines.
 
 To use,
 
@@ -204,7 +213,6 @@ Caveats:
 
 - When you choose an image file through the USB port's media menu, make sure that you not only choose an image file, but afterwards *insert* it!
 - If you replace a hardware tape drive, make sure to delete your old tape device file first, then IPL, check/set the new device name in DST, and have auto-configuration create the new device file during the following IPL.
-- The amended (with an explicit *Device* statement) tape code as of v2026.09.10 has not yet undergone extensive testing. Initial tests yield mixed results.
 
 ---
 
