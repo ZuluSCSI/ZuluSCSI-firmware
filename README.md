@@ -156,9 +156,9 @@ cycled through with the eject button or the Control Board browser.
 
 A directory in the scan root named with a type prefix and ID is picked up automatically:
 
-    HD0/  CD0/  RE0/  MO0/  TP0/  FD0/  ZP0/    ... through ID F
+    CD0/  RE0/  MO0/  TP0/  FD0/  ZP0/    ... through ID F
 
-and the `n` forms `HDn/`, `CDn/`, `REn/`, `MOn/`, `TPn/`, `FDn/`, `ZPn/` bind to the
+and the `n` forms `CDn/`, `REn/`, `MOn/`, `TPn/`, `FDn/`, `ZPn/` bind to the
 dynamic SCA ID.
 
 This can be overridden per device in `zuluscsi.ini`:
