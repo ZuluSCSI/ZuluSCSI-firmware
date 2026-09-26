@@ -40,8 +40,9 @@
 // Custom inquiry data is not cached in RAM. A page comes from one of two
 // places, in this order:
 //
-//   1. the flash profile store, when a profile is bound to the SCSI ID
-//      (see zpdb_profiles.h)
+//   1. a custom profile store, when a profile is bound to the SCSI ID -- the one
+//      built from the SD card, or failing that the one compiled into the
+//      firmware (see zpdb_profiles.h)
 //   2. the built-in AS/400 identities, which are const arrays already in
 //      flash (as400_values.h, as400_tape_values.h)
 //
@@ -373,12 +374,13 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
         }
     }
 
-    // Bind a named AS/400 disk profile: AS400_DiskProfile=<name of a profile
-    // in the flash store, e.g. "59H7001">. Binding is one linear scan of the
-    // store's section headers and costs no RAM -- the pages themselves stay
+    // Bind a named AS/400 disk profile: AS400_DiskProfile=<name of a profile,
+    // e.g. "59H7001">, looked up in the custom store built from the SD card first
+    // and then in the one compiled into the firmware. Binding is a linear scan of
+    // a store's section headers and costs no RAM -- the pages themselves stay
     // in flash until they are served. Fails loud: an ID that names a profile
-    // the store does not hold is logged rather than quietly falling back to
-    // the built-in identity, which would be a different drive.
+    // neither store holds is logged rather than quietly falling back to the
+    // built-in identity, which would be a different drive.
     if (readAS400Key(section, dynamic_section, "AS400_DiskProfile", tmp, sizeof(tmp)))
     {
         if (tmp[0] != '\0')
@@ -406,7 +408,7 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
             else
             {
                 logmsg("---- ERROR: AS/400 disk profile ", tmp, " requested for SCSI ID ",
-                       (int)scsiId, " but it is not in the profile store");
+                       (int)scsiId, " but it is not in the custom or built-in profile store");
             }
         }
     }

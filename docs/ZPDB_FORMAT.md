@@ -1,7 +1,6 @@
 # ZPDB — ZuluSCSI Profile DataBase, on-flash format v1.0
 
-A container for the `data/zulu_profiles/*.ini` drive profiles (and any other
-key/value profile data of the same shape). It replaced the statically allocated
+ZPDB replaced the statically allocated
 `g_custom_vpd`, `g_custom_spd` and `g_custom_modesense` tables in
 [custom_vendor_inquiry.cpp](../../ZuluSCSI-firmware/src/custom_vendor_inquiry.cpp)
 with lookups that read straight out of flash.
@@ -26,6 +25,10 @@ the linker's allocation and the map ever disagree.
 The store is never read through the XIP window: reads go through
 `platform_flash_read()`, which streams the flash device directly, so nothing is cached
 on the way and a value read straight after a program is never stale.
+
+A second, read-only store in the same format is compiled into the firmware image
+itself -- see *Built-in store* below. A profile name is looked up in the flash-region
+store first and in the built-in store second.
 
 Design rules, in the order they constrain everything else:
 
@@ -235,8 +238,9 @@ What replaced the static tables:
 | `g_custom_modesense[id]`                  | `zpdbReadModeSense()` — key `ModeSense3F`             |
 
 The per-SCSI-ID dimension disappears from storage: a SCSI ID is *bound* to a section
-once (`zpdbBindProfile()`), and all that is kept per target is a 16-byte section
-reference. N IDs on the same profile cost nothing extra.
+once (`zpdbBindProfile()`), and all that is kept per target is a 12-byte section
+reference plus a pointer to the store it was found in -- 16 bytes. N IDs on the same
+profile cost nothing extra.
 
 When no profile is bound, the built-in AS/400 disk and tape identities are served the
 same way — copied into `scsiDev.data` directly from the const arrays in
@@ -316,3 +320,35 @@ outside any section, a hex value that isn't a list of hex byte pairs, chunk indi
 out of order, a profile name another file already used, or a section that would
 exceed 4096 bytes. A half-built section is dropped rather than committed; sections the
 file already completed stay in the store, and the log says so.
+
+## Built-in store
+
+The firmware also carries a store compiled into its own image, so a card needs no
+profile files at all to use the profiles that ship with it. At build time
+`src/generate-embedded-profiles.py` runs `utils/zpdb_build.py --header` over the file
+named by `profile_definitions` in `platformio.ini` (`as400_disk_definitions.txt`) and
+writes `src/embedded_profiles_generated.h`: the same bytes the device would build, as
+a `const` array. The header is generated, not checked in.
+
+- **When.** The script writes the header while SCons is still setting up, before
+  anything is compiled -- `zpdb_profiles.cpp` includes it. A missing definitions file
+  or a `zpdb_build.py` error fails the build. The header is only rewritten when its
+  contents change, and the store's `build_epoch` is the definitions file's mtime, so
+  an unchanged file does not recompile anything.
+- **Where.** The array is placed in `.flashdata.zpdb_profiles`, which both linker
+  scripts keep in flash. Without it the RP2350 script would copy it into RAM along
+  with the rest of the `.cpp.o` `.rodata`.
+- **Reading.** Unlike the flash-region store, it is read through the XIP window with
+  a plain `memcpy()`: nothing ever reprograms it, so there is no stale-cache case.
+  It is opened, CRC included, on every `zpdbProfilesInit()`, independent of whether
+  the board has a profile region or the call ingests.
+
+Lookup order is fixed: `zpdbBindProfile()` and `zpdbReadCapacityByName()` search the
+flash-region custom store (built from the SD card) first and the built-in store second.
+A profile is taken whole from whichever store has it -- keys are never mixed between
+the two -- so a card's copy of a profile replaces the built-in one of the same name,
+and a card that carries none falls back to the built-in set. The bind is logged with
+the store it came from (`uses custom profile` / `uses built-in profile`).
+
+A build that never runs the generator (the GD32 targets) finds no header
+(`__has_include`) and simply has no built-in store.

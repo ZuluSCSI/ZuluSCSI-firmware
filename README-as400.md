@@ -64,7 +64,8 @@ Tested with Firmware 2026-08-07, 9401-150, V4R4, V5R2: IPL only so far, but that
 
 To use,
 
-- copy *as400_disk_definitions.txt* from the official GitHub repository to the SD card.
+- set `AS400_DiskProfile` to one of the profiles in *as400_disk_definitions.txt*. The profiles in that file are built into the firmware, so nothing needs to be copied to the SD card to use them.
+  - To add custom profiles, or to replace a built-in one, copy your own *as400_disk_definitions.txt* to the SD card. A profile in the custom store takes priority over the built-in profile of the same name; any profile the card does not have is still taken from the built-in set.
   - Multiple SCSI IDs sharing the same `AS400_DiskProfile` need a distinct `AS400_DiskSerialNumber` set on each, or OS/400 sees identical serial numbers and cannot tell the units apart -- see [Differentiating same-profile disks](#differentiating-same-profile-disks) below.
 
 ### PPC

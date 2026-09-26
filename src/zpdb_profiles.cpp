@@ -31,21 +31,42 @@
 #include <string.h>
 #include <strings.h>
 
+// The compiled-in store, generated at build time from the platformio.ini
+// `profile_definitions` file by src/generate-embedded-profiles.py. A build
+// that does not run that script (the GD32 targets) simply has no fallback.
+#if __has_include("embedded_profiles_generated.h")
+# include "embedded_profiles_generated.h"
+# define ZPDB_HAVE_EMBEDDED 1
+#endif
+
 extern SdFs SD;
 
 // ---------------------------------------------------------------- state
 
+// Two stores, searched in this order when a profile is bound:
+//
+//   g_store     the store in the flash region, rebuilt from the card's
+//               /zulu_profiles -- which is where custom_profiles.cpp splits
+//               the SD card's definitions file out to
+//   g_embedded  the store compiled into the firmware image itself
+//
+// So a profile on the card always wins over the built-in one of the same
+// name, and the built-in set is there for any name the card does not carry.
+// A profile is taken whole from whichever store has it; keys are never mixed
+// between the two, since that would splice together two different drives.
 static ZpdbStore g_store;
+static ZpdbStore g_embedded;
 
-// Per-target binding: a 16-byte section reference and a flag, and that is the
-// whole per-target cost of a profile -- this is what replaces the per-target
-// copies of the VPD/SPD/MODE SENSE payloads. The profile name is deliberately
-// not kept here; it is already in flash, and zpdbProfileName() reads it back
-// on the rare occasions something wants to print it.
+// Per-target binding: a 12-byte section reference and the store it is in,
+// and that is the whole per-target cost of a profile -- this is what replaces
+// the per-target copies of the VPD/SPD/MODE SENSE payloads. The profile name
+// is deliberately not kept here; it is already in the store, and
+// zpdbProfileName() reads it back on the rare occasions something wants to
+// print it. `store` is nullptr when nothing is bound.
 static struct
 {
     zpdb_section_ref_t section;
-    bool bound;
+    const ZpdbStore *store;
 } g_bound[S2S_MAX_TARGETS];
 
 
@@ -257,7 +278,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
 
         if (overflow)
         {
-            dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " is longer than ",
+            dbgmsg("-- ZPDB: ", filename, ":", (int)lineno, " is longer than ",
                    (int)ZPDB_INI_LINE_MAX, " characters");
             file_ok = false;
             break;
@@ -272,7 +293,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
             char *close = strchr(line, ']');
             if (close == nullptr)
             {
-                dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " has no closing ']'");
+                dbgmsg("-- ZPDB: ", filename, ":", (int)lineno, " has no closing ']'");
                 file_ok = false;
                 break;
             }
@@ -292,7 +313,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
             {
                 if (hashes[i] == hash)
                 {
-                    dbgmsg("---- ZPDB: ", filename, " defines profile '", name,
+                    dbgmsg("-- ZPDB: ", filename, " defines profile '", name,
                            "' which another file already defined");
                     file_ok = false;
                     break;
@@ -302,7 +323,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
 
             if (*hash_count >= ZPDB_MAX_PROFILES)
             {
-                dbgmsg("---- ZPDB: more than ", (int)ZPDB_MAX_PROFILES,
+                dbgmsg("-- ZPDB: more than ", (int)ZPDB_MAX_PROFILES,
                        " profiles, '", name, "' was not stored");
                 file_ok = false;
                 break;
@@ -322,7 +343,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
         char *equals = strchr(line, '=');
         if (equals == nullptr)
         {
-            dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " has no '='");
+            dbgmsg("-- ZPDB: ", filename, ":", (int)lineno, " has no '='");
             file_ok = false;
             break;
         }
@@ -333,7 +354,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
 
         if (!in_section)
         {
-            dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " has key '", key,
+            dbgmsg("-- ZPDB: ", filename, ":", (int)lineno, " has key '", key,
                    "' outside any [profile] section");
             file_ok = false;
             break;
@@ -353,7 +374,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
             int len = parseHexLine(value, scratch.binary, (int)scratch.binary_size);
             if (len < 0)
             {
-                dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
+                dbgmsg("-- ZPDB: ", filename, ":", (int)lineno, " key '", key,
                        "' is not a list of hex bytes");
                 file_ok = false;
                 break;
@@ -373,7 +394,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
             }
             else
             {
-                dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
+                dbgmsg("-- ZPDB: ", filename, ":", (int)lineno, " key '", key,
                        "' is out of chunk order, expected ", (int)expect_chunk);
                 file_ok = false;
                 break;
@@ -406,7 +427,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
                     int len = parseHexLine(value, scratch.binary, (int)scratch.binary_size);
                     if (len < 0)
                     {
-                        dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
+                        dbgmsg("-- ZPDB: ", filename, ":", (int)lineno, " key '", key,
                                "' is not a list of hex bytes");
                         file_ok = false;
                         ok = false;
@@ -422,7 +443,7 @@ static bool ingestFile(FsFile &file, const char *filename, ZpdbWriter &writer,
         {
             if (file_ok)
             {
-                dbgmsg("---- ZPDB: ", filename, ":", (int)lineno, " key '", key,
+                dbgmsg("-- ZPDB: ", filename, ":", (int)lineno, " key '", key,
                        "' could not be stored");
             }
             file_ok = false;
@@ -471,7 +492,7 @@ static bool nextProfileFile(char *name, size_t name_size)
             }
             else
             {
-                dbgmsg("---- ZPDB: file name '", candidate, "' is too long, skipped");
+                dbgmsg("-- ZPDB: file name '", candidate, "' is too long, skipped");
             }
         }
         file.close();
@@ -511,7 +532,7 @@ static void moveProfileFile(const char *name, bool ok)
 
     if (!SD.exists(dir) && !SD.mkdir(dir))
     {
-        dbgmsg("---- ZPDB: could not create ", dir, ", leaving ", name, " in place");
+        dbgmsg("-- ZPDB: could not create ", dir, ", leaving ", name, " in place");
         return;
     }
 
@@ -520,19 +541,19 @@ static void moveProfileFile(const char *name, bool ok)
 
     if (SD.exists(to) && !SD.remove(to))
     {
-        dbgmsg("---- ZPDB: could not replace ", to, ", leaving ", name, " in place");
+        dbgmsg("-- ZPDB: could not replace ", to, ", leaving ", name, " in place");
         return;
     }
 
     if (!SD.rename(from, to))
-        dbgmsg("---- ZPDB: could not move ", from, " to ", to);
+        dbgmsg("-- ZPDB: could not move ", from, " to ", to);
     else
-        dbgmsg("---- ZPDB: ", name, " -> ", dir);
+        dbgmsg("-- ZPDB: ", name, " -> ", dir);
 }
 
 static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
 {
-    logmsg("-- ZuluSCSI Profile Database erasing and rebuilding the profile store from ", (int)file_count,
+    logmsg("-- ZuluSCSI Profile Database erasing and rebuilding the custom profile store from ", (int)file_count,
            " file(s) in ", ZPDB_PROFILE_DIR);
 
     // Everything below works in the caller's buffer; the store allocates
@@ -556,7 +577,7 @@ static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
 
     if (!zpdbFlashErase())
     {
-        logmsg("---- ZPDB: erase failed, the profile store is now unusable");
+        logmsg("-- ZPDB: erase failed, the profile store is now unusable");
         return;
     }
 
@@ -577,7 +598,7 @@ static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
 
         if (!file.open(path, O_RDONLY))
         {
-            dbgmsg("---- ZPDB: could not open ", path);
+            dbgmsg("-- ZPDB: could not open ", path);
         }
         else
         {
@@ -592,7 +613,7 @@ static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
         {
             // The writer latches on a flash-level failure, so nothing further
             // can be stored -- move the rest to /failed rather than looping.
-            dbgmsg("---- ZPDB: the store write failed, remaining files will be skipped");
+            dbgmsg("-- ZPDB: the store write failed, remaining files will be skipped");
             while (nextProfileFile(name, sizeof(name)))
             {
                 moveProfileFile(name, false);
@@ -604,7 +625,7 @@ static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
 
     if (writer.failed() || !writer.finish())
     {
-        logmsg("---- ZPDB: error occured attempting to write the profile store, retry with debug on to see further error messages");
+        logmsg("-- ZPDB: error occured attempting to write the profile store, retry with debug on to see further error messages");
     }
     else
     {
@@ -615,12 +636,62 @@ static void rebuildStore(uint32_t file_count, uint8_t *scratch_buf)
 
 }
 
+// ---------------------------------------------------------------- embedded
+
+#ifdef ZPDB_HAVE_EMBEDDED
+// zpdb_read_fn over the compiled-in array. The array is placed in flash by the
+// section the generator gives it, and is read through the XIP window like any
+// other const data -- unlike the flash region, nothing ever reprograms it, so
+// there is no stale-cache case to steer around.
+static bool embeddedRead(uint32_t offset, void *dest, uint32_t len, void *ctx)
+{
+    (void)ctx;
+
+    if (len > zpdb_profiles_size || offset > zpdb_profiles_size - len)
+    {
+        dbgmsg("-- ZPDB: read of ", (int)len, " bytes at ", (int)offset,
+               " is outside the ", (int)zpdb_profiles_size, "-byte built-in store");
+        return false;
+    }
+
+    memcpy(dest, zpdb_profiles + offset, len);
+    return true;
+}
+#endif
+
+// Owes nothing to the card or the flash region, so this opens even on a board
+// with no region and on the boots that do not ingest.
+static void openEmbeddedStore()
+{
+#ifdef ZPDB_HAVE_EMBEDDED
+    // The CRC check is cheap here and catches a generator that has drifted out
+    // of step with this reader, which would otherwise surface as profiles that
+    // silently fail to bind.
+    logmsg("Built-in ZuluSCSI Profile Database (ZPDB) found in compiled code");
+    if (!g_embedded.open(embeddedRead, nullptr, zpdb_profiles_size))
+    {
+        logmsg("-- ZPDB: ERROR: the built-in profile store is invalid and will not be used"
+               " (set Debug=1 for the reason)");
+        return;
+    }
+
+    logmsg("-- ZPDB: ", (int)g_embedded.sectionCount(), " built-in profile(s) available,");
+#else
+    dbgmsg("-- ZPDB: this build has no built-in profile store");
+#endif
+}
+
 // ---------------------------------------------------------------- public
+
+static const char *storeLabel(const ZpdbStore *store)
+{
+    return (store == &g_embedded) ? "built-in" : "custom";
+}
 
 // With [SCSI] Debug=1, name every profile the store holds. Each line costs a
 // short read from flash for the name, so the whole walk is skipped outright
 // when debug logging is off rather than left to dbgmsg() to discard.
-static void logStoredProfiles()
+static void logStoredProfiles(const ZpdbStore &store)
 {
     if (!g_log_debug)
         return;
@@ -628,31 +699,31 @@ static void logStoredProfiles()
     char name[ZPDB_MAX_NAME];
     zpdb_section_ref_t section;
     uint32_t index = 0;
+    const char *label = storeLabel(&store);
 
-    if (!g_store.firstSection(&section))
+    if (!store.firstSection(&section))
         return;
 
     do
     {
-        if (!g_store.sectionName(section, name, sizeof(name)))
+        if (!store.sectionName(section, name, sizeof(name)))
         {
-            dbgmsg("---- ZPDB: profile ", (int)index, " has an unreadable name");
+            dbgmsg("-- ZPDB: ", label, " profile ", (int)index, " has an unreadable name");
             break;
         }
 
-        dbgmsg("---- ZPDB: profile ", (int)index, ": '", name, "' -- ",
+        dbgmsg("-- ZPDB: ", label, " profile ", (int)index, ": '", name, "' -- ",
                (int)section.entry_count, " key(s), ", (int)section.sect_len,
                " bytes at store offset ", (int)section.offset);
         index++;
         platform_poll();
-    } while (g_store.nextSection(&section));
+    } while (store.nextSection(&section));
 }
 
-void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size)
+// The flash-region half of zpdbProfilesInit(): ingest, when there is scratch
+// to do it with, then open whatever the region holds.
+static void openFlashStore(uint8_t *scratch, size_t scratch_size)
 {
-    zpdbUnbindAll();
-    g_store.close();
-
     if (!zpdbFlashInit())
         return;
 
@@ -680,7 +751,6 @@ void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size)
 
     if (!g_store.open(zpdbFlashRead, nullptr, zpdbFlashSize()))
     {
-        dbgmsg("-- No ZuluSCSI Profile Database (ZPDB) found in Flash");
         if (!can_ingest)
         {
             // Nothing was scanned, so say only what is actually known.
@@ -700,27 +770,41 @@ void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size)
     uint32_t used = g_store.totalSize();
     uint32_t region = zpdbFlashSize();
     uint32_t free_bytes = (region > used) ? (region - used) : 0;
-    logmsg("-- ZuluSCSI Profile Database (ZPDB) found in Flash");
-    logmsg("---- ZPDB: ", (int)g_store.sectionCount(), " profile(s) in flash, using ",
+    logmsg("Custom ZuluSCSI Profile Database (ZPDB) found in Flash");
+    logmsg("-- ZPDB: ", (int)g_store.sectionCount(), " profile(s) in flash, using ",
            (int)used, " of ", (int)region, " bytes (", (int)((used * 100) / region),
            "%), ", (int)free_bytes, " bytes free");
 
     if (free_bytes < ZPDB_MAX_SECTION_SIZE)
     {
-        dbgmsg("---- ZPDB: WARNING: nearing end of usable flash, ", free_bytes, " bytes left.");
+        dbgmsg("-- ZPDB: WARNING: nearing end of usable flash, ", free_bytes, " bytes left.");
     }
+}
 
-    logStoredProfiles();
+void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size)
+{
+    zpdbUnbindAll();
+    g_store.close();
+    g_embedded.close();
+
+    openFlashStore(scratch, scratch_size);
+    openEmbeddedStore();
+
+    if (g_store.isOpen())
+        logStoredProfiles(g_store);
+    if (g_embedded.isOpen())
+        logStoredProfiles(g_embedded);
 }
 
 bool zpdbProfilesAvailable()
 {
-    return g_store.isOpen();
+    return g_store.isOpen() || g_embedded.isOpen();
 }
 
 uint32_t zpdbProfileCount()
 {
-    return g_store.sectionCount();
+    return (g_store.isOpen() ? g_store.sectionCount() : 0) +
+           (g_embedded.isOpen() ? g_embedded.sectionCount() : 0);
 }
 
 void zpdbUnbindAll()
@@ -728,44 +812,72 @@ void zpdbUnbindAll()
     memset(g_bound, 0, sizeof(g_bound));
 }
 
+// Resolve a profile name against the stores in priority order: the SD card
+// store in flash first, then the built-in one. Returns the store the profile
+// was found in, or nullptr. findSection() is false on a store that is not
+// open, so a missing store simply falls through.
+static const ZpdbStore *findProfile(const char *profileName, zpdb_section_ref_t *section)
+{
+    if (g_store.findSection(profileName, section))
+        return &g_store;
+
+    if (g_embedded.findSection(profileName, section))
+        return &g_embedded;
+
+    return nullptr;
+}
+
 bool zpdbBindProfile(uint8_t scsiId, const char *profileName)
 {
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
 
-    if (!g_store.isOpen())
+    if (!g_store.isOpen() && !g_embedded.isOpen())
     {
-        logmsg("---- ZPDB: profile '", profileName, "' requested for SCSI ID ", (int)id,
+        logmsg("-- ZPDB: profile '", profileName, "' requested for SCSI ID ", (int)id,
                " but no profile store is loaded");
         return false;
     }
 
-    if (!g_store.findSection(profileName, &g_bound[id].section))
+    zpdb_section_ref_t section;
+    const ZpdbStore *store = findProfile(profileName, &section);
+    if (store == nullptr)
     {
-        logmsg("---- ZPDB: profile '", profileName, "' was not found in the store for "
-               "SCSI ID ", (int)id);
+        logmsg("-- ZPDB: profile '", profileName, "' was not found in the custom profile store or "
+               "built-in profile store for SCSI ID ", (int)id);
         return false;
     }
 
-    g_bound[id].bound = true;
+    g_bound[id].section = section;
+    g_bound[id].store = store;
 
-    logmsg("---- ZPDB: SCSI ID ", (int)id, " uses profile '", profileName, "'");
+    logmsg("-- ZPDB: SCSI ID ", (int)id, " uses ", storeLabel(store), " profile '",
+           profileName, "'");
     return true;
 }
 
 bool zpdbHasProfile(uint8_t scsiId)
 {
-    return g_bound[scsiId & S2S_CFG_TARGET_ID_BITS].bound;
+    return g_bound[scsiId & S2S_CFG_TARGET_ID_BITS].store != nullptr;
+}
+
+// The store this SCSI ID's profile is bound into, or nullptr when there is
+// nothing bound to read from.
+static const ZpdbStore *boundStore(uint8_t id)
+{
+    const ZpdbStore *store = g_bound[id].store;
+    return (store != nullptr && store->isOpen()) ? store : nullptr;
 }
 
 const char *zpdbProfileName(uint8_t scsiId)
 {
-    // Read back from flash rather than held per target: this is only used for
-    // logging and status display, and a per-target copy of the name would cost
-    // several times what the binding itself does.
+    // Read back from the store rather than held per target: this is only used
+    // for logging and status display, and a per-target copy of the name would
+    // cost several times what the binding itself does.
     static char name[ZPDB_MAX_NAME];
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    const ZpdbStore *store = boundStore(id);
 
-    if (!g_bound[id].bound || !g_store.sectionName(g_bound[id].section, name, sizeof(name)))
+    if (store == nullptr || !store->sectionName(g_bound[id].section, name, sizeof(name)))
         return nullptr;
 
     return name;
@@ -776,41 +888,44 @@ static bool readKey(uint8_t scsiId, const char *key, uint8_t *buf, uint32_t buf_
                     uint32_t *length)
 {
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    const ZpdbStore *store = boundStore(id);
 
-    if (!g_bound[id].bound || !g_store.isOpen())
+    if (store == nullptr)
         return false;
 
     zpdb_entry_ref_t entry;
-    if (!g_store.findKey(g_bound[id].section, key, &entry))
+    if (!store->findKey(g_bound[id].section, key, &entry))
         return false;
 
-    return g_store.readValue(entry, buf, buf_size, length);
+    return store->readValue(entry, buf, buf_size, length);
 }
 
 bool zpdbReadVPD(uint8_t scsiId, uint8_t pageCode, uint8_t *buf, uint32_t buf_size,
                  uint32_t *length)
 {
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    const ZpdbStore *store = boundStore(id);
 
-    if (!g_bound[id].bound || !g_store.isOpen())
+    if (store == nullptr)
         return false;
 
     zpdb_entry_ref_t entry;
-    if (!g_store.findVPD(g_bound[id].section, pageCode, &entry))
+    if (!store->findVPD(g_bound[id].section, pageCode, &entry))
         return false;
 
-    return g_store.readValue(entry, buf, buf_size, length);
+    return store->readValue(entry, buf, buf_size, length);
 }
 
 bool zpdbHasVPD(uint8_t scsiId, uint8_t pageCode)
 {
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    const ZpdbStore *store = boundStore(id);
 
-    if (!g_bound[id].bound || !g_store.isOpen())
+    if (store == nullptr)
         return false;
 
     zpdb_entry_ref_t entry;
-    return g_store.findVPD(g_bound[id].section, pageCode, &entry);
+    return store->findVPD(g_bound[id].section, pageCode, &entry);
 }
 
 bool zpdbReadSPD(uint8_t scsiId, uint8_t *buf, uint32_t buf_size, uint32_t *length)
@@ -832,21 +947,21 @@ bool zpdbReadLogSense(uint8_t scsiId, uint8_t pageCode, uint8_t *buf, uint32_t b
     return readKey(scsiId, key, buf, buf_size, length);
 }
 
-static bool readCapacityFromSection(zpdb_section_ref_t section, uint32_t *blockSize,
-                                    uint64_t *sectors)
+static bool readCapacityFromSection(const ZpdbStore &store, zpdb_section_ref_t section,
+                                    uint32_t *blockSize, uint64_t *sectors)
 {
     zpdb_entry_ref_t entry;
     bool found = false;
 
-    if (blockSize != nullptr && g_store.findKey(section, "BlockSize", &entry))
+    if (blockSize != nullptr && store.findKey(section, "BlockSize", &entry))
     {
-        *blockSize = (uint32_t)g_store.readLong(entry, 0);
+        *blockSize = (uint32_t)store.readLong(entry, 0);
         found = true;
     }
 
-    if (sectors != nullptr && g_store.findKey(section, "Sectors", &entry))
+    if (sectors != nullptr && store.findKey(section, "Sectors", &entry))
     {
-        *sectors = g_store.readU64(entry, 0);
+        *sectors = store.readU64(entry, 0);
         found = true;
     }
 
@@ -856,19 +971,21 @@ static bool readCapacityFromSection(zpdb_section_ref_t section, uint32_t *blockS
 bool zpdbReadCapacity(uint8_t scsiId, uint32_t *blockSize, uint64_t *sectors)
 {
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    const ZpdbStore *store = boundStore(id);
 
-    if (!g_bound[id].bound || !g_store.isOpen())
+    if (store == nullptr)
         return false;
 
-    return readCapacityFromSection(g_bound[id].section, blockSize, sectors);
+    return readCapacityFromSection(*store, g_bound[id].section, blockSize, sectors);
 }
 
 bool zpdbReadCapacityByName(const char *profileName, uint32_t *blockSize, uint64_t *sectors)
 {
     zpdb_section_ref_t section;
+    const ZpdbStore *store = findProfile(profileName, &section);
 
-    if (!g_store.isOpen() || !g_store.findSection(profileName, &section))
+    if (store == nullptr)
         return false;
 
-    return readCapacityFromSection(section, blockSize, sectors);
+    return readCapacityFromSection(*store, section, blockSize, sectors);
 }

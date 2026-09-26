@@ -36,7 +36,7 @@ static void zpdb_host_log(Params... params)
 }
 #else
 # include "ZuluSCSI_log.h"
-# define ZPDB_LOG(...) dbgmsg("---- ZPDB: ", __VA_ARGS__)
+# define ZPDB_LOG(...) dbgmsg("-- ZPDB: ", __VA_ARGS__)
 #endif
 
 // Chunk used to stream flash past the CRC and the page verifier. Small
