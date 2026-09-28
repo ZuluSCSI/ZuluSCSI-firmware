@@ -963,6 +963,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             img.file.getFoldername(foldername, MAX_FILE_PATH + 1);
             FsFile folder = SD.open(foldername, O_RDONLY);
             bool valid = false;
+            bool has_cue_sheet = false;
             img.cuesheetfile.close();
             while (!valid && img.cuesheetfile.openNext(&folder, O_RDONLY))
             {
@@ -970,6 +971,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
 
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
+                    has_cue_sheet = true;
                     valid = cdromValidateCueSheet(img);
                     if (valid)
                     {
@@ -990,7 +992,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                 audio_reset(target_idx);
 #endif
             }
-            else
+            else if (has_cue_sheet)
             {
                 logmsg("---- No valid .cue sheet found in folder '", foldername, "'");
                 logmsg("!! Please fix or remove folder, invalid .cue sheet can cause image handling issues. !!" );
