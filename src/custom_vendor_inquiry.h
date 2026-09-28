@@ -38,10 +38,15 @@ extern "C" {
 // every previously-processed ID's custom data.
 void resetCustomInquiryData();
 
-// Parse custom inquiry data from zuluscsi.ini for one SCSI ID.
+// Work out where one SCSI ID's custom inquiry data comes from: an
+// AS400_DiskProfile= binding into a profile store (the custom one, else the
+// built-in one -- see zpdb_profiles.h), the per-ID
+// AS400_DiskSerialNumber / AS400_DiskPartNumber overrides, and failing those
+// a built-in AS/400 identity. Nothing is copied here -- the pages themselves
+// are read when they are served.
+//
 // Called once per discovered SCSI ID during initialization, after
 // resetCustomInquiryData() has been called once for the whole scan.
-// INI format: [SCSI<id>] vpd00=XX XX XX, spd=XX XX XX (hex values)
 void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type);
 
 // Check if custom VPD (Vital Product Data) exists for a given SCSI ID and page code.
@@ -62,6 +67,16 @@ bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length);
 // so, fills *blockSize/*sectors and returns true -- used to auto-create a
 // correctly-sized image file when none exists yet for a profiled ID.
 bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sectors);
+
+// True only when this SCSI ID is presenting one of the captured AS/400 tape
+// identities (Device=AS400_CISC/AS400_PPC) -- i.e. the specific real
+// Tandberg-manufactured drives this project's sense-data/SPACE-logic quirks
+// were derived from and hardware-verified against. False for every other
+// tape on an AS/400-preset board, including one with no Device= override at
+// all (S2S_CFG_QUIRKS_AS400 is board-wide, set by System=AS400_*, so quirks
+// alone can't tell a captured identity apart from a generic one -- see the
+// PPC/PCI CPF4119 regression this was added to fix).
+bool isAS400CapturedTapeIdentity(uint8_t scsiId);
 #endif
 
 #ifdef __cplusplus

@@ -26,6 +26,7 @@
 #include "diagnostic.h"
 #include "disk.h"
 #include "inquiry.h"
+#include <custom_vendor_inquiry.h>
 #include "led.h"
 #include "mode.h"
 #include "scsi2sd_time.h"
@@ -605,6 +606,32 @@ static void process_Command()
 				// QIC drive vendor-specific sense bytes (Caliper/Sankyo/Wangtek)
 				// Byte 9 bit 3: BOM (Beginning of Medium)
 				scsiDev.data[9] = scsiDev.target->tapeBOM ? (1 << 3) : 0;
+#ifdef PLATFORM_AS400
+				if (cfg->quirks == S2S_CFG_QUIRKS_AS400 && isAS400CapturedTapeIdentity(scsiDev.target->targetId))
+				{
+					// Real AS/400 tape drive wire captures (2026-09-11, see
+					// AS/400 tape investigation) diverge from both the
+					// generic convention above and from this drive's own
+					// Tandberg SCSI-2 manual:
+					// - Valid is only set when Information is actually
+					//   meaningful, not unconditionally.
+					// - Byte 9 is Tandberg's own documented "Destination
+					//   Sense Pointer" (COPY-only) on this drive family, not
+					//   a general BOM flag borrowed from a different
+					//   vendor's convention -- real hardware always sends 0
+					//   here outside COPY.
+					//
+					// isAS400CapturedTapeIdentity() added 2026-09-25: this
+					// drive-specific quirk was gated on cfg->quirks alone
+					// (board-wide, set by System=AS400_*) with no check for
+					// which tape identity is actually in use -- forced these
+					// Tandberg-specific values onto a real PPC/PCI machine's
+					// generic-identity tape too, breaking INZTAP (CPF4119)
+					// on a config that worked before this quirk existed.
+					scsiDev.data[0] = scsiDev.target->sense.info ? 0xF0 : 0x70;
+					scsiDev.data[9] = 0;
+				}
+#endif
 			}
 			else if (scsiDev.target->sense.code == MEDIUM_ERROR
 				|| scsiDev.target->sense.code == HARDWARE_ERROR
@@ -619,6 +646,17 @@ static void process_Command()
 			}
 			// Additional bytes if there are errors to report
 			scsiDev.data[7] = 10; // additional length
+#ifdef PLATFORM_AS400
+			if (cfg->deviceType == S2S_CFG_SEQUENTIAL && cfg->quirks == S2S_CFG_QUIRKS_AS400 &&
+				isAS400CapturedTapeIdentity(scsiDev.target->targetId))
+			{
+				// Matches real AS/400 tape drive wire captures, which
+				// consistently declare 19 (not this generic default of 10).
+				// Scoped to captured identities only, 2026-09-25 -- see the
+				// matching comment above for why.
+				scsiDev.data[7] = 19;
+			}
+#endif
 			scsiDev.data[12] = scsiDev.target->sense.asc >> 8;
 			scsiDev.data[13] = scsiDev.target->sense.asc;
 			if ((scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD))
@@ -895,7 +933,51 @@ static void scsiReset()
 			// returning GOOD immediately on every reset after the
 			// first, identical to the original bug, confirmed via a
 			// live hardware retest.
-			scsiDev.targets[i].started = 0;
+			//
+			// EXPERIMENTAL, 2026-09-09: tape (S2S_CFG_SEQUENTIAL)
+			// excluded from started=0 specifically -- UA reporting
+			// above is untouched, still generalized to tape, and still
+			// confirmed correct (Fiona/P03's own IPL-time probe shows
+			// the textbook 06/2900 -> 02/0402 two-step). But Fiona's
+			// screenlog.0 cross-checked against 6 OS/400 problem-detail
+			// PDFs (matched via wall-clock correlation) showed CHKTAP's
+			// TEST UNIT READY correctly reporting NOT_READY (02/0402)
+			// with nothing ever sent afterward to clear it -- no
+			// START STOP UNIT/LOAD UNLOAD appears anywhere in the whole
+			// capture (IPL or CHKTAP), and ZuluSCSI_tape.cpp's own 0x1B
+			// handler never sets started=1 under any branch either. So
+			// once forced to 0 here, tape has no path back to ready at
+			// all -- same dead-end shape as the CD-ROM regression this
+			// same block was carved out for above. NOT YET CONFIRMED
+			// SAFE for the P02 CISC bystander-tape case that originally
+			// motivated this forcing: that validation used disk as the
+			// load source with tape merely present, and whether tape's
+			// OWN started=0 forcing was ever actually load-bearing for
+			// THAT fix specifically was never isolated. Needs testing
+			// on both P02 (regression check: does B982 stay fixed with
+			// tape as bystander?) and P03 (does CHKTAP get further?)
+			// before this can be considered a real fix rather than a
+			// hypothesis.
+			//
+			// BUGFIX, 2026-09-09 (same day): the first cut of this
+			// carve-out only skipped the started=0 assignment for tape
+			// -- but nothing else in this function ever sets started=1
+			// for it either (unlike CD-ROM, which reaches that via the
+			// *other* branch below), so tape's started flag just sat at
+			// its zero-initialized default forever, identical in effect
+			// to the un-excluded behavior. Confirmed on real hardware:
+			// CHKTAP's TEST UNIT READY still returned NOT_READY
+			// (02/0402), completely unchanged from before this
+			// carve-out existed. Must explicitly set started=1 for
+			// tape, not just omit the =0.
+			if (!scsiDev.targets[i].cfg || scsiDev.targets[i].cfg->deviceType != S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.targets[i].started = 0;
+			}
+			else
+			{
+				scsiDev.targets[i].started = 1;
+			}
 		}
 		else
 #endif
@@ -1604,7 +1686,19 @@ void scsiInit()
 			// regression (SRC B1014507), confirmed by the maintainers.
 			scsiDev.targets[i].sense.code = UNIT_ATTENTION;
 			scsiDev.targets[i].sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
-			scsiDev.targets[i].started = 0;
+			// EXPERIMENTAL, 2026-09-09: tape excluded from started=0 here
+			// too -- see the matching comment (and the full reasoning,
+			// plus the same-day bugfix for the same-effect-as-before
+			// omission bug) in scsiReset(). Not yet confirmed safe for
+			// P02.
+			if (!cfg || cfg->deviceType != S2S_CFG_SEQUENTIAL)
+			{
+				scsiDev.targets[i].started = 0;
+			}
+			else
+			{
+				scsiDev.targets[i].started = 1;
+			}
 		}
 		else
 #endif

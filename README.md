@@ -156,9 +156,9 @@ cycled through with the eject button or the Control Board browser.
 
 A directory in the scan root named with a type prefix and ID is picked up automatically:
 
-    HD0/  CD0/  RE0/  MO0/  TP0/  FD0/  ZP0/    ... through ID F
+    CD0/  RE0/  MO0/  TP0/  FD0/  ZP0/    ... through ID F
 
-and the `n` forms `HDn/`, `CDn/`, `REn/`, `MOn/`, `TPn/`, `FDn/`, `ZPn/` bind to the
+and the `n` forms `CDn/`, `REn/`, `MOn/`, `TPn/`, `FDn/`, `ZPn/` bind to the
 dynamic SCA ID.
 
 This can be overridden per device in `zuluscsi.ini`:
@@ -217,7 +217,7 @@ For AS/400 `AS400_DiskProfile=` SCSI IDs (see below), a correctly-sized image is
 
 AS/400 disk profiles
 ---------------------
-For AS/400 (`System = "AS400_PPC"` or `"AS400_CISC"`), multiple SCSI IDs can each emulate a different real DASD unit by setting `AS400_DiskProfile = "<name>"` in that ID's `[SCSIn]` section, naming a profile from [`as400_disk_definitions.txt`](as400_disk_definitions.txt) — copy this file to the SD card root.
+For AS/400 (`System = "AS400_PPC"` or `"AS400_CISC"`), multiple SCSI IDs can each emulate a different real DASD unit by setting `AS400_DiskProfile = "<name>"` in that ID's `[SCSIn]` section, naming a profile from [`as400_disk_definitions.txt`](as400_disk_definitions.txt). Those profiles are built into the firmware; copy the file (or your own version of it) to the SD card root only to add profiles or override built-in ones, since a profile on custom store takes priority over a built-in profile of the same name.
 
 > **Note:** The AS/400 platform extensively uses serial numbers to distinguish between devices. If another device with the same serial number is configured, even on separate SCSI-IDs, the machine recognizes only one of them. Hence the large count of disk profiles, until this issue is fixed.
 

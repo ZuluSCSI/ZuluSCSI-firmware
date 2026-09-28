@@ -1,8 +1,10 @@
 .pio
 src/ZuluSCSI_build_info_generated.h
+src/embedded_profiles_generated.h
 .vscode
 .DS_Store
 venv
 .ai_instructions
 .claude_project
 .cursorrules
+__pycache__/

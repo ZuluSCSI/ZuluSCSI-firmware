@@ -197,6 +197,40 @@ bool platform_rewrite_flash_page(uint32_t offset, uint8_t buffer[PLATFORM_FLASH_
 #endif
 void platform_boot_to_main_firmware();
 
+// External flash map
+//
+// Every region below sits at a fixed, hardcoded offset. None of them may move
+// without stranding data already written to boards in the field, and the ROM
+// drive is the one that matters most: it has started at 1244 kB since before
+// the two data regions existed, so the settings area and the profile store
+// were carved out of the firmware's old allocation rather than pushing the
+// ROM drive up.
+//
+//     offset      size  region
+//     ---------------------------------------------------------------
+//          0   1156 kB  bootloader + main firmware
+//    1183744     16 kB  settings area (reserved), 4 erase sectors
+//    1200128     72 kB  profile store, see src/zpdb_flash.cpp
+//    1273856    rest    ROM drive, to the end of the flash chip
+//
+// The boundary between the two data regions is the only one free to move: the
+// pair has to add up to the same 88 kB whatever the split, or the ROM drive
+// moves with it. The settings area went from 2 erase sectors to 4 by taking
+// 8 kB off the profile store, which had far more than it needed -- the 24
+// profiles the shipped as400_disk_definitions.txt carries build a 32 kB store
+// (utils/zpdb_build.py --report prints the figure for any set of profiles).
+//
+// The firmware's extent is enforced by the linker: PLATFORM_FLASH_FIRMWARE_SIZE
+// must equal program_flash_allocation in platformio.ini, which becomes the
+// length of the FLASH region in the generated linker script. A static_assert
+// in ZuluSCSI_platform.cpp fails the build if the two drift apart.
+#define PLATFORM_FLASH_FIRMWARE_SIZE    (1156 * 1024)
+#define PLATFORM_FLASH_SETTINGS_OFFSET  PLATFORM_FLASH_FIRMWARE_SIZE
+#define PLATFORM_FLASH_SETTINGS_SIZE    (16 * 1024)
+#define PLATFORM_FLASH_PROFILES_OFFSET  (PLATFORM_FLASH_SETTINGS_OFFSET + PLATFORM_FLASH_SETTINGS_SIZE)
+#define PLATFORM_FLASH_PROFILES_SIZE    (72 * 1024)
+#define ROMDRIVE_OFFSET                 (PLATFORM_FLASH_PROFILES_OFFSET + PLATFORM_FLASH_PROFILES_SIZE)
+
 // ROM drive in the unused external flash area
 #ifndef RP2040_DISABLE_ROMDRIVE
 #define PLATFORM_HAS_ROM_DRIVE 1
@@ -210,6 +244,27 @@ bool platform_read_romdrive(uint8_t *dest, uint32_t start, uint32_t count);
 #define PLATFORM_ROMDRIVE_PAGE_SIZE 4096
 bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count);
 #endif
+
+// Direct access to an arbitrary region of the external flash, used by the
+// profile store (see src/zpdb_flash.cpp). Offsets are flash-relative, the
+// same convention flash_range_erase() uses -- not XIP addresses.
+#define PLATFORM_HAS_FLASH_REGION_ACCESS 1
+#define PLATFORM_FLASH_SECTOR_SIZE 4096
+#define PLATFORM_FLASH_PROGRAM_SIZE 256
+
+// Read straight from the flash device, bypassing the XIP cache and the
+// memory-mapped window: the data is streamed through the flash controller's
+// FIFO, so nothing is cached and a value read back after a program is never
+// stale. Any offset, length and destination alignment is accepted.
+bool platform_flash_read(uint32_t flash_offset, void *dest, uint32_t count);
+
+// Erase whole sectors. Both arguments must be PLATFORM_FLASH_SECTOR_SIZE
+// multiples.
+bool platform_flash_erase(uint32_t flash_offset, uint32_t count);
+
+// Program an already-erased range. Both arguments must be
+// PLATFORM_FLASH_PROGRAM_SIZE multiples.
+bool platform_flash_program(uint32_t flash_offset, const uint8_t *data, uint32_t count);
 
 #ifndef RP2MCU_USE_CPU_PARITY
 

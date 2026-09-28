@@ -224,25 +224,24 @@ bool ImageBackingStore::_internal_open(const char *filename)
     bool got_range = m_fsfile.contiguousRange(&begin, &end);
     bool range_covers_file = got_range && end >= begin + sectorcount - 1;
 
-    // Diagnostic for the AS/400 performance investigation -- logged unconditionally
-    // at open time, independent of IOTrace, since this is the actual root
-    // decision point for whether ImageBackingStore's raw-block fast path
-    // is even reachable for this file at all. A trace showing 0% fast-path
-    // accesses only tells you the symptom; this tells you why, immediately,
-    // without needing a trace to infer it from.
+    // Diagnostic for the AS/400 performance investigation: whether
+    // ImageBackingStore's raw-block fast path is reachable for this file at
+    // all. Debug-only, same as this file's other diagnostic notices (see
+    // the unaligned-access fallback messages below) -- this fires on every
+    // image open, so it doesn't belong in the default log.
     if (!got_range)
     {
-        logmsg("---- ", filename, ": is non-contiguous on SD card  -- ",
+        dbgmsg("---- ", filename, ": is non-contiguous on SD card  -- ",
                "ImageBackingStore's raw-block fast path is unavailable for this file");
     }
     else if (!range_covers_file)
     {
-        logmsg("---- ", filename, ": contiguous range too short for fast path -- have sectors ",
+        dbgmsg("---- ", filename, ": contiguous range too short for fast path -- have sectors ",
                (int)begin, "-", (int)end, " (", (int)(end - begin + 1), "), need ", (int)sectorcount);
     }
     else
     {
-        logmsg("---- ", filename, ": contiguous sectors ", (int)begin, "-", (int)end,
+        dbgmsg("---- ", filename, ": contiguous sectors ", (int)begin, "-", (int)end,
                " -- fast path available");
     }
 

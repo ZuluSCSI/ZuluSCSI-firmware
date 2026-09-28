@@ -1078,8 +1078,34 @@ scsi_system_settings_t *ZuluSCSISettings::getSystem()
     return &m_sys;
 }
 
+// The mask used by the device accessors below is a bounds check only because
+// S2S_MAX_TARGETS is a power of two, which makes S2S_CFG_TARGET_ID_BITS a
+// contiguous low-bit mask covering exactly the valid index range.
+static_assert((S2S_MAX_TARGETS & (S2S_MAX_TARGETS - 1)) == 0,
+              "S2S_MAX_TARGETS must be a power of two for S2S_CFG_TARGET_ID_BITS to bound an array index");
+static_assert(S2S_CFG_TARGET_ID_BITS == S2S_MAX_TARGETS - 1,
+              "S2S_CFG_TARGET_ID_BITS must cover exactly the target index range");
+
+// The device accessors below are reached with two different kinds of ID:
+// a bare 0-based target index, and a raw S2S_TargetCfg::scsiId, which carries
+// S2S_CFG_TARGET_ENABLED (0x80) on every enabled target -- so target 5 arrives
+// as 0x85. Neither array is anywhere near that long, and an unmasked index read
+// roughly 12 kB past the end of g_scsi_settings (m_dev is its last member),
+// quietly returning whatever BSS followed it. Mask here rather than relying on
+// every call site to remember: getCustomSPD() (custom_vendor_inquiry.cpp) did
+// not, and served the resulting garbage as the vendor/product fields of every
+// AS/400 standard INQUIRY. S2S_CFG_TARGET_ID_BITS is S2S_MAX_TARGETS-1 and
+// S2S_MAX_TARGETS is a power of two, so the mask alone always lands in bounds.
 scsi_device_settings_t *ZuluSCSISettings::getDevice(uint8_t scsiId)
 {
+    // SCSI_SETTINGS_SYS_IDX is the [SCSI] section's device defaults, one slot
+    // past the last target, so it is the one index that must not be masked.
+    // Today only this class uses it, indexing m_dev directly, but accept it
+    // here so an outside caller reaching for the defaults gets them.
+    if (scsiId != SCSI_SETTINGS_SYS_IDX)
+    {
+        scsiId &= S2S_CFG_TARGET_ID_BITS;
+    }
     return &m_dev[scsiId];
 }
 
@@ -1093,9 +1119,12 @@ const char* ZuluSCSISettings::getSystemPresetName()
     return systemPresetName[m_sysPreset];
 }
 
+// Unlike m_dev, m_devPreset has no defaults slot -- it is exactly
+// S2S_MAX_TARGETS long -- so SCSI_SETTINGS_SYS_IDX is out of bounds here too
+// and the mask is unconditional.
 scsi_device_preset_t ZuluSCSISettings::getDevicePreset(uint8_t scsiId)
 {
-    return m_devPreset[scsiId];
+    return m_devPreset[scsiId & S2S_CFG_TARGET_ID_BITS];
 }
 
 const char* ZuluSCSISettings::getDevicePresetName(uint8_t scsiId)

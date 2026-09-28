@@ -963,6 +963,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             img.file.getFoldername(foldername, MAX_FILE_PATH + 1);
             FsFile folder = SD.open(foldername, O_RDONLY);
             bool valid = false;
+            bool has_cue_sheet = false;
             img.cuesheetfile.close();
             while (!valid && img.cuesheetfile.openNext(&folder, O_RDONLY))
             {
@@ -970,6 +971,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
 
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
+                    has_cue_sheet = true;
                     valid = cdromValidateCueSheet(img);
                     if (valid)
                     {
@@ -990,7 +992,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                 audio_reset(target_idx);
 #endif
             }
-            else
+            else if (has_cue_sheet)
             {
                 logmsg("---- No valid .cue sheet found in folder '", foldername, "'");
                 logmsg("!! Please fix or remove folder, invalid .cue sheet can cause image handling issues. !!" );
@@ -1736,11 +1738,11 @@ void scsiDiskLoadConfig(int target_idx)
         // found via the per-ID default subdirectory convention (TP0/, HD0/,
         // etc., set up by scsiDiskSetConfig()/scsiDiskCheckDir() above) or an
         // explicit ImgDir=. That path never used to call
-        // parseCustomInquiryData() at all, so any AS/400 (or generic custom
-        // vpdXX=/spd=) identity data for an ID configured this way was
-        // silently never loaded -- confirmed against a real boot log where
-        // an AS/400 tape drive in TP0/ served Zulu's generic identity
-        // instead of the compiled-in AS/400 tape defaults.
+        // parseCustomInquiryData() at all, so any AS/400 identity data for
+        // an ID configured this way was silently never loaded -- confirmed
+        // against a real boot log where an AS/400 tape drive in TP0/ served
+        // Zulu's generic identity instead of the compiled-in AS/400 tape
+        // defaults.
         parseCustomInquiryData(target_idx, (S2S_CFG_TYPE) img.deviceType);
 
         logmsg("-- Opening '", filename, "' for id: ", target_idx);

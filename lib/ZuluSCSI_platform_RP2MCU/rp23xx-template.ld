@@ -172,6 +172,25 @@ SECTIONS
         *(.text*setNameFromImage*)
         *(.text*getBlockSize*)
 
+        /* Drive profile store (ZPDB). The ingest runs once at power-on and the
+         * lookups only ever serve INQUIRY, so none of this belongs in RAM on a
+         * board that is mostly out of it -- and the code already has a flash
+         * copy as its .data initializer, so moving it costs no flash at all.
+         *
+         * zpdb_flash.cpp deliberately stays in RAM: it is the layer that calls
+         * platform_flash_erase/program, and keeping it here means the window
+         * where XIP is off stays two frames deep in RAM code, never on the
+         * return path of anything fetched from flash. Same arrangement the ROM
+         * drive already ships with -- scsiDiskProgramRomDrive() and
+         * romDriveClear() run from flash and reach platform_write_romdrive() in
+         * RAM through a veneer. */
+        *zpdb.cpp.o(.text .text*)
+        *zpdb_profiles.cpp.o(.text .text*)
+        *custom_profiles.cpp.o(.text .text*)
+        *(.text*autoCreateAS400ProfileImages*)
+        *(.text*autoCreateDynamicAS400Image*)
+        *(.text*as400DynamicIdIsClaimed*)
+
         /* Wi-Fi association, only used during init and reconnect. Keeps the
          * packet path (platform_network_send/receive) in RAM. */
         *(.text*platform_network_wifi_join*)
