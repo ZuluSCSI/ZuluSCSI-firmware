@@ -145,7 +145,7 @@ void scsiReadBuffer()
 {
 	// READ BUFFER
 	// Used for testing the speed of the SCSI interface.
-	uint8_t mode = scsiDev.data[1] & 7;
+	uint8_t mode = scsiDev.cdb[1] & 7;
 
 	int allocLength =
 		(((uint32_t) scsiDev.cdb[6]) << 16) +
