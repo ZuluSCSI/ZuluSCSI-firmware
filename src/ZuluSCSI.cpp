@@ -2408,15 +2408,13 @@ extern "C" void zuluscsi_main_loop(void)
   iotrace_platform_poll_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
   iotrace_loop_account(IOTRACE_BUCKET_PLATFORM_POLL, iotrace_platform_poll_us);
 
-  control_disk_swap();
-
   if (!is_initiator)
-    diskEjectButtonUpdate(true);
+    diskEjectButtonUpdate(scsiDev.phase == BUS_FREE);
   blink_poll();
-
 
   if (g_displayEnabled && scsiDev.phase == BUS_FREE)
   {
+    control_disk_swap();
     controlLoop();
   }
 
@@ -2465,8 +2463,8 @@ extern "C" void zuluscsi_main_loop(void)
   if (g_sdcard_present)
   {
     // Check SD card status for hotplug
-    if (scsiDev.phase == BUS_FREE &&
-        (uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INTERVAL)
+    if (scsiDev.phase == BUS_FREE
+      && (uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INTERVAL)
     {
       sd_card_check_time = millis();
       if (!poll_sd_card())
@@ -2489,8 +2487,10 @@ extern "C" void zuluscsi_main_loop(void)
 
   if (!g_sdcard_present && !g_msc_initiator)
   { 
-    // Try to remount SD card
-    if ((uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INSERT_INTERVAL)
+    // Try to remount SD card only when the bus is free as a ROM drive maybe
+    // in the middle of a transfer
+    if (scsiDev.phase == BUS_FREE
+      && (uint32_t)(millis() - sd_card_check_time) > SDCARD_POLL_INSERT_INTERVAL)
     {
       g_sdcard_present = mountSDCard();
       sd_card_check_time = millis();
