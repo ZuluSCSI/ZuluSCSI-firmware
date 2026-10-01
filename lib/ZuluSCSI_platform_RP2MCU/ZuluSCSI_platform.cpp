@@ -43,6 +43,7 @@
 #include "custom_timings.h"
 #include <ZuluSCSI_settings.h>
 #include "ZuluSCSI_usb_console_media.h"
+#include "ZuluSCSI_usb_console_erase.h"
 #ifdef ZULUCONTROL_FIRMWARE 
 #include <ZuluSCSI_WebUI.h>
 #include <ZuluSCSI_WebUI_I2CServer.h>
@@ -131,7 +132,8 @@ typedef enum
     USB_INPUT_BUTTON_2,
     USB_INPUT_BUTTON_3,
     USB_INPUT_BUTTON_4,
-    USB_INPUT_MEDIA_SUBMENU
+    USB_INPUT_MEDIA_SUBMENU,
+    USB_INPUT_ERASE_SD_CARD
 }
 usb_input_type_t;
 
@@ -1072,6 +1074,11 @@ uint32_t platform_write_to_serial(uint8_t* data, uint32_t len)
 }
 
 
+// How often platform_reset_watchdog() below is allowed to push the log to USB.
+// It is called from the SCSI command path, so this is what keeps the USB stack
+// off that hot path while still letting long-running loops report progress.
+#define USB_LOG_POLL_INTERVAL_MS 50
+
 // Send log data to USB UART if USB is connected.
 // Data is retrieved from the shared log ring buffer and
 // this function sends as much as fits in USB CDC buffer.
@@ -1431,9 +1438,26 @@ void platform_reset_watchdog()
         g_watchdog_initialized = true;
     }
 
-    // USB log is polled here also to make sure any log messages in fault states
-    // get passed to USB.
-    usb_log_poll();
+    // USB log is polled here as well, not only from platform_poll(). Every
+    // loop that can run for a while kicks the watchdog -- the SCSI command
+    // path, image creation, the SD-card-absent wait in zuluscsi_setup(), the
+    // SCA dynamic-ID poll -- and several of those never reach platform_poll(),
+    // so without this they produce no USB serial output at all while they run.
+    // The SD-card-absent wait is the one users meet first: with no card there
+    // is nowhere to write zululog.txt either, so USB is the only way to see
+    // why the board is unhappy.
+    //
+    // Rate-limited because the SCSI command path calls this often enough that
+    // polling every time walks into the TinyUSB stack thousands of times a
+    // second. That is where a "ep 80 was already available" panic came from,
+    // and it is far more often than a CDC endpoint can drain regardless.
+    static uint32_t last_usb_log_poll = 0;
+    uint32_t now = millis();
+    if ((uint32_t)(now - last_usb_log_poll) >= USB_LOG_POLL_INTERVAL_MS)
+    {
+        last_usb_log_poll = now;
+        usb_log_poll();
+    }
 }
 
 // Poll function that is called every few milliseconds.
@@ -1601,11 +1625,6 @@ bool platform_is_sca()
 
 #ifdef PLATFORM_HAS_ROM_DRIVE
 
-# ifndef ROMDRIVE_OFFSET
-    // Reserve up to 352 kB for firmware by default.
-    #define ROMDRIVE_OFFSET (352 * 1024)
-# endif
-
 uint32_t platform_get_romdrive_maxsize()
 {
     if (g_flash_chip_size >= ROMDRIVE_OFFSET)
@@ -1673,6 +1692,135 @@ bool platform_write_romdrive(const uint8_t *data, uint32_t start, uint32_t count
 }
 
 #endif // PLATFORM_HAS_ROM_DRIVE
+
+/*******************************************/
+/* Direct flash region access              */
+/*******************************************/
+
+// ROMDRIVE_OFFSET comes from the flash map in ZuluSCSI_platform.h. It is the
+// first byte past the profile store, and the map is only self-consistent if
+// the firmware really is limited to the space ahead of the settings area --
+// which is the linker's job, driven by program_flash_allocation. Check that
+// the two descriptions of the same boundary still agree.
+#ifdef PLATFORM_FLASH_PROGRAM_ALLOCATION
+static_assert(PLATFORM_FLASH_PROGRAM_ALLOCATION == PLATFORM_FLASH_FIRMWARE_SIZE,
+              "program_flash_allocation in platformio.ini and "
+              "PLATFORM_FLASH_FIRMWARE_SIZE in ZuluSCSI_platform.h disagree; the "
+              "firmware would run into the settings area or waste flash ahead of it");
+#endif
+static_assert(ROMDRIVE_OFFSET == 1273856,
+              "the ROM drive has moved -- boards already carrying a ROM drive in "
+              "flash would no longer find it");
+static_assert((PLATFORM_FLASH_SETTINGS_OFFSET % PLATFORM_FLASH_SECTOR_SIZE) == 0 &&
+              (PLATFORM_FLASH_SETTINGS_SIZE % PLATFORM_FLASH_SECTOR_SIZE) == 0 &&
+              (PLATFORM_FLASH_PROFILES_OFFSET % PLATFORM_FLASH_SECTOR_SIZE) == 0 &&
+              (PLATFORM_FLASH_PROFILES_SIZE % PLATFORM_FLASH_SECTOR_SIZE) == 0,
+              "every flash region has to start and end on an erase sector");
+
+// Reads bypass the XIP cache and the memory-mapped window entirely by
+// streaming the flash controller's FIFO, the same mechanism
+// platform_read_romdrive() uses. Nothing is cached on the way, so a read
+// issued right after a program never returns a stale line.
+//
+// Like platform_read_romdrive(), this does not lock g_core1_mutex: the
+// stream FIFO is a single shared resource, so callers must not stream from
+// both cores at once.
+bool platform_flash_read(uint32_t flash_offset, void *dest, uint32_t count)
+{
+    uint8_t *out = (uint8_t *)dest;
+
+    while (count > 0)
+    {
+        // The FIFO deals in whole words at word-aligned addresses; anything
+        // else is handled by reading around the request and copying out the
+        // part that was asked for.
+        uint32_t aligned = flash_offset & ~3u;
+        uint32_t skip = flash_offset - aligned;
+        uint32_t words = (skip + count + 3) / 4;
+        uint32_t buffer[64];
+
+        const uint32_t max_words = sizeof(buffer) / sizeof(buffer[0]);
+        if (words > max_words) words = max_words;
+
+        xip_ctrl_hw->stream_ctr = 0;
+        while (!(xip_ctrl_hw->stat & XIP_STAT_FIFO_EMPTY))
+        {
+            (void) xip_ctrl_hw->stream_fifo;
+        }
+
+        xip_ctrl_hw->stream_addr = aligned;
+        xip_ctrl_hw->stream_ctr = words;
+
+        uint32_t got = 0;
+        while (got < words)
+        {
+            if (!(xip_ctrl_hw->stat & XIP_STAT_FIFO_EMPTY))
+            {
+                buffer[got++] = xip_ctrl_hw->stream_fifo;
+            }
+        }
+
+        uint32_t available = words * 4 - skip;
+        uint32_t n = (count < available) ? count : available;
+        memcpy(out, (const uint8_t *)buffer + skip, n);
+
+        out += n;
+        flash_offset += n;
+        count -= n;
+    }
+
+    return true;
+}
+
+bool platform_flash_erase(uint32_t flash_offset, uint32_t count)
+{
+    if ((flash_offset % PLATFORM_FLASH_SECTOR_SIZE) != 0 ||
+        (count % PLATFORM_FLASH_SECTOR_SIZE) != 0)
+    {
+        logmsg("platform_flash_erase(): offset ", (int)flash_offset, " count ", (int)count,
+               " is not sector aligned");
+        return false;
+    }
+
+    // XIP is disabled during flashing so interrupts and
+    // core1 handlers must be blocked.
+    mutex_enter_blocking(&g_core1_mutex);
+    uint32_t saved_irq = save_and_disable_interrupts();
+
+    flash_range_erase(flash_offset, count);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    set_flash_clock();
+#endif
+
+    restore_interrupts(saved_irq);
+    mutex_exit(&g_core1_mutex);
+    return true;
+}
+
+bool platform_flash_program(uint32_t flash_offset, const uint8_t *data, uint32_t count)
+{
+    if ((flash_offset % PLATFORM_FLASH_PROGRAM_SIZE) != 0 ||
+        (count % PLATFORM_FLASH_PROGRAM_SIZE) != 0)
+    {
+        logmsg("platform_flash_program(): offset ", (int)flash_offset, " count ", (int)count,
+               " is not program-page aligned");
+        return false;
+    }
+
+    mutex_enter_blocking(&g_core1_mutex);
+    uint32_t saved_irq = save_and_disable_interrupts();
+
+    flash_range_program(flash_offset, data, count);
+
+#ifdef ZULUSCSI_MCU_RP23XX
+    set_flash_clock();
+#endif
+
+    restore_interrupts(saved_irq);
+    mutex_exit(&g_core1_mutex);
+    return true;
+}
 
 #ifdef PLATFORM_AUTH_CHECK_ENABLE
 
@@ -1872,6 +2020,13 @@ static usb_input_type_t serial_menu(menu_context_t context)
             return USB_INPUT_NONE;
         }
 
+        // Route to the erase submenu while it is active
+        if (serialEraseMenuActive())
+        {
+            serialEraseMenuProcess((char)read);
+            return USB_INPUT_NONE;
+        }
+
         switch((char) read)
         {
             case 'X':
@@ -1879,7 +2034,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 if (context ==  MENU_CONTEXT_TARGET_MSC)
                     input_type = USB_INPUT_EXIT_MSC;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
             case 'R':
             case 'r':
@@ -1906,33 +2061,43 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 input_type = USB_INPUT_LOG_TO_SD;
                 break;
             case '1':
-                if (g_enabled_eject_buttons & 1 || g_enabled_cow_buttons & 1)
+                if (context ==  MENU_CONTEXT_TARGET_MAIN && (g_enabled_eject_buttons & 1 || g_enabled_cow_buttons & 1))
                     input_type = USB_INPUT_BUTTON_1;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
             case '2':
-                if (g_enabled_eject_buttons & 2 || g_enabled_cow_buttons & 2)
+                if (context ==  MENU_CONTEXT_TARGET_MAIN && (g_enabled_eject_buttons & 2 || g_enabled_cow_buttons & 2))
                     input_type = USB_INPUT_BUTTON_2;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
                 break;
             case '3':
-                if (g_enabled_eject_buttons & 4 || g_enabled_cow_buttons & 4)
+                if (context ==  MENU_CONTEXT_TARGET_MAIN && (g_enabled_eject_buttons & 4 || g_enabled_cow_buttons & 4))
                     input_type = USB_INPUT_BUTTON_3;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
             case '4':
-                if (g_enabled_eject_buttons & 8 || g_enabled_cow_buttons & 8)
+                if (context ==  MENU_CONTEXT_TARGET_MAIN && (g_enabled_eject_buttons & 8 || g_enabled_cow_buttons & 8))
                     input_type = USB_INPUT_BUTTON_4;
                 else
-                    ignore_key = true;
+                    match_keyed = false;
                 break;
             case 'M':
             case 'm':
-                input_type = USB_INPUT_MEDIA_SUBMENU;
+                if (context ==  MENU_CONTEXT_TARGET_MAIN)
+                    input_type = USB_INPUT_MEDIA_SUBMENU;
+                else
+                    match_keyed = false;
+                break;
+            case 'T':
+            case 't':
+                if (context ==  MENU_CONTEXT_TARGET_MAIN)
+                    input_type = USB_INPUT_ERASE_SD_CARD;
+                else
+                    match_keyed = false;
                 break;
             case 'Y':
             case 'y':
@@ -1965,16 +2130,17 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 "    'u' - reboot into the UF2 bootloader\r\n"
                 "    'l' - toggle logging to the SD Card, currently ", g_log_to_sd ? "on" : "off", "\r\n",
                 "    'd' - toggle all debug logging, currently ", g_log_debug ? "on" : "off", "\r\n",
-                (g_enabled_eject_buttons & 1)   ? "    '1' - push function button 1 (eject, switch image)\r\n" : "",
-                (g_enabled_cow_buttons & 1)     ? "    '1' - push function button 1 (cow init, currently " : "", (g_enabled_cow_buttons & 1) ? ((g_cow_button_state & 1) ? "enabled)\r\n" : "disabled)\r\n") : "",
-                (g_enabled_eject_buttons & 2)   ? "    '2' - push function button 2 (eject, switch image)\r\n" : "",
-                (g_enabled_cow_buttons & 2)     ? "    '2' - push function button 2 (cow init, currently ": "",  (g_enabled_cow_buttons & 2) ? ((g_cow_button_state & 2) ? "enabled)\r\n)\r\n" : "disabled)\r\n") : "",
-                (g_enabled_eject_buttons & 4)   ? "    '3' - push function button 3 (eject, switch image)\r\n" : "",
-                (g_enabled_cow_buttons & 4)     ? "    '3' - push function button 3 (cow init, currently ": "", (g_enabled_cow_buttons & 4) ? ((g_cow_button_state & 4) ? "enabled)\r\n" : "disabled)\r\n") : "",
-                (g_enabled_eject_buttons & 8)   ? "    '4' - push function button 4 (eject, switch image)\r\n" : "",
-                (g_enabled_cow_buttons & 8)     ? "    '4' - push function button 4 (cow init, currently ": "", (g_enabled_cow_buttons & 8) ? ((g_cow_button_state & 8) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 1)   ? "    '1' - push function button 1 (eject, switch image)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 1)     ? "    '1' - push function button 1 (cow init, currently " : "", (g_enabled_cow_buttons & 1) ? ((g_cow_button_state & 1) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 2)   ? "    '2' - push function button 2 (eject, switch image)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 2)     ? "    '2' - push function button 2 (cow init, currently ": "",  (g_enabled_cow_buttons & 2) ? ((g_cow_button_state & 2) ? "enabled)\r\n)\r\n" : "disabled)\r\n") : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 4)   ? "    '3' - push function button 3 (eject, switch image)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 4)     ? "    '3' - push function button 3 (cow init, currently ": "", (g_enabled_cow_buttons & 4) ? ((g_cow_button_state & 4) ? "enabled)\r\n" : "disabled)\r\n") : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_eject_buttons & 8)   ? "    '4' - push function button 4 (eject, switch image)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 8)     ? "    '4' - push function button 4 (cow init, currently ": "", (g_enabled_cow_buttons & 8) ? ((g_cow_button_state & 8) ? "enabled)\r\n" : "disabled)\r\n") : "",
 
-                "    'm' - media management (image select, eject, insert)\r\n"
+                (context == MENU_CONTEXT_TARGET_MAIN) ? "    'm' - media management (image select, eject, insert)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN) ? "    't' - erase (TRIM) entire SD card -- DESTROYS ALL DATA\r\n" : ""
                 "  press 'y' after a command to confirm and execute"
             );
         }
@@ -2011,7 +2177,6 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     logmsg("Turning logging to SD card ", g_log_to_sd ? "on" : "off");
                     break;
                 case USB_INPUT_EXIT_MSC:
-                    logmsg("Exiting mass storage");
                     break;
                 case USB_INPUT_BUTTON_1:
                     if (g_enabled_eject_buttons & 1)
@@ -2063,6 +2228,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     break;
                 case USB_INPUT_MEDIA_SUBMENU:
                     serialMediaMenuEnter();
+                    break;
+                case USB_INPUT_ERASE_SD_CARD:
+                    serialEraseMenuEnter();
                     break;
                 default:
                     input_type = USB_INPUT_NONE;
@@ -2134,6 +2302,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                         logmsg(g_cow_button_state & 4 ? "Disable" : "Enable", " cow init on function button 3, press 'y' to engage or any key to clear");
                     }
                     break;
+                case USB_INPUT_ERASE_SD_CARD:
+                    logmsg("Erase (TRIM) entire SD card requested, press 'y' to engage or any key to clear");
+                    break;
                 case USB_INPUT_MEDIA_SUBMENU:
                     logmsg("Enter media management submenu, press 'y' to engage or any key to clear");
                     break;
@@ -2151,7 +2322,14 @@ static usb_input_type_t serial_menu(menu_context_t context)
 #ifdef PLATFORM_MASS_STORAGE
 bool platform_stop_msc()
 {
-    return serial_menu(MENU_CONTEXT_TARGET_MSC) == USB_INPUT_EXIT_MSC;
+    usb_input_type_t input = serial_menu(MENU_CONTEXT_TARGET_MSC);
+    if (input == USB_INPUT_EXIT_MSC || g_rebooting)
+    {
+        logmsg("Exiting mass storage");
+        return true;
+    }
+    return false;
+
 }
 #endif // PLATFORM_MASS_STORAGE
 

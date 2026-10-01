@@ -2,6 +2,7 @@
 #include "ZuluSCSI_log.h"
 #include "ui.h"
 #include <ctype.h>
+#include <memory>
 
 char g_tmpFilename[MAX_PATH_LEN];
 char g_tmpFilepath[MAX_PATH_LEN];
@@ -166,8 +167,12 @@ PROCESS_DIR_ITEM_RESULT SDNavigator::ProcessDirectoryItem(const char *filename, 
 
 WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, bool includeAllFiles, bool remapBinCues)
 {
-    char buf[MAX_PATH_LEN];
-   
+    std::unique_ptr<char[]> buf{new (std::nothrow) char[MAX_PATH_LEN]};
+    if (buf == nullptr)
+    {
+        // SAVE logmsg("Ran out of memory creating buf[MAX_PATH_LEN]");
+        return WALK_DIR_ITEM_RESULT_FAIL;
+    }
 
     FsFile dir;
     if (dirname[0] == '\0')
@@ -196,14 +201,14 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
     FsFile file;
     while (file.openNext(&dir, O_RDONLY))
     {
-        memset(buf, 0, MAX_FILE_PATH);
-        if (!file.getName(buf, MAX_FILE_PATH))
+        memset(buf.get(), 0, MAX_FILE_PATH);
+        if (!file.getName(buf.get(), MAX_FILE_PATH))
         {
-     // SAVE       logmsg("Image directory '", dirname, "' had invalid file");
+            // SAVE       logmsg("Image directory '", dirname, "' had invalid file");
             continue;
         }
 
-        if (!scsiDiskFilenameValid(buf) && !includeAllFiles) 
+        if (!scsiDiskFilenameValid(buf.get()) && !includeAllFiles)
         {
             continue;
         }
@@ -215,9 +220,19 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
             continue;
         }
 
-        char newPath[MAX_FILE_PATH];
-        char cueFile[MAX_FILE_PATH];
-        memset(cueFile, 0, MAX_FILE_PATH);
+        std::unique_ptr<char[]> newPath {new (std::nothrow) char[MAX_FILE_PATH]};
+        if (newPath == nullptr)
+        {
+            // SAVE logmsg("Ran out of memory creating newPath[MAX_PATH_LEN]");
+            return WALK_DIR_ITEM_RESULT_FAIL;
+        }
+        std::unique_ptr<char[]> cueFile {new (std::nothrow) char[MAX_FILE_PATH]};
+        memset(cueFile.get(), 0, MAX_FILE_PATH);
+        if (cueFile == nullptr)
+        {
+            // SAVE logmsg("Ran out of memory creating cueFile[MAX_PATH_LEN]");
+            return WALK_DIR_ITEM_RESULT_FAIL;
+        }
 
         u_int64_t cueSize;
         u_int64_t binSize;
@@ -225,16 +240,16 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
 
         if (recursive)
         {
-            memset(newPath, 0, MAX_FILE_PATH);
-            strcpy(newPath, dirname);
-            strcat(newPath, "/");
-            strcat(newPath, buf);
+            memset(newPath.get(), 0, MAX_FILE_PATH);
+            strcpy(newPath.get(), dirname);
+            strcat(newPath.get(), "/");
+            strcat(newPath.get(), buf.get());
             
             if (!file.isDir()) // File
             {
-                bool isSimpleCue = isFileABinFileWithACueFile(newPath, cueFile, cueSize, totalBins);
+                bool isSimpleCue = isFileABinFileWithACueFile(newPath.get(), cueFile.get(), cueSize, totalBins);
 
-                switch(ProcessDirectoryItem(buf, dirname, file.size(), isSimpleCue ? NAV_OBJECT_CUE_SIMPLE : NAV_OBJECT_FILE, cueFile))
+                switch(ProcessDirectoryItem(buf.get(), dirname, file.size(), isSimpleCue ? NAV_OBJECT_CUE_SIMPLE : NAV_OBJECT_FILE, cueFile.get()))
                 {
                     case PROCESS_DIR_ITEM_RESULT_PROCEED:
                         break;
@@ -249,11 +264,11 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
                 if (remapBinCues)
                 {
                     // do check
-                    if (isFolderACueBinSet(newPath, cueFile, cueSize, binSize, totalBins))
+                    if (isFolderACueBinSet(newPath.get(), cueFile.get(), cueSize, binSize, totalBins))
                     {
                         processDirAsNormal = false;
 
-                        switch(ProcessDirectoryItem(buf, dirname, binSize, NAV_OBJECT_CUE, cueFile))
+                        switch(ProcessDirectoryItem(buf.get(), dirname, binSize, NAV_OBJECT_CUE, cueFile.get()))
                         {
                             case PROCESS_DIR_ITEM_RESULT_PROCEED:
                                 break;
@@ -267,7 +282,7 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
                 {
                     _hasSubDirs = true;
 
-                    switch(WalkDirectory(newPath, recursive, includeAllFiles, remapBinCues))
+                    switch(WalkDirectory(newPath.get(), recursive, includeAllFiles, remapBinCues))
                     {
                         case WALK_DIR_ITEM_RESULT_OK:
                             break;
@@ -286,16 +301,16 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
 
             if (remapBinCues && file.isDir())
             {
-                memset(newPath, 0, MAX_FILE_PATH);
-                strcpy(newPath, dirname);
-                strcat(newPath, "/");
-                strcat(newPath, buf);
+                memset(newPath.get(), 0, MAX_FILE_PATH);
+                strcpy(newPath.get(), dirname);
+                strcat(newPath.get(), "/");
+                strcat(newPath.get(), buf.get());
                 
-                if (isFolderACueBinSet(newPath, cueFile, cueSize, binSize, totalBins))
+                if (isFolderACueBinSet(newPath.get(), cueFile.get(), cueSize, binSize, totalBins))
                 {
                     processDirAsNormal = false;
 
-                    switch(ProcessDirectoryItem(buf, dirname, binSize, NAV_OBJECT_CUE, cueFile))
+                    switch(ProcessDirectoryItem(buf.get(), dirname, binSize, NAV_OBJECT_CUE, cueFile.get()))
                     {
                         case PROCESS_DIR_ITEM_RESULT_PROCEED:
                             break;
@@ -311,11 +326,11 @@ WALK_DIR_RESULT SDNavigator::WalkDirectory(const char* dirname, bool recursive, 
                 
                 if (!file.isDir())
                 {
-                    bool isSimpleCue = isFileABinFileWithACueFile(newPath, cueFile, cueSize, totalBins);
+                    bool isSimpleCue = isFileABinFileWithACueFile(newPath.get(), cueFile.get(), cueSize, totalBins);
                     type = isSimpleCue ? NAV_OBJECT_CUE_SIMPLE : NAV_OBJECT_FILE;
                 }
 
-                switch(ProcessDirectoryItem(buf, dirname, file.size(), type, cueFile))
+                switch(ProcessDirectoryItem(buf.get(), dirname, file.size(), type, cueFile.get()))
                 {
                     case PROCESS_DIR_ITEM_RESULT_PROCEED:
                         break;

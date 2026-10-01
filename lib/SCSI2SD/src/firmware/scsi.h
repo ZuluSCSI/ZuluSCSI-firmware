@@ -97,6 +97,12 @@ typedef struct
 	uint16_t bytesPerSector;
 	uint8_t tapeDensity;
 	uint8_t tapeBufferedMode; // Buffered mode field from MODE SELECT byte 2
+
+	// Disconnect time limit from the Disconnect-Reconnect mode page (0x02),
+	// in 100us increments. Zero (the default) means no negotiated limit --
+	// see scsiReconnect()'s use of this alongside SCSI-2 table 7's fixed
+	// disconnection delay.
+	uint16_t disconnectTimeLimit;
 } LiveCfg;
 
 typedef struct {

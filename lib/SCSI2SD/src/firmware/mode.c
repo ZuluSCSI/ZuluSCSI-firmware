@@ -879,6 +879,36 @@ static void doModeSelect(void)
 
 			switch (pageCode)
 			{
+			case 0x02: // Disconnect-Reconnect Page
+			{
+				if (pageLen != 0x0E) goto bad;
+
+				uint16_t disconnectTimeLimit =
+					(((uint16_t)scsiDev.data[idx+6]) << 8) |
+					scsiDev.data[idx+7];
+				uint16_t maxBurstSize =
+					(((uint16_t)scsiDev.data[idx+10]) << 8) |
+					scsiDev.data[idx+11];
+				uint8_t dtdc = scsiDev.data[idx+12] & 0x03;
+
+				// SCSI-2 8.3.3.2: if DTDC is non-zero and maximum burst
+				// size is non-zero, the target shall return CHECK
+				// CONDITION / ILLEGAL REQUEST / INVALID FIELD IN
+				// PARAMETER LIST.
+				if (dtdc != 0 && maxBurstSize != 0) goto bad;
+
+				// SCSI-2 6.6.6: honored as the negotiated half of "a
+				// disconnection delay (table 7) or the disconnect time
+				// limit mode parameter, whichever is greater" -- see
+				// scsiReconnect(). Units are 100us increments; zero
+				// means no additional limit beyond table 7's fixed
+				// floor. The other fields on this page (buffer full/
+				// empty ratio, bus inactivity limit, connect time
+				// limit, DTDC itself) have no consumer yet -- nothing
+				// currently decides *when* to disconnect based on them.
+				scsiDev.target->liveCfg.disconnectTimeLimit = disconnectTimeLimit;
+			}
+			break;
 			case 0x03: // Format Device Page
 			{
 				if (pageLen != 0x16) goto bad;

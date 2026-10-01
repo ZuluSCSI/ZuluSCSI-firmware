@@ -5,11 +5,13 @@ Revision = 03B8
 Feature = #6607
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 0002B561 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=8143 heads=5 sectors/track=270 (block size per descriptor: 522)
 ; => implied capacity 10993050 sectors. Compare against Sectors= below (from READ CAPACITY)
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -47,11 +49,13 @@ Revision = 03B7
 Feature = #6713
 BlockSize = 522
 Sectors = 17177940
+; Base captured serial number (VPD82 ASCII @ offset 14): 002A2B90 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=8152 heads=10 sectors/track=270 (block size per descriptor: 522)
 ; => implied capacity 22010400 sectors. Compare against Sectors= below (from READ CAPACITY)
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -89,11 +93,14 @@ Revision = 1644
 Feature = #6717
 BlockSize = 522
 Sectors = 17177940
+; Base captured serial number (VPD80 ASCII, last 8 bytes; no VPD82 on
+; this profile): 22473JP9 -- reused verbatim by every SCSI ID using this
+; profile unless AS400_DiskSerialNumber= overrides it (see README-as400.md's
+; "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=29550 heads=2 sectors/track=585 (block size per descriptor: 522)
 ; => implied capacity 34573500 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -142,11 +149,13 @@ Revision = 1340
 Feature = Unknown
 BlockSize = 522
 Sectors = 17177940
+; Base captured serial number (VPD82 ASCII @ offset 14): 0009B381 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=7049 heads=10 sectors/track=262 (block size per descriptor: 522)
 ; => implied capacity 18468380 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -184,11 +193,13 @@ Revision = 4I4I
 Feature = #6606
 BlockSize = 520
 Sectors = 4204913
+; Base captured serial number (VPD82 ASCII @ offset 14): 00BE1188 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=4390 heads=8 sectors/track=128 (block size per descriptor: 520)
 ; => implied capacity 4495360 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -223,11 +234,14 @@ Revision = S27E
 Feature = #4318
 BlockSize = 522
 Sectors = 34287616
+; Base captured serial number (VPD80 ASCII, last 8 bytes; no VPD82 on
+; this profile): E2V1V9KB -- reused verbatim by every SCSI ID using this
+; profile unless AS400_DiskSerialNumber= overrides it (see README-as400.md's
+; "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=36703 heads=2 sectors/track=658 (block size per descriptor: 522)
 ; => implied capacity 48301148 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -261,11 +275,14 @@ Revision = S29B
 Feature = Unknown
 BlockSize = 522
 Sectors = 17177940
+; Base captured serial number (VPD80 ASCII, last 8 bytes; no VPD82 on
+; this profile): E3XE8KPC -- reused verbatim by every SCSI ID using this
+; profile unless AS400_DiskSerialNumber= overrides it (see README-as400.md's
+; "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=36703 heads=3 sectors/track=658 (block size per descriptor: 522)
 ; => implied capacity 72451722 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -298,14 +315,15 @@ Vendor = IBM
 Product = 0663L12
 Feature = #6104
 Revision = s 62
-Feature = Unknown
 BlockSize = 520
 Sectors = 1931265
+; Base captured serial number (VPD82 ASCII @ offset 14): 00084438 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=2463 heads=13 sectors/track=65 (block size per descriptor: 520)
 ; => implied capacity 2081235 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -338,11 +356,13 @@ Feature = #6601
 Revision = 101B
 BlockSize = 520
 Sectors = 2019430
+; Base captured serial number (VPD82 ASCII @ offset 14): 00175995 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=4119 heads=5 sectors/track=106 (block size per descriptor: 520)
 ; => implied capacity 2183070 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -353,7 +373,7 @@ SPD_chunks = 2
 ; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
 VPD01 = 00 01 00 2f 18 34 35 47 39 34 36 33 20 20 20 20 20 00 38 39 35 39 38 35 20 20 20 20 00 f4 f5 c7 f9 f4 f6 f3 40 40 40 40 40 f8 f9 f5 f9 f8 f5 40 40 40 40
 VPD02 = 00 02 00 2f 18 34 35 47 39 38 35 31 20 20 20 20 20 00 38 39 35 39 36 33 20 20 20 20 00 f4 f5 c7 f9 f8 f5 f1 40 40 40 40 40 f8 f9 f5 f9 f6 f3 40 40 40 40
-VPD03 = 00 03 00 14 30 00 00 00 a0 90 06 18 00 01 01 b0 00 00 00 00 00 00 00 00
+VPD03 = 00 03 00 14 30 00 00 00 a0 90 06 18 00 01 01 40 00 00 00 00 00 00 00 00
 VPD80 = 00 80 00 10 20 20 20 20 20 20 20 20 30 30 31 37 35 39 39 35
 VPD82 = 00 82 00 30 19 30 36 36 32 00 53 31 32 00 30 30 31 37 35 39 39 35 00 49 42 4d 20 20 20 00 f0 f6 f6 f2 e2 f1 f2 00 f0 f0 f1 f7 f5 f9 f9 f5 c9 c2 d4 40 40 40
 
@@ -377,11 +397,13 @@ Feature = #6601
 Revision = 101B
 BlockSize = 520
 Sectors = 2019430
+; Base captured serial number (VPD82 ASCII @ offset 14): 00058884 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=4119 heads=5 sectors/track=106 (block size per descriptor: 520)
 ; => implied capacity 2183070 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -392,7 +414,7 @@ SPD_chunks = 2
 ; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
 VPD01 = 00 01 00 2f 18 34 35 47 39 34 36 33 20 20 20 20 20 00 38 39 35 39 38 35 20 20 20 20 00 f4 f5 c7 f9 f4 f6 f3 40 40 40 40 40 f8 f9 f5 f9 f8 f5 40 40 40 40
 VPD02 = 00 02 00 2f 18 34 35 47 39 38 39 39 20 20 20 20 20 00 38 39 35 39 37 34 20 20 20 20 00 f4 f5 c7 f9 f8 f9 f9 40 40 40 40 40 f8 f9 f5 f9 f7 f4 40 40 40 40
-VPD03 = 00 03 00 14 30 00 00 00 a0 90 06 18 00 01 01 b0 00 00 00 00 00 00 00 00
+VPD03 = 00 03 00 14 30 00 00 00 a0 90 06 18 00 01 01 40 00 00 00 00 00 00 00 00
 VPD80 = 00 80 00 10 20 20 20 20 20 20 20 20 30 30 30 35 38 38 38 34
 VPD82 = 00 82 00 30 19 30 36 36 32 00 53 31 32 00 30 30 30 35 38 38 38 34 00 49 42 4d 20 20 20 00 f0 f6 f6 f2 e2 f1 f2 00 f0 f0 f0 f5 f8 f8 f8 f4 c9 c2 d4 40 40 40
 
@@ -430,6 +452,9 @@ Product = DGVS09U
 Revision = 02A1
 BlockSize = 522
 Sectors = 17177940
+; Base captured serial number (VPD82 ASCII @ offset 14): 00AA0007 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 
 ; --- Standard INQUIRY (full response) ---
 SPD_0 = 00 00 03 02 9f 00 01 3a 49 42 4d 41 53 34 30 30 44 47 56 53 30 39 55 20 20 20 20 20 20 20 20 20 30 32 41 31 30 30 41 41 30 30 30 37 37 35 4d 53 50 41 34 31 41 31 20 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 30 36 38 30 30 30 35 36 33 30 30 30 31 32 32 30 39 4c 34 30 34 34 20 20 20 20 20 46 32 34 34 36 30 20 20 20 20 51 33 34 4c
@@ -463,11 +488,13 @@ Product = DFHSS4W
 Revision = 03B8
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 0000BB10 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=8143 heads=5 sectors/track=270 (block size per descriptor: 522)
 ; => implied capacity 10993050 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -510,11 +537,13 @@ Product = DFHSS4W
 Revision = 5959
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 001FE032 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=6077 heads=9 sectors/track=180 (block size per descriptor: 522)
 ; => implied capacity 9844740 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -554,11 +583,13 @@ Product = DFHSS4W
 Revision = 5959
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 0025802E -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=6077 heads=9 sectors/track=180 (block size per descriptor: 522)
 ; => implied capacity 9844740 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -598,11 +629,13 @@ Product = DFHSS4W
 Revision = 5959
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 00140A86 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=6077 heads=9 sectors/track=180 (block size per descriptor: 522)
 ; => implied capacity 9844740 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -642,11 +675,13 @@ Product = DFHSS4W
 Revision = 5959
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 000D99A0 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=6077 heads=9 sectors/track=180 (block size per descriptor: 522)
 ; => implied capacity 9844740 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -686,11 +721,13 @@ Product = DFHSS4W
 Revision = 5959
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 001BE48D -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=6077 heads=9 sectors/track=180 (block size per descriptor: 522)
 ; => implied capacity 9844740 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -730,11 +767,13 @@ Product = DFHSS4W
 Revision = 5959
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 0018E422 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=6077 heads=9 sectors/track=180 (block size per descriptor: 522)
 ; => implied capacity 9844740 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -774,11 +813,13 @@ Product = DFHSS4W
 Revision = 03B8
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 0004ADB4 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=8143 heads=5 sectors/track=270 (block size per descriptor: 522)
 ; => implied capacity 10993050 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -821,11 +862,13 @@ Product = DFHSS4W
 Revision = 03B8
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 0004BDC3 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=8143 heads=5 sectors/track=270 (block size per descriptor: 522)
 ; => implied capacity 10993050 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -868,11 +911,13 @@ Product = DFHSS4W
 Revision = 03B8
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 00026229 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=8143 heads=5 sectors/track=270 (block size per descriptor: 522)
 ; => implied capacity 10993050 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -915,11 +960,13 @@ Product = DFHSS4W
 Revision = 03B8
 BlockSize = 522
 Sectors = 8379886
+; Base captured serial number (VPD82 ASCII @ offset 14): 0004BD60 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
 ; Decoded from MODE SENSE pages 0x03/0x04: cylinders=8143 heads=5 sectors/track=270 (block size per descriptor: 522)
 ; => implied capacity 10993050 sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt.
 
 ; --- Standard INQUIRY (full response) ---
@@ -949,4 +996,86 @@ LogSense30_1 = 20 30 30 20 30 30 20 30 33 0a 20 20 30 30 20 30 30 20 30 30 20 30
 LogSense30_chunks = 2
 LogSense30PageLength = 44
 LogSense30PageListLength = 0
+
+[86G9124-5]
+Vendor = IBMAS400
+Product = DFHSS2W
+Revision = 4I4I
+Feature = #6606
+BlockSize = 520
+Sectors = 4204913
+; Base captured serial number (VPD82 ASCII @ offset 14): 00E63509 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
+; Decoded from MODE SENSE pages 0x03/0x04: cylinders=4390 heads=8 sectors/track=128 (block size per descriptor: 520)
+; => implied capacity 4495360 sectors. Compare against Sectors= below (from READ CAPACITY) ---
+; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
+; not the MODE SENSE geometry, when in doubt.
+
+; --- Standard INQUIRY (full response) ---
+SPD_0 = 00 00 02 02 9f 00 00 3e 49 42 4d 41 53 34 30 30 44 46 48 53 53 32 57 20 20 20 20 20 20 20 20 20 34 49 34 49 30 30 45 36 33 35 30 39 52 41 4d 53 41 30 34 52 20 20 20 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 30 36 38 39 36 33 33 32 34 30 30 30 32 32 32 38 36 47 39 31 32 34 20 20 20 20 20 34 38 36 35 30 39 20 20 20 20 32 37 48 30
+SPD_1 = 32 36 32 20 20 20 20 20 34 38 34 35 34 37 20 20 20 20 00 00 00 00 00 00
+SPD_chunks = 2
+
+; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
+VPD01 = 00 01 00 2f 18 38 36 47 39 31 32 34 20 20 20 20 20 00 34 38 36 35 30 39 20 20 20 20 00 f8 f6 c7 f9 f1 f2 f4 40 40 40 40 40 f4 f8 f6 f5 f0 f9 40 40 40 40
+VPD02 = 00 02 00 2f 18 32 37 48 30 32 36 32 20 20 20 20 20 00 34 38 34 35 34 37 20 20 20 20 00 f2 f7 c8 f0 f2 f6 f2 40 40 40 40 40 f4 f8 f4 f5 f4 f7 40 40 40 40
+VPD03 = 00 03 00 24 00 00 00 00 a0 90 06 19 00 01 04 f3 00 00 00 00 00 00 00 00 52 4f 53 53 41 31 34 52 20 20 20 20 30 45 34 38
+VPD80 = 00 80 00 10 20 20 20 20 20 20 20 20 30 30 45 36 33 35 30 39
+VPD82 = 00 82 00 30 19 44 46 48 53 00 53 32 57 00 30 30 45 36 33 35 30 39 00 49 42 4d 20 20 20 00 c4 c6 c8 e2 e2 f2 e6 00 c5 f6 f3 f5 f0 f9 40 40 c9 c2 d4 40 40 40
+
+; --- MODE SENSE(6), page 0x3F (all pages) ---
+ModeSense3F_0 = a7 00 10 08 00 40 29 71 00 00 02 08 81 0a 04 01 70 00 00 00 01 00 00 00 82 0e 00 00 00 00 00 00 00 00 00 19 00 00 00 00 03 16 00 08 00 13 00 00 00 00 00 80 02 08 00 01 00 0c 00 1e 40 00 00 00 84 16 00 11 26 08 00 00 00 00 00 00 00 00 00 12 07 00 00 00 1c 20 00 00 87 0a 04 01 30 00 00 00 00 00 00 00 88 12 00 01 ff ff 00 00 ff ff ff ff 00 08 00 00 00 00 00 00 8a 06 00 00 00 00 00 00 8c 16 80 00 00 0a 00 00 00 00 0f 00
+ModeSense3F_1 = 00 11 3d 07 00 00 00 00 00 00 10 0c 80 0e 80 80 08 10 00 00 00 00 00 00 00 00 00 00
+ModeSense3F_chunks = 2
+
+; --- LOG SENSE pages ---
+LogSense00 = 00 00 00 0a 00 01 02 03 05 06 30 32 33 35
+LogSense30 = 30 00 00 30 00 00 00 2c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+LogSense30PageLength = 48
+LogSense30PageListLength = 44
+LogSense31 = 00 00 00 00
+LogSense31PageLength = 0
+
+[74G6978-6]
+Vendor = IBMAS400
+Product = DFHSS2W
+Feature = #6606
+Revision = 4I4I
+BlockSize = 520
+Sectors = 4204913
+; Base captured serial number (VPD82 ASCII @ offset 14): 00508929 -- reused
+; verbatim by every SCSI ID using this profile unless AS400_DiskSerialNumber=
+; overrides it (see README-as400.md's "Differentiating same-profile disks").
+; Decoded from MODE SENSE pages 0x03/0x04: cylinders=4390 heads=8 sectors/track=128 (block size per descriptor: 520)
+; => implied capacity 4495360 sectors. Compare against Sectors= below (from READ CAPACITY) ---
+; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
+; not the MODE SENSE geometry, when in doubt.
+
+; --- Standard INQUIRY (full response) ---
+SPD_0 = 00 00 02 02 9f 00 00 3e 49 42 4d 41 53 34 30 30 44 46 48 53 53 32 57 20 20 20 20 20 20 20 20 20 34 49 34 49 30 30 35 30 38 39 32 39 52 41 4d 53 41 30 34 52 20 20 20 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 30 36 38 39 36 31 31 31 20 30 30 30 32 32 32 37 34 47 36 39 37 38 20 20 20 20 20 34 38 36 35 30 36 20 20 20 20 32 31 48 30
+SPD_1 = 39 31 31 20 20 20 20 20 45 33 38 34 31 31 20 20 20 20 00 00 00 00 00 00
+SPD_chunks = 2
+
+; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
+VPD01 = 00 01 00 2f 18 37 34 47 36 39 37 38 20 20 20 20 20 00 34 38 36 35 30 36 20 20 20 20 00 f7 f4 c7 f6 f9 f7 f8 40 40 40 40 40 f4 f8 f6 f5 f0 f6 40 40 40 40
+VPD02 = 00 02 00 2f 18 32 31 48 30 39 31 31 20 20 20 20 20 00 45 33 38 34 31 31 20 20 20 20 00 f2 f1 c8 f0 f9 f1 f1 40 40 40 40 40 c5 f3 f8 f4 f1 f1 40 40 40 40
+VPD03 = 00 03 00 24 00 00 00 00 a0 90 06 19 00 01 04 f3 00 00 00 00 00 00 00 00 52 4f 53 53 41 31 34 52 20 20 20 20 30 45 34 37
+VPD80 = 00 80 00 10 20 20 20 20 20 20 20 20 30 30 35 30 38 39 32 39
+VPD82 = 00 82 00 30 19 44 46 48 53 00 53 32 57 00 30 30 35 30 38 39 32 39 00 49 42 4d 20 20 20 00 c4 c6 c8 e2 e2 f2 e6 00 f5 f0 f8 f9 f2 f9 40 40 c9 c2 d4 40 40 40
+
+; --- MODE SENSE(6), page 0x3F (all pages) ---
+ModeSense3F_0 = a7 00 10 08 00 40 29 71 00 00 02 08 81 0a 04 01 70 00 00 00 01 00 00 00 82 0e 00 00 00 00 00 00 00 00 00 19 00 00 00 00 03 16 00 08 00 13 00 00 00 00 00 80 02 08 00 01 00 0c 00 1e 40 00 00 00 84 16 00 11 26 08 00 00 00 00 00 00 00 00 00 12 07 00 00 00 1c 20 00 00 87 0a 04 01 30 00 00 00 00 00 00 00 88 12 00 01 ff ff 00 00 ff ff ff ff 00 08 00 00 00 00 00 00 8a 06 00 00 00 00 00 00 8c 16 80 00 00 0a 00 00 00 00 0f 00
+ModeSense3F_1 = 00 11 3d 07 00 00 00 00 00 00 10 0c 80 0e 80 80 08 10 00 00 00 00 00 00 00 00 00 00
+ModeSense3F_chunks = 2
+
+; --- LOG SENSE pages ---
+LogSense00 = 00 00 00 0a 00 01 02 03 05 06 30 32 33 35
+LogSense30 = 30 00 00 30 00 00 00 2c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+LogSense30PageLength = 48
+LogSense30PageListLength = 44
+LogSense31 = 00 00 00 00
+LogSense31PageLength = 0
 
