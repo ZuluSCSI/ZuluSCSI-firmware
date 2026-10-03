@@ -3,10 +3,11 @@
 # extract_as400_tape_data.sh --- Capture a real AS/400-era tape drive's
 # identity and mode-page data, one run per cartridge/condition.
 #
-# Reads standard INQUIRY, the full MODE SENSE (all pages, 0x3F), and MODE
-# SENSE page 0x10 (Device Configuration) alone from a real SCSI sequential
-# (tape) device, and appends the result as one labeled, diffable block to a
-# plain-text capture file (default: as400_tape_captures.txt).
+# Reads standard INQUIRY, MODE SENSE page 0x00 (important on older SCSI-1
+# tape drives), MODE SENSE page 0x10 (Device Configuration), the full MODE
+# SENSE all-pages probe (0x3F), and READ BLOCK LIMITS from a real SCSI
+# sequential (tape) device. Appends the result as one labeled, diffable block
+# to a plain-text capture file (default: as400_tape_captures.txt).
 #
 # Intended use: run once per condition (blank cartridge, a cartridge known
 # to be recorded at a specific density, etc.) against the SAME physical
@@ -41,8 +42,8 @@
 # Example:
 #   ./extract_as400_tape_data.sh /dev/sg3 QIC2000-blank
 #   ./extract_as400_tape_data.sh /dev/sg3 QIC2000-cart-recorded-QIC1000
-#   diff <(grep '^ModeSense10' as400_tape_captures.txt | sed -n 1p) \
-#        <(grep '^ModeSense10' as400_tape_captures.txt | sed -n 2p)
+#   grep -E '^\\[|^(ModeSense00|ModeSense10|ModeSense3F|ReadBlockLimits) =' \
+#        as400_tape_captures.txt
 # ---------------------------------------------------------------------------
 
 set -uo pipefail
@@ -175,32 +176,68 @@ if [ "$INQ_SIZE" -ge 36 ]; then
     info "Vendor='$VENDOR' Product='$PRODUCT' Revision='$REVISION'"
 fi
 
-# ===== 2. MODE SENSE(6), page 0x10 alone (Device Configuration) ============
+# ===== 2. MODE SENSE(6), page 0x00 ========================================
+# Some older SCSI-1 tape drives expose useful device/media state here while
+# rejecting the later standardized page 0x10 and all-pages 0x3F requests.
+info "Reading MODE SENSE page 0x00..."
+MS00_RAW="$SCRATCHDIR/modesense00.bin"
+MS00_SUPPORTED="no"
+if run_capture "$MS00_RAW" sg_raw -o - -r 255 "$DEV" 1a 00 00 00 ff 00; then
+    MS00_SUPPORTED="yes"
+fi
+MS00_SIZE=$(wc -c < "$MS00_RAW" 2>/dev/null | tr -d ' '); MS00_SIZE=${MS00_SIZE:-0}
+if [ "$MS00_SIZE" -eq 0 ]; then
+    warn "MODE SENSE page 0x00 returned no data --- try manually: sg_raw -v -r 255 $DEV 1a 00 00 00 ff 00 | xxd"
+fi
+info "MODE SENSE page 0x00: $MS00_SIZE bytes"
+
+# ===== 3. MODE SENSE(6), page 0x10 alone (Device Configuration) ============
 # Same CDB shape the real 9402-400's own INZTAP sends: DBD=0, PC=0 (current),
 # page=0x10, alloc=0x0C (12) --- matches what's actually been observed on the
 # wire, so this capture is directly comparable to the AS/400-side traffic.
 info "Reading MODE SENSE page 0x10 (Device Configuration)..."
 MS10_RAW="$SCRATCHDIR/modesense10.bin"
-run_capture "$MS10_RAW" sg_raw -o - -r 12 "$DEV" 1a 00 10 00 0c 00 || true
+MS10_SUPPORTED="no"
+if run_capture "$MS10_RAW" sg_raw -o - -r 12 "$DEV" 1a 00 10 00 0c 00; then
+    MS10_SUPPORTED="yes"
+fi
 MS10_SIZE=$(wc -c < "$MS10_RAW" 2>/dev/null | tr -d ' '); MS10_SIZE=${MS10_SIZE:-0}
 if [ "$MS10_SIZE" -eq 0 ]; then
     warn "MODE SENSE page 0x10 returned no data --- try manually: sg_raw -v -r 12 $DEV 1a 00 10 00 0c 00 | xxd"
 fi
 info "MODE SENSE page 0x10: $MS10_SIZE bytes"
 
-# ===== 3. MODE SENSE(6), all pages (0x3F) --- catches anything not
+# ===== 4. MODE SENSE(6), all pages (0x3F) --- catches anything not
 # specifically anticipated (e.g. a data-compression or medium-partition
 # page real hardware reports that Zulu doesn't currently emulate at all) ===
 info "Reading MODE SENSE (all pages)..."
 MS3F_RAW="$SCRATCHDIR/modesense3f.bin"
-run_capture "$MS3F_RAW" sg_raw -o - -r 255 "$DEV" 1a 00 3f 00 ff 00 || true
+MS3F_SUPPORTED="no"
+if run_capture "$MS3F_RAW" sg_raw -o - -r 255 "$DEV" 1a 00 3f 00 ff 00; then
+    MS3F_SUPPORTED="yes"
+fi
 MS3F_SIZE=$(wc -c < "$MS3F_RAW" 2>/dev/null | tr -d ' '); MS3F_SIZE=${MS3F_SIZE:-0}
 if [ "$MS3F_SIZE" -eq 0 ]; then
     warn "MODE SENSE 0x3F returned no data --- try manually: sg_raw -v -r 255 $DEV 1a 00 3f 00 ff 00 | xxd"
 fi
 info "MODE SENSE 0x3F: $MS3F_SIZE bytes"
 
-# ===== 4. VPD page 0x00 courtesy check --- just to record whether this
+# ===== 5. READ BLOCK LIMITS ================================================
+# A basic sequential-access command that is especially useful on older drives:
+# records the minimum and maximum block sizes accepted by the real hardware.
+info "Reading READ BLOCK LIMITS..."
+RBL_RAW="$SCRATCHDIR/read_block_limits.bin"
+RBL_SUPPORTED="no"
+if run_capture "$RBL_RAW" sg_raw -o - -r 6 "$DEV" 05 00 00 00 00 00; then
+    RBL_SUPPORTED="yes"
+fi
+RBL_SIZE=$(wc -c < "$RBL_RAW" 2>/dev/null | tr -d ' '); RBL_SIZE=${RBL_SIZE:-0}
+if [ "$RBL_SIZE" -eq 0 ]; then
+    warn "READ BLOCK LIMITS returned no data --- try manually: sg_raw -v -r 6 $DEV 05 00 00 00 00 00 | xxd"
+fi
+info "READ BLOCK LIMITS: $RBL_SIZE bytes"
+
+# ===== 6. VPD page 0x00 courtesy check --- just to record whether this
 # drive supports VPD at all, not a full VPD capture (see header comment) ===
 info "Checking VPD support (page 0x00)..."
 VPD00_RAW="$SCRATCHDIR/vpd00.bin"
@@ -215,11 +252,21 @@ info "VPD supported: $VPD_SUPPORTED"
     echo "Vendor = ${VENDOR:-?}"
     echo "Product = ${PRODUCT:-?}"
     echo "Revision = ${REVISION:-?}"
+    echo "ModeSense00Supported = $MS00_SUPPORTED"
+    echo "ModeSense10Supported = $MS10_SUPPORTED"
+    echo "ModeSense3FSupported = $MS3F_SUPPORTED"
+    echo "ReadBlockLimitsSupported = $RBL_SUPPORTED"
     echo "VPDSupported = $VPD_SUPPORTED"
     echo ""
     echo "; --- Standard INQUIRY (full response) ---"
 } >> "$SECTION_BODY"
 [ "$INQ_SIZE" -gt 0 ] && emit_hex_field "SPD" "$INQ_RAW"
+
+{
+    echo ""
+    echo "; --- MODE SENSE(6) page 0x00 ---"
+} >> "$SECTION_BODY"
+[ "$MS00_SIZE" -gt 0 ] && emit_hex_field "ModeSense00" "$MS00_RAW"
 
 {
     echo ""
@@ -238,6 +285,12 @@ info "VPD supported: $VPD_SUPPORTED"
 [ "$MS3F_SIZE" -gt 0 ] && emit_hex_field "ModeSense3F" "$MS3F_RAW"
 
 {
+    echo ""
+    echo "; --- READ BLOCK LIMITS ---"
+} >> "$SECTION_BODY"
+[ "$RBL_SIZE" -gt 0 ] && emit_hex_field "ReadBlockLimits" "$RBL_RAW"
+
+{
     echo "; ==========================================================================="
     echo "; AS/400 tape capture '$LABEL', captured from $DEV on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "; Label should identify BOTH the drive and the cartridge/condition ---"
@@ -252,9 +305,11 @@ info "VPD supported: $VPD_SUPPORTED"
 echo "" >&2
 echo "=== Summary ===" >&2
 echo "Vendor/Product/Revision: '$VENDOR' / '$PRODUCT' / '$REVISION'" >&2
-echo "MODE SENSE page 0x10: $MS10_SIZE bytes" >&2
-echo "MODE SENSE 0x3F: $MS3F_SIZE bytes" >&2
+echo "MODE SENSE page 0x00: $MS00_SIZE bytes ($MS00_SUPPORTED)" >&2
+echo "MODE SENSE page 0x10: $MS10_SIZE bytes ($MS10_SUPPORTED)" >&2
+echo "MODE SENSE 0x3F: $MS3F_SIZE bytes ($MS3F_SUPPORTED)" >&2
+echo "READ BLOCK LIMITS: $RBL_SIZE bytes ($RBL_SUPPORTED)" >&2
 echo "" >&2
 echo "Appended block [$LABEL] to $OUTFILE" >&2
-echo "Run again with a different Label per cartridge/condition, then diff the" >&2
-echo "ModeSense10/ModeSense3F lines across blocks by eye." >&2
+echo "Run again with a different Label per cartridge/condition, then compare" >&2
+echo "ModeSense00/ModeSense10/ModeSense3F/ReadBlockLimits across blocks." >&2
