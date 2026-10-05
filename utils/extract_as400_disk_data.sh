@@ -358,8 +358,7 @@ if [ "$MS_SIZE" -ge 4 ]; then
         GEOMETRY_COMMENT="; Decoded from MODE SENSE pages 0x03/0x04: cylinders=$CYL heads=$HEADS sectors/track=$SPT (block size per descriptor: ${BPS_FROM_DESC:-unknown})
 ; => implied capacity $IMPLIED sectors. Compare against Sectors= below (from READ CAPACITY) ---
 ; if these two numbers disagree, this drive's own MODE SENSE geometry is internally
-; inconsistent the same way the firmware's built-in 09L4044 capture is (see project memory:
-; project_as400_static_data_inconsistency.md). Trust READ CAPACITY / the INQUIRY+VPD identity,
+; inconsistent the same way the firmware's built-in 09L4044 capture is. Trust READ CAPACITY / the INQUIRY+VPD identity,
 ; not the MODE SENSE geometry, when in doubt."
         info "MODE SENSE geometry: cyl=$CYL heads=$HEADS spt=$SPT => implied $IMPLIED sectors"
         if [ "$SECTORS" -gt 0 ] && [ "$IMPLIED" -ne "$SECTORS" ]; then

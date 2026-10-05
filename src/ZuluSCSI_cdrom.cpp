@@ -487,7 +487,7 @@ static bool cdromSelectBinFileForTrack(image_config_t &img, const CUETrackInfo *
 
     if (!open_ok)
     {
-        logmsg("CUE sheet specified track file '", track->filename, "' not found");
+        logmsg("---- CUE sheet specified track file '", track->filename, "' not found");
     }
 
     return open_ok;

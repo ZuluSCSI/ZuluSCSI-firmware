@@ -1076,7 +1076,7 @@ void patchDevice(uint8_t target_idx)
 
         if (!map.IsRom && !map.IsRaw)
         {
-            if (img.image_directory)
+            if (img.has_image_directory)
             {
                 if (map.IsRemovable)
                 {

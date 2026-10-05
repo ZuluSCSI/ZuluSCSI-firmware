@@ -168,16 +168,9 @@ bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen)
     }
 
     // Derive from the currently loaded image path
-    if (img.image_directory && img.current_image[0] != '\0')
+    if (img.has_image_directory)
     {
-        strncpy(buf, img.current_image, buflen - 1);
-        buf[buflen - 1] = '\0';
-        char *last_slash = strrchr(buf, '/');
-        if (last_slash && last_slash != buf)
-        {
-            *last_slash = '\0';
-            return true;
-        }
+        img.image_directory.getName(buf, buflen);
     }
 
     // Prefix-mode: images sit in the root directory filtered by a 3-char prefix
@@ -188,21 +181,8 @@ bool controlGetImageDirectory(uint8_t scsi_id, char *buf, size_t buflen)
     }
 
     // Fall back to the conventional directory name for this device type
-    if (!img.image_directory) return false;
+    if (!img.has_image_directory) return false;
 
-    char prefix[4];
-    switch ((S2S_CFG_TYPE)img.deviceType)
-    {
-        case S2S_CFG_OPTICAL:     strncpy(prefix, "CD0", 4); break;
-        case S2S_CFG_REMOVABLE:   strncpy(prefix, "RE0", 4); break;
-        case S2S_CFG_SEQUENTIAL:  strncpy(prefix, "TP0", 4); break;
-        case S2S_CFG_FLOPPY_14MB: strncpy(prefix, "FD0", 4); break;
-        case S2S_CFG_MO:          strncpy(prefix, "MO0", 4); break;
-        case S2S_CFG_ZIP100:      strncpy(prefix, "ZP0", 4); break;
-        default: return false;
-    }
-    prefix[2] = scsiEncodeID(scsi_id);
-    memcpy(buf, prefix, sizeof(prefix));
     return true;
 }
 
