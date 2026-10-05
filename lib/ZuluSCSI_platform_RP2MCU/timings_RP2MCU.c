@@ -695,7 +695,8 @@ bool set_timings(zuluscsi_speed_grade_t speed_grade)
     switch (speed_grade)
     {
 #ifdef ENABLE_AUDIO_OUTPUT_I2S
-    case SPEED_GRADE_MAX:
+    case SPEED_GRADE_SYS_IRIX: [[fallthrough]];
+    case SPEED_GRADE_MAX: [[fallthrough]];
     case SPEED_GRADE_A:
         timings_index = 8;
         break;
@@ -735,16 +736,19 @@ bool set_timings(zuluscsi_speed_grade_t speed_grade)
         timings_index = 9;
         break;
     case SPEED_GRADE_AUDIO_I2S:
-        timings_index  =9;
+        timings_index = 9;
         break;
     case SPEED_GRADE_BASE_203MHZ:
         timings_index = 9;
         break;
     case SPEED_GRADE_BASE_155MHZ:
         timings_index = 5;
+    case SPEED_GRADE_SYS_IRIX:
+        timings_index = 8;
         break;
 #elif defined(ENABLE_AUDIO_OUTPUT_SPDIF)
-    case SPEED_GRADE_MAX:
+    case SPEED_GRADE_SYS_IRIX: [[fallthrough]];
+    case SPEED_GRADE_MAX: [[fallthrough]];
     case SPEED_GRADE_A:
         timings_index = 8;
         break;
@@ -770,6 +774,7 @@ bool set_timings(zuluscsi_speed_grade_t speed_grade)
         timings_index = 5;
         break;
 #else
+    case SPEED_GRADE_SYS_IRIX: [[fallthrough]];
     case SPEED_GRADE_MAX:
     case SPEED_GRADE_A:
         timings_index = 8;
@@ -803,6 +808,12 @@ bool set_timings(zuluscsi_speed_grade_t speed_grade)
         g_max_sync_10_period = g_zuluscsi_timings->scsi_10.max_sync;
         g_max_sync_20_period = g_zuluscsi_timings->scsi_20.max_sync;
         g_max_sync_5_period = g_zuluscsi_timings->scsi_5.max_sync;
+        if (speed_grade == SPEED_GRADE_SYS_IRIX)
+        {
+            g_zuluscsi_timings->scsi_20.rdelay1 = 9;
+            g_zuluscsi_timings->scsi_20.rtotal_period_adjust = 3;
+        }
+
         return true;
     }
     return false;
