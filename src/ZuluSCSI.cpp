@@ -497,78 +497,85 @@ bool createImageFile(char *imgname, uint64_t size)
   }
   LED_ON();
   FsFile file = SD.open(imgname, O_WRONLY | O_CREAT);
-  if (!file.preAllocate(size + footer_size))
+  bool is_preallocated = false;
+  if (file.preAllocate(size + footer_size))
+  {
+    file.setValidLength(size + footer_size);
+    is_preallocated = true;
+  }
+  else
   {
     logmsg("---- Preallocation didn't find contiguous set of clusters, continuing anyway");
   }
 
-  int blocks = size/sizeof(scsiDev.data);
-  UICreateInit(blocks, sizeof(scsiDev.data), imgname);
-
-  // Write zeros to fill the file
   uint32_t start = millis();
-  memset(scsiDev.data, 0, sizeof(scsiDev.data));
-  uint64_t remain = size;
-
-  int block = 0;
-  bool writing_serial_out = false;
-  char serial_string[128];
-  char *string_marker = serial_string;
-  uint32_t seconds = 0;
-  uint32_t serial_time = 0;
-  while (remain > 0)
+  if (!is_preallocated)
   {
-    uint32_t time_start = millis();
+    int blocks = size/sizeof(scsiDev.data);
+    UICreateInit(blocks, sizeof(scsiDev.data), imgname);
 
-    if (millis() & 128) { LED_ON(); } else { LED_OFF(); }
-    platform_reset_watchdog();
+    // Write zeros to fill the file
+    memset(scsiDev.data, 0, sizeof(scsiDev.data));
+    uint64_t remain = size;
 
-    size_t to_write = sizeof(scsiDev.data);
-    if (to_write > remain) to_write = remain;
-    if (file.write(scsiDev.data, to_write) != to_write)
+    int block = 0;
+    bool writing_serial_out = false;
+    char serial_string[128];
+    char *string_marker = serial_string;
+    uint32_t seconds = 0;
+    uint32_t serial_time = 0;
+    while (remain > 0)
     {
-      logmsg("---- File writing to '", imgname, "' failed with ", (int)remain, " bytes remaining");
-      file.close();
-      LED_OFF();
-      return false;
-    }
+      uint32_t time_start = millis();
 
-    remain -= to_write;
-    uint32_t time = (uint32_t)(millis() - start);
-    // Create a new string to overwrite the previous line every second
-    if(platform_serial_connected() && (time / 1000) > seconds)
-    {
-      int kb_per_s = (size - remain) / time;
-      // "\x1b[2K" is a control charater to clear the current line
-      snprintf(serial_string, sizeof(serial_string),"\r\x1b[2KWrote %lu MB with %lu MB remaining at %d kB/s\r", (uint32_t)((size - remain) / 1048576), (uint32_t)(remain / 1048576), kb_per_s);
-      string_marker = serial_string;
-      writing_serial_out = true;
-      seconds++;
-    }
+      if (millis() & 128) { LED_ON(); } else { LED_OFF(); }
+      platform_reset_watchdog();
 
-    // Attempt write to the serial port every 1/4 second
-    if(writing_serial_out && (time / 250) > serial_time)
-    {
-      uint32_t len = strlen(string_marker);
-      uint32_t wrote = 0;
-      if (len > 0)
+      size_t to_write = sizeof(scsiDev.data);
+      if (to_write > remain) to_write = remain;
+      if (file.write(scsiDev.data, to_write) != to_write)
       {
-        wrote = platform_write_to_serial((uint8_t*) string_marker, len);
-        string_marker += wrote;
+        logmsg("---- File writing to '", imgname, "' failed with ", (int)remain, " bytes remaining");
+        file.close();
+        LED_OFF();
+        return false;
       }
-      if (strlen(string_marker) == 0)
-      {
-        writing_serial_out = false;
-      }
-      serial_time++;
-    }
 
-    UICreateProgress(millis() - time_start, block);
-    block++;
+      remain -= to_write;
+      uint32_t time = (uint32_t)(millis() - start);
+      // Create a new string to overwrite the previous line every second
+      if(platform_serial_connected() && (time / 1000) > seconds)
+      {
+        int kb_per_s = (size - remain) / time;
+        // "\x1b[2K" is a control charater to clear the current line
+        snprintf(serial_string, sizeof(serial_string),"\r\x1b[2KWrote %lu MB with %lu MB remaining at %d kB/s\r", (uint32_t)((size - remain) / 1048576), (uint32_t)(remain / 1048576), kb_per_s);
+        string_marker = serial_string;
+        writing_serial_out = true;
+        seconds++;
+      }
+
+      // Attempt write to the serial port every 1/4 second
+      if(writing_serial_out && (time / 250) > serial_time)
+      {
+        uint32_t len = strlen(string_marker);
+        uint32_t wrote = 0;
+        if (len > 0)
+        {
+          wrote = platform_write_to_serial((uint8_t*) string_marker, len);
+          string_marker += wrote;
+        }
+        if (strlen(string_marker) == 0)
+        {
+          writing_serial_out = false;
+        }
+        serial_time++;
+      }
+
+      UICreateProgress(millis() - time_start, block);
+      block++;
+    }
+    UICreateProgress(0, block);
   }
-
-  UICreateProgress(0, block);
-
   bool vhd_success = false;
   if (is_vhd_image)
   {
@@ -596,14 +603,20 @@ bool createImageFile(char *imgname, uint64_t size)
     {
       logmsg("---- Image saved as VHD format");
     }
-    logmsg("---- Image creation successful, write speed ", kb_per_s, " kB/s");
+    if (is_preallocated)
+      logmsg("---- Image creation successful via exFAT image preallocation, skipped zeroing out data");
+    else
+      logmsg("---- Image creation successful, write speed ", kb_per_s, " kB/s");
   }
   else
   {
     logmsg("---- Failed to write VHD footer");
     if (file.truncate(size))
     {
-      logmsg("---- Successfully recovered raw image without vhd footer, write speed was ", kb_per_s, " kB/s");
+      if (is_preallocated)
+        logmsg("---- Successfully recovered raw image without vhd footer via exFAT image preallocation");
+      else
+        logmsg("---- Successfully recovered raw image without vhd footer, write speed was ", kb_per_s, " kB/s");
       /*
        * Replace the last three bytes of the image name with 'raw'.
        * Yes, this assumes the string is at least 3 bytes long -and-
