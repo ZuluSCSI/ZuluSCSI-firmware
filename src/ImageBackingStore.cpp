@@ -219,6 +219,25 @@ bool ImageBackingStore::_internal_open(const char *filename)
         return false;
     }
 
+    // exFAT tracks a valid data length separately from the file size. Image
+    // files created without writing every byte (PC tools such as "fsutil file
+    // createnew" or "truncate", SdFat's preAllocate(), an interrupted copy)
+    // can have it far below the file size. SdFat reads past it as zeros and,
+    // before any write past it, zero-fills the gap one sector at a time -- for
+    // a write near the end of a multi-GB image that takes minutes and trips
+    // the watchdog. The raw fast path ignores it, so data written there would
+    // read back as zeros on a PC. Mark the whole allocation valid once so all
+    // access paths agree.
+    if (m_fsfile.isWritable() && m_fsfile.validLength() < m_fsfile.dataLength())
+    {
+        logmsg("---- Extending exFAT valid data length from ", (int)(m_fsfile.validLength() / (1024 * 1024)),
+               " MB to ", (int)(m_fsfile.dataLength() / (1024 * 1024)), " MB");
+        if (!m_fsfile.setValidLength(m_fsfile.dataLength()))
+        {
+            logmsg("---- WARNING: Failed to extend valid data length, writes past it may stall");
+        }
+    }
+
     uint32_t sectorcount = m_fsfile.size() / SD_SECTOR_SIZE;
     uint32_t begin = 0, end = 0;
     bool got_range = m_fsfile.contiguousRange(&begin, &end);
