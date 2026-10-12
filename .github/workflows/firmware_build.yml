@@ -5,6 +5,20 @@ on:
   workflow_dispatch:
   pull_request:
 
+on:
+  push:
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+  workflow_dispatch:
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+
 jobs:
   build_firmware:
 #    name: RHC-internal-Z4
