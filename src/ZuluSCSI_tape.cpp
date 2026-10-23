@@ -370,6 +370,21 @@ tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, ui
     return TAP_OK;
 }
 
+// A tape write destroys everything after it. The .tap image is overwritten in
+// place, so cut off whatever follows the new end of data. Without this, a stale
+// tail left by longer earlier contents is read back as a corrupt record (or as
+// data that should no longer exist) instead of as end of data. A no-op when
+// appending, which is the common case.
+static void tapTruncateAtWriteEnd(image_config_t &img)
+{
+    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
+    if (img.file.size() > tape_info->file_pos && !img.file.truncate(tape_info->file_pos))
+    {
+        logmsg("------ TAP failed to truncate image at file_pos=", (int)tape_info->file_pos,
+               " file_size=", (int)img.file.size());
+    }
+}
+
 // Write a filemark
 tap_result_t tapWriteFilemark(image_config_t &img) {
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
@@ -381,6 +396,7 @@ tap_result_t tapWriteFilemark(image_config_t &img) {
     }
     img.file.flush();
     tape_info->file_pos += 4;
+    tapTruncateAtWriteEnd(img);
     tape_info->tape_mark_count++;
     tape_info->logical_object_number++;
     scsiDev.target->tapeBOM = 0;
@@ -1188,6 +1204,8 @@ void tapeTapDataOut()
     scsiFinishRead(NULL, 0, &g_tap_transfer.parityError);
 
     scsiDev.dataPtr = scsiDev.dataLen = 0;
+
+    tapTruncateAtWriteEnd(img);
 
     // Verify that all data has been flushed to disk from SdFat cache.
     img.file.flush();
