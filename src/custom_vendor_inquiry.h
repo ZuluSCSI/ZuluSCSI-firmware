@@ -77,6 +77,12 @@ bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sect
 // alone can't tell a captured identity apart from a generic one -- see the
 // PPC/PCI CPF4119 regression this was added to fix).
 bool isAS400CapturedTapeIdentity(uint8_t scsiId);
+
+// Medium Type byte (MODE SENSE header offset 1) for a captured AS/400 tape
+// identity: 0x00 while ejected, else an explicit MediumType= override, else
+// the captured drive's default. Returns -1 when scsiId is not a captured
+// identity, i.e. the caller's own logic applies.
+int getAS400TapeMediumType(uint8_t scsiId);
 #endif
 
 #ifdef __cplusplus

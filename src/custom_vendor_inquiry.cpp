@@ -797,29 +797,15 @@ bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length)
         memcpy(buf, modeSense, len);
 
         // MODE SENSE(6) header offset 1 is Medium Type. The compiled-in
-        // capture was taken with no cartridge loaded (0x00, "no
-        // cartridge") -- real hardware only reports 0x00 when genuinely
-        // empty (see AS400TapeCISCMediumType/AS400TapePPCMediumType's own
-        // comments), so serving it as-is once a tape image is actually
-        // configured makes every density request fail identically,
-        // regardless of which density is asked for. An explicit
-        // MediumType= override in this ID's ini section (the same generic
-        // per-device key doModeSense()'s non-AS/400 fallback path honors)
-        // takes precedence over the compiled-in default.
+        // capture was taken with no cartridge loaded (0x00), so it must be
+        // replaced with the value for the current media state -- see
+        // getAS400TapeMediumType().
         if (len >= 2)
         {
-            const scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(id);
-            if (devCfg->mediumType >= 0)
+            int mediumType = getAS400TapeMediumType(scsiId);
+            if (mediumType >= 0)
             {
-                buf[1] = (uint8_t)devCfg->mediumType;
-            }
-            else if (g_builtin[id] == BUILTIN_AS400_TAPE_CISC)
-            {
-                buf[1] = AS400TapeCISCMediumType;
-            }
-            else
-            {
-                buf[1] = AS400TapePPCMediumType;
+                buf[1] = (uint8_t)mediumType;
             }
         }
 
@@ -847,5 +833,31 @@ bool isAS400CapturedTapeIdentity(uint8_t scsiId)
 {
     uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
     return g_builtin[id] == BUILTIN_AS400_TAPE_CISC || g_builtin[id] == BUILTIN_AS400_TAPE_PPC;
+}
+
+// Real hardware reports Medium Type 0x00 only when genuinely empty (see
+// AS400TapeCISCMediumType/AS400TapePPCMediumType's own comments), and the
+// host judges the cartridge from it: serving 0x00 while an image is loaded
+// makes INZTAP reject every density as the wrong cartridge type. This is
+// needed on every MODE SENSE path, not just the all-pages response -- INZTAP
+// asks for page 0x10 directly, which doModeSense()'s generic code answers.
+int getAS400TapeMediumType(uint8_t scsiId)
+{
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    if (!isAS400CapturedTapeIdentity(id))
+        return -1;
+
+    // No cartridge in the drive: ejected through the media menu/eject button.
+    if (scsiDiskGetImageConfig(id).ejected)
+        return 0x00;
+
+    // An explicit MediumType= in this ID's ini section takes precedence over
+    // the captured drive's default.
+    const scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(id);
+    if (devCfg->mediumType >= 0)
+        return devCfg->mediumType;
+
+    return g_builtin[id] == BUILTIN_AS400_TAPE_CISC ? AS400TapeCISCMediumType
+                                                    : AS400TapePPCMediumType;
 }
 #endif

@@ -418,6 +418,18 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 	if (scsiDev.target->cfg->mediumType >= 0)
 		mediumType = scsiDev.target->cfg->mediumType;
 
+#ifdef PLATFORM_AS400
+	if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+	{
+		// Captured AS/400 tape identity: its default Medium Type (and 0x00
+		// while ejected) must reach direct page requests too, not only the
+		// all-pages response served above.
+		int identityMediumType = getAS400TapeMediumType(scsiDev.target->cfg->scsiId);
+		if (identityMediumType >= 0)
+			mediumType = (uint8_t)identityMediumType;
+	}
+#endif
+
 	scsiDev.data[idx++] = mediumType;
 	scsiDev.data[idx++] = deviceSpecificParam;
 
