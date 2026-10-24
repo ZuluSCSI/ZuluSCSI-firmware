@@ -791,7 +791,21 @@ bool ImageBackingStore::seek(uint64_t pos)
     if (m_iscontiguous)
     {
         m_cursector = m_bgnsector + sectornum;
-        return (m_cursector <= m_endsector);
+        if (m_cursector <= m_endsector)
+        {
+            return true;
+        }
+
+        // The raw range only covers the whole sectors of the file. A seek
+        // into a trailing partial sector, or anywhere in a file shorter than
+        // one sector (its range is empty), is still inside the file: let
+        // SdFat decide instead of refusing it.
+        if (m_israw || !m_fsfile.isOpen())
+        {
+            return false;
+        }
+        revert_to_noncontiguous();
+        return m_fsfile.seek(pos);
     }
     else if (m_isrom)
     {
