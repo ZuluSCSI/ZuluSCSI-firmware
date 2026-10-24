@@ -659,6 +659,24 @@ static void process_Command()
 #endif
 			scsiDev.data[12] = scsiDev.target->sense.asc >> 8;
 			scsiDev.data[13] = scsiDev.target->sense.asc;
+#ifdef PLATFORM_AS400
+			if (cfg->deviceType == S2S_CFG_SEQUENTIAL && cfg->quirks == S2S_CFG_QUIRKS_AS400 &&
+				isAS400CapturedTapeIdentity(scsiDev.target->targetId) &&
+				scsiDev.target->sense.code == UNIT_ATTENTION &&
+				(scsiDev.target->sense.asc == POWER_ON_RESET ||
+				 scsiDev.target->sense.asc == SCSI_BUS_RESET ||
+				 scsiDev.target->sense.asc == POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED))
+			{
+				// The real Tandberg drive never fills the ASC byte; it reports a
+				// drive-specific code in byte 13 instead, and the IOP's sense
+				// routine decodes that byte. Observed on the real drive (bus
+				// analyzer trace of a tape load on a CISC AS/400): the unit
+				// attention after a bus reset is byte 12 = 0x00, byte 13 = 0x62.
+				// Only this case has been seen on the wire so far.
+				scsiDev.data[12] = 0x00;
+				scsiDev.data[13] = 0x62;
+			}
+#endif
 			if ((scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD))
 			{
 				/* EWSD seems not to want something behind additional length. (8 + 0x0e = 22) */
@@ -694,6 +712,19 @@ static void process_Command()
 		}
 		scsiDev.target->sense.code = UNIT_ATTENTION;
 		scsiDev.target->sense.asc = scsiDev.target->unitAttention;
+#ifdef PLATFORM_AS400
+		// Real AS/400 drives answer a reset unit attention with 29/00, which is
+		// what the AS/400 priming in scsiReset() sets up as pending sense. Now
+		// that this branch also delivers it for ATN-less selects (see
+		// scsiStatusSEL() in the platform layer), keep the same code instead of
+		// the generic 29/01 (power on) or 29/02 (bus reset).
+		if (scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 &&
+			(scsiDev.target->unitAttention == POWER_ON_RESET ||
+			 scsiDev.target->unitAttention == SCSI_BUS_RESET))
+		{
+			scsiDev.target->sense.asc = POWER_ON_RESET_OR_BUS_DEVICE_RESET_OCCURRED;
+		}
+#endif
 
 		// If initiator doesn't do REQUEST SENSE for the next command, then
 		// data is lost.
