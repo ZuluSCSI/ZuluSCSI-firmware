@@ -83,6 +83,13 @@ bool isAS400CapturedTapeIdentity(uint8_t scsiId);
 // the captured drive's default. Returns -1 when scsiId is not a captured
 // identity, i.e. the caller's own logic applies.
 int getAS400TapeMediumType(uint8_t scsiId);
+
+// True when scsiId presents the captured CISC tape identity (not the PPC one).
+bool isAS400CISCTapeIdentity(uint8_t scsiId);
+
+// The real CISC drive's own INQUIRY form for vital product data (see
+// as400_tape_values.cpp): fills buf and *length for a page it has, false otherwise.
+bool getAS400CISCTapeVendorPage(uint8_t page, uint8_t *buf, uint8_t *length);
 #endif
 
 #ifdef __cplusplus

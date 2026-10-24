@@ -685,6 +685,17 @@ static void process_Command()
 			}
 		}
 
+#ifdef PLATFORM_AS400
+		// The real CISC tape drive answers REQUEST SENSE with 28 bytes however
+		// much is asked for (bus analyzer trace: allocation length 0x20 -> 28
+		// bytes); sending more only pads with zeros.
+		if (cfg->deviceType == S2S_CFG_SEQUENTIAL &&
+			isAS400CISCTapeIdentity(cfg->scsiId) && allocLength > 28)
+		{
+			allocLength = 28;
+		}
+#endif
+
 		// Silently truncate results. SCSI-2 spec 8.2.14.
 		enter_DataIn(allocLength);
 

@@ -835,6 +835,34 @@ bool isAS400CapturedTapeIdentity(uint8_t scsiId)
     return g_builtin[id] == BUILTIN_AS400_TAPE_CISC || g_builtin[id] == BUILTIN_AS400_TAPE_PPC;
 }
 
+bool isAS400CISCTapeIdentity(uint8_t scsiId)
+{
+    return g_builtin[scsiId & S2S_CFG_TARGET_ID_BITS] == BUILTIN_AS400_TAPE_CISC;
+}
+
+bool getAS400CISCTapeVendorPage(uint8_t page, uint8_t *buf, uint8_t *length)
+{
+    const uint8_t *data = nullptr;
+    size_t len = 0;
+    if (page == 0x80)
+    {
+        data = AS400TapeCISCVendorPage80;
+        len = AS400TapeCISCVendorPage80Len;
+    }
+    else if (page == 0x03)
+    {
+        data = AS400TapeCISCVendorPage03;
+        len = AS400TapeCISCVendorPage03Len;
+    }
+    else
+    {
+        return false;
+    }
+    memcpy(buf, data, len);
+    *length = (uint8_t)len;
+    return true;
+}
+
 // Real hardware reports Medium Type 0x00 only when genuinely empty (see
 // AS400TapeCISCMediumType/AS400TapePPCMediumType's own comments), and the
 // host judges the cartridge from it: serving 0x00 while an image is loaded

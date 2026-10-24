@@ -38,6 +38,10 @@
 // tape loaded), consistent with predating those SCSI conventions.
 extern const uint8_t AS400TapeCISCVendorInquiry[];
 extern const size_t  AS400TapeCISCVendorInquiryLen;
+extern const uint8_t AS400TapeCISCVendorPage80[];
+extern const size_t  AS400TapeCISCVendorPage80Len;
+extern const uint8_t AS400TapeCISCVendorPage03[];
+extern const size_t  AS400TapeCISCVendorPage03Len;
 
 extern const uint8_t as400_tape_cisc_mode_sense_all_pages[];
 extern const size_t  as400_tape_cisc_mode_sense_all_pagesLen;

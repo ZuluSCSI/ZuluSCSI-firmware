@@ -19,6 +19,9 @@
 #include "diagnostic.h"
 
 #include <string.h>
+#ifdef PLATFORM_AS400
+#include <custom_vendor_inquiry.h>
+#endif
 
 static const uint8_t SupportedDiagnosticPages[] =
 {
@@ -170,6 +173,16 @@ void scsiReadBuffer()
 		// TODO support BUFFER OFFSET fields in CDB
 		scsiDev.dataLen =
 			(allocLength > sizeof(scsiDev.data)) ? sizeof(scsiDev.data) : allocLength;
+#ifdef PLATFORM_AS400
+		// The captured CISC tape drive answers this with a buffer of ASCII
+		// spaces (16384 bytes seen from the real drive, no cartridge loaded);
+		// the AS/400 IOP reads it as the drive's error dump. Everywhere else
+		// this has always sent whatever the data buffer held last.
+		if (isAS400CISCTapeIdentity(scsiDev.target->cfg->scsiId))
+		{
+			memset(scsiDev.data, 0x20, scsiDev.dataLen);
+		}
+#endif
 		scsiDev.phase = DATA_IN;
 	}
 	else if (mode == 0x3)
