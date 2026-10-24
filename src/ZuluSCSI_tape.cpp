@@ -171,9 +171,12 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
     }
 
     // Read 4-byte header
-    if (!img.file.seek(tape_info->file_pos) || img.file.read(header, sizeof(header)) != sizeof(header)) {
+    bool header_seek_ok = img.file.seek(tape_info->file_pos);
+    ssize_t header_read = header_seek_ok ? img.file.read(header, sizeof(header)) : -1;
+    if (!header_seek_ok || header_read != (ssize_t)sizeof(header)) {
         logmsg("------ TAP failed to seek and/or read header at file_pos=", (int)tape_info->file_pos,
-               " file_size=", (int)img.file.size());
+               " file_size=", (int)img.file.size(), " seek=", (int)header_seek_ok,
+               " read=", (int)header_read, " contiguous=", (int)img.file.isContiguous());
         record.is_error = true;
         return TAP_ERROR;
     }
