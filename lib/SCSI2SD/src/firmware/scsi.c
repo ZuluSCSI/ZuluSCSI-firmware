@@ -676,6 +676,26 @@ static void process_Command()
 				scsiDev.data[12] = 0x00;
 				scsiDev.data[13] = 0x62;
 			}
+			if (cfg->deviceType == S2S_CFG_SEQUENTIAL && isAS400CISCTapeIdentity(cfg->scsiId))
+			{
+				// More of the drive's byte-13 codes, taken from the drive
+				// microcode's sense table (not yet seen on the wire): the IOP
+				// decodes byte 13, and anything it does not recognise ends in
+				// its generic "unrecognised error" handling.
+				if (scsiDev.target->sense.code == BLANK_CHECK)
+				{
+					// end of data
+					scsiDev.data[12] = 0x00;
+					scsiDev.data[13] = 0x17;
+				}
+				else if (scsiDev.target->sense.code == NOT_READY &&
+					scsiDev.target->sense.asc == MEDIUM_NOT_PRESENT)
+				{
+					// no cartridge
+					scsiDev.data[12] = 0x00;
+					scsiDev.data[13] = 0x55;
+				}
+			}
 #endif
 			if ((scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD))
 			{
