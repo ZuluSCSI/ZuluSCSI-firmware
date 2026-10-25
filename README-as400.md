@@ -34,7 +34,7 @@ We have to differ three hardware generations when considering Zulu vs. AS/400 ov
 | Device | CISC/IMPI, 520 bytes/block disks | PPC/SPD, 520/522 bytes/block disks   | PPC/PCI, 522 bytes/block disks |
 | ------ | -------------------------------- | ------------------------------------ | ------------------------------ |
 | CD-ROM | Not supported                    | Works                                | Works                          |
-| Tape   | Fails for `savlib` and more      | Fails for `savlib` and more          | Works (generic device)         |
+| Tape   | Works                            | Untested, but expected to work       | Works (generic device)         |
 | Disk   | Works                            | Fails/Lack of feedback               | Works                          |
 
 There are success reports of more 150's working, and one of a 9406-270 becoming stuck with A6000244, *Contact was lost with device indicated*, as well as another model 270 unable to IPL from emulated CD-ROM with a medium read error.
