@@ -44,6 +44,7 @@
 #include <ZuluSCSI_settings.h>
 #include "ZuluSCSI_usb_console_media.h"
 #include "ZuluSCSI_usb_console_erase.h"
+#include "ZuluSCSI_sd_trimcheck.h"
 #ifdef ZULUCONTROL_FIRMWARE 
 #include <ZuluSCSI_WebUI.h>
 #include <ZuluSCSI_WebUI_I2CServer.h>
@@ -133,7 +134,8 @@ typedef enum
     USB_INPUT_BUTTON_3,
     USB_INPUT_BUTTON_4,
     USB_INPUT_MEDIA_SUBMENU,
-    USB_INPUT_ERASE_SD_CARD
+    USB_INPUT_ERASE_SD_CARD,
+    USB_INPUT_SD_TRIMCHECK
 }
 usb_input_type_t;
 
@@ -2099,6 +2101,13 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 else
                     match_keyed = false;
                 break;
+            case 'C':
+            case 'c':
+                if (context ==  MENU_CONTEXT_TARGET_MAIN)
+                    input_type = USB_INPUT_SD_TRIMCHECK;
+                else
+                    match_keyed = false;
+                break;
             case 'Y':
             case 'y':
                 yes_keyed = true;
@@ -2140,6 +2149,7 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 (context == MENU_CONTEXT_TARGET_MAIN && g_enabled_cow_buttons & 8)     ? "    '4' - push function button 4 (cow init, currently ": "", (g_enabled_cow_buttons & 8) ? ((g_cow_button_state & 8) ? "enabled)\r\n" : "disabled)\r\n") : "",
 
                 (context == MENU_CONTEXT_TARGET_MAIN) ? "    'm' - media management (image select, eject, insert)\r\n" : "",
+                (context == MENU_CONTEXT_TARGET_MAIN) ? "    'c' - check how the SD card handles erase (TRIM), uses a temporary file\r\n" : "",
                 (context == MENU_CONTEXT_TARGET_MAIN) ? "    't' - erase (TRIM) entire SD card -- DESTROYS ALL DATA\r\n" : ""
                 "  press 'y' after a command to confirm and execute"
             );
@@ -2232,6 +2242,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                 case USB_INPUT_ERASE_SD_CARD:
                     serialEraseMenuEnter();
                     break;
+                case USB_INPUT_SD_TRIMCHECK:
+                    sdTrimCheckRun();
+                    break;
                 default:
                     input_type = USB_INPUT_NONE;
             }
@@ -2304,6 +2317,9 @@ static usb_input_type_t serial_menu(menu_context_t context)
                     break;
                 case USB_INPUT_ERASE_SD_CARD:
                     logmsg("Erase (TRIM) entire SD card requested, press 'y' to engage or any key to clear");
+                    break;
+                case USB_INPUT_SD_TRIMCHECK:
+                    logmsg("SD card erase (TRIM) check requested, the SCSI bus is not serviced meanwhile, press 'y' to engage or any key to clear");
                     break;
                 case USB_INPUT_MEDIA_SUBMENU:
                     logmsg("Enter media management submenu, press 'y' to engage or any key to clear");
