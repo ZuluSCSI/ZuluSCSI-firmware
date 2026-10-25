@@ -114,6 +114,43 @@ void s2s_scsiInquiry()
 		if (allocationLength == 0) allocationLength = 256;
 	}
 
+#ifdef PLATFORM_AS400
+	// The captured CISC tape drive does not implement standard EVPD; it has its
+	// own request form instead: byte 2 bit 7 selects a page, byte 3 is the page
+	// number. The IOP uses it to read the drive's serial number (page 0x80) and
+	// microcode level (page 0x03), and counts a failed request as a device error
+	// (SRC 3010). Any other request is rejected with the drive's own sense: byte
+	// 12 = 0, byte 13 = 0x02 (as observed for a standard EVPD request).
+	uint8_t vendorForm = 0;
+	if (isAS400CISCTapeIdentity(scsiDev.target->cfg->scsiId))
+	{
+		vendorForm = 1;
+		uint8_t length = 0;
+		if (!evpd && (pageCode & 0x80) &&
+			getAS400CISCTapeVendorPage(scsiDev.cdb[3], scsiDev.data, &length))
+		{
+			scsiDev.dataLen = length;
+			scsiDev.phase = DATA_IN;
+		}
+		else if (evpd || pageCode)
+		{
+			scsiDev.status = CHECK_CONDITION;
+			scsiDev.target->sense.code = ILLEGAL_REQUEST;
+			scsiDev.target->sense.asc = END_OF_PARTITION_MEDIUM_DETECTED; // 0x0002
+			scsiDev.phase = STATUS;
+		}
+		else
+		{
+			vendorForm = 0; // plain INQUIRY, handled below
+		}
+	}
+
+	if (vendorForm)
+	{
+		// answered above
+	}
+	else
+#endif
 	if (!evpd)
 	{
 		if (pageCode)

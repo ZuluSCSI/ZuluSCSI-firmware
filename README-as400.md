@@ -184,7 +184,7 @@ Currently, two AS/400 specific tape drives are emulated:
 - a CISC era QIC1000, FC #6343,
 - a PCI/PPC era SLR5, FC #6382.
 
-> **Note:** Both emulation targets are currently **broken**. The only reliably working tape emulation is the standard (generic) tape device — no `Device` statement for the SCSI ID itself, and this only works with comparably new PPC/PCI machines.
+> **Note:** Only CISC functionality has been tested today. Especially the very similar early PPC (SPD based) has not been tested, yet.
 
 To use,
 

@@ -265,12 +265,29 @@ static const uint8_t SequentialDeviceConfigPage[] =
 0x00, // Write buffer full ratio
 0x00, // Read buffer empty ratio
 0x00,0x01, // Write delay time, in 100ms units
+0x00, // DBR, BIS, RSMK, AVC, SOCF, RBO, REW
 0x00, // Default gap size
 0x10, // auto-generation of default eod (end of data)
 0x00,0x00,0x00, // buffer-size at early warning
 0x00, // No data compression
 0x00 // reserved
 };
+
+#ifdef PLATFORM_AS400
+// The captured CISC tape drive's device configuration page as the real drive
+// reports it with no cartridge loaded: page savable (PS bit), write-buffer-full
+// and read-buffer-empty ratios 20, DBR/BIS/RSMK set, EOD defined with EOD
+// generation and synchronize at early warning. Same bytes as in the captured
+// all-pages response, and the changeable-values variant.
+static const uint8_t AS400CISCTapeDeviceConfigPage[] =
+{
+0x90, 0x0E, 0x00, 0x00, 0x14, 0x14, 0x00, 0x00, 0xE0, 0x00, 0x38, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+static const uint8_t AS400CISCTapeDeviceConfigPageChangeable[] =
+{
+0x90, 0x0E, 0x40, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+#endif
 
 // Allow Apple 68k Drive Setup to format this drive.
 // Code
@@ -417,6 +434,18 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 	};
 	if (scsiDev.target->cfg->mediumType >= 0)
 		mediumType = scsiDev.target->cfg->mediumType;
+
+#ifdef PLATFORM_AS400
+	if (scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL)
+	{
+		// Captured AS/400 tape identity: its default Medium Type (and 0x00
+		// while ejected) must reach direct page requests too, not only the
+		// all-pages response served above.
+		int identityMediumType = getAS400TapeMediumType(scsiDev.target->cfg->scsiId);
+		if (identityMediumType >= 0)
+			mediumType = (uint8_t)identityMediumType;
+	}
+#endif
 
 	scsiDev.data[idx++] = mediumType;
 	scsiDev.data[idx++] = deviceSpecificParam;
@@ -704,12 +733,23 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		(pageCode == 0x10 || pageCode == 0x3F))
 	{
 		pageFound = 1;
-		pageIn(
-			pc,
-			idx,
-			SequentialDeviceConfigPage,
-			sizeof(SequentialDeviceConfigPage));
-		idx += sizeof(SequentialDeviceConfigPage);
+#ifdef PLATFORM_AS400
+		if (isAS400CISCTapeIdentity(scsiDev.target->cfg->scsiId))
+		{
+			const uint8_t *page = (pc == 0x01) ? AS400CISCTapeDeviceConfigPageChangeable : AS400CISCTapeDeviceConfigPage;
+			memcpy(&scsiDev.data[idx], page, sizeof(AS400CISCTapeDeviceConfigPage));
+			idx += sizeof(AS400CISCTapeDeviceConfigPage);
+		}
+		else
+#endif
+		{
+			pageIn(
+				pc,
+				idx,
+				SequentialDeviceConfigPage,
+				sizeof(SequentialDeviceConfigPage));
+			idx += sizeof(SequentialDeviceConfigPage);
+		}
 	}
 
 	idx += modeSenseCDCapabilitiesPage(pc, idx, pageCode, &pageFound);
