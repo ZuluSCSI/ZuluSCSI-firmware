@@ -265,6 +265,7 @@ static const uint8_t SequentialDeviceConfigPage[] =
 0x00, // Write buffer full ratio
 0x00, // Read buffer empty ratio
 0x00,0x01, // Write delay time, in 100ms units
+0x00, // DBR, BIS, RSMK, AVC, SOCF, RBO, REW
 0x00, // Default gap size
 0x10, // auto-generation of default eod (end of data)
 0x00,0x00,0x00, // buffer-size at early warning
