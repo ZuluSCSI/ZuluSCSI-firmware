@@ -1707,6 +1707,17 @@ extern "C" int scsiTapeCommand()
                 }
             }
             else
+#ifdef PLATFORM_AS400
+            if (isAS400CISCTapeIdentity(scsiDev.target->cfg->scsiId))
+            {
+                // The real CISC drive rejects a short erase: illegal request,
+                // sense bytes 12/13 = 0x00/0x02 (as for a standard EVPD request).
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = END_OF_PARTITION_MEDIUM_DETECTED;
+            }
+            else
+#endif
             {
                 // Short erase: write an erase gap marker.
                 if (!img.file.isWritable())

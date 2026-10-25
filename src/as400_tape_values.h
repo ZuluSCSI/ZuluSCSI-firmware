@@ -32,16 +32,33 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// CISC-era ("IBM 4100", Tandberg-manufactured): standard INQUIRY and
-// MODE SENSE(6) page 0x3F only -- the real drive has no VPD/EVPD or LOG
-// SENSE support at all (confirmed: identical rejection with and without a
-// tape loaded), consistent with predating those SCSI conventions.
+// CISC-era ("IBM 4100", Tandberg-manufactured): standard INQUIRY, MODE SENSE
+// and its own vendor form of INQUIRY for vital product data -- the real drive
+// has no standard VPD/EVPD or LOG SENSE support at all (confirmed: identical
+// rejection with and without a tape loaded), consistent with predating those
+// SCSI conventions.
 extern const uint8_t AS400TapeCISCVendorInquiry[];
 extern const size_t  AS400TapeCISCVendorInquiryLen;
 extern const uint8_t AS400TapeCISCVendorPage80[];
 extern const size_t  AS400TapeCISCVendorPage80Len;
 extern const uint8_t AS400TapeCISCVendorPage03[];
 extern const size_t  AS400TapeCISCVendorPage03Len;
+extern const uint8_t AS400TapeCISCVendorPage00[];
+extern const size_t  AS400TapeCISCVendorPage00Len;
+extern const uint8_t AS400TapeCISCVendorPage81[];
+extern const size_t  AS400TapeCISCVendorPage81Len;
+extern const uint8_t AS400TapeCISCVendorPage82[];
+extern const size_t  AS400TapeCISCVendorPage82Len;
+extern const uint8_t AS400TapeCISCVendorPageC0[];
+extern const size_t  AS400TapeCISCVendorPageC0Len;
+extern const uint8_t AS400TapeCISCVendorPageC1[];
+extern const size_t  AS400TapeCISCVendorPageC1Len;
+extern const uint8_t AS400TapeCISCVendorPageC2[];
+extern const size_t  AS400TapeCISCVendorPageC2Len;
+extern const uint8_t AS400TapeCISCVendorPageC3[];
+extern const size_t  AS400TapeCISCVendorPageC3Len;
+extern const uint8_t AS400TapeCISCVendorPageC4[];
+extern const size_t  AS400TapeCISCVendorPageC4Len;
 
 extern const uint8_t as400_tape_cisc_mode_sense_all_pages[];
 extern const size_t  as400_tape_cisc_mode_sense_all_pagesLen;

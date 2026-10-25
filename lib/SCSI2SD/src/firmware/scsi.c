@@ -695,6 +695,13 @@ static void process_Command()
 					scsiDev.data[12] = 0x00;
 					scsiDev.data[13] = 0x55;
 				}
+				else if (scsiDev.target->sense.code == NO_SENSE && scsiDev.target->sense.ili)
+				{
+					// incorrect length (seen on the real drive: Information =
+					// requested - actual length, byte 12 = 0, byte 13 = 0x0F)
+					scsiDev.data[12] = 0x00;
+					scsiDev.data[13] = 0x0F;
+				}
 			}
 #endif
 			if ((scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_EWSD))

@@ -842,25 +842,29 @@ bool isAS400CISCTapeIdentity(uint8_t scsiId)
 
 bool getAS400CISCTapeVendorPage(uint8_t page, uint8_t *buf, uint8_t *length)
 {
-    const uint8_t *data = nullptr;
-    size_t len = 0;
-    if (page == 0x80)
+    struct VendorPage { uint8_t page; const uint8_t *data; size_t len; };
+    static const VendorPage pages[] = {
+        {0x00, AS400TapeCISCVendorPage00, AS400TapeCISCVendorPage00Len},
+        {0x03, AS400TapeCISCVendorPage03, AS400TapeCISCVendorPage03Len},
+        {0x80, AS400TapeCISCVendorPage80, AS400TapeCISCVendorPage80Len},
+        {0x81, AS400TapeCISCVendorPage81, AS400TapeCISCVendorPage81Len},
+        {0x82, AS400TapeCISCVendorPage82, AS400TapeCISCVendorPage82Len},
+        {0xC0, AS400TapeCISCVendorPageC0, AS400TapeCISCVendorPageC0Len},
+        {0xC1, AS400TapeCISCVendorPageC1, AS400TapeCISCVendorPageC1Len},
+        {0xC2, AS400TapeCISCVendorPageC2, AS400TapeCISCVendorPageC2Len},
+        {0xC3, AS400TapeCISCVendorPageC3, AS400TapeCISCVendorPageC3Len},
+        {0xC4, AS400TapeCISCVendorPageC4, AS400TapeCISCVendorPageC4Len},
+    };
+    for (const VendorPage &vp : pages)
     {
-        data = AS400TapeCISCVendorPage80;
-        len = AS400TapeCISCVendorPage80Len;
+        if (vp.page == page)
+        {
+            memcpy(buf, vp.data, vp.len);
+            *length = (uint8_t)vp.len;
+            return true;
+        }
     }
-    else if (page == 0x03)
-    {
-        data = AS400TapeCISCVendorPage03;
-        len = AS400TapeCISCVendorPage03Len;
-    }
-    else
-    {
-        return false;
-    }
-    memcpy(buf, data, len);
-    *length = (uint8_t)len;
-    return true;
+    return false;
 }
 
 // Real hardware reports Medium Type 0x00 only when genuinely empty (see

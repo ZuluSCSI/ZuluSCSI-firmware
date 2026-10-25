@@ -273,6 +273,22 @@ static const uint8_t SequentialDeviceConfigPage[] =
 0x00 // reserved
 };
 
+#ifdef PLATFORM_AS400
+// The captured CISC tape drive's device configuration page as the real drive
+// reports it with no cartridge loaded: page savable (PS bit), write-buffer-full
+// and read-buffer-empty ratios 20, DBR/BIS/RSMK set, EOD defined with EOD
+// generation and synchronize at early warning. Same bytes as in the captured
+// all-pages response, and the changeable-values variant.
+static const uint8_t AS400CISCTapeDeviceConfigPage[] =
+{
+0x90, 0x0E, 0x00, 0x00, 0x14, 0x14, 0x00, 0x00, 0xE0, 0x00, 0x38, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+static const uint8_t AS400CISCTapeDeviceConfigPageChangeable[] =
+{
+0x90, 0x0E, 0x40, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+#endif
+
 // Allow Apple 68k Drive Setup to format this drive.
 // Code
 static const uint8_t AppleVendorPage[] =
@@ -717,12 +733,23 @@ static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int alloc
 		(pageCode == 0x10 || pageCode == 0x3F))
 	{
 		pageFound = 1;
-		pageIn(
-			pc,
-			idx,
-			SequentialDeviceConfigPage,
-			sizeof(SequentialDeviceConfigPage));
-		idx += sizeof(SequentialDeviceConfigPage);
+#ifdef PLATFORM_AS400
+		if (isAS400CISCTapeIdentity(scsiDev.target->cfg->scsiId))
+		{
+			const uint8_t *page = (pc == 0x01) ? AS400CISCTapeDeviceConfigPageChangeable : AS400CISCTapeDeviceConfigPage;
+			memcpy(&scsiDev.data[idx], page, sizeof(AS400CISCTapeDeviceConfigPage));
+			idx += sizeof(AS400CISCTapeDeviceConfigPage);
+		}
+		else
+#endif
+		{
+			pageIn(
+				pc,
+				idx,
+				SequentialDeviceConfigPage,
+				sizeof(SequentialDeviceConfigPage));
+			idx += sizeof(SequentialDeviceConfigPage);
+		}
 	}
 
 	idx += modeSenseCDCapabilitiesPage(pc, idx, pageCode, &pageFound);
