@@ -144,6 +144,15 @@ static void report_card()
 bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose)
 {
     memset(out, 0, sizeof(*out));
+
+    scr_t scr;
+    memset(&scr, 0, sizeof(scr));
+    if (SD.card()->readSCR(&scr))
+    {
+        out->scr_known = true;
+        out->scr_zero = !scr.dataAfterErase();
+    }
+
     VLOG("");
     VLOG("SD card erase (TRIM) check -- the SCSI bus is not serviced while this runs");
     if (verbose)
@@ -270,6 +279,16 @@ bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose)
         VLOG("  Result: the data was unchanged after the erase -- the card defers or ignores erases");
     else if (verdict_zeros + verdict_ones + verdict_pattern + verdict_other > 0)
         VLOG("  Result: mixed read-back -- erasing is NOT safe for zero ranges on this card");
+
+    if (out->scr_known && units_done == TRIMCHECK_UNITS)
+    {
+        bool measured_zero = verdict_zeros > 0 && verdict_ones == 0 && verdict_pattern == 0 && verdict_other == 0;
+        bool measured_ones = verdict_ones > 0 && verdict_zeros == 0 && verdict_pattern == 0 && verdict_other == 0;
+        if (measured_zero == out->scr_zero && (measured_zero || measured_ones))
+            VLOG("  The card's SCR register agrees: erased data reads as ", out->scr_zero ? "zeros" : "ones");
+        else
+            VLOG("  The card's SCR register says erased data reads as ", out->scr_zero ? "zeros" : "ones", ", which DIFFERS from the measurement above -- trust the measurement");
+    }
 
     file.close();
     SD.remove(TRIMCHECK_FILE);

@@ -24,6 +24,8 @@ typedef struct
     uint32_t worst_erase_ms; // slowest erase of one unit, rounded up
     bool reads_zero;         // every erased unit read back as zeros
     bool neighbour_ok;       // the unit after the erased ones was left alone
+    bool scr_known;          // the SD driver could read the card's SCR register
+    bool scr_zero;           // ... and it says that erased blocks read back as zeros
 } sd_erase_measure_t;
 
 // Runs the test with a temporary file; returns false if it could not be

@@ -63,7 +63,14 @@ bool sdEraseReadsAsZero(uint32_t *unitSectors)
             // card (SD SCR register, which this SD driver cannot read), so it is
             // measured: erase a temporary file's blocks and look.
             sd_erase_measure_t result;
-            if (!sdTrimMeasure(&result, false))
+            scr_t scr;
+            memset(&scr, 0, sizeof(scr));
+            if (SD.card()->readSCR(&scr) && scr.dataAfterErase())
+            {
+                // The card says so itself, no need to test.
+                logmsg("SdTrim: the card's SCR register says erased blocks read back as ones, zeros are written normally");
+            }
+            else if (!sdTrimMeasure(&result, false))
             {
                 logmsg("SdTrim: the card's erase could not be tested, zeros are written normally");
             }
