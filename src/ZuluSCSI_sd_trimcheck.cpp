@@ -53,20 +53,25 @@ struct readback_t
     uint32_t other;
 };
 
-static bool read_unit(uint32_t first, uint32_t unit, readback_t &rb, uint32_t &read_ms)
+static bool read_unit(uint32_t first, uint32_t unit, readback_t &rb, uint32_t &read_ms, uint32_t &check_ms)
 {
     memset(&rb, 0, sizeof(rb));
     const uint32_t chunk_sectors = sizeof(scsiDev.data) / 512;
-    uint32_t start = millis();
+    uint32_t read_us = 0;
+    uint32_t check_us = 0;
 
     for (uint32_t done = 0; done < unit; done += chunk_sectors)
     {
         uint32_t count = unit - done < chunk_sectors ? unit - done : chunk_sectors;
-        if (!SD.card()->readSectors(first + done, scsiDev.data, count))
+        uint32_t t0 = micros();
+        bool read_ok = SD.card()->readSectors(first + done, scsiDev.data, count);
+        read_us += micros() - t0;
+        if (!read_ok)
         {
             return false;
         }
 
+        t0 = micros();
         for (uint32_t i = 0; i < count * 512; i++)
         {
             uint8_t b = scsiDev.data[i];
@@ -75,10 +80,12 @@ static bool read_unit(uint32_t first, uint32_t unit, readback_t &rb, uint32_t &r
             else if (b == TRIMCHECK_PATTERN) rb.pattern++;
             else rb.other++;
         }
+        check_us += micros() - t0;
         platform_reset_watchdog();
     }
 
-    read_ms = millis() - start;
+    read_ms = read_us / 1000;
+    check_ms = check_us / 1000;
     return true;
 }
 
@@ -204,8 +211,8 @@ void sdTrimCheckRun()
         }
 
         readback_t rb;
-        uint32_t read_ms = 0;
-        if (!read_unit(unit_first, unit, rb, read_ms))
+        uint32_t read_ms = 0, check_ms = 0;
+        if (!read_unit(unit_first, unit, rb, read_ms, check_ms))
         {
             logmsg("  Unit ", (int)u, ": reading back failed");
             break;
@@ -213,7 +220,8 @@ void sdTrimCheckRun()
 
         logmsg("  Unit ", (int)u, ": erase took ", (int)(erase_us / 1000), " ms; read back ", (int)(rb.zeros / 1024), " KB zeros, ",
                (int)(rb.ones / 1024), " KB 0xFF, ", (int)(rb.pattern / 1024), " KB unchanged, ", (int)(rb.other / 1024),
-               " KB other; reading the unit took ", (int)read_ms, " ms");
+               " KB other; reading the unit from the card took ", (int)read_ms, " ms (plus ", (int)check_ms,
+               " ms for the byte-wise comparison in this check)");
         verdict_zeros += rb.zeros;
         verdict_ones += rb.ones;
         verdict_pattern += rb.pattern;
@@ -222,8 +230,8 @@ void sdTrimCheckRun()
 
     // Neighbouring unit that must not have been touched.
     readback_t nb;
-    uint32_t nb_ms = 0;
-    bool neighbour_ok = read_unit(first + TRIMCHECK_UNITS * unit, unit, nb, nb_ms) && nb.pattern == unit * 512;
+    uint32_t nb_ms = 0, nb_check_ms = 0;
+    bool neighbour_ok = read_unit(first + TRIMCHECK_UNITS * unit, unit, nb, nb_ms, nb_check_ms) && nb.pattern == unit * 512;
     logmsg("  Neighbouring unit after the erased ones: ", neighbour_ok ? "untouched" : "CHANGED (the card erased more than asked)");
 
     if (verdict_zeros > 0 && verdict_ones == 0 && verdict_pattern == 0 && verdict_other == 0)
