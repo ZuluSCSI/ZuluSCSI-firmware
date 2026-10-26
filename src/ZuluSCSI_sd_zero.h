@@ -23,6 +23,9 @@ bool sdEraseReadsAsZero(uint32_t *unitSectors = nullptr);
 // Forget the measurement, e.g. after the card was changed.
 void sdEraseGateReset();
 
+// Slowest erase of one unit seen while measuring, in milliseconds (0 if not measured).
+uint32_t sdEraseWorstMs();
+
 // Writes zeros to count logical sectors of the image, starting at lba. Whole
 // erase units inside the range are released with the card's erase when
 // sdEraseReadsAsZero() allows it and the image is read directly from the card;
