@@ -46,11 +46,20 @@ extern bool g_rawdrive_active;
 
 static gate_state_t g_gate = GATE_UNKNOWN;
 static uint32_t g_gate_unit_sectors = 0;
+static uint32_t g_gate_worst_erase_ms = 0;
+static bool g_writesame_trim = false; // [SCSI] SdTrim: use the gate for WRITE SAME
 
 void sdEraseGateReset()
 {
     g_gate = GATE_UNKNOWN;
     g_gate_unit_sectors = 0;
+    g_gate_worst_erase_ms = 0;
+    g_writesame_trim = false;
+}
+
+uint32_t sdEraseWorstMs()
+{
+    return g_gate_worst_erase_ms;
 }
 
 bool sdEraseReadsAsZero(uint32_t *unitSectors)
@@ -59,7 +68,8 @@ bool sdEraseReadsAsZero(uint32_t *unitSectors)
     {
         g_gate = GATE_CLOSED;
 
-        if (ini_getbool("SCSI", "SdTrim", false, CONFIGFILE))
+        g_writesame_trim = ini_getbool("SCSI", "SdTrim", false, CONFIGFILE);
+        if (g_writesame_trim || ini_getbool("SCSI", "SdScrub", false, CONFIGFILE))
         {
             // Whether erased blocks read back as zeros is a property of each
             // card (SD SCR register, which this SD driver cannot read), so it is
@@ -90,8 +100,9 @@ bool sdEraseReadsAsZero(uint32_t *unitSectors)
             {
                 g_gate = GATE_OPEN;
                 g_gate_unit_sectors = result.unit_sectors;
+                g_gate_worst_erase_ms = result.worst_erase_ms;
                 logmsg("SdTrim: erased blocks read back as zeros, erase unit ", (int)(result.unit_sectors / 2),
-                       " KB, slowest erase ", (int)result.worst_erase_ms, " ms -- zeroed ranges are released with the card's erase");
+                       " KB, slowest erase ", (int)result.worst_erase_ms, " ms");
             }
         }
     }
@@ -146,7 +157,7 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
     uint32_t au = 0;
     uint32_t bgn = 0;
     uint8_t mode = 0;
-    if (count == 0 || !sdEraseReadsAsZero(&au) || au == 0 || !file.linearSdMapping(&bgn, &mode))
+    if (count == 0 || !sdEraseReadsAsZero(&au) || !g_writesame_trim || au == 0 || !file.linearSdMapping(&bgn, &mode))
     {
         return write_zero_sectors(file, bytesPerSector, lba, count);
     }
