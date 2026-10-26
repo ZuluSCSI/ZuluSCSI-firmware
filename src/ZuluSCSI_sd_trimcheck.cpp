@@ -29,6 +29,9 @@
 // Non-destructive for the user's data: everything this check erases is in a
 // temporary file that it creates itself and deletes afterwards.
 
+// Log only when the caller asked for the full, verbose check.
+#define VLOG(...) do { if (verbose) logmsg(__VA_ARGS__); } while (0)
+
 #define TRIMCHECK_FILE "ZULUTRIM.TMP"
 #define TRIMCHECK_PATTERN 0xA5
 
@@ -72,7 +75,21 @@ static bool read_unit(uint32_t first, uint32_t unit, readback_t &rb, uint32_t &r
         }
 
         t0 = micros();
-        for (uint32_t i = 0; i < count * 512; i++)
+        uint32_t i = 0;
+        if (((uintptr_t)scsiDev.data & 3) == 0)
+        {
+            // Whole words first: nearly every word is one of the three uniform values.
+            const uint32_t *words = (const uint32_t *)scsiDev.data;
+            for (; i + 4 <= count * 512; i += 4, words++)
+            {
+                uint32_t w = *words;
+                if (w == 0x00000000) rb.zeros += 4;
+                else if (w == 0xFFFFFFFF) rb.ones += 4;
+                else if (w == 0x01010101 * TRIMCHECK_PATTERN) rb.pattern += 4;
+                else break; // mixed word: classify the rest byte by byte
+            }
+        }
+        for (; i < count * 512; i++)
         {
             uint8_t b = scsiDev.data[i];
             if (b == 0x00) rb.zeros++;
@@ -124,11 +141,15 @@ static void report_card()
     }
 }
 
-void sdTrimCheckRun()
+bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose)
 {
-    logmsg("");
-    logmsg("SD card erase (TRIM) check -- the SCSI bus is not serviced while this runs");
-    report_card();
+    memset(out, 0, sizeof(*out));
+    VLOG("");
+    VLOG("SD card erase (TRIM) check -- the SCSI bus is not serviced while this runs");
+    if (verbose)
+    {
+        report_card();
+    }
 
     uint32_t unit = 8192; // sectors; replaced by the card's AU size when known
     sds_t sds = {0};
@@ -145,8 +166,9 @@ void sdTrimCheckRun()
     if (!is_power_of_two(unit) || unit > TRIMCHECK_MAX_UNIT_SECTORS)
     {
         logmsg("  Erase unit of ", (int)unit, " sectors cannot be tested, giving up");
-        return;
+        return false;
     }
+    out->unit_sectors = unit;
 
     // Room for the test units plus one unit of slack to reach an aligned start,
     // and one more as neighbours to check for collateral erasure.
@@ -155,14 +177,14 @@ void sdTrimCheckRun()
     if ((uint64_t)file_sectors * 512 + 1024 * 1024 > free_space)
     {
         logmsg("  Not enough free space for the temporary test file (", (int)((uint64_t)file_sectors * 512 / (1024 * 1024)), " MB), giving up");
-        return;
+        return false;
     }
 
     FsFile file = SD.open(TRIMCHECK_FILE, O_RDWR | O_CREAT | O_TRUNC);
     if (!file)
     {
         logmsg("  Cannot create ", TRIMCHECK_FILE, ", giving up");
-        return;
+        return false;
     }
 
     uint32_t begin = 0, end = 0;
@@ -171,7 +193,7 @@ void sdTrimCheckRun()
         logmsg("  No contiguous free space for the temporary test file, giving up");
         file.close();
         SD.remove(TRIMCHECK_FILE);
-        return;
+        return false;
     }
 
     // Fill it with a pattern, so that the effect of the erase is visible.
@@ -190,13 +212,14 @@ void sdTrimCheckRun()
         logmsg("  Cannot prepare the temporary test file, giving up");
         file.close();
         SD.remove(TRIMCHECK_FILE);
-        return;
+        return false;
     }
 
-    logmsg("  Test: erasing ", TRIMCHECK_UNITS, " x ", (int)unit, " sectors (", (int)(unit / 2048), " MB each) at sector ", (int)first,
+    VLOG("  Test: erasing ", TRIMCHECK_UNITS, " x ", (int)unit, " sectors (", (int)(unit / 2048), " MB each) at sector ", (int)first,
            ", previously filled with 0xA5");
 
     uint32_t verdict_zeros = 0, verdict_ones = 0, verdict_pattern = 0, verdict_other = 0;
+    uint32_t units_done = 0;
     for (uint32_t u = 0; u < TRIMCHECK_UNITS; u++)
     {
         uint32_t unit_first = first + u * unit;
@@ -218,10 +241,15 @@ void sdTrimCheckRun()
             break;
         }
 
-        logmsg("  Unit ", (int)u, ": erase took ", (int)(erase_us / 1000), " ms; read back ", (int)(rb.zeros / 1024), " KB zeros, ",
+        VLOG("  Unit ", (int)u, ": erase took ", (int)(erase_us / 1000), " ms; read back ", (int)(rb.zeros / 1024), " KB zeros, ",
                (int)(rb.ones / 1024), " KB 0xFF, ", (int)(rb.pattern / 1024), " KB unchanged, ", (int)(rb.other / 1024),
                " KB other; reading the unit from the card took ", (int)read_ms, " ms (plus ", (int)check_ms,
-               " ms for the byte-wise comparison in this check)");
+               " ms for comparing it in this check)");
+        units_done++;
+        if (erase_us / 1000 + 1 > out->worst_erase_ms)
+        {
+            out->worst_erase_ms = erase_us / 1000 + 1;
+        }
         verdict_zeros += rb.zeros;
         verdict_ones += rb.ones;
         verdict_pattern += rb.pattern;
@@ -232,18 +260,29 @@ void sdTrimCheckRun()
     readback_t nb;
     uint32_t nb_ms = 0, nb_check_ms = 0;
     bool neighbour_ok = read_unit(first + TRIMCHECK_UNITS * unit, unit, nb, nb_ms, nb_check_ms) && nb.pattern == unit * 512;
-    logmsg("  Neighbouring unit after the erased ones: ", neighbour_ok ? "untouched" : "CHANGED (the card erased more than asked)");
+    VLOG("  Neighbouring unit after the erased ones: ", neighbour_ok ? "untouched" : "CHANGED (the card erased more than asked)");
 
     if (verdict_zeros > 0 && verdict_ones == 0 && verdict_pattern == 0 && verdict_other == 0)
-        logmsg("  Result: erased blocks read back as ZEROS -- erasing all-zero ranges does not change what the host reads");
+        VLOG("  Result: erased blocks read back as ZEROS -- erasing all-zero ranges does not change what the host reads");
     else if (verdict_ones > 0 && verdict_zeros == 0 && verdict_pattern == 0 && verdict_other == 0)
-        logmsg("  Result: erased blocks read back as ONES (0xFF) -- erasing zero ranges WOULD change what the host reads");
+        VLOG("  Result: erased blocks read back as ONES (0xFF) -- erasing zero ranges WOULD change what the host reads");
     else if (verdict_pattern > 0 && verdict_zeros == 0 && verdict_ones == 0 && verdict_other == 0)
-        logmsg("  Result: the data was unchanged after the erase -- the card defers or ignores erases");
+        VLOG("  Result: the data was unchanged after the erase -- the card defers or ignores erases");
     else if (verdict_zeros + verdict_ones + verdict_pattern + verdict_other > 0)
-        logmsg("  Result: mixed read-back -- erasing is NOT safe for zero ranges on this card");
+        VLOG("  Result: mixed read-back -- erasing is NOT safe for zero ranges on this card");
 
     file.close();
     SD.remove(TRIMCHECK_FILE);
-    logmsg("SD card erase (TRIM) check finished");
+    VLOG("SD card erase (TRIM) check finished");
+
+    out->neighbour_ok = neighbour_ok;
+    out->reads_zero = units_done == TRIMCHECK_UNITS && verdict_zeros > 0 &&
+                      verdict_ones == 0 && verdict_pattern == 0 && verdict_other == 0;
+    return units_done == TRIMCHECK_UNITS;
+}
+
+void sdTrimCheckRun()
+{
+    sd_erase_measure_t result;
+    sdTrimMeasure(&result, true);
 }

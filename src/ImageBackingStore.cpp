@@ -752,6 +752,25 @@ bool ImageBackingStore::contiguousRange(uint32_t* bgnSector, uint32_t* endSector
     }
 }
 
+bool ImageBackingStore::linearSdMapping(uint32_t* bgnSector, uint8_t* alignMode)
+{
+#if ENABLE_COW
+    if (m_iscow)
+    {
+        return false;
+    }
+#endif
+
+    if (!m_iscontiguous || m_blockdev == nullptr || m_isrom)
+    {
+        return false;
+    }
+
+    *bgnSector = m_bgnsector;
+    *alignMode = m_alignMode;
+    return true;
+}
+
 bool ImageBackingStore::seek(uint64_t pos)
 {
 #if ENABLE_COW

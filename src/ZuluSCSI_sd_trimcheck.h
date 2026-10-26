@@ -12,4 +12,22 @@
 
 #pragma once
 
+#include <stdint.h>
+#include <stdbool.h>
+
 void sdTrimCheckRun();
+
+// The measurement behind the check, for callers that need its verdict.
+typedef struct
+{
+    uint32_t unit_sectors;   // erase unit tested, in 512-byte sectors (the card's allocation unit)
+    uint32_t worst_erase_ms; // slowest erase of one unit, rounded up
+    bool reads_zero;         // every erased unit read back as zeros
+    bool neighbour_ok;       // the unit after the erased ones was left alone
+} sd_erase_measure_t;
+
+// Runs the test with a temporary file; returns false if it could not be
+// completed (no room, erase refused, ...). Needs scsiDev.data as scratch space,
+// so the SCSI bus must not be in the middle of a transfer. With verbose set it
+// prints what the console command prints.
+bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose);
