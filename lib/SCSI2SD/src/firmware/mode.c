@@ -857,9 +857,16 @@ static void doModeSelect(void)
 			blockDescLen = scsiDev.data[3];
 			idx = 4;
 		}
-
-		// The header check above guarantees dataLen >= idx.
-		if (blockDescLen > scsiDev.dataLen - idx) goto badLength;
+		// Make sure the data structure is the correct length before
+		// ModeSelect starts overwriting settings
+		int idx_check = idx + blockDescLen;
+		while (idx_check < scsiDev.dataLen)
+		{
+			if (idx_check + 2 > scsiDev.dataLen) goto badLength;
+			int pageLen = scsiDev.data[idx + 1];
+			if (idx_check + 2 + pageLen > scsiDev.dataLen) goto badLength;
+			idx_check += 2 + pageLen;
+		}
 
 		// Store device-specific parameter byte (byte 2 for 6-byte, byte 3 for 10-byte)
 		// For sequential devices this contains buffered mode in bits 6-4
@@ -912,10 +919,7 @@ static void doModeSelect(void)
 			int pageCode = scsiDev.data[idx] & 0x3F;
 			if (pageCode == 0) goto out;
 
-			if (idx + 2 > scsiDev.dataLen) goto badLength;
-
 			int pageLen = scsiDev.data[idx + 1];
-			if (idx + 2 + pageLen > scsiDev.dataLen) goto badLength;
 
 			switch (pageCode)
 			{
