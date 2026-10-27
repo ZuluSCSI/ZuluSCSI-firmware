@@ -35,8 +35,78 @@ const uint8_t AS400TapeCISCVendorInquiry[] = {
     0x20, 0x49, 0x42, 0x4D, 0x20, 0x34, 0x31, 0x30, 0x30, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
     0x49, 0x30, 0x38, 0x58, 0x30, 0x37, 0x32, 0x31, 0x46, 0x38, 0x37, 0x31, 0x39, 0x38, 0x39, 0x35,
     0x38, 0x32, 0x39,
+    // The real drive puts two more bytes (0x20 0x20) on the bus after the 51
+    // bytes its additional-length field accounts for -- seen on a bus
+    // analyzer trace of the real drive answering INQUIRY with a large
+    // allocation length. The additional-length byte (0x2E) stays as captured.
+    0x20, 0x20,
 };
 const size_t AS400TapeCISCVendorInquiryLen = sizeof(AS400TapeCISCVendorInquiry);
+
+// The real drive's own INQUIRY form for vital product data: CDB byte 1 = 0, byte 2
+// bit 7 set, byte 3 = page number, allocation length in byte 4 (a standard EVPD
+// request is rejected). Pages 0x80 and 0x03 captured from the real drive
+// (TANDBERG IBM 4100, microcode I08X07) with no cartridge loaded; the IOP asks
+// for them with allocation lengths 15 and 32 and the drive answers at exactly
+// that length. Page 0x80 is the unit serial number (ASCII "13F1014711", NUL
+// terminated). Page 0x03 carries the microcode level as ASCII ("0807") and the
+// microcode LID name in EBCDIC ("AJEFDAF0"); it was also reported to be compared
+// by the IOP against the level of the microcode it carries, to decide on a
+// download -- the V3R2 LIC carries level 0807.
+const uint8_t AS400TapeCISCVendorPage80[] = {
+    0x01, 0x80, 0x00, 0x0B, 0x31, 0x33, 0x46, 0x31, 0x30, 0x31, 0x34, 0x37, 0x31, 0x31, 0x00,
+};
+const size_t AS400TapeCISCVendorPage80Len = sizeof(AS400TapeCISCVendorPage80);
+
+const uint8_t AS400TapeCISCVendorPage03[] = {
+    0x01, 0x03, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0xA0, 0xB0, 0x0E, 0x10, 0x30, 0x38, 0x30, 0x37,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC1, 0xD1, 0xC5, 0xC6, 0xC4, 0xC1, 0xC6, 0xF0,
+};
+const size_t AS400TapeCISCVendorPage03Len = sizeof(AS400TapeCISCVendorPage03);
+
+// The rest of the drive's vendor pages, captured the same way. Page 0x00 lists
+// the pages it has; 0x82 is the implemented standard ("SCSI-2 X3.131-199X");
+// 0xC0 is a part/build string, 0xC1 the microcode revision (the INQUIRY
+// revision), 0xC2-0xC4 are dates ("10.07.92", "05.15.97", "10.07.92").
+const uint8_t AS400TapeCISCVendorPage00[] = {
+    0x01, 0x00, 0x00, 0x0A, 0x00, 0x03, 0x80, 0x81, 0x82, 0xC0, 0xC1, 0xC2, 0xC3, 0xC4,
+};
+const size_t AS400TapeCISCVendorPage00Len = sizeof(AS400TapeCISCVendorPage00);
+
+const uint8_t AS400TapeCISCVendorPage81[] = {
+    0x01, 0x81, 0x00, 0x02, 0x03, 0x03,
+};
+const size_t AS400TapeCISCVendorPage81Len = sizeof(AS400TapeCISCVendorPage81);
+
+const uint8_t AS400TapeCISCVendorPage82[] = {
+    0x01, 0x82, 0x00, 0x13, 'S', 'C', 'S', 'I', '-', '2', ' ', 'X', '3', '.', '1', '3', '1', '-', '1', '9', '9', 'X', 0x00,
+};
+const size_t AS400TapeCISCVendorPage82Len = sizeof(AS400TapeCISCVendorPage82);
+
+const uint8_t AS400TapeCISCVendorPageC0[] = {
+    0x01, 0xC0, 0x00, 0x0D, '0', '0', '0', '0', '0', '0', '.', '1', '0', '1', '0', '0', 0x00,
+};
+const size_t AS400TapeCISCVendorPageC0Len = sizeof(AS400TapeCISCVendorPageC0);
+
+const uint8_t AS400TapeCISCVendorPageC1[] = {
+    0x01, 0xC1, 0x00, 0x07, 'I', '0', '8', 'X', '0', '7', 0x00,
+};
+const size_t AS400TapeCISCVendorPageC1Len = sizeof(AS400TapeCISCVendorPageC1);
+
+const uint8_t AS400TapeCISCVendorPageC2[] = {
+    0x01, 0xC2, 0x00, 0x09, '1', '0', '.', '0', '7', '.', '9', '2', 0x00,
+};
+const size_t AS400TapeCISCVendorPageC2Len = sizeof(AS400TapeCISCVendorPageC2);
+
+const uint8_t AS400TapeCISCVendorPageC3[] = {
+    0x01, 0xC3, 0x00, 0x09, '0', '5', '.', '1', '5', '.', '9', '7', 0x00,
+};
+const size_t AS400TapeCISCVendorPageC3Len = sizeof(AS400TapeCISCVendorPageC3);
+
+const uint8_t AS400TapeCISCVendorPageC4[] = {
+    0x01, 0xC4, 0x00, 0x09, '1', '0', '.', '0', '7', '.', '9', '2', 0x00,
+};
+const size_t AS400TapeCISCVendorPageC4Len = sizeof(AS400TapeCISCVendorPageC4);
 
 
 const uint8_t as400_tape_cisc_mode_sense_all_pages[] = {

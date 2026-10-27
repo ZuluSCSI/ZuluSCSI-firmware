@@ -778,6 +778,16 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
             tape_is_tap_format = true;
         }
 
+        // A .tap image is rewritten and truncated in place, which only a
+        // regular file can do. RAW:/PART: backing has a fixed size and cannot
+        // represent a logical end of data, so refuse it rather than misbehave.
+        if (tape_is_tap_format && img.file.isRaw())
+        {
+            logmsg("---- Error: ", filename, ": SIMH .tap tape images must be regular files, RAW:/PART: backing is not supported for them");
+            img.file.close();
+            return false;
+        }
+
         if (img.scsiSectors == 0 && !isProcessorDevice(type) && !img.file.isFolder() && !tape_is_tap_format)
         {
             logmsg("---- Error: image file ", filename, " is empty");

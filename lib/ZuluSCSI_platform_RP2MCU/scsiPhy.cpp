@@ -156,7 +156,19 @@ extern "C" bool scsiStatusSEL()
         {
             // This is a SCSI1 host that does send IDENTIFY message
             scsiDev.atnFlag = 0;
-            scsiDev.target->unitAttention = 0;
+            // Dropping the pending unit attention here, unconditionally, silently
+            // overrode the EnableUnitAttention handling in scsi.c's
+            // process_SelectionPhase(), which exists to keep it for ATN-less hosts
+            // that expect one -- the AS/400 IOP probes its devices with ATN-less
+            // selects and takes a missing unit attention on the first TEST UNIT
+            // READY for a failed self-test (SRC 917BB982). Apply the same rule as
+            // scsi.c: only discard it when EnableUnitAttention is off, or for
+            // optical drives (a real AS/400 Model 600 CD-ROM IPL regressed with it).
+            if (!(scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION) ||
+                scsiDev.target->cfg->deviceType == S2S_CFG_OPTICAL)
+            {
+                scsiDev.target->unitAttention = 0;
+            }
             scsiDev.compatMode = COMPAT_SCSI1;
         }
     }
