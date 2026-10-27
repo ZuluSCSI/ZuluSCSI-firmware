@@ -72,10 +72,16 @@ static struct
     uint32_t pause_hours;
     uint32_t next_step_ms;
     uint32_t resume_ms;
-    uint32_t last_activity_ms;
-    uint32_t last_sel_count;
     bool led_on;
 } s;
+
+// After a card change the scrubber starts again for the new card, once the bus
+// has been quiet for a while (measuring the new card takes a second).
+#define SCRUB_RESTART_IDLE_MS 5000
+
+static bool g_restart_pending = false;
+static uint32_t g_last_activity_ms = 0;
+static uint32_t g_last_sel_count = 0;
 
 static bool time_reached(uint32_t now, uint32_t t)
 {
@@ -157,7 +163,7 @@ static void scrub_one_unit(uint32_t now)
     {
         if (bus_active())
         {
-            s.last_activity_ms = millis();
+            g_last_activity_ms = millis();
             return; // try this unit again later
         }
 
@@ -176,7 +182,7 @@ static void scrub_one_unit(uint32_t now)
     {
         if (bus_active())
         {
-            s.last_activity_ms = millis();
+            g_last_activity_ms = millis();
             return;
         }
 
@@ -255,8 +261,8 @@ void sdTrimStart()
 
     long hours = ini_getl("SCSI", "SdScrubPauseHours", 24, CONFIGFILE);
     s.pause_hours = hours < 1 ? 1 : (hours > 500 ? 500 : hours); // 500 h still fits the millisecond timer
-    s.last_activity_ms = millis();
-    s.last_sel_count = scsiDev.selCount;
+    g_last_activity_ms = millis();
+    g_last_sel_count = scsiDev.selCount;
 
     logmsg("SD scrubber: enabled, erase unit ", (int)(au / 2), " KB, waits for a quiet SCSI bus, pause between passes ",
            (int)s.pause_hours, " h");
@@ -267,22 +273,33 @@ void sdScrubReset()
 {
     led_set(false);
     s.state = SCRUB_OFF;
+    g_restart_pending = true;
 }
 
 void sdScrubPoll()
 {
-    if (s.state == SCRUB_OFF)
+    if (s.state == SCRUB_OFF && !g_restart_pending)
     {
         return;
     }
 
     uint32_t now = millis();
 
-    if (bus_active() || scsiDev.selCount != s.last_sel_count)
+    if (!g_sdcard_present || bus_active() || scsiDev.selCount != g_last_sel_count)
     {
-        s.last_sel_count = scsiDev.selCount;
-        s.last_activity_ms = now;
+        g_last_sel_count = scsiDev.selCount;
+        g_last_activity_ms = now;
         led_set(false);
+        return;
+    }
+
+    if (g_restart_pending)
+    {
+        if (time_reached(now, g_last_activity_ms + SCRUB_RESTART_IDLE_MS))
+        {
+            g_restart_pending = false;
+            sdTrimStart();
+        }
         return;
     }
 
@@ -295,7 +312,7 @@ void sdScrubPoll()
         return;
     }
 
-    if (!time_reached(now, s.last_activity_ms + SCRUB_IDLE_MS))
+    if (!time_reached(now, g_last_activity_ms + SCRUB_IDLE_MS))
     {
         led_set(false);
         return;
