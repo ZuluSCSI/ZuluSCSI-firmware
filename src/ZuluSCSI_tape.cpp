@@ -171,9 +171,12 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
     }
 
     // Read 4-byte header
-    if (!img.file.seek(tape_info->file_pos) || img.file.read(header, sizeof(header)) != sizeof(header)) {
+    bool header_seek_ok = img.file.seek(tape_info->file_pos);
+    ssize_t header_read = header_seek_ok ? img.file.read(header, sizeof(header)) : -1;
+    if (!header_seek_ok || header_read != (ssize_t)sizeof(header)) {
         logmsg("------ TAP failed to seek and/or read header at file_pos=", (int)tape_info->file_pos,
-               " file_size=", (int)img.file.size());
+               " file_size=", (int)img.file.size(), " seek=", (int)header_seek_ok,
+               " read=", (int)header_read, " contiguous=", (int)img.file.isContiguous());
         record.is_error = true;
         return TAP_ERROR;
     }
@@ -370,6 +373,29 @@ tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, ui
     return TAP_OK;
 }
 
+// A tape write destroys everything after it. The .tap image is overwritten in
+// place, so cut off whatever follows the new end of data. Without this, a stale
+// tail left by longer earlier contents is read back as a corrupt record (or as
+// data that should no longer exist) instead of as end of data. A no-op when
+// appending, which is the common case.
+// Returns false if the image could not be cut off, which the callers report to
+// the host as a failed command: leaving the stale tail in place is the bug.
+static bool tapTruncateAtWriteEnd(image_config_t &img)
+{
+    tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
+    if (img.file.size() <= tape_info->file_pos)
+    {
+        return true;
+    }
+    if (img.file.truncate(tape_info->file_pos))
+    {
+        return true;
+    }
+    logmsg("------ TAP failed to truncate image at file_pos=", (int)tape_info->file_pos,
+           " file_size=", (int)img.file.size());
+    return false;
+}
+
 // Write a filemark
 tap_result_t tapWriteFilemark(image_config_t &img) {
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
@@ -381,6 +407,9 @@ tap_result_t tapWriteFilemark(image_config_t &img) {
     }
     img.file.flush();
     tape_info->file_pos += 4;
+    if (!tapTruncateAtWriteEnd(img)) {
+        return TAP_ERROR;
+    }
     tape_info->tape_mark_count++;
     tape_info->logical_object_number++;
     scsiDev.target->tapeBOM = 0;
@@ -413,6 +442,9 @@ tap_result_t tapWriteEraseGap(image_config_t &img) {
     }
 
     tape_info->file_pos += 4;
+    if (!tapTruncateAtWriteEnd(img)) {
+        return TAP_ERROR;
+    }
     return TAP_OK;
 }
 
@@ -1189,6 +1221,11 @@ void tapeTapDataOut()
 
     scsiDev.dataPtr = scsiDev.dataLen = 0;
 
+    if (!tapTruncateAtWriteEnd(img))
+    {
+        goto write_error;
+    }
+
     // Verify that all data has been flushed to disk from SdFat cache.
     img.file.flush();
     return;
@@ -1670,6 +1707,17 @@ extern "C" int scsiTapeCommand()
                 }
             }
             else
+#ifdef PLATFORM_AS400
+            if (isAS400CISCTapeIdentity(scsiDev.target->cfg->scsiId))
+            {
+                // The real CISC drive rejects a short erase: illegal request,
+                // sense bytes 12/13 = 0x00/0x02 (as for a standard EVPD request).
+                scsiDev.status = CHECK_CONDITION;
+                scsiDev.target->sense.code = ILLEGAL_REQUEST;
+                scsiDev.target->sense.asc = END_OF_PARTITION_MEDIUM_DETECTED;
+            }
+            else
+#endif
             {
                 // Short erase: write an erase gap marker.
                 if (!img.file.isWritable())

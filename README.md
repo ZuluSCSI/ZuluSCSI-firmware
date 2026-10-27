@@ -41,7 +41,7 @@ The media type can also be set in `zuluscsi.ini`, or directly by the file name o
 | `FD`   | Floppy | 512 | |
 | `MO`   | Magneto-optical | 512 | |
 | `RE`   | Generic removable | 512 | |
-| `TP`   | Sequential / tape | 512 | See tape section |
+| `TP`   | Sequential / tape | 512 | |
 | `ZP`   | Iomega Zip 100 | 512 | Image should be exactly 100,663,296 bytes |
 | `NE`   | DaynaPORT network | — | Network-capable hardware only |
 | `AM`   | Amiga WiFi network | — | Network-capable hardware only |

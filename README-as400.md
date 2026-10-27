@@ -34,7 +34,7 @@ We have to differ three hardware generations when considering Zulu vs. AS/400 ov
 | Device | CISC/IMPI, 520 bytes/block disks | PPC/SPD, 520/522 bytes/block disks   | PPC/PCI, 522 bytes/block disks |
 | ------ | -------------------------------- | ------------------------------------ | ------------------------------ |
 | CD-ROM | Not supported                    | Works                                | Works                          |
-| Tape   | Fails for `savlib` and more      | Fails for `savlib` and more          | Works (generic device)         |
+| Tape   | Works                            | Untested, but expected to work       | Works (generic device)         |
 | Disk   | Works                            | Fails/Lack of feedback               | Works                          |
 
 There are success reports of more 150's working, and one of a 9406-270 becoming stuck with A6000244, *Contact was lost with device indicated*, as well as another model 270 unable to IPL from emulated CD-ROM with a medium read error.
@@ -184,7 +184,7 @@ Currently, two AS/400 specific tape drives are emulated:
 - a CISC era QIC1000, FC #6343,
 - a PCI/PPC era SLR5, FC #6382.
 
-> **Note:** Both emulation targets are currently **broken**. The only reliably working tape emulation is the standard (generic) tape device — no `Device` statement for the SCSI ID itself, and this only works with comparably new PPC/PCI machines.
+> **Note:** Only CISC functionality has been tested today. Especially the very similar early PPC (SPD based) has not been tested, yet.
 
 To use,
 

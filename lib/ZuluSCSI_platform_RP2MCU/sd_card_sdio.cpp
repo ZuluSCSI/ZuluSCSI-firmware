@@ -70,6 +70,7 @@ static uint32_t g_sdio_rca; // Relative card address
 static cid_t g_sdio_cid;
 static csd_t g_sdio_csd;
 static sds_t __attribute__((aligned(4))) g_sdio_sds;
+static scr_t __attribute__((aligned(4))) g_sdio_scr;
 static int g_sdio_error_line;
 static sdio_status_t g_sdio_error;
 static uint32_t g_sdio_dma_buf[128];
@@ -217,6 +218,18 @@ bool SdioCard::begin(SdioConfig sdioConfig)
         dbgmsg("SDIO failed to get SD Status");
         return false;
     }
+
+
+    memset(&g_sdio_scr, 0, sizeof(scr_t));
+    uint8_t* config_pointer = (uint8_t*) &g_sdio_scr;
+    if (!checkReturnOk(rp2040_sdio_command_R1(CMD55, g_sdio_rca, &reply)) ||
+        !checkReturnOk(rp2040_sdio_command_R1(ACMD51, 0, &reply)) ||
+        !checkReturnOk(receive_status_register(config_pointer)))
+    {
+        dbgmsg("SDIO failed to get SD Configuration register");
+        return false;
+    }
+
 
     // Increase clock rate to CPU clock / 5 / clkdiv
     rp2040_sdio_init(g_sdio_clk_divider);
@@ -464,8 +477,8 @@ bool SdioCard::cardCMD6(uint32_t arg, uint8_t* status) {
 }
 
 bool SdioCard::readSCR(scr_t* scr) {
-    logmsg("SdioCard::readSCR() not implemented");
-    return false;
+    *scr = g_sdio_scr;
+    return true;
 }
 
 /* Writing and reading, with progress callback */
