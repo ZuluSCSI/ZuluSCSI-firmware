@@ -73,8 +73,8 @@ sdio_status_t rp2040_sdio_tx_poll(uint32_t *bytes_complete = nullptr);
 // Force everything to idle state
 sdio_status_t rp2040_sdio_stop();
 
-// Receives the SD Status register.  Does not return until the register has been received.
-sdio_status_t receive_status_register(uint8_t* sds);
+// Receives a SD register.  Does not return until the register has been received.
+sdio_status_t receive_register(uint8_t* sds, size_t size);
 
 // (Re)initialize the SDIO interface
 void rp2040_sdio_init(int clock_divider = 1);
