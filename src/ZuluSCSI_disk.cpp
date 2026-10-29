@@ -63,6 +63,8 @@ extern "C" {
 #ifdef PLATFORM_AS400
 #include "as400_values.h"
 #include "ZuluSCSI_sd_zero.h"
+#include "ZuluSCSI_unmap.h"
+#include "ZuluSCSI_gap_layout.h"
 #endif
 
 #ifndef PLATFORM_MAX_SCSI_SPEED
@@ -2367,6 +2369,162 @@ static void doReadCapacity()
     }
 }
 
+#ifdef PLATFORM_AS400
+/*****************************************/
+/* UNMAP / logical block provisioning    */
+/*****************************************/
+
+// One UNMAP may release this much in total per descriptor, and carry this many
+// descriptors; announced in the Block Limits VPD page. Releasing a range is a
+// series of SD erases that nothing can interrupt, so the command time is
+// bounded: at most 8 erase units of 4 MB at (at most) SD_UNMAP_MAX_ERASE_MS.
+#define UNMAP_MAX_BYTES (32UL * 1024 * 1024)
+#define UNMAP_MAX_DESCRIPTORS 4
+#define UNMAP_PARAM_MAX (8 + 16 * UNMAP_MAX_DESCRIPTORS)
+
+static bool unmapEligible()
+{
+    const S2S_TargetCfg *cfg = scsiDev.target->cfg;
+    if (cfg->deviceType != S2S_CFG_FIXED || cfg->quirks == S2S_CFG_QUIRKS_AS400 || !sdUnmapAvailable())
+    {
+        return false;
+    }
+
+    // Only an image that is stored as plain sectors on the card can have
+    // whole erase units released.
+    image_config_t &img = *(image_config_t*)cfg;
+    uint32_t bgn = 0;
+    uint8_t mode = 0;
+    return img.file.isWritable() && !img.ejectFixedDiskWriteBlocked &&
+           img.file.linearSdMapping(&bgn, &mode) && mode == ALIGN_UNALIGNED_OFF;
+}
+
+extern "C" int scsiDiskUnmapAdvertised(int standardIdentity)
+{
+    if (!unmapEligible())
+    {
+        return 0;
+    }
+
+    if (!standardIdentity)
+    {
+        uint16_t len = 0;
+        if (getCustomSPD(scsiDev.target->cfg->scsiId, scsiDev.data, &len))
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+extern "C" uint32_t scsiDiskUnmapVpdPage(uint8_t pageCode, uint8_t *buf)
+{
+    if ((pageCode != 0xB0 && pageCode != 0xB2) || !scsiDiskUnmapAdvertised(0))
+    {
+        return 0;
+    }
+
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint32_t unitSectors = 0;
+    sdUnmapAvailable(&unitSectors);
+
+    memset(buf, 0, 64);
+    buf[1] = pageCode;
+
+    if (pageCode == 0xB0)
+    {
+        // Block Limits: only the UNMAP fields are filled in, zero means "no
+        // limit reported" for the others.
+        buf[3] = 0x3C;
+        storeBe32(buf + 20, UNMAP_MAX_BYTES / bytesPerSector);
+        storeBe32(buf + 24, UNMAP_MAX_DESCRIPTORS);
+        uint32_t granularity = unitSectors * 512 / bytesPerSector;
+        storeBe32(buf + 28, granularity ? granularity : 1);
+        return 64;
+    }
+
+    // Logical Block Provisioning: UNMAP supported, thin provisioned.
+    buf[3] = 4;
+    buf[5] = 0x80;
+    buf[6] = 0x02;
+    return 8;
+}
+
+// Callback from the data out phase of UNMAP: the parameter list.
+static void doUnmapParameters(void)
+{
+    scsiDev.postDataOutHook = nullptr;
+
+    image_config_t &img = *(image_config_t*)scsiDev.target->cfg;
+    uint32_t bytesPerSector = scsiDev.target->liveCfg.bytesPerSector;
+    uint64_t capacity = getCapacityBlocks(img, bytesPerSector);
+    uint32_t maxBlocks = UNMAP_MAX_BYTES / bytesPerSector;
+
+    // Block descriptors follow an 8 byte header. A descriptor cut off by the
+    // end of the parameter list is ignored.
+    uint32_t listLen = scsiDev.dataLen;
+    uint32_t descLen = (((uint32_t)scsiDev.data[2]) << 8) | scsiDev.data[3];
+    if (descLen > listLen - 8)
+    {
+        descLen = listLen - 8;
+    }
+    uint32_t count = descLen / 16;
+
+    scsiDev.phase = STATUS;
+    if (count > UNMAP_MAX_DESCRIPTORS)
+    {
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ILLEGAL_REQUEST;
+        scsiDev.target->sense.asc = INVALID_FIELD_IN_PARAMETER_LIST;
+        return;
+    }
+
+    // Copied out first: the descriptors are in scsiDev.data, which the SD
+    // access below is free to use. Nothing is released unless every
+    // descriptor is valid.
+    uint64_t lbas[UNMAP_MAX_DESCRIPTORS];
+    uint32_t blocks[UNMAP_MAX_DESCRIPTORS];
+    for (uint32_t i = 0; i < count; i++)
+    {
+        const uint8_t *d = scsiDev.data + 8 + 16 * i;
+        uint64_t lba = 0;
+        for (int b = 0; b < 8; b++)
+        {
+            lba = (lba << 8) | d[b];
+        }
+        uint32_t n = (((uint32_t)d[8]) << 24) | (((uint32_t)d[9]) << 16) | (((uint32_t)d[10]) << 8) | d[11];
+
+        if (n > maxBlocks)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_PARAMETER_LIST;
+            return;
+        }
+        if (lba > capacity || n > capacity - lba)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+            return;
+        }
+        lbas[i] = lba;
+        blocks[i] = n;
+    }
+
+    uint32_t released_total = 0;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        uint32_t released = 0;
+        sdUnmapSectors(img.file, bytesPerSector, (uint32_t)lbas[i], blocks[i], &released);
+        released_total += released;
+    }
+    scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
+
+    dbgmsg("------ Unmap of ", (int)count, " range(s) released ", (int)(released_total / 2048), " MB with the SD card's erase");
+}
+#endif // PLATFORM_AS400
+
 static void doReadCapacity16()
 {
     uint64_t lba =
@@ -2405,9 +2563,20 @@ static void doReadCapacity16()
             highestBlock = 0x00001053;
         }
 
+#ifdef PLATFORM_AS400
+        int unmap = scsiDiskUnmapAdvertised(0); // may use scsiDev.data as scratch
+#endif
         memset(scsiDev.data, 0, 32);
         storeBe64(scsiDev.data, highestBlock);
         storeBe32(scsiDev.data + 8, bytesPerSector);
+#ifdef PLATFORM_AS400
+        if (unmap)
+        {
+            // Logical block provisioning enabled (LBPME), without a promise
+            // that unmapped blocks read as zeros (LBPRZ = 0).
+            scsiDev.data[14] = 0x80;
+        }
+#endif
         scsiDev.dataLen = allocationLength < 32 ? allocationLength : 32;
         scsiDev.phase = DATA_IN;
         }
@@ -4642,6 +4811,36 @@ int scsiDiskCommand()
             (((uint32_t) scsiDev.cdb[7]) << 8) +
             scsiDev.cdb[8];
         scsiDiskWriteSame(lba, blocks);
+    }
+    else if (unlikely(command == 0x42) && scsiDiskUnmapAdvertised(0))
+    {
+        // UNMAP: the ranges the host no longer needs are released with the
+        // SD card's erase. ANCHOR is not supported.
+        uint32_t listLen = (((uint32_t) scsiDev.cdb[7]) << 8) + scsiDev.cdb[8];
+        if (scsiDev.cdb[1] & 1)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+            scsiDev.phase = STATUS;
+        }
+        else if (listLen == 0)
+        {
+            // Nothing to unmap.
+        }
+        else if (listLen < 8 || listLen > UNMAP_PARAM_MAX)
+        {
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = ILLEGAL_REQUEST;
+            scsiDev.target->sense.asc = PARAMETER_LIST_LENGTH_ERROR;
+            scsiDev.phase = STATUS;
+        }
+        else
+        {
+            scsiDev.dataLen = listLen;
+            scsiDev.phase = DATA_OUT;
+            scsiDev.postDataOutHook = doUnmapParameters;
+        }
     }
     else if (likely(command == 0xEA) || likely(command == 0xE8))
     {

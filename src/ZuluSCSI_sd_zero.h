@@ -33,3 +33,22 @@ uint32_t sdEraseWorstMs();
 // Returns false if writing failed. *releasedSectors, if given, is how many
 // 512-byte SD sectors were released instead of written.
 bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lba, uint32_t count, uint32_t *releasedSectors = nullptr);
+
+// Slowest measured erase of one unit that still allows announcing UNMAP, in
+// milliseconds: one UNMAP command may release several units back to back.
+#define SD_UNMAP_MAX_ERASE_MS 100
+
+// True if UNMAP can be announced and honoured: [SCSI] SdScrub = Yes, the card
+// reads erased blocks back as zeros and erases a unit fast enough, as measured
+// by sdTrimStart() at boot and after a card change (it never starts a
+// measurement itself, as that needs a temporary file on the card). If it returns true, *unitSectors (when given) is the
+// card's erase unit in 512-byte sectors.
+bool sdUnmapAvailable(uint32_t *unitSectors = nullptr);
+
+// Releases the whole erase units inside count logical sectors from lba with
+// the card's erase; the ranges in front of and behind them are left alone, as
+// a host that sends UNMAP does not expect any particular content for them.
+// Does nothing if the image is not read directly from the card, or if erasing
+// failed. *releasedSectors, if given, is how many 512-byte SD sectors were
+// released.
+void sdUnmapSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lba, uint32_t count, uint32_t *releasedSectors = nullptr);

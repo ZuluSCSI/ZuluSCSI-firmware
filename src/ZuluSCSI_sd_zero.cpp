@@ -48,6 +48,7 @@ static gate_state_t g_gate = GATE_UNKNOWN;
 static uint32_t g_gate_unit_sectors = 0;
 static uint32_t g_gate_worst_erase_ms = 0;
 static bool g_writesame_trim = false; // [SCSI] SdTrim: use the gate for WRITE SAME
+static bool g_scrub_setting = false;  // [SCSI] SdScrub: UNMAP is announced and honoured
 
 void sdEraseGateReset()
 {
@@ -55,6 +56,7 @@ void sdEraseGateReset()
     g_gate_unit_sectors = 0;
     g_gate_worst_erase_ms = 0;
     g_writesame_trim = false;
+    g_scrub_setting = false;
 }
 
 uint32_t sdEraseWorstMs()
@@ -69,7 +71,8 @@ bool sdEraseReadsAsZero(uint32_t *unitSectors)
         g_gate = GATE_CLOSED;
 
         g_writesame_trim = ini_getbool("SCSI", "SdTrim", false, CONFIGFILE);
-        if (g_writesame_trim || ini_getbool("SCSI", "SdScrub", false, CONFIGFILE))
+        g_scrub_setting = ini_getbool("SCSI", "SdScrub", false, CONFIGFILE);
+        if (g_writesame_trim || g_scrub_setting)
         {
             // Whether erased blocks read back as zeros is a property of each
             // card (SD SCR register, which this SD driver cannot read), so it is
@@ -147,19 +150,30 @@ static bool write_zero_sectors(ImageBackingStore &file, uint32_t bytesPerSector,
     return true;
 }
 
-bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lba, uint32_t count, uint32_t *releasedSectors)
+// Where a request to clear count logical sectors from lba can be released with
+// the card's erase: whole erase units in absolute card sectors, which are
+// entirely inside whole physical units of the image.
+typedef struct
 {
-    if (releasedSectors)
-    {
-        *releasedSectors = 0;
-    }
+    uint64_t erase_first;   // first and one past the last SD sector to erase
+    uint64_t erase_end;
+    uint32_t head_end;      // logical sectors [lba, head_end) and
+    uint32_t tail_start;    // [tail_start, lba + count) are not covered by it
+    uint32_t bgn;           // first SD sector of the image
+    uint32_t unit_bytes;    // physical unit of the image (see below)
+    uint32_t unit_sectors;  // logical sectors per physical unit
+} erase_plan_t;
 
-    uint32_t au = 0;
+// Returns false if no erase unit can be released (the image is not read
+// directly from the card, the layout is not understood, or the range is too
+// small).
+static bool plan_erase(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lba, uint32_t count, uint32_t au, erase_plan_t *plan)
+{
     uint32_t bgn = 0;
     uint8_t mode = 0;
-    if (count == 0 || !sdEraseReadsAsZero(&au) || !g_writesame_trim || au == 0 || !file.linearSdMapping(&bgn, &mode))
+    if (au == 0 || !file.linearSdMapping(&bgn, &mode))
     {
-        return write_zero_sectors(file, bytesPerSector, lba, count);
+        return false;
     }
 
     // One physical unit is what a gapped layout stores together (its padding
@@ -180,7 +194,7 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
             unit_sectors = GAP_PPC_GROUP_SECTORS;
             break;
         default:
-            return write_zero_sectors(file, bytesPerSector, lba, count);
+            return false;
     }
 
     // Physical byte range (within the image) of the units that the request
@@ -190,7 +204,7 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
     uint64_t end_unit = ((uint64_t)lba + count) / unit_sectors;
     if (end_unit <= first_unit)
     {
-        return write_zero_sectors(file, bytesPerSector, lba, count);
+        return false;
     }
     uint64_t phys_start = first_unit * unit_bytes;
     uint64_t phys_end = end_unit * unit_bytes;
@@ -204,47 +218,43 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
     uint64_t erase_end = sd_end / au * au; // exclusive
     if (erase_end <= erase_first || erase_end > 0xFFFFFFFFULL) // the erase command takes 32 bit sector numbers
     {
-        return write_zero_sectors(file, bytesPerSector, lba, count);
-    }
-
-    // Back to image positions: the logical sectors in front of and behind the
-    // erased range, including a unit the range starts or ends in, are
-    // written as zeros the normal way.
-    uint64_t erase_start_off = (erase_first - bgn) * 512;
-    uint64_t erase_end_off = (erase_end - bgn) * 512;
-    const uint64_t request_end = (uint64_t)lba + count; // exclusive; may not fit 32 bits on a huge disk
-    uint32_t head_end = (uint32_t)((erase_start_off + unit_bytes - 1) / unit_bytes * unit_sectors);
-    uint32_t tail_start = (uint32_t)(erase_end_off / unit_bytes * unit_sectors);
-
-    if (!write_zero_sectors(file, bytesPerSector, lba, head_end - lba))
-    {
         return false;
     }
 
-    file.flush();
+    // Back to image positions: the logical sectors in front of and behind the
+    // erased range, including a unit the range starts or ends in.
+    uint64_t erase_start_off = (erase_first - bgn) * 512;
+    uint64_t erase_end_off = (erase_end - bgn) * 512;
 
+    plan->erase_first = erase_first;
+    plan->erase_end = erase_end;
+    plan->head_end = (uint32_t)((erase_start_off + unit_bytes - 1) / unit_bytes * unit_sectors);
+    plan->tail_start = (uint32_t)(erase_end_off / unit_bytes * unit_sectors);
+    plan->bgn = bgn;
+    plan->unit_bytes = unit_bytes;
+    plan->unit_sectors = unit_sectors;
+    return true;
+}
+
+// Erases SD sectors [first, end) in chunks. Returns false if the card refused,
+// with *failedAt the first sector of the chunk that was not erased.
+static bool erase_sectors(uint64_t first, uint64_t end, uint32_t au, uint32_t *releasedSectors, uint64_t *failedAt)
+{
     uint32_t chunk = SD_ZERO_ERASE_CHUNK_SECTORS / au * au;
     if (chunk == 0)
     {
         chunk = au;
     }
 
-    for (uint64_t s = erase_first; s < erase_end; )
+    for (uint64_t s = first; s < end; )
     {
-        uint64_t e = s + chunk < erase_end ? s + chunk : erase_end;
+        uint64_t e = s + chunk < end ? s + chunk : end;
         platform_reset_watchdog();
 
         if (!SD.card()->erase((uint32_t)s, (uint32_t)(e - 1)))
         {
-            // The card refused: write zeros the normal way for everything
-            // not erased yet, starting at the unit containing this chunk.
-            uint32_t from = (uint32_t)(((s - bgn) * 512) / unit_bytes * unit_sectors);
-            if (from < lba)
-            {
-                from = lba;
-            }
-            logmsg("SdTrim: erase failed at sector ", s, ", writing the remaining zeros");
-            return write_zero_sectors(file, bytesPerSector, from, (uint32_t)(request_end - from));
+            *failedAt = s;
+            return false;
         }
 
         if (releasedSectors)
@@ -253,6 +263,91 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
         }
         s = e;
     }
+    return true;
+}
 
-    return write_zero_sectors(file, bytesPerSector, tail_start, (uint32_t)(request_end - tail_start));
+bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lba, uint32_t count, uint32_t *releasedSectors)
+{
+    if (releasedSectors)
+    {
+        *releasedSectors = 0;
+    }
+
+    uint32_t au = 0;
+    erase_plan_t plan;
+    const uint64_t request_end = (uint64_t)lba + count; // exclusive; may not fit 32 bits on a huge disk
+    if (count == 0 || !sdEraseReadsAsZero(&au) || !g_writesame_trim ||
+        !plan_erase(file, bytesPerSector, lba, count, au, &plan))
+    {
+        return write_zero_sectors(file, bytesPerSector, lba, count);
+    }
+
+    // The sectors in front of and behind the erased range, including a unit
+    // the range starts or ends in, are written as zeros the normal way.
+    if (!write_zero_sectors(file, bytesPerSector, lba, plan.head_end - lba))
+    {
+        return false;
+    }
+
+    file.flush();
+
+    uint64_t failed_at = 0;
+    if (!erase_sectors(plan.erase_first, plan.erase_end, au, releasedSectors, &failed_at))
+    {
+        // The card refused: write zeros the normal way for everything
+        // not erased yet, starting at the unit containing this chunk.
+        uint32_t from = (uint32_t)(((failed_at - plan.bgn) * 512) / plan.unit_bytes * plan.unit_sectors);
+        if (from < lba)
+        {
+            from = lba;
+        }
+        logmsg("SdTrim: erase failed at sector ", failed_at, ", writing the remaining zeros");
+        return write_zero_sectors(file, bytesPerSector, from, (uint32_t)(request_end - from));
+    }
+
+    return write_zero_sectors(file, bytesPerSector, plan.tail_start, (uint32_t)(request_end - plan.tail_start));
+}
+
+bool sdUnmapAvailable(uint32_t *unitSectors)
+{
+    // Only looks at the result of the measurement that sdTrimStart() makes
+    // after boot and after a card change: measuring needs a temporary file on
+    // the card, which must not happen while a host is using the card.
+    if (g_gate != GATE_OPEN || !g_scrub_setting || g_gate_unit_sectors == 0 ||
+        g_gate_worst_erase_ms > SD_UNMAP_MAX_ERASE_MS)
+    {
+        return false;
+    }
+    if (unitSectors)
+    {
+        *unitSectors = g_gate_unit_sectors;
+    }
+    return true;
+}
+
+void sdUnmapSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lba, uint32_t count, uint32_t *releasedSectors)
+{
+    if (releasedSectors)
+    {
+        *releasedSectors = 0;
+    }
+
+    uint32_t au = 0;
+    erase_plan_t plan;
+    if (count == 0 || !sdUnmapAvailable(&au) || !plan_erase(file, bytesPerSector, lba, count, au, &plan))
+    {
+        return;
+    }
+
+    // Anything the image still has cached for this range must reach the card
+    // before it is erased, or it would be written back over the erased range.
+    file.flush();
+
+    uint64_t failed_at = 0;
+    if (!erase_sectors(plan.erase_first, plan.erase_end, au, releasedSectors, &failed_at))
+    {
+        // An UNMAP is only a hint, the data of a range that could not be
+        // released simply stays as it is.
+        logmsg("SdTrim: erase for UNMAP failed at sector ", failed_at);
+    }
 }
