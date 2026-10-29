@@ -213,7 +213,7 @@ bool SdioCard::begin(SdioConfig sdioConfig)
     uint8_t* stat_pointer = (uint8_t*) &g_sdio_sds;
     if (!checkReturnOk(rp2040_sdio_command_R1(CMD55, g_sdio_rca, &reply)) ||
         !checkReturnOk(rp2040_sdio_command_R1(ACMD13, 0, &reply)) ||
-        !checkReturnOk(receive_status_register(stat_pointer)))
+        !checkReturnOk(receive_register(stat_pointer, sizeof(sds_t))))
     {
         dbgmsg("SDIO failed to get SD Status");
         return false;
@@ -224,7 +224,7 @@ bool SdioCard::begin(SdioConfig sdioConfig)
     uint8_t* config_pointer = (uint8_t*) &g_sdio_scr;
     if (!checkReturnOk(rp2040_sdio_command_R1(CMD55, g_sdio_rca, &reply)) ||
         !checkReturnOk(rp2040_sdio_command_R1(ACMD51, 0, &reply)) ||
-        !checkReturnOk(receive_status_register(config_pointer)))
+        !checkReturnOk(receive_register(config_pointer, sizeof(scr_t))))
     {
         dbgmsg("SDIO failed to get SD Configuration register");
         return false;
