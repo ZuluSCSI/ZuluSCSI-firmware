@@ -149,6 +149,15 @@ at reboot time, or when a card is inserted. Use this value with e. g. `gdisk` to
 set the desired alignment  by issuing `x` (extra functionality) and `l` (set the
 sector alignment value).
 
+If a raw range reaches into the SD card's own file system (the volume that holds the
+image files and `zuluscsi.ini`), the host can change that file system. This includes
+the whole card, given by `RAW:0:0xFFFFFFFF` or by the raw fallback when no image is
+found. ZuluSCSI then does not write `zululog.txt` or the crash log to the card, because
+both sides keep their own copy of the directory and allocation data and would overwrite
+each other's changes. The messages are still available on the USB serial console. A raw
+partition behind that file system, such as `Partition = 2` on a card whose first
+partition is the boot volume, has no such restriction.
+
 ### Image directories (swappable media)
 
 Instead of a single file, a device can be pointed at a directory of images that are

@@ -278,6 +278,7 @@ bool scsiDiskTypeIsRemovable(S2S_CFG_TYPE type)
 /***********************/
 
 extern SdFs SD;
+extern bool g_sdcard_present;
 SdDevice sdDev = {2, 256 * 1024 * 1024 * 2}; /* For SCSI2SD */
 
 image_config_t g_DiskImages[S2S_MAX_TARGETS];
@@ -1861,6 +1862,31 @@ image_config_t &scsiDiskGetImageConfig(int target_idx)
 {
     assert(target_idx >= 0 && target_idx < S2S_MAX_TARGETS);
     return g_DiskImages[target_idx];
+}
+
+bool scsiDiskExposesCardFileSystem()
+{
+    FsVolume *vol = SD.vol();
+    if (!g_sdcard_present || !vol)
+    {
+        return false;
+    }
+
+    // The file system occupies the sectors from the start of the card (or the
+    // start of its partition) to the end of its last cluster. Counting from
+    // sector 0 can only make this answer "yes" more often, never less often.
+    uint64_t fs_end = (uint64_t)vol->dataStartSector() + (uint64_t)vol->clusterCount() * vol->sectorsPerCluster();
+
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        uint32_t bgn = 0;
+        uint32_t end = 0;
+        if (g_DiskImages[i].file.isOpen() && g_DiskImages[i].file.rawSectorRange(&bgn, &end) && bgn < fs_end)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void diskEjectAction(uint8_t buttonId)

@@ -99,6 +99,10 @@ public:
     // Is this in Raw mode? by passing the file system
     bool isRaw();
 
+    // For a raw image (RAW:, PART:n, or the raw fallback): the first and the
+    // last SD card sector it gives the host access to. False for other images.
+    bool rawSectorRange(uint32_t* bgnSector, uint32_t* endSector);
+
     // Is this internal ROM drive in microcontroller flash?
     bool isRom();
 

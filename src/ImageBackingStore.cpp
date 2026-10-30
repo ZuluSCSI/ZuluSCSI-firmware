@@ -601,6 +601,18 @@ bool ImageBackingStore::isRaw()
     return m_israw;
 }
 
+bool ImageBackingStore::rawSectorRange(uint32_t* bgnSector, uint32_t* endSector)
+{
+    if (!m_israw)
+    {
+        return false;
+    }
+
+    *bgnSector = m_bgnsector;
+    *endSector = m_endsector;
+    return true;
+}
+
 bool ImageBackingStore::isRom()
 {
     return m_isrom;
