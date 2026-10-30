@@ -135,7 +135,22 @@ void init_logfile()
 #endif
 
   if (g_rawdrive_active)
+  {
+    // The host can write to the card's file system, so ZuluSCSI must not:
+    // the host and ZuluSCSI each keep their own copy of the directory and
+    // allocation data, and whoever writes second overwrites the other's
+    // changes (lost files, clusters shared between files, log text in the
+    // config file). A log file that was opened before the images were known
+    // is closed here.
+    if (g_log_to_sd)
+    {
+      logmsg("The host has raw access to the SD card's file system, no further log messages will be written to ", LOGFILE);
+      save_logfile(true);
+      g_log_to_sd = false;
+    }
+    g_logfile.close();
     return;
+  }
 
   static bool first_open_after_boot = true;
 
@@ -1758,6 +1773,10 @@ static void reinitSCSI(bool power_on_with_sd)
       blinkStatus(BLINK_ERROR_NO_IMAGES);
     }
   }
+
+  // Known once all images are open; read by init_logfile() and the crash
+  // log saving, which must not write to a file system the host can change.
+  g_rawdrive_active = scsiDiskExposesCardFileSystem();
 
   scsiPhyReset();
   scsiDiskInit();

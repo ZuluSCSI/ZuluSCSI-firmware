@@ -229,6 +229,16 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen);
 // Get pointer to extended image configuration based on target idx
 image_config_t &scsiDiskGetImageConfig(int target_idx);
 
+// True if a target gives the host raw access to the part of the SD card that
+// holds the card's own file system (the one with the image files, the config
+// file and the log file): a raw image that starts before the end of that file
+// system, which includes the whole card when no image was found. Such a host
+// can change the file system at any time, so ZuluSCSI must not write files
+// there; its own copy of the directory and allocation data would not be
+// current. A raw image behind the file system (a partition after the first
+// one) is no problem.
+bool scsiDiskExposesCardFileSystem();
+
 // Start data transfer from disk image to SCSI bus
 // Can be called by device type specific command implementations (such as READ CD)
 void scsiDiskStartRead(uint32_t lba, uint32_t blocks);
