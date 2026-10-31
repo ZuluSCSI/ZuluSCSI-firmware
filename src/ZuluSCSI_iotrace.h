@@ -58,7 +58,7 @@
  * question by dropping the SD-card file sink entirely and emitting these
  * records to the console instead, captured via the same `screen` logging
  * already used for screenlog.0 -- that pipeline has never shown corruption
- * anywhere in this investigation. Trade-off to weigh before committing:
+ * so far. Trade-off to weigh before committing:
  * this is instrumentation of SD-access *timing*, and formatting each
  * record to text on the hot path (vs. today's raw memcpy-style binary
  * append) adds real CPU cost that could perturb the very numbers being

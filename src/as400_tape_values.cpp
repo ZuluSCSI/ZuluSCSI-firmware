@@ -134,8 +134,8 @@ const size_t as400_tape_cisc_mode_sense_all_pagesLen = sizeof(as400_tape_cisc_mo
 // the wrong thing to match, since it's the drive's *target* format that
 // matters, not which cartridge some incidental test image came from. Left
 // as a fixed default rather than derived per-image, since the .tap format
-// itself carries no density/medium-type metadata to derive it from (see
-// project notes) -- override via MediumType= in ini for anything else.
+// itself carries no density/medium-type metadata to derive it from --
+// override via MediumType= in ini for anything else.
 const uint8_t AS400TapeCISCMediumType = 0x25;
 
 
