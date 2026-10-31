@@ -62,6 +62,7 @@ extern "C" {
 #include <ZuluSCSI_platform_config.h>
 #ifdef PLATFORM_AS400
 #include "as400_values.h"
+#include "ZuluSCSI_sd_zero.h"
 #endif
 
 #ifndef PLATFORM_MAX_SCSI_SPEED
@@ -3970,6 +3971,41 @@ void scsiDiskWriteSame(uint32_t lba, uint32_t blocks)
     scsiEnterPhase(DATA_OUT);
     scsiRead(scsiDev.data, bytesPerSector, &parityError);
 
+    // A block of zeros is the usual way to clear a range quickly. Whole erase
+    // units inside it can then be released with the SD card's erase instead of
+    // programming every zero into the flash (only with SdTrim = Yes and a card
+    // that reads erased blocks back as zeros, see ZuluSCSI_sd_zero.h).
+    bool pattern_is_zero = true;
+    for (uint32_t i = 0; i < bytesPerSector; i++)
+    {
+        if (scsiDev.data[i] != 0)
+        {
+            pattern_is_zero = false;
+            break;
+        }
+    }
+
+    if (pattern_is_zero)
+    {
+        uint32_t released_sectors = 0;
+        bool zero_ok = sdZeroSectors(img.file, bytesPerSector, lba, writesame_count, &released_sectors);
+        scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
+
+        if (!zero_ok)
+        {
+            logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+        }
+        else if (released_sectors > 0)
+        {
+            dbgmsg("------ Write Same of zeros released ", (int)(released_sectors / 2048), " MB with the SD card's erase");
+        }
+        scsiDev.phase = STATUS;
+        return;
+    }
+
     const uint32_t buffer_sectors = sizeof(scsiDev.data) / bytesPerSector;
     uint32_t sectors_to_write = std::min(writesame_count, buffer_sectors);
     uint32_t bytes_to_write = sectors_to_write * bytesPerSector;
@@ -4000,6 +4036,7 @@ void scsiDiskWriteSame(uint32_t lba, uint32_t blocks)
         writesame_count -= sectors_to_write;
         platform_reset_watchdog();
     }
+    scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
     scsiDev.phase = STATUS;
 
 }
