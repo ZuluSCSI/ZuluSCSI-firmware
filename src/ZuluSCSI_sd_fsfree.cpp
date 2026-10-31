@@ -285,7 +285,11 @@ bool sdFsRangeFree(uint32_t firstSector, uint32_t sectors)
     }
 
     // Anything the file system library has not written out yet, such as a
-    // cluster a file has just been given, must be on the card.
+    // cluster a file has just been given, must be on the card. This is done
+    // for every unit on purpose: the library writes the data of a new cluster
+    // before its allocation bit, so a bit read from a stale copy could call
+    // a cluster that already holds data free. The cost is one sector read per
+    // unit (a unit is megabytes), because the cached sector is dropped as well.
     if (!flush_file_system())
     {
         return false;
