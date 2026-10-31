@@ -42,6 +42,8 @@ typedef enum
     GATE_CLOSED
 } gate_state_t;
 
+extern bool g_rawdrive_active;
+
 static gate_state_t g_gate = GATE_UNKNOWN;
 static uint32_t g_gate_unit_sectors = 0;
 
@@ -69,6 +71,12 @@ bool sdEraseReadsAsZero(uint32_t *unitSectors)
             {
                 // The card says so itself, no need to test.
                 logmsg("SdTrim: the card's SCR register says erased blocks read back as ones, zeros are written normally");
+            }
+            else if (g_rawdrive_active)
+            {
+                // The test writes a file into the card's file system, which
+                // the host may be changing at the same time.
+                logmsg("SdTrim: the card's erase is not tested, a target gives the host direct access to the card's file system. Zeros are written normally");
             }
             else if (!sdTrimMeasure(&result, false))
             {

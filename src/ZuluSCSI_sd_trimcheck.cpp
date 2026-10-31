@@ -26,6 +26,8 @@
 #include <ZuluSCSI_log.h>
 #include <string.h>
 
+extern bool g_rawdrive_active;
+
 // Non-destructive for the user's data: everything this check erases is in a
 // temporary file that it creates itself and deletes afterwards.
 
@@ -144,6 +146,14 @@ static void report_card()
 bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose)
 {
     memset(out, 0, sizeof(*out));
+
+    if (g_rawdrive_active)
+    {
+        // The temporary file lives in the card's file system, which the host
+        // may be changing at the same time (two writers corrupt it).
+        logmsg("SD card erase (TRIM) check not possible: a target gives the host direct access to the card's file system");
+        return false;
+    }
 
     scr_t scr;
     memset(&scr, 0, sizeof(scr));
