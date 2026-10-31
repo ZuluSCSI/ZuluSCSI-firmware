@@ -66,7 +66,7 @@ extern const size_t  as400_tape_cisc_mode_sense_all_pagesLen;
 // MODE SENSE header "Medium Type" byte for a *loaded* cartridge, matching
 // this exact captured drive (product "IBM 4100"). Real hardware only
 // reports 0x00 ("no cartridge") when the drive is genuinely empty --
-// confirmed across 5 real drives x 4 cartridges, see project notes -- so
+// confirmed across 5 real drives x 4 cartridges -- so
 // the compiled-in identity above (itself captured with no cartridge
 // loaded) must not be served as-is once a tape image is actually
 // configured. 0x25 (DC9120) is this drive's #6379 identity's own native

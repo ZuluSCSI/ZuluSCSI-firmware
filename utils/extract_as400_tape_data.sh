@@ -17,7 +17,7 @@
 #
 # Deliberately does NOT capture LOG SENSE or attempt VPD/EVPD pages beyond
 # a courtesy check of page 0x00 --- LOG SENSE support for AS/400 tape is a
-# deliberately deferred feature (see project memory), and CISC-era drives
+# deliberately deferred feature, and CISC-era drives
 # are already confirmed to have no VPD/EVPD support at all; capturing it
 # unconditionally would just add noise for this specific diagnostic. If a
 # real capture for a brand-new tape identity (INQUIRY+VPD, for compiling

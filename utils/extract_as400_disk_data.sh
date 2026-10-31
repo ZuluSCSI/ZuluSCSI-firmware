@@ -278,9 +278,10 @@ done
 # VPD page 0x01 on these drives carries a 12-byte FRU/part-number field at
 # offset 5 (byte 0: peripheral qualifier/type, byte 1: 0x01 page code, bytes
 # 2-3: page length, byte 4: a flag/count byte, bytes 5-16: the FRU string,
-# space-padded, e.g. "59H7001     "). Confirmed against this session's real
-# hardware captures. This is the number printed on the physical drive --- see
-# project memory for why that's the primary key here and Feature+Model is not.
+# space-padded, e.g. "59H7001     "). Confirmed against real captures from
+# several drives. This is the number printed on the physical drive, which is
+# why it is the primary key here: Feature+Model is a system-level packaging
+# designation and is not in the drive's own data.
 if [ -z "$LABEL" ]; then
     VPD01_FILE="$SCRATCHDIR/vpd_01.bin"
     AUTO_LABEL=""
@@ -327,7 +328,7 @@ info "MODE SENSE 0x3F: $MS_SIZE bytes"
 # Decode CHS geometry for human review, if pages 0x03/0x04 are present in the
 # response. This is informational only (redundant with the raw hex capture);
 # it exists so a future reader doesn't have to hand-decode SCSI mode pages the
-# way this session did.
+# by hand.
 GEOMETRY_COMMENT=""
 if [ "$MS_SIZE" -ge 4 ]; then
     BLOCKDESCLEN=$(be_uint "$MS_RAW" 3 1)
@@ -445,7 +446,7 @@ fi
     echo "; AS/400 disk profile '$LABEL', captured from $DEV on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "; Label is the drive's own part number (from VPD page 0x01, or given explicitly)."
     echo "; Feature+Model (e.g. #6607) is a system-level packaging designation, not"
-    echo "; present in the drive's own INQUIRY/VPD data --- see project memory for why."
+    echo "; present in the drive's own INQUIRY/VPD data."
     echo "; ==========================================================================="
     echo "[$LABEL]"
     cat "$SECTION_BODY"
