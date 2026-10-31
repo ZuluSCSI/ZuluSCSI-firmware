@@ -87,7 +87,7 @@ static bool read_unit(uint32_t first, uint32_t unit, readback_t &rb, uint32_t &r
                 uint32_t w = *words;
                 if (w == 0x00000000) rb.zeros += 4;
                 else if (w == 0xFFFFFFFF) rb.ones += 4;
-                else if (w == 0x01010101 * TRIMCHECK_PATTERN) rb.pattern += 4;
+                else if (w == 0x01010101u * TRIMCHECK_PATTERN) rb.pattern += 4;
                 else break; // mixed word: classify the rest byte by byte
             }
         }
@@ -192,7 +192,13 @@ bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose)
     // Room for the test units plus one unit of slack to reach an aligned start,
     // and one more as neighbours to check for collateral erasure.
     const uint32_t file_sectors = (TRIMCHECK_UNITS + 2) * unit;
-    uint64_t free_space = (uint64_t)SD.freeClusterCount() * SD.bytesPerCluster();
+    int32_t free_clusters = SD.freeClusterCount();
+    if (free_clusters < 0)
+    {
+        logmsg("  Cannot determine the free space of the card, giving up");
+        return false;
+    }
+    uint64_t free_space = (uint64_t)free_clusters * SD.bytesPerCluster();
     if ((uint64_t)file_sectors * 512 + 1024 * 1024 > free_space)
     {
         logmsg("  Not enough free space for the temporary test file (", (int)((uint64_t)file_sectors * 512 / (1024 * 1024)), " MB), giving up");
@@ -218,9 +224,14 @@ bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose)
     // Fill it with a pattern, so that the effect of the erase is visible.
     memset(scsiDev.data, TRIMCHECK_PATTERN, sizeof(scsiDev.data));
     bool ok = true;
-    for (uint64_t done = 0; ok && done < (uint64_t)file_sectors * 512; done += sizeof(scsiDev.data))
+    const uint64_t file_bytes = (uint64_t)file_sectors * 512;
+    for (uint64_t done = 0; ok && done < file_bytes; done += sizeof(scsiDev.data))
     {
-        ok = file.write(scsiDev.data, sizeof(scsiDev.data)) == (int)sizeof(scsiDev.data);
+        // The last block is short when the file is not a multiple of the buffer
+        // (small erase units): writing more would grow the file past what
+        // contiguousRange() was asked about.
+        uint32_t n = file_bytes - done < sizeof(scsiDev.data) ? (uint32_t)(file_bytes - done) : (uint32_t)sizeof(scsiDev.data);
+        ok = file.write(scsiDev.data, n) == (int)n;
         platform_reset_watchdog();
     }
     ok = ok && file.sync();
@@ -234,7 +245,7 @@ bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose)
         return false;
     }
 
-    VLOG("  Test: erasing ", TRIMCHECK_UNITS, " x ", (int)unit, " sectors (", (int)(unit / 2048), " MB each) at sector ", (int)first,
+    VLOG("  Test: erasing ", TRIMCHECK_UNITS, " x ", (int)unit, " sectors (", (int)(unit / 2048), " MB each) at sector ", first,
            ", previously filled with 0xA5");
 
     uint32_t verdict_zeros = 0, verdict_ones = 0, verdict_pattern = 0, verdict_other = 0;

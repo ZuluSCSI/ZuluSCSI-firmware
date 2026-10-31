@@ -113,6 +113,10 @@ static bool write_zero_sectors(ImageBackingStore &file, uint32_t bytesPerSector,
 
     memset(scsiDev.data, 0, sizeof(scsiDev.data));
     const uint32_t sectors_per_buffer = sizeof(scsiDev.data) / bytesPerSector;
+    if (sectors_per_buffer == 0)
+    {
+        return false; // sectors larger than the buffer: nothing could be written
+    }
 
     if (!file.seek((uint64_t)lba * bytesPerSector))
     {
@@ -187,7 +191,7 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
     uint64_t sd_end = bgn + phys_end / 512; // exclusive
     uint64_t erase_first = (sd_first + au - 1) / au * au;
     uint64_t erase_end = sd_end / au * au; // exclusive
-    if (erase_end <= erase_first)
+    if (erase_end <= erase_first || erase_end > 0xFFFFFFFFULL) // the erase command takes 32 bit sector numbers
     {
         return write_zero_sectors(file, bytesPerSector, lba, count);
     }
@@ -197,6 +201,7 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
     // written as zeros the normal way.
     uint64_t erase_start_off = (erase_first - bgn) * 512;
     uint64_t erase_end_off = (erase_end - bgn) * 512;
+    const uint64_t request_end = (uint64_t)lba + count; // exclusive; may not fit 32 bits on a huge disk
     uint32_t head_end = (uint32_t)((erase_start_off + unit_bytes - 1) / unit_bytes * unit_sectors);
     uint32_t tail_start = (uint32_t)(erase_end_off / unit_bytes * unit_sectors);
 
@@ -227,8 +232,8 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
             {
                 from = lba;
             }
-            logmsg("SdTrim: erase failed at sector ", (int)s, ", writing the remaining zeros");
-            return write_zero_sectors(file, bytesPerSector, from, lba + count - from);
+            logmsg("SdTrim: erase failed at sector ", s, ", writing the remaining zeros");
+            return write_zero_sectors(file, bytesPerSector, from, (uint32_t)(request_end - from));
         }
 
         if (releasedSectors)
@@ -238,5 +243,5 @@ bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lb
         s = e;
     }
 
-    return write_zero_sectors(file, bytesPerSector, tail_start, lba + count - tail_start);
+    return write_zero_sectors(file, bytesPerSector, tail_start, (uint32_t)(request_end - tail_start));
 }
