@@ -14,8 +14,8 @@
 #include <stdint.h>
 #include "ImageBackingStore.h"
 
-// True if the card is known to read erased blocks back as zeros (and SdTrim is
-// on). Measured with a temporary file the first time it is asked, which takes a
+// True if the card is known to read erased blocks back as zeros (and SdTrim or
+// SdScrub is on). Measured with a temporary file the first time it is asked, which takes a
 // few seconds; the result is kept until sdEraseGateReset(). If it returns true,
 // *unitSectors (when given) is the card's erase unit in 512-byte sectors.
 bool sdEraseReadsAsZero(uint32_t *unitSectors = nullptr);
@@ -34,9 +34,11 @@ uint32_t sdEraseWorstMs();
 // 512-byte SD sectors were released instead of written.
 bool sdZeroSectors(ImageBackingStore &file, uint32_t bytesPerSector, uint32_t lba, uint32_t count, uint32_t *releasedSectors = nullptr);
 
-// Slowest measured erase of one unit that still allows announcing UNMAP, in
-// milliseconds: one UNMAP command may release several units back to back.
-#define SD_UNMAP_MAX_ERASE_MS 100
+// Slowest measured erase of one unit that still allows using the card's erase
+// for UNMAP and for the background scrubber, in milliseconds: an erase cannot
+// be interrupted and keeps the next host command waiting, and one UNMAP
+// command may release several units back to back.
+#define SD_ERASE_MAX_MS 100
 
 // True if UNMAP can be announced and honoured: [SCSI] SdScrub = Yes, the card
 // reads erased blocks back as zeros and erases a unit fast enough, as measured
