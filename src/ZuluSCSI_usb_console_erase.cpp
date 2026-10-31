@@ -32,12 +32,11 @@
 #define USB_CONSOLE_ERASE_SERIAL_PRINT_TIMEOUT_MS 30
 #endif
 
-// Chunk size cap, independent of card size -- see the design discussion
-// in project memory (project_as400_sdcard_trim_feature.md): a chunk size
-// that scales with card size (e.g. a flat 1/100th) doesn't bound
-// worst-case wait time on a very large card, which defeats the point of
-// chunking (progress feedback + a bounded wait per step) in the first
-// place. Chunk size actually used is min(total_sectors/100, this cap),
+// Chunk size cap, independent of card size: a chunk size that scales with
+// card size (e.g. a flat 1/100th) doesn't bound worst-case wait time on a
+// very large card, which defeats the point of chunking (progress feedback
+// + a bounded wait per step) in the first place. Chunk size actually used
+// is min(total_sectors/100, this cap),
 // so typical/small cards still get clean ~1% steps, while large cards
 // get finer (more, smaller) chunks instead of a few huge ones.
 //
