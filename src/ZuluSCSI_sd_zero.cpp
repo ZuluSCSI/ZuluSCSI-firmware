@@ -314,7 +314,7 @@ bool sdUnmapAvailable(uint32_t *unitSectors)
     // after boot and after a card change: measuring needs a temporary file on
     // the card, which must not happen while a host is using the card.
     if (g_gate != GATE_OPEN || !g_scrub_setting || g_gate_unit_sectors == 0 ||
-        g_gate_worst_erase_ms > SD_UNMAP_MAX_ERASE_MS)
+        g_gate_worst_erase_ms > SD_ERASE_MAX_MS)
     {
         return false;
     }

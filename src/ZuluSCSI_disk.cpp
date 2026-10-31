@@ -2377,7 +2377,7 @@ static void doReadCapacity()
 // One UNMAP may release this much in total per descriptor, and carry this many
 // descriptors; announced in the Block Limits VPD page. Releasing a range is a
 // series of SD erases that nothing can interrupt, so the command time is
-// bounded: at most 8 erase units of 4 MB at (at most) SD_UNMAP_MAX_ERASE_MS.
+// bounded: at most 8 erase units of 4 MB at (at most) SD_ERASE_MAX_MS.
 #define UNMAP_MAX_BYTES (32UL * 1024 * 1024)
 #define UNMAP_MAX_DESCRIPTORS 4
 #define UNMAP_PARAM_MAX (8 + 16 * UNMAP_MAX_DESCRIPTORS)

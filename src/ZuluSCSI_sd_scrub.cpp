@@ -45,9 +45,9 @@
 // about a quarter of the card's time at most.
 #define SCRUB_REST_FACTOR 3
 
-// A card whose erase takes longer than this is not used; an erase cannot be
-// interrupted and keeps the next host command waiting.
-#define SCRUB_MAX_ERASE_MS 100
+// An erase that takes this many times the limit SD_ERASE_MAX_MS (measured
+// at start) stops the scrubber.
+#define SCRUB_ERASE_BAIL_FACTOR 4
 
 // Double blink every two seconds while a pass is running, to tell it from
 // SCSI activity.
@@ -170,7 +170,7 @@ static void scrub_one_unit(uint32_t now)
         uint32_t count = s.au_sectors - done < chunk_sectors ? s.au_sectors - done : chunk_sectors;
         if (!SD.card()->readSectors(first + done, scsiDev.data, count))
         {
-            logmsg("SD scrubber: reading sector ", (int)(first + done), " failed, stopping");
+            logmsg("SD scrubber: reading sector ", first + done, " failed, stopping");
             s.state = SCRUB_OFF;
             led_set(false);
             return;
@@ -190,9 +190,9 @@ static void scrub_one_unit(uint32_t now)
         bool erased = SD.card()->erase(first, first + s.au_sectors - 1);
         uint32_t erase_ms = millis() - e0;
 
-        if (!erased || erase_ms > 4 * SCRUB_MAX_ERASE_MS)
+        if (!erased || erase_ms > SCRUB_ERASE_BAIL_FACTOR * SD_ERASE_MAX_MS)
         {
-            logmsg("SD scrubber: erasing sector ", (int)first, erased ? " took too long" : " failed", ", stopping");
+            logmsg("SD scrubber: erasing sector ", first, erased ? " took too long" : " failed", ", stopping");
             s.state = SCRUB_OFF;
             led_set(false);
             return;
@@ -246,7 +246,7 @@ void sdTrimStart()
         return;
     }
 
-    if (sdEraseWorstMs() > SCRUB_MAX_ERASE_MS)
+    if (sdEraseWorstMs() > SD_ERASE_MAX_MS)
     {
         logmsg("SD scrubber: not started, erasing one unit of this card takes ", (int)sdEraseWorstMs(), " ms");
         return;
