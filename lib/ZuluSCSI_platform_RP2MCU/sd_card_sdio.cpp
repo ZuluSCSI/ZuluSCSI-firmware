@@ -251,6 +251,7 @@ static void sdiocard_error_monitor(SdioCard *card, sdio_status_t error)
 
             SdioConfig defcfg;
             card->begin(defcfg);
+            g_sdio_error = error;
         }
     }
 }
@@ -568,8 +569,10 @@ bool SdioCard::writeSectors(uint32_t sector, const uint8_t* src, size_t n)
     if (g_sdio_error != SDIO_OK)
     {
         logmsg("SdioCard::writeSectors(", sector, ",...,", (int)n, ") failed: ", (int)g_sdio_error);
+        sdio_status_t error = g_sdio_error;
         stopTransmission(true);
-        sdiocard_error_monitor(this, g_sdio_error);
+        g_sdio_error = error;
+        sdiocard_error_monitor(this, error);
         return false;
     }
     else
@@ -667,8 +670,10 @@ bool SdioCard::readSectors(uint32_t sector, uint8_t* dst, size_t n)
     if (g_sdio_error != SDIO_OK)
     {
         logmsg("SdioCard::readSectors(", sector, ",...,", (int)n, ") failed: ", (int)g_sdio_error);
+        sdio_status_t error = g_sdio_error;
         stopTransmission(true);
-        sdiocard_error_monitor(this, g_sdio_error);
+        g_sdio_error = error;
+        sdiocard_error_monitor(this, error);
         return false;
     }
     else
