@@ -1,0 +1,98 @@
+name: Membrowse - Memory reports
+on: [push, pull_request]
+
+jobs:
+  setup-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      pio-version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2                 # parent commit, for the diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      # Fetch the latest available PlatformIO version from PyPI
+      - name: Get PlatformIO version
+        id: get-version
+        
+        run: |
+          # Use pip index to get versions and extract the latest one using grep/sed
+          PIO_VER=$(pip index versions platformio | grep -E "Available versions:" | sed -E 's/Available versions: //g' | awk -F', ' '{print $1}')
+          echo "PlatformIO Version: $PIO_VER"
+          echo "version=$PIO_VER" >> $GITHUB_OUTPUT
+        
+      - name: Create and Cache Virtual Environment
+        id: cache-venv
+        uses: actions/cache@v6
+        with:
+          path: .venv
+          # Uses the file hash of requirements.txt to uniquely identify this environment
+          key: ${{ runner.os }}-pio-${{ steps.get-version.outputs.version }}
+
+      - name: Install dependencies (only runs if cache misses)
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install platformio
+
+  loop-items:
+    needs: setup-environment
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false 
+      matrix:
+        include:
+          - target: ZuluSCSI_Blaster
+          - target: ZuluSCSI_Wide
+          - target: ZuluSCSI_RP2040
+          - target: ZuluSCSI_Pico
+          - target: ZuluSCSI_Pico_DaynaPORT
+          - target: ZuluSCSI_Pico_2
+          - target: ZuluSCSI_Pico_2_DaynaPORT
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2                 # parent commit, for the diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - name: Load Shared PlatformIO Environment
+        uses: actions/cache@v6
+        with:
+          path: .venv
+          key: ${{ runner.os }}-pio-${{ needs.setup-environment.outputs.pio-version }}
+          fail-on-cache-miss: true
+
+      - name: Run PIO for RP2040 and RP2350 MCU targets
+        run: |
+          source .venv/bin/activate
+          pio run -e "${{ matrix.target }}"
+      - uses: membrowse/membrowse-action@v1
+        with:
+          elf: ".pio/build/${{ matrix.target }}/firmware.elf"
+          target_name: ${{ matrix.target }}
+          api_key: ${{ secrets.MEMBROWSE_API_KEY }}
+          ld:     ".pio/build/${{ matrix.target }}/rp_linker.ld"
+          map_file: ".pio/build/${{ matrix.target }}/zuluscsi.map"  # optional: per-library attribution
+
+      - uses: membrowse/membrowse-action/comment-action@v1
+        if: github.event_name == 'pull_request'
+        with:
+          api_key: ${{ secrets.MEMBROWSE_API_KEY }}
+          commit: ${{ github.event.pull_request.head.sha }}
+
+
+
