@@ -2,6 +2,8 @@ name: Build ZuluSCSI firmware
 
 on:
   push:
+    branches:
+      - main
     paths-ignore:
       - '**/*.md'
       - '**/*.txt'
@@ -10,9 +12,6 @@ on:
       - '**/*.md'
       - '**/*.txt'
   workflow_dispatch:
-    paths-ignore:
-      - '**/*.md'
-      - '**/*.txt'
 
 jobs:
   build_firmware:
