@@ -925,6 +925,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 #endif
     log_ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE, log_settings);
     log_ini_getbool("SCSI", "DisableStatusLED", false, CONFIGFILE, log_settings);
+    log_ini_getbool("SCSI", "SdTrim", false, CONFIGFILE, log_settings);
 
     log_ini_getl("SCSI", "InitiatorImageHandling", 0, CONFIGFILE, log_settings, &log_getl_initiator_img_handling);
     log_ini_getl("SCSI", "InitiatorID", 7, CONFIGFILE, log_settings);

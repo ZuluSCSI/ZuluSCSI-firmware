@@ -59,6 +59,7 @@
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_settings.h"
 #include "ZuluSCSI_disk.h"
+#include "ZuluSCSI_sd_zero.h"
 #include "ZuluSCSI_sca_hw_config.h"
 #include "ZuluSCSI_initiator.h"
 #include "ZuluSCSI_msc_initiator.h"
@@ -2533,6 +2534,7 @@ extern "C" void zuluscsi_main_loop(void)
       blink_cancel();
       LED_OFF();
       logmsg("SD card reinit succeeded");
+      sdEraseGateReset(); // a different card may erase differently
       print_sd_info();
       if (g_displayEnabled)
       {

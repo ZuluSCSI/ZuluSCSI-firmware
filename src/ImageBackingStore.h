@@ -141,6 +141,14 @@ public:
     // SD card, return the sector numbers.
     bool contiguousRange(uint32_t* bgnSector, uint32_t* endSector);
 
+    // For operations that act on whole SD card sectors, such as releasing
+    // zeroed space with the card's ERASE command: true only while the image
+    // is accessed directly on the card (no SdFat cache in between) and is not
+    // a copy-on-write or ROM image. Returns the SD sector where the image
+    // starts and its layout, a zuluscsi_align_unaligned_t value
+    // (ALIGN_UNALIGNED_OFF: logical sectors packed back to back).
+    bool linearSdMapping(uint32_t* bgnSector, uint8_t* alignMode);
+
     // Set current position for following read/write operations
     bool seek(uint64_t pos);
 
