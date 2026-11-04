@@ -21,6 +21,7 @@
 
 #include "ZuluSCSI_sd_scrub.h"
 #include "ZuluSCSI_sd_zero.h"
+#include "ZuluSCSI_sd_fsfree.h"
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI.h"
 #include "ZuluSCSI_disk.h"
@@ -68,6 +69,8 @@ static struct
     uint32_t first_au;       // where this pass started, to cover the card over many short sessions
     uint32_t done_aus;
     uint32_t released_aus;
+    uint32_t fs_free_aus;    // of them, units the file system reports as free
+    bool fs_usable;          // [SCSI] SdScrubFreeSpace and sdFsFreeStart() succeeded
     uint32_t next_log_percent;
     uint32_t pause_hours;
     uint32_t next_step_ms;
@@ -132,6 +135,7 @@ static void start_pass()
     s.state = SCRUB_RUNNING;
     s.done_aus = 0;
     s.released_aus = 0;
+    s.fs_free_aus = 0;
     s.next_log_percent = 10;
     s.first_au = (micros() ^ (millis() * 2654435761u)) % s.au_count;
     s.next_step_ms = millis();
@@ -145,8 +149,18 @@ static void finish_pass(uint32_t now)
     s.state = SCRUB_RESTING;
     s.resume_ms = now + s.pause_hours * 3600UL * 1000UL;
     led_set(false);
-    logmsg("SD scrubber: 100% of the card scrubbed, ", (int)((uint64_t)s.released_aus * s.au_sectors / 2048),
-           " MB released; the next pass starts in ", (int)s.pause_hours, " h (SdScrubPauseHours in zuluscsi.ini)");
+    if (s.fs_usable)
+    {
+        logmsg("SD scrubber: 100% of the card scrubbed, ", (int)((uint64_t)s.released_aus * s.au_sectors / 2048),
+               " MB released, of which ", (int)((uint64_t)s.fs_free_aus * s.au_sectors / 2048),
+               " MB free space of the file system; the next pass starts in ", (int)s.pause_hours,
+               " h (SdScrubPauseHours in zuluscsi.ini)");
+    }
+    else
+    {
+        logmsg("SD scrubber: 100% of the card scrubbed, ", (int)((uint64_t)s.released_aus * s.au_sectors / 2048),
+               " MB released; the next pass starts in ", (int)s.pause_hours, " h (SdScrubPauseHours in zuluscsi.ini)");
+    }
 }
 
 // Looks at one unit. Returns without doing anything to it if a host selects
@@ -158,8 +172,12 @@ static void scrub_one_unit(uint32_t now)
     const uint32_t chunk_sectors = sizeof(scsiDev.data) / 512;
     bool zero = true;
 
+    // Space that the file system does not use needs no reading: whatever it
+    // holds is not wanted.
+    bool from_fs = s.fs_usable && sdFsRangeFree(first, s.au_sectors);
+
     uint32_t t0 = millis();
-    for (uint32_t done = 0; done < s.au_sectors && zero; done += chunk_sectors)
+    for (uint32_t done = 0; !from_fs && done < s.au_sectors && zero; done += chunk_sectors)
     {
         if (bus_active())
         {
@@ -198,6 +216,10 @@ static void scrub_one_unit(uint32_t now)
             return;
         }
         s.released_aus++;
+        if (from_fs)
+        {
+            s.fs_free_aus++;
+        }
     }
 
     s.done_aus++;
@@ -266,12 +288,19 @@ void sdTrimStart()
 
     logmsg("SD scrubber: enabled, erase unit ", (int)(au / 2), " KB, waits for a quiet SCSI bus, pause between passes ",
            (int)s.pause_hours, " h");
+
+    if (ini_getbool("SCSI", "SdScrubFreeSpace", false, CONFIGFILE))
+    {
+        s.fs_usable = sdFsFreeStart();
+    }
     start_pass();
 }
 
 void sdScrubReset()
 {
     led_set(false);
+    sdFsFreeReset();
+    s.fs_usable = false;
     s.state = SCRUB_OFF;
     g_restart_pending = true;
 }
