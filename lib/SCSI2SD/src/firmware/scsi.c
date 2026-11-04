@@ -956,7 +956,7 @@ static void scsiReset()
 	// produced a second connection whose first TEST UNIT READY returned
 	// Status GOOD immediately (no unit attention, no not-ready, no
 	// START STOP UNIT), unlike a fresh boot or a mid-connection reset.
-	// Same bug shape as the scsiInit() fix earlier this session.
+	// Same bug shape as the scsiInit() fix.
 	for (int i = 0; i < S2S_MAX_TARGETS; ++i)
 	{
 		if (scsiDev.targets[i].unitAttention != POWER_ON_RESET)

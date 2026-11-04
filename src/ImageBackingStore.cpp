@@ -337,15 +337,15 @@ void ImageBackingStore::setupGapLayout(uint64_t physicalSizeBytes)
 // so a multi-sector request is one genuinely contiguous physical run and
 // can be handled as one transaction, not one per sector/group.
 //
-// Sizing: a real PlatformIO build (this session) measured free RAM at
+// Sizing: a real PlatformIO build measured free RAM at
 // exactly 20768 bytes on ZuluSCSI_Blaster and 38280 bytes on ZuluSCSI_Wide
 // (RAM: 96.0% / 92.7% of 524288 bytes total) -- ruling out the original
 // idea of one buffer sized to the largest possible CDB (~126KB worst case
 // under CISC), which would exceed Blaster's *entire* free RAM by roughly
 // 6x. 8KB is a deliberately conservative fraction of that real headroom
-// (specific values not yet re-measured after this session's own other
-// additions -- IOTrace, TRIM, this feature's own code -- so free RAM
-// today is likely less than either figure above), while still batching
+// (specific values not yet re-measured after later additions -- IOTrace,
+// TRIM, this feature's own code -- so free RAM today is likely less than
+// either figure above), while still batching
 // meaningfully more than one unit at a time: 8 CISC slots (8*1024=8192
 // bytes exactly) or 1 PPC group (4608 of the 8192 bytes; a second group
 // would need 9216, which doesn't fit) per transaction, versus 1 either
