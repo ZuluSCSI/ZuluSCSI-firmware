@@ -27,7 +27,7 @@
 #include "control.h"
 #include "scrolling_text.h"
 
-#define MAX_SCOLLERS 4
+#define MAX_SCOLLERS 2
 #define SCREEN_ID_UNINITIALIZED -100
 #define SCREEN_ID_OTHER 255
 #define SCREEN_ID_NO_PREVIOUS -1
