@@ -109,6 +109,17 @@
     #define I2S_DMA_IRQ_IDX 2
 #endif
 
+// Lite Pins
+#define GPIO_VARIANT_DETECT 24
+#define VARIANT_DETECT_VALUE_LITE 0
+#define SDIO_WP_LITE    25
+#define SDIO_CD_LITE    28
+#define PSRAM_CS        8
+#ifdef ENABLE_AUDIO_OUTPUT_I2S
+    #define GPIO_I2S_BCLK_LITE 9
+    #define GPIO_I2S_WS_LITE   10
+    #define GPIO_I2S_DOUT_LITE 11
+#endif
 
 // Other pins
 #define SWO_PIN 32
