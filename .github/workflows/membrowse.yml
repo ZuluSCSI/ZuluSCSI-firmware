@@ -1,6 +1,9 @@
 name: Membrowse - Memory reports
-on: [push, pull_request]
-
+on:
+  pull_request:
+  push:
+    branches:
+      - main
 jobs:
   setup-environment:
     runs-on: ubuntu-latest
@@ -110,12 +113,6 @@ jobs:
           api_key: ${{ secrets.MEMBROWSE_API_KEY }}
           ld:     ".pio/build/${{ matrix.target }}/rp_linker.ld"
           map_file: ".pio/build/${{ matrix.target }}/zuluscsi.map"  # optional: per-library attribution
-
-      - uses: membrowse/membrowse-action/comment-action@v1
-        if: github.event_name == 'pull_request'
-        with:
-          api_key: ${{ secrets.MEMBROWSE_API_KEY }}
-          commit: ${{ github.event.pull_request.head.sha }}
 
 
 
