@@ -113,6 +113,6 @@ jobs:
           api_key: ${{ secrets.MEMBROWSE_API_KEY }}
           ld:     ".pio/build/${{ matrix.target }}/rp_linker.ld"
           map_file: ".pio/build/${{ matrix.target }}/zuluscsi.map"  # optional: per-library attribution
-
+          skip_sections: ".heap"
 
 
