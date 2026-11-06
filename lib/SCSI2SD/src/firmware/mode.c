@@ -857,14 +857,18 @@ static void doModeSelect(void)
 			blockDescLen = scsiDev.data[3];
 			idx = 4;
 		}
-		// Make sure the data structure is the correct length before
-		// ModeSelect starts overwriting settings
+		// Validate the whole parameter list before changing live settings.
+		// The block descriptor must fit, and each page length must be read
+		// from the page currently being checked (not from the descriptor).
+		if (blockDescLen > scsiDev.dataLen - idx) goto badLength;
 		int idx_check = idx + blockDescLen;
 		while (idx_check < scsiDev.dataLen)
 		{
+			// A vendor-specific page-code zero terminates parsing below.
+			if ((scsiDev.data[idx_check] & 0x3F) == 0) break;
 			if (idx_check + 2 > scsiDev.dataLen) goto badLength;
-			int pageLen = scsiDev.data[idx + 1];
-			if (idx_check + 2 + pageLen > scsiDev.dataLen) goto badLength;
+			int pageLen = scsiDev.data[idx_check + 1];
+			if (pageLen > scsiDev.dataLen - idx_check - 2) goto badLength;
 			idx_check += 2 + pageLen;
 		}
 
