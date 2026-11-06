@@ -579,6 +579,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.reinsertAfterEject =  log_ini_getbool(section, "ReinsertAfterEject", cfg.reinsertAfterEject, CONFIGFILE, log_settings);
     cfg.reinsertImmediately =  log_ini_getbool(section, "ReinsertImmediately", cfg.reinsertImmediately, CONFIGFILE, log_settings);
     cfg.ejectOnStop =  log_ini_getbool(section, "EjectOnStop", cfg.ejectOnStop, CONFIGFILE, log_settings);
+    cfg.tapeImageLoop = log_ini_getbool(section, "TapeImageLoop", cfg.tapeImageLoop, CONFIGFILE, log_settings);
     cfg.keepCurrentImageOnBusReset =  log_ini_getbool(section, "KeepCurrentImageOnBusReset", cfg.keepCurrentImageOnBusReset, CONFIGFILE, log_settings);
     cfg.disableMacSanityCheck =  log_ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE, log_settings);
 
@@ -593,7 +594,34 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.tapeDensity = log_ini_getl(section, "TapeDensity", cfg.tapeDensity, CONFIGFILE, log_settings, &log_getl_8bit_hex);
     cfg.tapeBufferedMode = log_ini_getl(section, "TapeBufferedMode", cfg.tapeBufferedMode, CONFIGFILE, log_settings, &log_getl_8bit_hex);
 
+    // E11 and SIMH .tap images have the same record headers/trailers, but
+    // only SIMH pads odd-length data records. Choose explicitly per target;
+    // never infer framing from the .tap extension or silently alter media.
+    if (ini_haskey(section, "TapeImageFormat", CONFIGFILE))
+    {
+        log_ini_gets(section, "TapeImageFormat", "SIMH", tmp, sizeof(tmp), CONFIGFILE, log_settings);
+        if (strcasecmp(tmp, "E11") == 0)
+            cfg.tapeImageFormat = 1;
+        else if (strcasecmp(tmp, "SIMH") == 0)
+            cfg.tapeImageFormat = 0;
+        else
+            logmsg("---- WARNING: unknown TapeImageFormat '", tmp, "' in [", section,
+                   "]; use SIMH or E11 (keeping current setting)");
+    }
+
 #ifdef PLATFORM_AS400
+    // An explicit TDC3600 opt-in does not change other AS400_CISC tape IDs.
+    if (ini_haskey(section, "AS400_TapeModel", CONFIGFILE))
+    {
+        log_ini_gets(section, "AS400_TapeModel", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
+        if (strcasecmp(tmp, "TDC3600") == 0)
+            cfg.as400TapeModel = 1;
+        else if (strcasecmp(tmp, "IBM4100") == 0)
+            cfg.as400TapeModel = 0;
+        else
+            logmsg("---- WARNING: unknown AS400_TapeModel '", tmp,
+                   "'; expected IBM4100 or TDC3600 (using existing setting)");
+    }
     log_ini_gets(section, "AlignUnalignedAccesses", "", tmp, sizeof(tmp), CONFIGFILE, log_settings);
     if (tmp[0])
     {
@@ -726,6 +754,9 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     cfgDev.tapeLengthMB = 0; // Default tape length in MB is unlimited
     cfgDev.tapeDensity = 0x10; // Default density: QIC-150
     cfgDev.tapeBufferedMode = 0x00; // Write Good status only after all data has been written to tape
+    cfgDev.tapeImageFormat = 0; // Default: conventional SIMH .tap (even-length padding)
+    cfgDev.tapeImageLoop = true; // Default: preserve legacy IMG wraparound
+    cfgDev.as400TapeModel = 0; // Default AS400_CISC tape: IBM 4100
 
 
     // System-specific defaults

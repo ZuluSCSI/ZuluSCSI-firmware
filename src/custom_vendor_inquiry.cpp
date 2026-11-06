@@ -221,8 +221,9 @@ static void selectAS400Builtin(uint8_t scsiId, S2S_CFG_TYPE type)
             // The real captured CISC drive does not support VPD/EVPD at all,
             // so this identity is standard INQUIRY and MODE SENSE only.
             g_builtin[id] = BUILTIN_AS400_TAPE_CISC;
-            logmsg("---- Using built-in AS/400 CISC tape inquiry data for SCSI ID ",
-                   (int)scsiId);
+            logmsg("---- Using built-in AS/400 CISC tape ",
+                   (g_scsi_settings.getDevice(id)->as400TapeModel == 1) ? "TDC 3600" : "IBM 4100",
+                   " inquiry data for SCSI ID ", (int)scsiId);
             break;
 
         case DEV_PRESET_AS400_BS522: [[fallthrough]];
@@ -714,8 +715,16 @@ bool getCustomSPD(uint8_t scsiId, uint8_t *buf, uint16_t *length)
             break;
 
         case BUILTIN_AS400_TAPE_CISC:
-            inquiry = AS400TapeCISCVendorInquiry;
-            len = AS400TapeCISCVendorInquiryLen;
+            if (isAS400TDC3600TapeIdentity(scsiId))
+            {
+                inquiry = AS400TapeTDC3600Inquiry;
+                len = AS400TapeTDC3600InquiryLen;
+            }
+            else
+            {
+                inquiry = AS400TapeCISCVendorInquiry;
+                len = AS400TapeCISCVendorInquiryLen;
+            }
             break;
 
         case BUILTIN_AS400_TAPE_PPC:
@@ -782,8 +791,16 @@ bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length)
 
     if (g_builtin[id] == BUILTIN_AS400_TAPE_CISC)
     {
-        modeSense = as400_tape_cisc_mode_sense_all_pages;
-        len = as400_tape_cisc_mode_sense_all_pagesLen;
+        if (isAS400TDC3600TapeIdentity(scsiId))
+        {
+            modeSense = as400_tape_tdc3600_mode_sense;
+            len = as400_tape_tdc3600_mode_senseLen;
+        }
+        else
+        {
+            modeSense = as400_tape_cisc_mode_sense_all_pages;
+            len = as400_tape_cisc_mode_sense_all_pagesLen;
+        }
     }
     else if (g_builtin[id] == BUILTIN_AS400_TAPE_PPC)
     {
@@ -840,8 +857,18 @@ bool isAS400CISCTapeIdentity(uint8_t scsiId)
     return g_builtin[scsiId & S2S_CFG_TARGET_ID_BITS] == BUILTIN_AS400_TAPE_CISC;
 }
 
-bool getAS400CISCTapeVendorPage(uint8_t page, uint8_t *buf, uint8_t *length)
+bool isAS400TDC3600TapeIdentity(uint8_t scsiId)
 {
+    uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
+    return g_builtin[id] == BUILTIN_AS400_TAPE_CISC &&
+           g_scsi_settings.getDevice(id)->as400TapeModel == 1;
+}
+
+bool getAS400CISCTapeVendorPage(uint8_t scsiId, uint8_t page, uint8_t *buf, uint8_t *length)
+{
+    // The original TDC 3600's proprietary pages were not captured.
+    // Do not substitute the later IBM 4100 pages.
+    if (isAS400TDC3600TapeIdentity(scsiId)) return false;
     struct VendorPage { uint8_t page; const uint8_t *data; size_t len; };
     static const VendorPage pages[] = {
         {0x00, AS400TapeCISCVendorPage00, AS400TapeCISCVendorPage00Len},
@@ -881,13 +908,16 @@ int getAS400TapeMediumType(uint8_t scsiId)
 
     // No cartridge in the drive: ejected through the media menu/eject button.
     if (scsiDiskGetImageConfig(id).ejected)
-        return 0x00;
+        return isAS400TDC3600TapeIdentity(scsiId) ? 0x01 : 0x00;
 
     // An explicit MediumType= in this ID's ini section takes precedence over
     // the captured drive's default.
     const scsi_device_settings_t *devCfg = g_scsi_settings.getDevice(id);
     if (devCfg->mediumType >= 0)
         return devCfg->mediumType;
+
+    if (isAS400TDC3600TapeIdentity(scsiId))
+        return AS400TapeTDC3600MediumType;
 
     return g_builtin[id] == BUILTIN_AS400_TAPE_CISC ? AS400TapeCISCMediumType
                                                     : AS400TapePPCMediumType;

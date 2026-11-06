@@ -104,6 +104,10 @@ struct image_config_t: public S2S_TargetCfg
     // Negative value forces restart from first image.
     int image_index;
 
+    // Effective tape framing for the currently mounted image (0=SIMH, 1=E11).
+    // IMGn may override the target's TapeImageFormat without changing defaults.
+    uint8_t mountedTapeImageFormat = 0;
+
     // Previously accessed CD-ROM track, cached for performance
     CUETrackInfo cdrom_trackinfo;
     uint32_t cdrom_track_end_lba;

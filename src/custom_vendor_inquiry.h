@@ -87,9 +87,12 @@ int getAS400TapeMediumType(uint8_t scsiId);
 // True when scsiId presents the captured CISC tape identity (not the PPC one).
 bool isAS400CISCTapeIdentity(uint8_t scsiId);
 
+// True only when an early B10 TANDBERG TDC 3600 was explicitly selected.
+bool isAS400TDC3600TapeIdentity(uint8_t scsiId);
+
 // The real CISC drive's own INQUIRY form for vital product data (see
 // as400_tape_values.cpp): fills buf and *length for a page it has, false otherwise.
-bool getAS400CISCTapeVendorPage(uint8_t page, uint8_t *buf, uint8_t *length);
+bool getAS400CISCTapeVendorPage(uint8_t scsiId, uint8_t page, uint8_t *buf, uint8_t *length);
 #endif
 
 #ifdef __cplusplus

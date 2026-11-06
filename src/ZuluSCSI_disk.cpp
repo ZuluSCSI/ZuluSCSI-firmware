@@ -569,6 +569,36 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
     img.cdrom_track_end_lba = 0;
     scsiDiskSetImageConfig(target_idx);
 
+    // Re-evaluate the tape framing on every image open, including IMGn swaps.
+    // TapeImageFormatN overrides the target default only for image N.
+    // Other images continue using TapeImageFormat (backward compatible).
+    if (img.deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        img.mountedTapeImageFormat = g_scsi_settings.getDevice(target_idx)->tapeImageFormat;
+        if (img.image_index >= 0 && img.image_index <= IMAGE_INDEX_MAX)
+        {
+            char section[SCSI_INI_SECTION_SIZE];
+            char key[32];
+            char value[16];
+            scsiGetIniSection(target_idx, section, sizeof(section));
+            snprintf(key, sizeof(key), "TapeImageFormat%d", img.image_index);
+            if (ini_haskey(section, key, CONFIGFILE))
+            {
+                ini_gets(section, key, "", value, sizeof(value), CONFIGFILE);
+                if (strcasecmp(value, "E11") == 0)
+                    img.mountedTapeImageFormat = 1;
+                else if (strcasecmp(value, "SIMH") == 0)
+                    img.mountedTapeImageFormat = 0;
+                else
+                    logmsg("---- WARNING: unknown ", key, " '", value,
+                           "'; using TapeImageFormat default");
+            }
+        }
+        logmsg("---- Tape framing for SCSI ID ", target_idx, " image ",
+               img.image_index, ": ",
+               img.mountedTapeImageFormat == 1 ? "E11" : "SIMH");
+    }
+
     // PART:n resolves to a RAW:start:end mapping via the SD card's own
     // MBR/GPT partition table (see ZuluSCSI_partition_table.h) -- checked
     // and validated here, before ImageBackingStore ever gets involved, so
@@ -1325,6 +1355,16 @@ void scsiDiskCloseTray(image_config_t &img)
     if (img.ejected)
     {
         uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
+        // A finite tape set remains unloaded after its last IMG entry.
+        // Do not silently reinsert the prior volume on INQUIRY or START.
+        if (img.deviceType == S2S_CFG_SEQUENTIAL &&
+            !g_scsi_settings.getDevice(target)->tapeImageLoop &&
+            img.image_index > IMAGE_INDEX_MAX)
+        {
+            dbgmsg("------ Tape image sequence exhausted on ID ", (int)target,
+                   "; leaving medium absent");
+            return;
+        }
         dbgmsg("------ Device close tray on ID ", (int)target);
         img.ejected = false;
         if (img.deviceType == S2S_CFG_SEQUENTIAL)
@@ -1334,8 +1374,26 @@ void scsiDiskCloseTray(image_config_t &img)
 
         if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
         {
-            dbgmsg("------ Posting UNIT ATTENTION after medium change");
-            scsiDev.targets[target].unitAttention = NOT_READY_TO_READY_TRANSITION_MEDIUM_MAY_HAVE_CHANGED;
+#ifdef PLATFORM_AS400
+            // During a 9404-B10 CISC LIC install, the host unloads tape 1
+            // and polls for tape 2. It accepts the initial NOT READY /
+            // MEDIUM NOT PRESENT (02/3A00), but a follow-up UNIT ATTENTION /
+            // MEDIUM MAY HAVE CHANGED (06/2800) causes SRC 6346/3010.
+            // Suppress only that media-change notification for the captured
+            // CISC tape identity; retain it for disk and all other devices.
+            // This is an on-hardware diagnostic compatibility workaround.
+            if (img.deviceType == S2S_CFG_SEQUENTIAL &&
+                img.quirks == S2S_CFG_QUIRKS_AS400 &&
+                isAS400TDC3600TapeIdentity(target))
+            {
+                dbgmsg("------ Suppressing medium-change UNIT ATTENTION for B10 TDC 3600 tape ID ", (int)target);
+            }
+            else
+#endif
+            {
+                dbgmsg("------ Posting UNIT ATTENTION after medium change");
+                scsiDev.targets[target].unitAttention = NOT_READY_TO_READY_TRANSITION_MEDIUM_MAY_HAVE_CHANGED;
+            }
         }
     }
 }
@@ -1384,7 +1442,17 @@ void doPerformEject(image_config_t &img)
             blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
             dbgmsg("------ Device open tray on ID ", (int)target);
             img.ejected = true;
-            switchNextImage(img); // Switch media for next time
+            if (!switchNextImage(img) &&
+                img.deviceType == S2S_CFG_SEQUENTIAL &&
+                !g_scsi_settings.getDevice(target)->tapeImageLoop &&
+                img.image_index > IMAGE_INDEX_MAX)
+            {
+                // The host unloaded the last tape. Close its file so the
+                // virtual drive reports no medium rather than the old tape.
+                img.file.close();
+                logmsg("Tape image sequence exhausted on ID ", (int)target,
+                       "; no next image, medium remains absent");
+            }
             if (g_scsi_settings.getDevice(target)->reinsertImmediately)
             {
                 scsiDiskCloseTray(img);
@@ -1652,6 +1720,14 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
     }
     else
     {
+        // Only sequential targets may opt out of the standard IMG wraparound.
+        // IMAGE_INDEX_MAX is used at startup to select IMG0; MAX+1 is
+        // reserved as the persistent exhausted state after the final eject.
+        const bool finiteTapeSet =
+            img.deviceType == S2S_CFG_SEQUENTIAL &&
+            !g_scsi_settings.getDevice(target_idx)->tapeImageLoop;
+        if (finiteTapeSet && img.image_index > IMAGE_INDEX_MAX)
+            return 0;
         while (1)
         {
             img.image_index++;
@@ -1677,10 +1753,15 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
             }
             else if (img.image_index > 0)
             {
-                // there may be more than one image but we've ran out of new ones
-                // wrap back to the first image
+                if (finiteTapeSet)
+                {
+                    // Do not present IMG0 again after the final volume.
+                    img.image_index = IMAGE_INDEX_MAX + 1;
+                    buf[0] = '\0';
+                    return 0;
+                }
+                // Standard behavior: wrap back to first image.
                 img.image_index = -1;
-                // Rerun loop
             }
             else
             {
