@@ -156,6 +156,41 @@ bool tapeIsTap()
     return g_tape_drive[scsiDev.target->targetId]->tape_is_tap_format;
 }
 
+// The .tap extension is shared by padded SIMH and unpadded E11 images.
+// The effective format is selected when each tape image is mounted,
+// allowing a numbered IMGn override without changing other volumes.
+static bool tapUsesE11(const image_config_t &img)
+{
+    return img.mountedTapeImageFormat == 1;
+}
+
+// E11-era Bitsavers images may end with a repeated 0x0000FFFF word run and
+// a final zero word instead of a conventional EOM marker. Recognize this
+// only when the *entire remaining tail* matches; never mistake a legitimate
+// 65535-byte data record for an end-of-medium marker.
+static bool tapIsLegacyFFFFTail(image_config_t &img, uint64_t pos)
+{
+    if (!tapUsesE11(img) || pos >= img.file.size()) return false;
+    uint64_t remaining = img.file.size() - pos;
+    if (remaining < 8 || remaining > 1024 || (remaining & 3)) return false;
+
+    bool sawFFFF = false;
+    bool sawFinalZero = false;
+    for (uint64_t offset = pos; offset < img.file.size(); offset += 4)
+    {
+        uint8_t bytes[4];
+        if (!img.file.seek(offset) || img.file.read(bytes, 4) != 4) return false;
+        uint32_t word = readLE32(bytes);
+        if (word == 0x0000FFFF && !sawFinalZero)
+            sawFFFF = true;
+        else if (word == 0x00000000 && sawFFFF && offset + 4 == img.file.size())
+            sawFinalZero = true;
+        else
+            return false;
+    }
+    return sawFFFF && sawFinalZero;
+}
+
 // Read a .TAP record moving forward
 tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uint8_t *buffer, uint32_t buffer_size, bool fixed) {
     tape_drive_t *tape_info = g_tape_drive[img.scsiId & S2S_CFG_TARGET_ID_BITS];
@@ -197,7 +232,8 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
         return TAP_FILEMARK;
     }
 
-    if (length_with_class == TAP_MARKER_END_MEDIUM) {
+    if (length_with_class == TAP_MARKER_END_MEDIUM ||
+        (length_with_class == 0x0000FFFF && tapIsLegacyFFFFTail(img, tape_info->file_pos))) {
         tape_info->is_eom = true;
         scsiDev.target->tapeBOM = 0;
         return TAP_END_OF_TAPE;
@@ -222,7 +258,7 @@ tap_result_t tapReadRecordForward(image_config_t &img, tap_record_t &record, uin
     // Read the data if buffer provided
     if (record.length > 0) {
         uint32_t data_length = record.length;
-        uint32_t padded_length = (data_length + 1) & ~1;  // Round up to even
+        uint32_t padded_length = tapUsesE11(img) ? data_length : ((data_length + 1) & ~1U);
 
         if (TAP_OVERLENGTH == tap_result_status) {
             if (!img.file.seek(tape_info->file_pos + 4) || img.file.read(buffer, buffer_size) != (ssize_t)buffer_size) {
@@ -322,7 +358,7 @@ tap_result_t tapReadRecordBackward(image_config_t &img, tap_record_t &record, ui
     record.length = length_with_class & 0x0FFFFFFF;
 
     if (record.length > 0) {
-        uint32_t padded_length = (record.length + 1) & ~1;
+        uint32_t padded_length = tapUsesE11(img) ? record.length : ((record.length + 1) & ~1U);
         uint32_t total_length = 8 + padded_length;
 
         if (tape_info->file_pos < total_length) {
@@ -1192,8 +1228,9 @@ void tapeTapDataOut()
                 // write trailer
                 if (data_to_write_len == end_of_next_data_record)
                 {
-                    // round to even position
-                    if (tape_info->file_pos & 1)
+                    // SIMH pads odd-length records; E11 stores the trailer
+                    // immediately after the data. Never add padding in E11.
+                    if (!tapUsesE11(img) && (tape_info->file_pos & 1))
                     { 
                         uint8_t write_zero = 0;
                         if (img.file.write(&write_zero, 1) == 1)
@@ -1757,6 +1794,14 @@ extern "C" int scsiTapeCommand()
         // READ BLOCK LIMITS
         uint32_t max_block_size = scsiTapeMaxSectorSize();
         uint32_t min_block_size = scsiTapeMinSectorSize();
+#ifdef PLATFORM_AS400
+        // Captured SCSI-1 TDC 3600 response: 00 00 80 00 00 01.
+        if (isAS400TDC3600TapeIdentity(scsiDev.target->cfg->scsiId))
+        {
+            max_block_size = 32768;
+            min_block_size = 1;
+        }
+#endif
         scsiDev.data[0] = 0; // Reserved
         scsiDev.data[1] = (max_block_size >> 16) & 0xFF; // Maximum block length (MSB)
         scsiDev.data[2] = (max_block_size >>  8) & 0xFF;

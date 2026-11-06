@@ -36,6 +36,11 @@ jobs:
         run: |
           pip install -U platformio
 
+      - name: Test E11 and SIMH tape framing
+        run: |
+          cd ZuluSCSI
+          python3 utils/test_e11_tapes.py
+
       - name: Test MODE SELECT parameter-list bounds
         run: |
           cd ZuluSCSI

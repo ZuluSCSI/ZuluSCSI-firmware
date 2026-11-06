@@ -80,6 +80,13 @@ extern const size_t  as400_tape_cisc_mode_sense_all_pagesLen;
 // native/target format) and did not work on real hardware.
 extern const uint8_t AS400TapeCISCMediumType;
 
+// Early B10 TDC 3600. Requires AS400_TapeModel=TDC3600.
+extern const uint8_t AS400TapeTDC3600Inquiry[];
+extern const size_t AS400TapeTDC3600InquiryLen;
+extern const uint8_t as400_tape_tdc3600_mode_sense[];
+extern const size_t as400_tape_tdc3600_mode_senseLen;
+extern const uint8_t AS400TapeTDC3600MediumType;
+
 // PPC-era ("IBM SLR5", Tandberg-manufactured): standard INQUIRY,
 // MODE SENSE(6) page 0x3F, and a 14-page VPD table (the real drive supports
 // VPD/EVPD, including vendor pages 0xC7/0xD0 that real RISC-side AS/400

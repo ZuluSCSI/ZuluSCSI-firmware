@@ -127,7 +127,7 @@ void s2s_scsiInquiry()
 		vendorForm = 1;
 		uint8_t length = 0;
 		if (!evpd && (pageCode & 0x80) &&
-			getAS400CISCTapeVendorPage(scsiDev.cdb[3], scsiDev.data, &length))
+			getAS400CISCTapeVendorPage(scsiDev.target->cfg->scsiId, scsiDev.cdb[3], scsiDev.data, &length))
 		{
 			scsiDev.dataLen = length;
 			scsiDev.phase = DATA_IN;
