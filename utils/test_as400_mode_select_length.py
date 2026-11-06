@@ -33,14 +33,15 @@ def compiled_validator(workdir):
     c_code = r"""
 #include <stdint.h>
 #include <string.h>
-int validate(const unsigned char *bytes, int n)
+int validate(const unsigned char *bytes, int n, int ten_byte)
 {
     struct { unsigned char data[256]; int dataLen; } scsiDev = {0};
-    if (n < 4 || n > 256) return 0;
+    if (n < (ten_byte ? 8 : 4) || n > 256) return 0;
     memcpy(scsiDev.data, bytes, n);
     scsiDev.dataLen = n;
-    int idx = 4;
-    int blockDescLen = scsiDev.data[3];
+    int idx = ten_byte ? 8 : 4;
+    int blockDescLen = ten_byte ? (scsiDev.data[6] << 8) | scsiDev.data[7]
+                                : scsiDev.data[3];
 """ + fragment + r"""
     return 1;
 badLength:
@@ -56,14 +57,14 @@ badLength:
         check=True,
     )
     lib = ctypes.CDLL(str(so_path))
-    lib.validate.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int]
+    lib.validate.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int, ctypes.c_int]
     lib.validate.restype = ctypes.c_int
     return lib.validate
 
 
-def assert_valid(fn, data, expected, why):
+def assert_valid(fn, data, ten_byte, expected, why):
     arr = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
-    observed = bool(fn(arr, len(data)))
+    observed = bool(fn(arr, len(data), int(ten_byte)))
     if observed != expected:
         raise AssertionError(f"{why}: expected {expected}, got {observed} ({data.hex(' ')})")
 
@@ -71,19 +72,30 @@ def assert_valid(fn, data, expected, why):
 def main():
     with tempfile.TemporaryDirectory(prefix="as400-mode-select-") as tmp:
         validator = compiled_validator(tmp)
+        # MODE SELECT(10) uses an 8-byte header and a 16-bit descriptor
+        # length; the three page payloads and IBM descriptor are unchanged.
+        b10_ten = bytes.fromhex("00 00 00 00 00 00 00 08") + B10[4:]
         tests = [
-            (B10, True, "real B10 IBM 0671S15 22-byte request"),
-            (B10[:3], False, "truncated mode header"),
-            (B10[:5], False, "block descriptor exceeds provided bytes"),
-            (B10[:13] + b"\x01", False, "truncated normal page header"),
-            (B10[:15] + b"\x02\x0e\x01\x80", False, "oversized second page"),
-            (bytes.fromhex("00 00 00 00 01 01 04 02 02 01 80"), True,
-             "two normal pages with different lengths"),
-            (bytes.fromhex("00 00 00 00 00"), True,
-             "vendor page code zero ends parsing as original firmware does"),
+            (B10, False, True, "real B10 IBM 0671S15 MODE SELECT(6)"),
+            (B10[:3], False, False, "truncated 6-byte command header"),
+            (B10[:5], False, False, "block descriptor exceeds available bytes"),
+            (B10[:13] + b"\\x01", False, False, "truncated normal mode page"),
+            (B10[:15] + b"\\x02\\x0e\\x01\\x80", False, False,
+             "oversized second page"),
+            (bytes.fromhex("00 00 00 00 01 01 04 02 02 01 80"),
+             False, True, "two normal pages of different sizes"),
+            (bytes.fromhex("00 00 00 00 00"), False, True,
+             "page-code zero ends parsing as existing firmware does"),
+            (b10_ten, True, True, "MODE SELECT(10) with matching pages"),
+            (b10_ten[:7], True, False, "truncated 10-byte command header"),
+            (b10_ten[:12], True, False, "truncated 10-byte block descriptor"),
+            (b10_ten[:17] + b"\\x01", True, False, "truncated 10-byte mode page"),
+            (b10_ten[:19] + b"\\x02\\x0e\\x01\\x80", True, False,
+             "oversized second page in MODE SELECT(10)"),
+            (b10_ten[:16], True, True, "MODE SELECT(10) descriptor-only"),
         ]
-        for data, expected, why in tests:
-            assert_valid(validator, data, expected, why)
+        for data, ten_byte, expected, why in tests:
+            assert_valid(validator, data, ten_byte, expected, why)
         print(f"PASS: {len(tests)} MODE SELECT bounds regression cases")
 
 
