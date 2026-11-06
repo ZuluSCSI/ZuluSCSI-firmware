@@ -36,6 +36,11 @@ jobs:
         run: |
           pip install -U platformio
 
+      - name: Test MODE SELECT parameter-list bounds
+        run: |
+          cd ZuluSCSI
+          python3 utils/test_as400_mode_select_length.py
+
       - name: Build firmware
         run: |
           cd ZuluSCSI
