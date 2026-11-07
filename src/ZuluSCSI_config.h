@@ -39,7 +39,6 @@
 #define FW_VER_SUFFIX   "V1.x-LTS-release"
 #else
 #define FW_VER_SUFFIX   "release"
-
 #endif
 
 #define DEF_STRINGFY(DEF) STRINGFY(DEF)
