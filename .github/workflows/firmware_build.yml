@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - LTS/V1.x
     paths-ignore:
       - '**/*.md'
       - '**/*.txt'
