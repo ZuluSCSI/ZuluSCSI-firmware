@@ -322,11 +322,27 @@ SECTIONS
         "ERROR: Pico second stage bootloader must be no more than 256 bytes in size")
 
     .rodata : {
+
+        *minIni.a*:(.rodata .rodata*)
+        *libZipParser.a*:(.rodata .rodata*)
+        *libZuluSCSI_audio_RP2MCU.a*:(.rodata .rodata*)
+        *libZuluSCSI_Control.a*:(.rodata .rodata*)
+        *libZuluSCSI_UI_RP2MCU.a*:(.rodata .rodata*)
+        *libZuluSCSI_WebUI_RP2MCU.a*:(.rodata .rodata*)
+        *libAdafruit*:(.rodata .rodata*)
+        *libRP2350_Logic_Sniffer.a*:(.rodata .rodata*)
+        *libCUEParser.a*:(.rodata .rodata*)
+
         /* Exclude as many constants as possible from flash as corresponding to the code that has been removed from flash
             to keep the MCU from having to hit flash while it is executing in SRAM */
         *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:  *libZuluSCSI_platform_RP2MCU.a: *libZuluSCSI_UI_RP2MCU.a: *libSdFat.a: *libSCSI2SD.a: *CUEParser.a: *minIni.a: *.cpp.o) .rodata*)
 /* Uncomment below and comment above lines for debugging */
         /* *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .rodata*) */
+
+        /* Manually pull in some of the larger constants into flash to leave more RAM free */
+        *as400_tape_values.cpp.o(.rodata .rodata*)
+        *as400_values.cpp.o(.rodata .rodata*)
+
 
         *(.srodata*)
         . = ALIGN(4);

@@ -62,6 +62,7 @@ extern "C" {
 #include <ZuluSCSI_platform_config.h>
 #ifdef PLATFORM_AS400
 #include "as400_values.h"
+#include "ZuluSCSI_sd_zero.h"
 #endif
 
 #ifndef PLATFORM_MAX_SCSI_SPEED
@@ -278,6 +279,7 @@ bool scsiDiskTypeIsRemovable(S2S_CFG_TYPE type)
 /***********************/
 
 extern SdFs SD;
+extern bool g_sdcard_present;
 SdDevice sdDev = {2, 256 * 1024 * 1024 * 2}; /* For SCSI2SD */
 
 image_config_t g_DiskImages[S2S_MAX_TARGETS];
@@ -566,6 +568,36 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
     img.cdrom_binfile_index = -1;
     img.cdrom_track_end_lba = 0;
     scsiDiskSetImageConfig(target_idx);
+
+    // Re-evaluate the tape framing on every image open, including IMGn swaps.
+    // TapeImageFormatN overrides the target default only for image N.
+    // Other images continue using TapeImageFormat (backward compatible).
+    if (img.deviceType == S2S_CFG_SEQUENTIAL)
+    {
+        img.mountedTapeImageFormat = g_scsi_settings.getDevice(target_idx)->tapeImageFormat;
+        if (img.image_index >= 0 && img.image_index <= IMAGE_INDEX_MAX)
+        {
+            char section[SCSI_INI_SECTION_SIZE];
+            char key[32];
+            char value[16];
+            scsiGetIniSection(target_idx, section, sizeof(section));
+            snprintf(key, sizeof(key), "TapeImageFormat%d", img.image_index);
+            if (ini_haskey(section, key, CONFIGFILE))
+            {
+                ini_gets(section, key, "", value, sizeof(value), CONFIGFILE);
+                if (strcasecmp(value, "E11") == 0)
+                    img.mountedTapeImageFormat = 1;
+                else if (strcasecmp(value, "SIMH") == 0)
+                    img.mountedTapeImageFormat = 0;
+                else
+                    logmsg("---- WARNING: unknown ", key, " '", value,
+                           "'; using TapeImageFormat default");
+            }
+        }
+        logmsg("---- Tape framing for SCSI ID ", target_idx, " image ",
+               img.image_index, ": ",
+               img.mountedTapeImageFormat == 1 ? "E11" : "SIMH");
+    }
 
     // PART:n resolves to a RAW:start:end mapping via the SD card's own
     // MBR/GPT partition table (see ZuluSCSI_partition_table.h) -- checked
@@ -1323,6 +1355,16 @@ void scsiDiskCloseTray(image_config_t &img)
     if (img.ejected)
     {
         uint8_t target = img.scsiId & S2S_CFG_TARGET_ID_BITS;
+        // A finite tape set remains unloaded after its last IMG entry.
+        // Do not silently reinsert the prior volume on INQUIRY or START.
+        if (img.deviceType == S2S_CFG_SEQUENTIAL &&
+            !g_scsi_settings.getDevice(target)->tapeImageLoop &&
+            img.image_index > IMAGE_INDEX_MAX)
+        {
+            dbgmsg("------ Tape image sequence exhausted on ID ", (int)target,
+                   "; leaving medium absent");
+            return;
+        }
         dbgmsg("------ Device close tray on ID ", (int)target);
         img.ejected = false;
         if (img.deviceType == S2S_CFG_SEQUENTIAL)
@@ -1332,8 +1374,26 @@ void scsiDiskCloseTray(image_config_t &img)
 
         if (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_UNIT_ATTENTION)
         {
-            dbgmsg("------ Posting UNIT ATTENTION after medium change");
-            scsiDev.targets[target].unitAttention = NOT_READY_TO_READY_TRANSITION_MEDIUM_MAY_HAVE_CHANGED;
+#ifdef PLATFORM_AS400
+            // During a 9404-B10 CISC LIC install, the host unloads tape 1
+            // and polls for tape 2. It accepts the initial NOT READY /
+            // MEDIUM NOT PRESENT (02/3A00), but a follow-up UNIT ATTENTION /
+            // MEDIUM MAY HAVE CHANGED (06/2800) causes SRC 6346/3010.
+            // Suppress only that media-change notification for the captured
+            // CISC tape identity; retain it for disk and all other devices.
+            // This is an on-hardware diagnostic compatibility workaround.
+            if (img.deviceType == S2S_CFG_SEQUENTIAL &&
+                img.quirks == S2S_CFG_QUIRKS_AS400 &&
+                isAS400TDC3600TapeIdentity(target))
+            {
+                dbgmsg("------ Suppressing medium-change UNIT ATTENTION for B10 TDC 3600 tape ID ", (int)target);
+            }
+            else
+#endif
+            {
+                dbgmsg("------ Posting UNIT ATTENTION after medium change");
+                scsiDev.targets[target].unitAttention = NOT_READY_TO_READY_TRANSITION_MEDIUM_MAY_HAVE_CHANGED;
+            }
         }
     }
 }
@@ -1382,7 +1442,17 @@ void doPerformEject(image_config_t &img)
             blinkStatus(g_scsi_settings.getDevice(target)->ejectBlinkTimes, g_scsi_settings.getDevice(target)->ejectBlinkPeriod);;
             dbgmsg("------ Device open tray on ID ", (int)target);
             img.ejected = true;
-            switchNextImage(img); // Switch media for next time
+            if (!switchNextImage(img) &&
+                img.deviceType == S2S_CFG_SEQUENTIAL &&
+                !g_scsi_settings.getDevice(target)->tapeImageLoop &&
+                img.image_index > IMAGE_INDEX_MAX)
+            {
+                // The host unloaded the last tape. Close its file so the
+                // virtual drive reports no medium rather than the old tape.
+                img.file.close();
+                logmsg("Tape image sequence exhausted on ID ", (int)target,
+                       "; no next image, medium remains absent");
+            }
             if (g_scsi_settings.getDevice(target)->reinsertImmediately)
             {
                 scsiDiskCloseTray(img);
@@ -1650,6 +1720,14 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
     }
     else
     {
+        // Only sequential targets may opt out of the standard IMG wraparound.
+        // IMAGE_INDEX_MAX is used at startup to select IMG0; MAX+1 is
+        // reserved as the persistent exhausted state after the final eject.
+        const bool finiteTapeSet =
+            img.deviceType == S2S_CFG_SEQUENTIAL &&
+            !g_scsi_settings.getDevice(target_idx)->tapeImageLoop;
+        if (finiteTapeSet && img.image_index > IMAGE_INDEX_MAX)
+            return 0;
         while (1)
         {
             img.image_index++;
@@ -1675,10 +1753,15 @@ int scsiDiskGetNextImageName(image_config_t &img, char *buf, size_t buflen)
             }
             else if (img.image_index > 0)
             {
-                // there may be more than one image but we've ran out of new ones
-                // wrap back to the first image
+                if (finiteTapeSet)
+                {
+                    // Do not present IMG0 again after the final volume.
+                    img.image_index = IMAGE_INDEX_MAX + 1;
+                    buf[0] = '\0';
+                    return 0;
+                }
+                // Standard behavior: wrap back to first image.
                 img.image_index = -1;
-                // Rerun loop
             }
             else
             {
@@ -1861,6 +1944,31 @@ image_config_t &scsiDiskGetImageConfig(int target_idx)
 {
     assert(target_idx >= 0 && target_idx < S2S_MAX_TARGETS);
     return g_DiskImages[target_idx];
+}
+
+bool scsiDiskExposesCardFileSystem()
+{
+    FsVolume *vol = SD.vol();
+    if (!g_sdcard_present || !vol)
+    {
+        return false;
+    }
+
+    // The file system occupies the sectors from the start of the card (or the
+    // start of its partition) to the end of its last cluster. Counting from
+    // sector 0 can only make this answer "yes" more often, never less often.
+    uint64_t fs_end = (uint64_t)vol->dataStartSector() + (uint64_t)vol->clusterCount() * vol->sectorsPerCluster();
+
+    for (int i = 0; i < S2S_MAX_TARGETS; i++)
+    {
+        uint32_t bgn = 0;
+        uint32_t end = 0;
+        if (g_DiskImages[i].file.isOpen() && g_DiskImages[i].file.rawSectorRange(&bgn, &end) && bgn < fs_end)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void diskEjectAction(uint8_t buttonId)
@@ -3944,6 +4052,41 @@ void scsiDiskWriteSame(uint32_t lba, uint32_t blocks)
     scsiEnterPhase(DATA_OUT);
     scsiRead(scsiDev.data, bytesPerSector, &parityError);
 
+    // A block of zeros is the usual way to clear a range quickly. Whole erase
+    // units inside it can then be released with the SD card's erase instead of
+    // programming every zero into the flash (only with SdTrim = Yes and a card
+    // that reads erased blocks back as zeros, see ZuluSCSI_sd_zero.h).
+    bool pattern_is_zero = true;
+    for (uint32_t i = 0; i < bytesPerSector; i++)
+    {
+        if (scsiDev.data[i] != 0)
+        {
+            pattern_is_zero = false;
+            break;
+        }
+    }
+
+    if (pattern_is_zero)
+    {
+        uint32_t released_sectors = 0;
+        bool zero_ok = sdZeroSectors(img.file, bytesPerSector, lba, writesame_count, &released_sectors);
+        scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
+
+        if (!zero_ok)
+        {
+            logmsg("SD card write failed during Write Same: ", SD.sdErrorCode());
+            scsiDev.status = CHECK_CONDITION;
+            scsiDev.target->sense.code = MEDIUM_ERROR;
+            scsiDev.target->sense.asc = WRITE_ERROR_AUTO_REALLOCATION_FAILED;
+        }
+        else if (released_sectors > 0)
+        {
+            dbgmsg("------ Write Same of zeros released ", (int)(released_sectors / 2048), " MB with the SD card's erase");
+        }
+        scsiDev.phase = STATUS;
+        return;
+    }
+
     const uint32_t buffer_sectors = sizeof(scsiDev.data) / bytesPerSector;
     uint32_t sectors_to_write = std::min(writesame_count, buffer_sectors);
     uint32_t bytes_to_write = sectors_to_write * bytesPerSector;
@@ -3974,6 +4117,7 @@ void scsiDiskWriteSame(uint32_t lba, uint32_t blocks)
         writesame_count -= sectors_to_write;
         platform_reset_watchdog();
     }
+    scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
     scsiDev.phase = STATUS;
 
 }

@@ -167,8 +167,8 @@ uint64_t sdio_crc16_4bit_checksum(uint32_t *data, uint32_t num_words)
 /*******************************************************
  * Status Register Receiver
  *******************************************************/
-sdio_status_t receive_status_register(uint8_t* sds) {
-    rp2040_sdio_rx_start(sds, 1, 64);
+sdio_status_t receive_register(uint8_t* reg, size_t size) {
+    rp2040_sdio_rx_start(reg, 1, size);
     // Wait for the DMA operation to complete, or fail if it took too long
 waitagain:
     while (dma_channel_is_busy(SDIO_DMA_CHB) || dma_channel_is_busy(SDIO_DMA_CH))

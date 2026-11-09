@@ -480,7 +480,7 @@ ModeSense3F_chunks = 2
 ; AS/400 disk profile '59H7001-170W-1', captured from /dev/sg3 on 2026-08-29T17:16:57Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [59H7001-170W-1]
 Vendor = IBMAS400
@@ -529,7 +529,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '27H1711-170W-2', captured from /dev/sg3 on 2026-08-29T17:29:25Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [27H1711-170W-2]
 Vendor = IBMAS400
@@ -575,7 +575,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '27H1711-170W-3', captured from /dev/sg3 on 2026-08-29T17:39:34Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [27H1711-170W-3]
 Vendor = IBMAS400
@@ -621,7 +621,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '27H1711-170W-4', captured from /dev/sg3 on 2026-08-29T17:48:49Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [27H1711-170W-4]
 Vendor = IBMAS400
@@ -667,7 +667,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '27H1711-170W-5', captured from /dev/sg3 on 2026-08-29T17:58:13Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [27H1711-170W-5]
 Vendor = IBMAS400
@@ -713,7 +713,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '27H1711-170W-6', captured from /dev/sg3 on 2026-08-29T18:03:52Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [27H1711-170W-6]
 Vendor = IBMAS400
@@ -759,7 +759,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '27H1711-170W-7', captured from /dev/sg3 on 2026-08-29T18:14:29Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [27H1711-170W-7]
 Vendor = IBMAS400
@@ -805,7 +805,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '59H7001-170S-1', captured from /dev/sg3 on 2026-08-29T18:23:13Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [59H7001-170S-1]
 Vendor = IBMAS400
@@ -854,7 +854,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '59H7001-170S-2', captured from /dev/sg3 on 2026-08-29T18:26:38Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [59H7001-170S-2]
 Vendor = IBMAS400
@@ -903,7 +903,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '59H7001-170S-3', captured from /dev/sg3 on 2026-08-29T18:29:03Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [59H7001-170S-3]
 Vendor = IBMAS400
@@ -952,7 +952,7 @@ LogSense30PageListLength = 0
 ; AS/400 disk profile '59H7001-170S-4', captured from /dev/sg3 on 2026-08-29T18:33:16Z
 ; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
 ; Feature+Model (e.g. #6607) is a system-level packaging designation, not
-; present in the drive's own INQUIRY/VPD data --- see project memory for why.
+; present in the drive's own INQUIRY/VPD data.
 ; ===========================================================================
 [59H7001-170S-4]
 Vendor = IBMAS400

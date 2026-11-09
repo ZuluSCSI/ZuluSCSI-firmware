@@ -66,7 +66,7 @@ extern const size_t  as400_tape_cisc_mode_sense_all_pagesLen;
 // MODE SENSE header "Medium Type" byte for a *loaded* cartridge, matching
 // this exact captured drive (product "IBM 4100"). Real hardware only
 // reports 0x00 ("no cartridge") when the drive is genuinely empty --
-// confirmed across 5 real drives x 4 cartridges, see project notes -- so
+// confirmed across 5 real drives x 4 cartridges -- so
 // the compiled-in identity above (itself captured with no cartridge
 // loaded) must not be served as-is once a tape image is actually
 // configured. 0x25 (DC9120) is this drive's #6379 identity's own native
@@ -79,6 +79,13 @@ extern const size_t  as400_tape_cisc_mode_sense_all_pagesLen;
 // (an incidental test-data cartridge instead of the drive's actual
 // native/target format) and did not work on real hardware.
 extern const uint8_t AS400TapeCISCMediumType;
+
+// Early B10 TDC 3600. Requires AS400_TapeModel=TDC3600.
+extern const uint8_t AS400TapeTDC3600Inquiry[];
+extern const size_t AS400TapeTDC3600InquiryLen;
+extern const uint8_t as400_tape_tdc3600_mode_sense[];
+extern const size_t as400_tape_tdc3600_mode_senseLen;
+extern const uint8_t AS400TapeTDC3600MediumType;
 
 // PPC-era ("IBM SLR5", Tandberg-manufactured): standard INQUIRY,
 // MODE SENSE(6) page 0x3F, and a 14-page VPD table (the real drive supports

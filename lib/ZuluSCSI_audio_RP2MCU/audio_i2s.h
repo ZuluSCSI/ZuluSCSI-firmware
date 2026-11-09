@@ -44,7 +44,7 @@ bool audio_is_active();
  * Initializes the audio subsystem. Should be called only once, toward the end
  * of platform_late_init().
  */
-void audio_setup();
+void audio_setup(uint bclk_pin, uint ws_pin, uint dout_pin);
 
 /**
  * Reclocks the I2S interface

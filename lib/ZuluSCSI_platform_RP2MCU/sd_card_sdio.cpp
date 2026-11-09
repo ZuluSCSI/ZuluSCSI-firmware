@@ -213,7 +213,7 @@ bool SdioCard::begin(SdioConfig sdioConfig)
     uint8_t* stat_pointer = (uint8_t*) &g_sdio_sds;
     if (!checkReturnOk(rp2040_sdio_command_R1(CMD55, g_sdio_rca, &reply)) ||
         !checkReturnOk(rp2040_sdio_command_R1(ACMD13, 0, &reply)) ||
-        !checkReturnOk(receive_status_register(stat_pointer)))
+        !checkReturnOk(receive_register(stat_pointer, sizeof(sds_t))))
     {
         dbgmsg("SDIO failed to get SD Status");
         return false;
@@ -224,7 +224,7 @@ bool SdioCard::begin(SdioConfig sdioConfig)
     uint8_t* config_pointer = (uint8_t*) &g_sdio_scr;
     if (!checkReturnOk(rp2040_sdio_command_R1(CMD55, g_sdio_rca, &reply)) ||
         !checkReturnOk(rp2040_sdio_command_R1(ACMD51, 0, &reply)) ||
-        !checkReturnOk(receive_status_register(config_pointer)))
+        !checkReturnOk(receive_register(config_pointer, sizeof(scr_t))))
     {
         dbgmsg("SDIO failed to get SD Configuration register");
         return false;
@@ -251,6 +251,7 @@ static void sdiocard_error_monitor(SdioCard *card, sdio_status_t error)
 
             SdioConfig defcfg;
             card->begin(defcfg);
+            g_sdio_error = error;
         }
     }
 }
@@ -568,8 +569,10 @@ bool SdioCard::writeSectors(uint32_t sector, const uint8_t* src, size_t n)
     if (g_sdio_error != SDIO_OK)
     {
         logmsg("SdioCard::writeSectors(", sector, ",...,", (int)n, ") failed: ", (int)g_sdio_error);
+        sdio_status_t error = g_sdio_error;
         stopTransmission(true);
-        sdiocard_error_monitor(this, g_sdio_error);
+        g_sdio_error = error;
+        sdiocard_error_monitor(this, error);
         return false;
     }
     else
@@ -667,8 +670,10 @@ bool SdioCard::readSectors(uint32_t sector, uint8_t* dst, size_t n)
     if (g_sdio_error != SDIO_OK)
     {
         logmsg("SdioCard::readSectors(", sector, ",...,", (int)n, ") failed: ", (int)g_sdio_error);
+        sdio_status_t error = g_sdio_error;
         stopTransmission(true);
-        sdiocard_error_monitor(this, g_sdio_error);
+        g_sdio_error = error;
+        sdiocard_error_monitor(this, error);
         return false;
     }
     else

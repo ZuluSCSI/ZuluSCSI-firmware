@@ -370,11 +370,10 @@ static void onSendFilePrep(char * dir_name)
 
     dbgmsg("TOOLBOX OPEN FILE FOR WRITE: '", file_name, "'");
     SD.chdir(dir_name);
-    gFile.open(file_name, FILE_WRITE);
+    gFile.open(file_name, O_WRONLY | O_CREAT | O_TRUNC);
     SD.chdir("/");
     if(gFile.isOpen() && gFile.isWritable())
     {
-        gFile.rewind();
         gFile.sync();
         // do i need to manually set phase to status here?
         return;

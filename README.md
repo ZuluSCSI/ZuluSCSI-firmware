@@ -149,6 +149,15 @@ at reboot time, or when a card is inserted. Use this value with e. g. `gdisk` to
 set the desired alignment  by issuing `x` (extra functionality) and `l` (set the
 sector alignment value).
 
+If a raw range reaches into the SD card's own file system (the volume that holds the
+image files and `zuluscsi.ini`), the host can change that file system. This includes
+the whole card, given by `RAW:0:0xFFFFFFFF` or by the raw fallback when no image is
+found. ZuluSCSI then does not write `zululog.txt` or the crash log to the card, because
+both sides keep their own copy of the directory and allocation data and would overwrite
+each other's changes. The messages are still available on the USB serial console. A raw
+partition behind that file system, such as `Partition = 2` on a card whose first
+partition is the boot volume, has no such restriction.
+
 ### Image directories (swappable media)
 
 Instead of a single file, a device can be pointed at a directory of images that are
@@ -256,6 +265,25 @@ The status led will blink continuously when card is not present, then blink once
 
 It will depend on the host system whether it gets confused by hotplugging.
 Any IO requests issued when card is removed will be timeouted.
+
+Releasing unused SD card space (ERASE)
+--------------------------------------
+An SD card can be told that a range of its sectors no longer holds anything worth keeping, with the SD `ERASE` command (the equivalent of TRIM on an SSD). The card's controller can then recycle that flash instead of preserving it, which helps write speed and card wear when hosts clear or rewrite a lot of data. ZuluSCSI can use this when a host clears a range with WRITE SAME and a block of zeros. This is experimental, and only available on the RP2040 and RP2350 based boards. It has been developed and tested on ZuluSCSI Wide with exFAT cards; other boards are not tested yet.
+
+**A card is only used this way if it reads erased blocks back as zeros.** Whether it does depends on the card, so ZuluSCSI checks the card's SCR register and then measures it: it erases a few blocks of a temporary file, `ZULUTRIM.TMP` (about 16 MB of free space in the card's file system is needed), and looks at what they read back as. The measurement takes a few seconds, during which the SCSI bus is not serviced. It is made the first time a WRITE SAME could use it (only if `SdTrim` below is on), and again after the SD card was exchanged. It is not made at all while a target gives the host direct access to the card's file system (see "Raw sector-range and partition access"), because the host and ZuluSCSI would both change that file system; zeros are then written normally.
+
+Only whole erase units (the card's allocation unit, typically 4 MB) that lie completely inside the range are released. The edges of a range are left as they are or written normally. Disk images that ZuluSCSI does not read directly from the card (for example because they are accessed through the file system instead of as plain sectors) are never erased.
+
+### Console commands
+These are in the USB serial console menu:
+
+- `c`: shows how the card handles erase (erase unit, SD status and SCR register values) and runs the measurement described above. It asks for confirmation first, because the SCSI bus is not serviced meanwhile.
+- `t`: erases the **entire** SD card, including all image files. It asks for confirmation twice (`y`, then typing `TRIM`). The SCSI bus is not serviced meanwhile.
+
+### Settings
+In the `[SCSI]` section of `zuluscsi.ini`:
+
+- `SdTrim = 1`: when a host clears a range with WRITE SAME and a block of zeros, whole erase units inside the range are released with `ERASE` instead of writing the zeros. Default 0.
 
 Programming & bootloader
 ------------------------

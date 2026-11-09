@@ -336,6 +336,29 @@ static void pageIn(int pc, int dataIdx, const uint8_t* pageData, int pageLen)
 static void doModeSense(int sixByteCmd, int dbd, int pc, int pageCode, int allocLength)
 {
 #ifdef PLATFORM_AS400
+	// The B10 SCSI-1 TDC 3600 supports its captured page-zero response,
+	// not the newer IBM 4100 page 0x10 and all-pages convention.
+	if (sixByteCmd && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 &&
+		scsiDev.target->cfg->deviceType == S2S_CFG_SEQUENTIAL &&
+		isAS400TDC3600TapeIdentity(scsiDev.target->cfg->scsiId) &&
+		(pageCode == 0x00 || pageCode == 0x10 || pageCode == 0x3F))
+	{
+		if (pageCode == 0x00 && pc == 0x00)
+		{
+			uint16_t customLen = 0;
+			if (getCustomModeSense(scsiDev.target->cfg->scsiId, scsiDev.data, &customLen))
+			{
+				scsiDev.dataLen = customLen > allocLength ? allocLength : customLen;
+				scsiDev.phase = DATA_IN;
+				return;
+			}
+		}
+		scsiDev.status = CHECK_CONDITION;
+		scsiDev.target->sense.code = ILLEGAL_REQUEST;
+		scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
+		scsiDev.phase = STATUS;
+		return;
+	}
 	if (sixByteCmd && pageCode == 0x3F && scsiDev.target->cfg->quirks == S2S_CFG_QUIRKS_AS400 && scsiDev.target->cfg->deviceType == S2S_CFG_FIXED)
 	{
 		// A loaded AS/400 disk profile (see custom_vendor_inquiry.cpp) can
@@ -857,14 +880,18 @@ static void doModeSelect(void)
 			blockDescLen = scsiDev.data[3];
 			idx = 4;
 		}
-		// Make sure the data structure is the correct length before
-		// ModeSelect starts overwriting settings
+		// Validate the whole parameter list before changing live settings.
+		// The block descriptor must fit, and each page length must be read
+		// from the page currently being checked (not from the descriptor).
+		if (blockDescLen > scsiDev.dataLen - idx) goto badLength;
 		int idx_check = idx + blockDescLen;
 		while (idx_check < scsiDev.dataLen)
 		{
+			// A vendor-specific page-code zero terminates parsing below.
+			if ((scsiDev.data[idx_check] & 0x3F) == 0) break;
 			if (idx_check + 2 > scsiDev.dataLen) goto badLength;
-			int pageLen = scsiDev.data[idx + 1];
-			if (idx_check + 2 + pageLen > scsiDev.dataLen) goto badLength;
+			int pageLen = scsiDev.data[idx_check + 1];
+			if (pageLen > scsiDev.dataLen - idx_check - 2) goto badLength;
 			idx_check += 2 + pageLen;
 		}
 
@@ -925,6 +952,28 @@ static void doModeSelect(void)
 			{
 			case 0x02: // Disconnect-Reconnect Page
 			{
+#ifdef PLATFORM_AS400
+				// IBM 0671S15 CISC disks use a captured two-byte form of
+				// mode page 0x02 (01 80), not the standard 14-byte SCSI-2
+				// Disconnect-Reconnect page. A B10 sends it with PF=1, SP=1
+				// during LIC installation; rejecting it with ASC/ASCQ 26/00
+				// leads to repeated MODE SELECT retries and SRC 6100/3100.
+				// Only accept the captured form on a profiled 520-byte AS/400
+				// fixed disk; leave standard parsing unchanged everywhere else.
+				if (pageLen == 0x02 &&
+					scsiDev.target->cfg->deviceType == S2S_CFG_FIXED &&
+					scsiDev.data[idx+2] == 0x01 &&
+					scsiDev.data[idx+3] == 0x80)
+				{
+					uint32_t as400BlockSize = 0, as400Sectors = 0;
+					if (getAS400ProfileCapacity(scsiDev.target->targetId,
+						&as400BlockSize, &as400Sectors) &&
+						as400BlockSize == 520)
+					{
+						break; // IBM-specific page has no standard disconnect fields.
+					}
+				}
+#endif
 				if (pageLen != 0x0E) goto bad;
 
 				uint16_t disconnectTimeLimit =
