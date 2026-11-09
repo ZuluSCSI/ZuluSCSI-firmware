@@ -11,7 +11,8 @@
 // file is affected.
 
 #pragma once
-
+#include <ZuluSCSI_platform_config.h>
+#if SD_TRIM_SUPPORT
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -33,3 +34,4 @@ typedef struct
 // so the SCSI bus must not be in the middle of a transfer. With verbose set it
 // prints what the console command prints.
 bool sdTrimMeasure(sd_erase_measure_t *out, bool verbose);
+#endif

@@ -122,3 +122,7 @@
 #ifndef FAST_I2C_CLK_SPEED
 #define FAST_I2C_CLK_SPEED 400000
 #endif
+
+#ifndef SD_TRIM_SUPPORT
+#define SD_TRIM_SUPPORT 1
+#endif
