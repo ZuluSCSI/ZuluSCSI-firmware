@@ -59,7 +59,9 @@ bool sdEraseReadsAsZero(uint32_t *unitSectors)
     {
         g_gate = GATE_CLOSED;
 
+
         if (ini_getbool("SCSI", "SdTrim", false, CONFIGFILE))
+#if SD_TRIM_SUPPORT
         {
             // Whether erased blocks read back as zeros is a property of each
             // card (SD SCR register, which this SD driver cannot read), so it is
@@ -94,6 +96,11 @@ bool sdEraseReadsAsZero(uint32_t *unitSectors)
                        " KB, slowest erase ", (int)result.worst_erase_ms, " ms -- zeroed ranges are released with the card's erase");
             }
         }
+#else
+        {
+            logmsg("\"SdTrim\" setting in ", CONFIGFILE, " not supported on this board");
+        }
+#endif
     }
 
     if (g_gate == GATE_OPEN && unitSectors)
