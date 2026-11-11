@@ -19,6 +19,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  **/
 
+#include <ZuluSCSI_platform_config.h>
+
+#if SD_TRIM_SUPPORT
+
 #include "ZuluSCSI_sd_fsfree.h"
 #include "ZuluSCSI_platform.h"
 #include "ZuluSCSI.h"
@@ -309,3 +313,5 @@ bool sdFsRangeFree(uint32_t firstSector, uint32_t sectors)
     }
     return !g.read_failed;
 }
+
+#endif // SD_TRIM_SUPPORT

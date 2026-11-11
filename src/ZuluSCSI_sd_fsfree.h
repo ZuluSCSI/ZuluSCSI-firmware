@@ -16,6 +16,10 @@
 
 #pragma once
 
+#include <ZuluSCSI_platform_config.h>
+
+#if SD_TRIM_SUPPORT
+
 #include <stdint.h>
 
 // Checks that the card's file system can be consulted: a supported type, no
@@ -34,3 +38,4 @@ bool sdFsRangeFree(uint32_t firstSector, uint32_t sectors);
 
 // Forget everything, e.g. when the card was changed.
 void sdFsFreeReset();
+#endif // SD_TRIM_SUPPORT

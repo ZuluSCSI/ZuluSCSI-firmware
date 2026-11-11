@@ -19,6 +19,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  **/
 
+#include <ZuluSCSI_platform_config.h>
+
+#if SD_TRIM_SUPPORT
+
 #include "ZuluSCSI_sd_scrub.h"
 #include "ZuluSCSI_sd_zero.h"
 #include "ZuluSCSI_sd_fsfree.h"
@@ -356,3 +360,5 @@ void sdScrubPoll()
         scrub_one_unit(now);
     }
 }
+
+#endif // SD_TRIM_SUPPORT

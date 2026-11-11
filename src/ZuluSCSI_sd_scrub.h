@@ -7,6 +7,10 @@
 
 #pragma once
 
+#include <ZuluSCSI_platform_config.h>
+
+#if SD_TRIM_SUPPORT
+
 // Reads the settings, measures the card's erase behaviour once (a few seconds,
 // the host is not served meanwhile) and starts the first pass. Call once the SD
 // card and the images are set up and before the main loop runs.
@@ -17,3 +21,9 @@ void sdScrubReset();
 
 // Call from the main loop; does nothing most of the time.
 void sdScrubPoll();
+#else
+// Boards without SD_TRIM_SUPPORT (see ZuluSCSI_platform_config.h) have no scrubber.
+static inline void sdTrimStart() {}
+static inline void sdScrubReset() {}
+static inline void sdScrubPoll() {}
+#endif
