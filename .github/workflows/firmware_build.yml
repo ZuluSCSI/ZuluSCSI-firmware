@@ -2,6 +2,8 @@ name: Build ZuluSCSI firmware
 
 on:
   push:
+    tags:
+      - '**'
     branches:
       - main
       - LTS/V1.x
