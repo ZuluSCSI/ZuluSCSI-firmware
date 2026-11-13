@@ -68,7 +68,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
             .delay0 = 10 - 1,
             .delay1 = 15 - 1,
             .total_period_adjust = -1,
-            .rdelay1 = 15 - 1,
+            .rdelay1 = 13 - 1,
             .rtotal_period_adjust = 0,
             .max_sync = 50,
         },
@@ -192,7 +192,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
             .delay0 = 10 - 1,
             .delay1 = 15 - 1,
             .total_period_adjust = -1,
-            .rdelay1 = 15 - 1,
+            .rdelay1 = 14 - 1,
             .rtotal_period_adjust = 0,
             .max_sync = 50,
         },
@@ -310,7 +310,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_10 =
         {
-            .delay0 = 6 - 1,
+            .delay0 = 7 - 1,
             .delay1 = 12 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 12 - 1,
@@ -441,7 +441,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_10 =
         {
-            .delay0 = 4 - 1,
+            .delay0 = 5 - 1,
             .delay1 = 8 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 8 - 1,
@@ -451,7 +451,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_5 =
         {
-            .delay0 = 4 - 1,
+            .delay0 = 6 - 1,
             .delay1 = 8 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 8 - 1,
@@ -496,7 +496,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_20 =
         {
-            .delay0 = 2 - 1,
+            .delay0 = 3 - 1,
             .delay1 = 5 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 7 - 1,
@@ -518,7 +518,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_5 =
         {
-            .delay0 = 5 - 1,
+            .delay0 = 7 - 1,
             .delay1 = 10 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 10 - 1,
@@ -574,7 +574,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_10 =
         {
-            .delay0 = 6 - 1,
+            .delay0 = 7 - 1,
             .delay1 = 12 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 12 - 1,
@@ -627,7 +627,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_20 =
         {
-            .delay0 = 2 - 1,
+            .delay0 = 3 - 1,
             .delay1 = 5 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 7 - 1,
@@ -638,7 +638,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_10 =
         {
-            .delay0 = 5 - 1,
+            .delay0 = 6 - 1,
             .delay1 = 9 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 9 - 1,
@@ -649,7 +649,7 @@ static zuluscsi_timings_t  predefined_timings[]  = {
 
         .scsi_5 =
         {
-            .delay0 = 5 - 1,
+            .delay0 = 7 - 1,
             .delay1 = 10 - 1,
             .total_period_adjust = 0,
             .rdelay1 = 10 - 1,
@@ -793,8 +793,38 @@ bool set_timings(zuluscsi_speed_grade_t speed_grade)
         timings_index = 5;
         break;
 #endif
-        default:
-            break;
+    case SPEED_GRADE_TEST_0:
+        timings_index = 0;
+        break;
+    case SPEED_GRADE_TEST_1:
+        timings_index = 1;
+        break;
+    case SPEED_GRADE_TEST_2:
+        timings_index = 2;
+        break;
+    case SPEED_GRADE_TEST_3:
+        timings_index = 3;
+        break;
+    case SPEED_GRADE_TEST_4:
+        timings_index = 4;
+        break;
+    case SPEED_GRADE_TEST_5:
+        timings_index = 5;
+        break;
+    case SPEED_GRADE_TEST_6:
+        timings_index = 6;
+        break;
+    case SPEED_GRADE_TEST_7:
+        timings_index = 7;
+        break;
+    case SPEED_GRADE_TEST_8:
+        timings_index = 8;
+        break;
+    case SPEED_GRADE_TEST_9:
+        timings_index = 9;
+        break;
+    default:
+        break;
     }
     if (speed_grade != SPEED_GRADE_DEFAULT && speed_grade != SPEED_GRADE_CUSTOM)
     {
