@@ -1,7 +1,7 @@
 ZuluSCSI™ Firmware
 =================
 
-ZuluSCSI is a family of hardware devices that emulates Small System Computer Interface storage devices. This repository contains the firmware source code for these devices, as well as precompiled firmware, available via the [releases](https://github.com/ZuluSCSI/ZuluSCSI-firmware/releases) page.
+ZuluSCSI is a family of hardware devices that emulates [Small Computer System Interface](https://en.wikipedia.org/wiki/SCSI) storage devices. This repository contains the firmware source code for these devices, as well as precompiled firmware, available via the [releases](https://github.com/ZuluSCSI/ZuluSCSI-firmware/releases) page.
 
 
 Image files on the SD card
