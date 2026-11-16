@@ -59,7 +59,19 @@ const char * const speed_grade_strings[] =
     "A",
     "B",
     "C",
-    "WifiRM2"
+    "WifiRM2",
+    "Base203MHz",
+    "Base155MHz",
+    "Test_0",
+    "Test_1",
+    "Test_2",
+    "Test_3",
+    "Test_4",
+    "Test_5",
+    "Test_6",
+    "Test_7",
+    "Test_8",
+    "Test_9"
 };
 
 // must be in the same order as zuluscsi_wifi_security_t in ZuluSCSI_settings.h
