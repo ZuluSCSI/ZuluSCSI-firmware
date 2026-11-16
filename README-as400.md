@@ -120,13 +120,15 @@ See below for the meaning of the *padded size*.
 
 Check your machine model's individual platform restrictions which types of DASD is supported with your given machine and OS release.
 
+> **Note:** If you reference a non-existing disk profile, you will get a log message on the Zulu Console, in the error log (if enabled), and the SCSI ID is **not** presented to the host!
+
 #### How custom profiles are handled
 
 At power-on, if *as400_disk_definitions.txt* exists on the SD card, ZuluSCSI splits it into one file per profile, `zulu_profiles/<SectionName>.ini`, and renames the original to *-processed-as400_disk_definitions.txt* so the split does not repeat on every boot. Right after the split, all `.ini` files in `zulu_profiles/` are written into a profile store in flash and moved to `zulu_profiles/loaded/`, or to `zulu_profiles/failed/` if they could not be parsed; see the log for the reason. The custom profiles are copied off the SD card into a memory area of the ZuluSCSI’s own onboard flash chip, the same chip that holds the firmware. They are then served from there, which saves RAM.
 
 Files in `loaded/` are not read again, so to add a profile, supply every custom profile you still need, not just the new one. Loading only happens at power-on with a card inserted, not when a card is inserted while running. Built-in profiles are not affected by any of this, and a custom profile overrides a built-in one of the same name.
 
-> **Note:** When a card change happens, and the new card contains new/different profiles not in the `loaded/` subdirectory, the whole custom store is erased and rebuilt from those files. Depending on the *as400_disk_definitions.txt* content before and after, this might leave you without working DASD.
+> **Note:** When a card change happens, and the new card contains new/different profiles not in the `loaded/` subdirectory, the whole custom store is erased and rebuilt from those files at the next Zulu reboot. Depending on the *as400_disk_definitions.txt* content before and after, this might leave you without working DASD.
 
 #### Updating custom profiles
 
