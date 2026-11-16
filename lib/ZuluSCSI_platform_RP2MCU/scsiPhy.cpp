@@ -56,6 +56,16 @@ extern "C" bool scsiStatusBSY()
 /************************/
 
 static SCSI_PHASE g_scsi_phase;
+
+// Bytes sent to the host in the current DATA IN phase in 16-bit mode.
+// If the total is odd, the last transfer carried a padding byte in the
+// high lane and the host must be told to discard it (see scsiEnterPhaseImmediate).
+static uint32_t g_wide_data_in_bytes;
+
+// Set when a new piece of DATA IN data starts after an odd running total.
+// The 16-bit transfer code pads each piece separately, so everything after
+// that point lands in the wrong byte lanes. Logged when the phase ends.
+static bool g_wide_data_in_misaligned;
 volatile uint8_t g_scsi_sts_selection;
 volatile uint8_t g_scsi_sts_selection_initiator;
 volatile uint8_t g_scsi_ctrl_bsy;
@@ -350,6 +360,25 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
         // Phase changes are not allowed while REQ or ACK is asserted.
         while (likely(!scsiDev.resetFlag) && SCSI_IN(ACK)) {}
 
+        // After a 16-bit DATA IN phase that ended on an odd byte,
+        // send IGNORE WIDE RESIDUE so the host discards the padding byte.
+        // Without it, hosts see one byte too many and fail the command.
+        bool odd_wide_data_in = (g_scsi_phase == DATA_IN) && (g_wide_data_in_bytes & 1);
+        if (g_wide_data_in_misaligned)
+        {
+            logmsg("WARNING: 16-bit DATA IN was sent in pieces with an odd length, data after the first odd piece was misaligned (",
+                   (int)g_wide_data_in_bytes, " bytes total, command ", (uint8_t)scsiDev.cdb[0], ")");
+            g_wide_data_in_misaligned = false;
+        }
+        g_wide_data_in_bytes = 0;
+        if (odd_wide_data_in && phase >= 0 && likely(!scsiDev.resetFlag))
+        {
+            scsiEnterPhase(MESSAGE_IN);
+            scsiWriteByte(MSG_IGNORE_WIDE_RESIDUE);
+            scsiWriteByte(0x01); // One byte to ignore
+            return scsiEnterPhaseImmediate(phase);
+        }
+
         if (scsiDev.compatMode < COMPAT_SCSI2 && (phase == DATA_IN || phase == DATA_OUT))
         {
             // Akai S1000/S3000 seems to need extra delay before changing to data phase
@@ -431,6 +460,8 @@ extern "C" uint32_t scsiEnterPhaseImmediate(int phase)
 void scsiEnterBusFree(void)
 {
     g_scsi_phase = BUS_FREE;
+    g_wide_data_in_bytes = 0;
+    g_wide_data_in_misaligned = false;
     g_scsi_sts_selection = 0;
     g_scsi_sts_selection_initiator = 0xFF;
     g_scsi_ctrl_bsy = 0;
@@ -482,6 +513,11 @@ static inline void scsiWriteOneByte(uint16_t value)
 extern "C" void scsiWriteByte(uint8_t value)
 {
     scsiLogDataIn(&value, 1);
+    if (useWideMode())
+    {
+        if (g_wide_data_in_bytes & 1) g_wide_data_in_misaligned = true;
+        g_wide_data_in_bytes += 1;
+    }
     scsiWriteOneByte(value);
 }
 
@@ -494,6 +530,11 @@ extern "C" void scsiWrite(const uint8_t* data, uint32_t count)
 extern "C" void scsiStartWrite(const uint8_t* data, uint32_t count)
 {
     scsiLogDataIn(data, count);
+    if (useWideMode() && count > 0)
+    {
+        if (g_wide_data_in_bytes & 1) g_wide_data_in_misaligned = true;
+        g_wide_data_in_bytes += count;
+    }
 #ifdef RP2MCU_DISABLE_SCSI_ACCEL
     if (useWideMode())
     {
