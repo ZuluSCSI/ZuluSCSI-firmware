@@ -1840,6 +1840,14 @@ void scsiDiskLoadConfig(int target_idx)
         // defaults.
         parseCustomInquiryData(target_idx, (S2S_CFG_TYPE) img.deviceType);
 
+#ifdef PLATFORM_AS400
+        if (isAS400ProfileMissing(target_idx))
+        {
+            logmsg("-- Not opening '", filename, "' for id: ", target_idx, ", its AS400_DiskProfile was not found");
+            return;
+        }
+#endif
+
         logmsg("-- Opening '", filename, "' for id: ", target_idx);
         scsiDiskOpenHDDImage(target_idx, filename, 0, blocksize, (S2S_CFG_TYPE) img.deviceType, img.use_prefix);
     }

@@ -1379,6 +1379,13 @@ bool findHDDImages()
         scsiDiskGetImageConfig(id).tapeBufferedMode = g_scsi_settings.getDevice(id)->tapeBufferedMode;
 
         // Open the image file
+#ifdef PLATFORM_AS400
+        if (id < S2S_MAX_TARGETS && isAS400ProfileMissing(id))
+        {
+          logmsg("-- Not opening ", fullname, " for id:", id, ", its AS400_DiskProfile was not found");
+          continue;
+        }
+#endif
         if (id < S2S_MAX_TARGETS && is_romdrive)
         {
           logmsg("-- Loading ROM drive from ", fullname, " for id:", id);

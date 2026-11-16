@@ -68,6 +68,12 @@ bool getCustomModeSense(uint8_t scsiId, uint8_t *buf, uint16_t *length);
 // correctly-sized image file when none exists yet for a profiled ID.
 bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sectors);
 
+// True when this SCSI ID names an AS400_DiskProfile that neither the custom
+// nor the built-in profile store holds. Such a target must not be presented
+// to the host: a generic identity would be a different drive to OS/400.
+// Set by parseCustomInquiryData(), cleared by resetCustomInquiryData().
+bool isAS400ProfileMissing(uint8_t scsiId);
+
 // True only when this SCSI ID is presenting one of the captured AS/400 tape
 // identities (Device=AS400_CISC/AS400_PPC) -- i.e. the specific real
 // Tandberg-manufactured drives this project's sense-data/SPACE-logic quirks
