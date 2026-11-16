@@ -96,11 +96,14 @@ static struct {
 // this. `loaded` is consumed by selectAS400Builtin() below: a named
 // profile's declared VPD page set is authoritative for that SCSI ID, so any
 // page IT doesn't have should stay absent rather than being patched in from
-// the built-in default's unrelated physical drive.
+// the built-in default's unrelated physical drive. `missing` is set when an
+// AS400_DiskProfile was named but neither profile store holds it; the target
+// is then not presented at all (see isAS400ProfileMissing()).
 static struct {
     uint32_t blockSize;
     uint32_t sectors;
     bool loaded;
+    bool missing;
 } g_as400_profile_info[S2S_MAX_TARGETS];
 
 // A page is now patched every time it is served, so a page whose shape the
@@ -203,7 +206,7 @@ static void selectAS400Builtin(uint8_t scsiId, S2S_CFG_TYPE type)
         // built-in default would splice a different physical drive's identity
         // into an otherwise self-consistent profile -- confirmed in practice
         // for VPD pages 0x01/0x82/0x83.
-        if (g_as400_profile_info[id].loaded)
+        if (g_as400_profile_info[id].loaded || g_as400_profile_info[id].missing)
             return;
 
         g_builtin[id] = BUILTIN_AS400_DISK;
@@ -380,8 +383,9 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
     // and then in the one compiled into the firmware. Binding is a linear scan of
     // a store's section headers and costs no RAM -- the pages themselves stay
     // in flash until they are served. Fails loud: an ID that names a profile
-    // neither store holds is logged rather than quietly falling back to the
-    // built-in identity, which would be a different drive.
+    // neither store holds is not presented to the host at all (the image open
+    // is skipped, see isAS400ProfileMissing()) rather than quietly falling
+    // back to the built-in identity, which would be a different drive.
     if (readAS400Key(section, dynamic_section, "AS400_DiskProfile", tmp, sizeof(tmp)))
     {
         if (tmp[0] != '\0')
@@ -408,8 +412,10 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
             }
             else
             {
+                g_as400_profile_info[scsiId & S2S_CFG_TARGET_ID_BITS].missing = true;
                 logmsg("---- ERROR: AS/400 disk profile ", tmp, " requested for SCSI ID ",
-                       (int)scsiId, " but it is not in the custom or built-in profile store");
+                       (int)scsiId, " but it is not in the custom or built-in profile store;"
+                       " this SCSI ID will not be presented");
             }
         }
     }
@@ -844,6 +850,11 @@ bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sect
     *blockSize = g_as400_profile_info[id].blockSize;
     *sectors = g_as400_profile_info[id].sectors;
     return true;
+}
+
+bool isAS400ProfileMissing(uint8_t scsiId)
+{
+    return g_as400_profile_info[scsiId & S2S_CFG_TARGET_ID_BITS].missing;
 }
 
 bool isAS400CapturedTapeIdentity(uint8_t scsiId)
