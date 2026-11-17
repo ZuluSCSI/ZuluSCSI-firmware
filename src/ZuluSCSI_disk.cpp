@@ -4441,6 +4441,7 @@ void scsiDiskReportLUNs()
         scsiDev.target->sense.code = ILLEGAL_REQUEST;
         scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
         scsiDev.phase = STATUS;
+        return;
     }
     memset(scsiDev.data, 0, 16);
     scsiDev.data[3] = 0x08;// (uint32_t)(msb_data[0] - lsb_data[3]) = 8
