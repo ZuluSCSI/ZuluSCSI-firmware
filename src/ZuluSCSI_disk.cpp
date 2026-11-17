@@ -4413,12 +4413,12 @@ void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t ski
             scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
         }
 
-        // Support optional linked command (CDB byte 9 bit 0)
-        if (scsiDev.cdb[9] & 1)
-        {
-            scsiDev.msgIn = MSG_LINKED_COMMAND_COMPLETE;
-            scsiDev.phase = MESSAGE_IN;
-        }
+        // Optional linked command (CDB byte 9 bit 0) is handled by
+        // process_Status(): it sends INTERMEDIATE status followed by
+        // LINKED COMMAND COMPLETE. Going straight to MESSAGE_IN without
+        // a STATUS phase makes the AS/400 IOA reject the message.
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
     }
 }
 #endif
