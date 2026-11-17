@@ -4383,12 +4383,22 @@ void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t ski
     g_disk_transfer.skip_blocks = blocks;
     g_disk_transfer.skip_mask_length = mask_length > 0 ? mask_length : 256;
 
-    int parityError; 
+    int parityError = 0;
     scsiEnterPhase(DATA_OUT);
 
     scsiRead(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length, &parityError);
 
-    if (skip_total_true_bits(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length) != (int) blocks) {
+    if (parityError && (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
+    {
+        // A corrupted mask would put the linked command's blocks at the
+        // wrong LBAs, so fail the Skip instead of using it.
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ABORTED_COMMAND;
+        scsiDev.target->sense.asc = SCSI_PARITY_ERROR;
+        scsiDev.phase = STATUS;
+        g_disk_transfer.skip_command = 0;
+    }
+    else if (skip_total_true_bits(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length) != (int) blocks) {
         logmsg("Skip mask bit count mismatch: expected ", (int)blocks,
                " set bits in ", (int)mask_length, " byte mask");
         scsiDev.status = CHECK_CONDITION;
