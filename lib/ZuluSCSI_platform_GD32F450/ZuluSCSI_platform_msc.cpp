@@ -106,7 +106,7 @@ bool platform_sense_msc() {
     }
   }
 
-  logmsg("Waiting for USB enumeration timed out after ", usb_timeout, "ms.");
+  logmsg("Waiting for USB enumeration timed out after ", (int)usb_timeout, "ms.");
   logmsg("-- Try increasing 'USBMassStorageWaitPeriod' in the ", CONFIGFILE);
   //if not, disconnect MSC class...
   usbd_disconnect (&cdc_acm);
