@@ -167,6 +167,8 @@ typedef struct __attribute__((__packed__)) scsi_system_settings_t
 
     bool dumpCachedSettings;
 
+    bool printProfiles;
+
 #if ENABLE_COW
     uint16_t cowBufferSize;
 #endif

@@ -722,6 +722,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     cfgSys.dumpCachedSettings = false;
 
+    cfgSys.printProfiles = false;
+
 #ifdef ENABLE_COW
     cfgSys.cowBufferSize = DEFAULT_COW_BUFFER_SIZE;
 #endif
@@ -941,6 +943,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
 
     cfgSys.dumpCachedSettings = log_ini_getbool("SCSI", "DumpCachedSettings", cfgSys.dumpCachedSettings, CONFIGFILE, log_settings);
 
+    // No need to log this setting - it will print info when true
+    cfgSys.printProfiles = ini_getbool("SCSI", "PrintProfiles", cfgSys.printProfiles, CONFIGFILE);
 
 #if ENABLE_COW
     cfgSys.cowBufferSize = log_ini_getl("SCSI", "CowBufferSize", cfgSys.cowBufferSize, CONFIGFILE, log_settings);
