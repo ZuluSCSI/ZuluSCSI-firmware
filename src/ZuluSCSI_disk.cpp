@@ -4383,12 +4383,22 @@ void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t ski
     g_disk_transfer.skip_blocks = blocks;
     g_disk_transfer.skip_mask_length = mask_length > 0 ? mask_length : 256;
 
-    int parityError; 
+    int parityError = 0;
     scsiEnterPhase(DATA_OUT);
 
     scsiRead(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length, &parityError);
 
-    if (skip_total_true_bits(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length) != (int) blocks) {
+    if (parityError && (scsiDev.boardCfg.flags & S2S_CFG_ENABLE_PARITY))
+    {
+        // A corrupted mask would put the linked command's blocks at the
+        // wrong LBAs, so fail the Skip instead of using it.
+        scsiDev.status = CHECK_CONDITION;
+        scsiDev.target->sense.code = ABORTED_COMMAND;
+        scsiDev.target->sense.asc = SCSI_PARITY_ERROR;
+        scsiDev.phase = STATUS;
+        g_disk_transfer.skip_command = 0;
+    }
+    else if (skip_total_true_bits(g_disk_transfer.skip_mask, g_disk_transfer.skip_mask_length) != (int) blocks) {
         logmsg("Skip mask bit count mismatch: expected ", (int)blocks,
                " set bits in ", (int)mask_length, " byte mask");
         scsiDev.status = CHECK_CONDITION;
@@ -4413,12 +4423,12 @@ void scsiDiskSkip(uint32_t lba, uint32_t blocks, uint8_t mask_length,uint8_t ski
             scsiDiskPrefetchInvalidate(scsiDev.target->targetId);
         }
 
-        // Support optional linked command (CDB byte 9 bit 0)
-        if (scsiDev.cdb[9] & 1)
-        {
-            scsiDev.msgIn = MSG_LINKED_COMMAND_COMPLETE;
-            scsiDev.phase = MESSAGE_IN;
-        }
+        // Optional linked command (CDB byte 9 bit 0) is handled by
+        // process_Status(): it sends INTERMEDIATE status followed by
+        // LINKED COMMAND COMPLETE. Going straight to MESSAGE_IN without
+        // a STATUS phase makes the AS/400 IOA reject the message.
+        scsiDev.status = GOOD;
+        scsiDev.phase = STATUS;
     }
 }
 #endif
@@ -4482,7 +4492,9 @@ int scsiDiskCommand()
             scsiDev.target->sense.code = ILLEGAL_REQUEST;
             scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
             scsiDev.phase = STATUS;
-            return 0;
+            // Handled: returning 0 would let scsi.c keep dispatching the
+            // rejected command to the other handlers.
+            return 1;
         }
     }
 #endif
