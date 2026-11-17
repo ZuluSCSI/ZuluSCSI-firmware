@@ -4481,7 +4481,9 @@ int scsiDiskCommand()
             scsiDev.target->sense.code = ILLEGAL_REQUEST;
             scsiDev.target->sense.asc = INVALID_FIELD_IN_CDB;
             scsiDev.phase = STATUS;
-            return 0;
+            // Handled: returning 0 would let scsi.c keep dispatching the
+            // rejected command to the other handlers.
+            return 1;
         }
     }
 #endif
