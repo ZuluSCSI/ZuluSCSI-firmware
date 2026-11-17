@@ -137,6 +137,30 @@ static uint8_t asciiToEbcdic(char c)
     return 0x40;
 }
 
+// Normalize an AS400_DiskSerialNumber value to the 8 characters the standard
+// INQUIRY carries as a 28-bit value: 8 hex digits, the first always '0'
+// (applyProfileIdentityFields() and applyBuiltinIdentityFields() force it).
+// 1 to 7 hex digits are right-justified and zero-padded to 8, lowercase is
+// uppercased, and 8 hex digits must start with '0'. Returns false for any
+// other value, since forcing the first character or padding with spaces
+// would serve a different serial than the one configured.
+static bool normalizeAS400Serial(const char *value, char serial[9])
+{
+    size_t slen = strlen(value);
+    if (slen == 0 || slen > 8) return false;
+
+    memset(serial, '0', 8);
+    serial[8] = '\0';
+    for (size_t i = 0; i < slen; i++)
+    {
+        char c = value[i];
+        if (c >= 'a' && c <= 'f') c -= ('a' - 'A');
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) return false;
+        serial[8 - slen + i] = c;
+    }
+    return serial[0] == '0';
+}
+
 
 // Inject the serial number into a page at the given offset: the configured
 // AS400_DiskSerialNumber when there is one, otherwise the generated default
@@ -336,19 +360,25 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
     }
 #endif // DYNAMIC_SCSI_ID
 
-    // Parse AS/400 serial override: AS400_DiskSerialNumber=<up to 8 chars>
-    // Shorter values are right-padded with ASCII spaces; longer values are truncated.
+    // Parse AS/400 serial override: AS400_DiskSerialNumber=<hex digits>,
+    // normalized by normalizeAS400Serial().
     if (readAS400Key(section, dynamic_section, "AS400_DiskSerialNumber", tmp, sizeof(tmp)))
     {
-        size_t slen = strlen(tmp);
-        if (slen > 0)
+        if (tmp[0] != '\0')
         {
             uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
-            memset(g_as400_serial_override[id].data, ' ', 8);
-            if (slen > 8) slen = 8;
-            memcpy(g_as400_serial_override[id].data, tmp, slen);
-            g_as400_serial_override[id].length = 8;
-            logmsg("---- Custom AS/400 serial for SCSI ID ", (int) scsiId, ": \"", tmp, "\"");
+            char serial[9];
+            if (normalizeAS400Serial(tmp, serial))
+            {
+                memcpy(g_as400_serial_override[id].data, serial, 8);
+                g_as400_serial_override[id].length = 8;
+                logmsg("---- Custom AS/400 serial for SCSI ID ", (int) scsiId, ": \"", serial, "\"");
+            }
+            else
+            {
+                logmsg("---- ERROR: AS400_DiskSerialNumber \"", tmp, "\" for SCSI ID ", (int) scsiId,
+                       " is not 1-7 hex digits or 8 hex digits starting with 0; override ignored");
+            }
         }
     }
 
