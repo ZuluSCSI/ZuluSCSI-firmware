@@ -155,7 +155,7 @@ AS400_DiskProfile = "86G9124"
 AS400_DiskSerialNumber = "02222222"
 ```
 
-The value must be exactly 8 characters: hexadecimal digits only (`0`-`9`, `A`-`F`), with the first character always `0`. This isn't an arbitrary style choice -- the field is read back as a 28-bit binary value, not free text. A value that doesn't fit this shape shows as a masked serial (`00-********`) in DST's "Display Non-Configured Units" screen, and possibly yields an unusable device.
+The value must be hexadecimal digits only (`0`-`9`, `A`-`F`): either 8 characters with the first one `0`, or 1 to 7 characters, which are right-justified and zero-padded to 8 (`2222222` is served as `02222222`). Any other value is rejected with an error in the log and the override is not applied. This isn't an arbitrary style choice -- the field is read back as a 28-bit binary value, not free text. A value that doesn't fit this shape shows as a masked serial (`00-********`) in DST's "Display Non-Configured Units" screen, and possibly yields an unusable device.
 
 Without an `AS400_DiskSerialNumber` override, a named profile's own originally-captured serial is used verbatim and unchanged — good for a single disk of that profile, but two or more SCSI IDs sharing the same profile with no override will show the exact same serial to OS/400. An override is required, not just recommended, whenever a profile is used more than once.
 
