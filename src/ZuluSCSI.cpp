@@ -60,6 +60,7 @@
 #include "ZuluSCSI_settings.h"
 #include "ZuluSCSI_disk.h"
 #include "ZuluSCSI_sd_zero.h"
+#include "ZuluSCSI_sd_scrub.h"
 #include "ZuluSCSI_sca_hw_config.h"
 #include "ZuluSCSI_initiator.h"
 #include "ZuluSCSI_msc_initiator.h"
@@ -1378,6 +1379,13 @@ bool findHDDImages()
         scsiDiskGetImageConfig(id).tapeBufferedMode = g_scsi_settings.getDevice(id)->tapeBufferedMode;
 
         // Open the image file
+#ifdef PLATFORM_AS400
+        if (id < S2S_MAX_TARGETS && isAS400ProfileMissing(id))
+        {
+          logmsg("-- Not opening ", fullname, " for id:", id, ", its AS400_DiskProfile was not found");
+          continue;
+        }
+#endif
         if (id < S2S_MAX_TARGETS && is_romdrive)
         {
           logmsg("-- Loading ROM drive from ", fullname, " for id:", id);
@@ -2366,6 +2374,14 @@ extern "C" void zuluscsi_setup(void)
   }
 #endif
 
+#ifdef PLATFORM_AS400
+  if (g_sdcard_present)
+  {
+    // Settings SdTrim and SdScrub; measures the card's erase if either is on
+    sdTrimStart();
+  }
+#endif
+
   logmsg("Firmware initialization complete!");
 }
 
@@ -2474,6 +2490,10 @@ extern "C" void zuluscsi_main_loop(void)
     iotrace_disk_compute_us = (uint32_t)(iotrace_now_us() - iotrace_t0);
     iotrace_loop_account(IOTRACE_BUCKET_DISK_COMPUTE, iotrace_disk_compute_us);
 
+#ifdef PLATFORM_AS400
+    sdScrubPoll();
+#endif
+
     scsiLogPhaseChange(scsiDev.phase);
 
     // Save log periodically during status phase if there are new messages.
@@ -2535,6 +2555,7 @@ extern "C" void zuluscsi_main_loop(void)
       LED_OFF();
       logmsg("SD card reinit succeeded");
       sdEraseGateReset(); // a different card may erase differently
+      sdScrubReset();
       print_sd_info();
       if (g_displayEnabled)
       {

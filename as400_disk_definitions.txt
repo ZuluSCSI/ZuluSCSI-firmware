@@ -1079,3 +1079,33 @@ LogSense30PageListLength = 44
 LogSense31 = 00 00 00 00
 LogSense31PageLength = 0
 
+; ===========================================================================
+; AS/400 disk profile '0671S15', captured from /dev/sg1 on 2026-10-08T04:50:23Z
+; Label is the drive's own part number (from VPD page 0x01, or given explicitly).
+; Feature+Model (e.g. #6607) is a system-level packaging designation, not
+; present in the drive's own INQUIRY/VPD data.
+; ===========================================================================
+[0671S15]
+Vendor = IBM
+Product = 0671S15
+Revision = 200
+BlockSize = 520
+Sectors = 616392
+
+; --- Standard INQUIRY (full response) ---
+SPD = 00 00 00 00 83 00 00 00 49 42 4d 20 20 20 20 20 30 36 37 31 53 31 35 20 20 20 20 20 20 20 20 20 32 30 30 20 30 30 31 30 34 33 30 30 32 31 46 34 35 39 38 20 20 20 20 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 39 38 30 38 39 31 37 38 00 30 30 30 31 32 32 36 34 39 34 32 30 31 20 20 20 20 20 38 34 32 37 38 36 20 20 20 20
+
+; --- VPD pages (space-separated hex bytes, minIni-parseable) ---
+; no VPD pages captured
+
+; --- MODE SENSE(6), page 0x3F (all pages) ---
+ModeSense3F = 15 00 00 08 00 09 67 c8 00 00 02 08 81 01 04 82 02 01 80 80 01 80
+
+; --- LOG SENSE pages ---
+LogSense00 = 00 00 00 00
+LogSense30 = 00 00 00 00
+LogSense30PageLength = 0
+LogSense30PageListLength = 0
+LogSense31 = 00 00 00 00
+LogSense31PageLength = 0
+

@@ -36,6 +36,16 @@ typedef enum
     SPEED_GRADE_WIFI_RM2,
     SPEED_GRADE_BASE_203MHZ,
     SPEED_GRADE_BASE_155MHZ,
+    SPEED_GRADE_TEST_0,
+    SPEED_GRADE_TEST_1,
+    SPEED_GRADE_TEST_2,
+    SPEED_GRADE_TEST_3,
+    SPEED_GRADE_TEST_4,
+    SPEED_GRADE_TEST_5,
+    SPEED_GRADE_TEST_6,
+    SPEED_GRADE_TEST_7,
+    SPEED_GRADE_TEST_8,
+    SPEED_GRADE_TEST_9
 } zuluscsi_speed_grade_t;
 
 // Wi-Fi security mode requested by the WiFiSecurity setting.

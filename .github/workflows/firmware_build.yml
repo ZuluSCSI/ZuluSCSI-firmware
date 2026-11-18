@@ -2,6 +2,8 @@ name: Build ZuluSCSI firmware
 
 on:
   push:
+    tags:
+      - '**'
     branches:
       - main
       - LTS/V1.x
@@ -46,6 +48,11 @@ jobs:
         run: |
           cd ZuluSCSI
           python3 utils/test_as400_mode_select_length.py
+
+      - name: Test AS400_DiskSerialNumber normalization
+        run: |
+          cd ZuluSCSI
+          python3 utils/test_as400_serial_override.py
 
       - name: Build firmware
         run: |

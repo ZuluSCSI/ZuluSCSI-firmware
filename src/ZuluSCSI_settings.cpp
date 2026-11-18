@@ -59,7 +59,19 @@ const char * const speed_grade_strings[] =
     "A",
     "B",
     "C",
-    "WifiRM2"
+    "WifiRM2",
+    "Base203MHz",
+    "Base155MHz",
+    "Test_0",
+    "Test_1",
+    "Test_2",
+    "Test_3",
+    "Test_4",
+    "Test_5",
+    "Test_6",
+    "Test_7",
+    "Test_8",
+    "Test_9"
 };
 
 // must be in the same order as zuluscsi_wifi_security_t in ZuluSCSI_settings.h
@@ -957,6 +969,8 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     log_ini_getbool("SCSI", "DebugIgnoreBusyFree", 0, CONFIGFILE, log_settings);
     log_ini_getbool("SCSI", "DisableStatusLED", false, CONFIGFILE, log_settings);
     log_ini_getbool("SCSI", "SdTrim", false, CONFIGFILE, log_settings);
+    log_ini_getbool("SCSI", "SdScrub", false, CONFIGFILE, log_settings);
+    log_ini_getl("SCSI", "SdScrubPauseHours", 24, CONFIGFILE, log_settings);
 
     log_ini_getl("SCSI", "InitiatorImageHandling", 0, CONFIGFILE, log_settings, &log_getl_initiator_img_handling);
     log_ini_getl("SCSI", "InitiatorID", 7, CONFIGFILE, log_settings);

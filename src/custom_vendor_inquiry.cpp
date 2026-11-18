@@ -96,11 +96,14 @@ static struct {
 // this. `loaded` is consumed by selectAS400Builtin() below: a named
 // profile's declared VPD page set is authoritative for that SCSI ID, so any
 // page IT doesn't have should stay absent rather than being patched in from
-// the built-in default's unrelated physical drive.
+// the built-in default's unrelated physical drive. `missing` is set when an
+// AS400_DiskProfile was named but neither profile store holds it; the target
+// is then not presented at all (see isAS400ProfileMissing()).
 static struct {
     uint32_t blockSize;
     uint32_t sectors;
     bool loaded;
+    bool missing;
 } g_as400_profile_info[S2S_MAX_TARGETS];
 
 // A page is now patched every time it is served, so a page whose shape the
@@ -132,6 +135,30 @@ static uint8_t asciiToEbcdic(char c)
     if (c >= 'J' && c <= 'R') return (uint8_t)(0xD1 + (c - 'J'));
     if (c >= 'S' && c <= 'Z') return (uint8_t)(0xE2 + (c - 'S'));
     return 0x40;
+}
+
+// Normalize an AS400_DiskSerialNumber value to the 8 characters the standard
+// INQUIRY carries as a 28-bit value: 8 hex digits, the first always '0'
+// (applyProfileIdentityFields() and applyBuiltinIdentityFields() force it).
+// 1 to 7 hex digits are right-justified and zero-padded to 8, lowercase is
+// uppercased, and 8 hex digits must start with '0'. Returns false for any
+// other value, since forcing the first character or padding with spaces
+// would serve a different serial than the one configured.
+static bool normalizeAS400Serial(const char *value, char serial[9])
+{
+    size_t slen = strlen(value);
+    if (slen == 0 || slen > 8) return false;
+
+    memset(serial, '0', 8);
+    serial[8] = '\0';
+    for (size_t i = 0; i < slen; i++)
+    {
+        char c = value[i];
+        if (c >= 'a' && c <= 'f') c -= ('a' - 'A');
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) return false;
+        serial[8 - slen + i] = c;
+    }
+    return serial[0] == '0';
 }
 
 
@@ -203,7 +230,7 @@ static void selectAS400Builtin(uint8_t scsiId, S2S_CFG_TYPE type)
         // built-in default would splice a different physical drive's identity
         // into an otherwise self-consistent profile -- confirmed in practice
         // for VPD pages 0x01/0x82/0x83.
-        if (g_as400_profile_info[id].loaded)
+        if (g_as400_profile_info[id].loaded || g_as400_profile_info[id].missing)
             return;
 
         g_builtin[id] = BUILTIN_AS400_DISK;
@@ -333,19 +360,25 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
     }
 #endif // DYNAMIC_SCSI_ID
 
-    // Parse AS/400 serial override: AS400_DiskSerialNumber=<up to 8 chars>
-    // Shorter values are right-padded with ASCII spaces; longer values are truncated.
+    // Parse AS/400 serial override: AS400_DiskSerialNumber=<hex digits>,
+    // normalized by normalizeAS400Serial().
     if (readAS400Key(section, dynamic_section, "AS400_DiskSerialNumber", tmp, sizeof(tmp)))
     {
-        size_t slen = strlen(tmp);
-        if (slen > 0)
+        if (tmp[0] != '\0')
         {
             uint8_t id = scsiId & S2S_CFG_TARGET_ID_BITS;
-            memset(g_as400_serial_override[id].data, ' ', 8);
-            if (slen > 8) slen = 8;
-            memcpy(g_as400_serial_override[id].data, tmp, slen);
-            g_as400_serial_override[id].length = 8;
-            logmsg("---- Custom AS/400 serial for SCSI ID ", (int) scsiId, ": \"", tmp, "\"");
+            char serial[9];
+            if (normalizeAS400Serial(tmp, serial))
+            {
+                memcpy(g_as400_serial_override[id].data, serial, 8);
+                g_as400_serial_override[id].length = 8;
+                logmsg("---- Custom AS/400 serial for SCSI ID ", (int) scsiId, ": \"", serial, "\"");
+            }
+            else
+            {
+                logmsg("---- ERROR: AS400_DiskSerialNumber \"", tmp, "\" for SCSI ID ", (int) scsiId,
+                       " is not 1-7 hex digits or 8 hex digits starting with 0; override ignored");
+            }
         }
     }
 
@@ -380,8 +413,9 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
     // and then in the one compiled into the firmware. Binding is a linear scan of
     // a store's section headers and costs no RAM -- the pages themselves stay
     // in flash until they are served. Fails loud: an ID that names a profile
-    // neither store holds is logged rather than quietly falling back to the
-    // built-in identity, which would be a different drive.
+    // neither store holds is not presented to the host at all (the image open
+    // is skipped, see isAS400ProfileMissing()) rather than quietly falling
+    // back to the built-in identity, which would be a different drive.
     if (readAS400Key(section, dynamic_section, "AS400_DiskProfile", tmp, sizeof(tmp)))
     {
         if (tmp[0] != '\0')
@@ -408,8 +442,10 @@ void parseCustomInquiryData(uint8_t scsiId, S2S_CFG_TYPE type)
             }
             else
             {
+                g_as400_profile_info[scsiId & S2S_CFG_TARGET_ID_BITS].missing = true;
                 logmsg("---- ERROR: AS/400 disk profile ", tmp, " requested for SCSI ID ",
-                       (int)scsiId, " but it is not in the custom or built-in profile store");
+                       (int)scsiId, " but it is not in the custom or built-in profile store;"
+                       " this SCSI ID will not be presented");
             }
         }
     }
@@ -844,6 +880,11 @@ bool getAS400ProfileCapacity(uint8_t scsiId, uint32_t *blockSize, uint32_t *sect
     *blockSize = g_as400_profile_info[id].blockSize;
     *sectors = g_as400_profile_info[id].sectors;
     return true;
+}
+
+bool isAS400ProfileMissing(uint8_t scsiId)
+{
+    return g_as400_profile_info[scsiId & S2S_CFG_TARGET_ID_BITS].missing;
 }
 
 bool isAS400CapturedTapeIdentity(uint8_t scsiId)
