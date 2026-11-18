@@ -183,9 +183,16 @@ ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_s
 
 bool ImageBackingStore::_internal_open(const char *filename)
 {
-    m_isreadonly_attr = !!(FS_ATTRIB_READ_ONLY & SD.attrib(filename));
+    // SD.attrib() returns -1 when the file cannot be opened, which has the
+    // read-only bit set like every other bit.
+    int attrib = SD.attrib(filename);
+    m_isreadonly_attr = !!(FS_ATTRIB_READ_ONLY & attrib);
     oflag_t open_flag = O_RDWR;
-    if (m_isreadonly_attr && !m_isfolder)
+    if (attrib < 0 && !m_isfolder)
+    {
+        logmsg("---- Image file not found");
+    }
+    else if (m_isreadonly_attr && !m_isfolder)
     {
         open_flag = O_RDONLY;
         logmsg("---- Image file is read-only, writes disabled");
