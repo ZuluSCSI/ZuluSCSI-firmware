@@ -29,6 +29,7 @@
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_initiator.h"
 #include "ZuluSCSI_msc_initiator.h"
+#include "ZuluSCSI_initiator_cdrom.h"
 #include "ZuluSCSI_msc.h"
 #include <ZuluSCSI_platform.h>
 #include <minIni.h>
@@ -113,6 +114,9 @@ static struct {
 
     // VHD output format (opt-in via InitiatorVHD=1)
     bool use_vhd_format;
+
+    // CD is imaged as .bin/.cue instead of .iso
+    bool cd_bincue;
 
     // Negotiated bus width for targets
     int targetBusWidth[S2S_MAX_TARGETS];
@@ -325,6 +329,7 @@ void scsiInitiatorMainLoop()
         g_initiator_state.removable = false;
         g_initiator_state.eject_when_done = false;
         g_initiator_state.use_read10 = false;
+        g_initiator_state.cd_bincue = false;
 
         UIInitiatorScanning(g_initiator_state.target_id, g_initiator_state.initiator_id);
         
@@ -358,13 +363,43 @@ void scsiInitiatorMainLoop()
             }
 #endif
 
-            bool readcapok = startstopok &&
+            bool inquiryok = startstopok &&
+                scsiInquiry(g_initiator_state.target_id, inquiry_data);
+
+            // CDs with audio or several tracks are imaged as .bin/.cue
+            // according to the table of contents
+            bool is_cd = inquiryok &&
+                (inquiry_data[0] & 0x1f) == SCSI_DEVICE_TYPE_CD;
+            if (is_cd)
+            {
+                char cd_vendor[9];
+                memcpy(cd_vendor, &inquiry_data[8], 8);
+                cd_vendor[8] = 0;
+
+                initiator_cd_image_t cd_image = scsiInitiatorCDProbe(g_initiator_state.target_id, cd_vendor);
+                if (cd_image == INITIATOR_CD_IMAGE_SKIP)
+                {
+                    LED_OFF();
+                    if (inquiry_data[1] & 0x80)
+                    {
+                        // Eject the disc so that another one can be inserted
+                        g_initiator_state.eject_when_done = true;
+                        scsiStartStopUnit(g_initiator_state.target_id, false);
+                    }
+                    else
+                    {
+                        g_initiator_state.drives_imaged |= 1 << g_initiator_state.target_id;
+                    }
+                    return;
+                }
+                g_initiator_state.cd_bincue = (cd_image == INITIATOR_CD_IMAGE_BINCUE);
+            }
+            bool is_bincue = g_initiator_state.cd_bincue;
+
+            bool readcapok = startstopok && !is_bincue &&
                 scsiInitiatorReadCapacity(g_initiator_state.target_id,
                                           &g_initiator_state.sectorcount,
                                           &g_initiator_state.sectorsize);
-
-            bool inquiryok = startstopok &&
-                scsiInquiry(g_initiator_state.target_id, inquiry_data);
 
             LED_OFF();
 
@@ -404,6 +439,15 @@ void scsiInitiatorMainLoop()
                     return;
                 }
             }
+            else if (is_bincue)
+            {
+                g_initiator_state.sectorsize = 2352;
+                g_initiator_state.sectorcount = g_initiator_state.sectorcount_all = scsiInitiatorCDTotalSectors();
+                total_bytes = scsiInitiatorCDTotalBytes();
+                logmsg("CD image size is ", (int)(total_bytes / (1024 * 1024)), " MiB");
+                UIInitiatorReadCapOk(g_initiator_state.target_id, (S2S_CFG_TYPE)SCSI_DEVICE_TYPE_CD,
+                                     g_initiator_state.sectorcount, g_initiator_state.sectorsize);
+            }
             else if (startstopok)
             {
                 // GT TODO
@@ -438,18 +482,21 @@ void scsiInitiatorMainLoop()
                 memcpy(revision, &inquiry_data[32], 4);
                 revision[4]=0;
 
-                g_initiator_state.use_read10 = scsiInitiatorTestSupportsRead10(g_initiator_state.target_id, g_initiator_state.sectorsize);
-                if(!g_initiator_state.use_read10)
+                if (!is_bincue)
                 {
-                    // READ6 command can transfer up to 256 sectors
-                    g_initiator_state.max_sector_per_transfer = 256;
-                }
+                    g_initiator_state.use_read10 = scsiInitiatorTestSupportsRead10(g_initiator_state.target_id, g_initiator_state.sectorsize);
+                    if(!g_initiator_state.use_read10)
+                    {
+                        // READ6 command can transfer up to 256 sectors
+                        g_initiator_state.max_sector_per_transfer = 256;
+                    }
 
-                // Limit sectors per transfer based on buffer size
-                uint32_t max_by_buffer = sizeof(scsiDev.data) / g_initiator_state.sectorsize;
-                if (max_by_buffer < g_initiator_state.max_sector_per_transfer)
-                {
-                    g_initiator_state.max_sector_per_transfer = max_by_buffer;
+                    // Limit sectors per transfer based on buffer size
+                    uint32_t max_by_buffer = sizeof(scsiDev.data) / g_initiator_state.sectorsize;
+                    if (max_by_buffer < g_initiator_state.max_sector_per_transfer)
+                    {
+                        g_initiator_state.max_sector_per_transfer = max_by_buffer;
+                    }
                 }
 
 
@@ -475,7 +522,7 @@ void scsiInitiatorMainLoop()
                 if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_CD)
                 {
                     strncpy(filename_base, "CD00_imaged", sizeof(filename_base));
-                    filename_extension = ".iso";
+                    filename_extension = is_bincue ? ".bin" : ".iso";
                 }
                 else if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_MO)
                 {
@@ -610,7 +657,7 @@ void scsiInitiatorMainLoop()
                     return;
                 }
 
-                if (SD.fatType() == FAT_TYPE_EXFAT)
+                if (SD.fatType() == FAT_TYPE_EXFAT && !is_bincue)
                 {
                     // Only preallocate on exFAT, on FAT32 preallocating can result in false garbage data in the
                     // file if write is interrupted.
@@ -622,10 +669,56 @@ void scsiInitiatorMainLoop()
 
                 UIInitiatorTargetFilename(g_initiator_state.target_id, filename);
 
+                if (is_bincue)
+                {
+                    scsiInitiatorCDBegin(&g_initiator_state.target_file, filename,
+                                         g_initiator_state.max_retry_count);
+                }
+
                 logmsg("Starting to copy drive data to ", filename);
                 g_initiator_state.imaging = true;
             }
         }
+    }
+    else if (g_initiator_state.cd_bincue)
+    {
+        // Copy CD tracks to .bin file
+        uint32_t time_start = millis();
+        uint32_t sectors_in_batch = 0;
+        initiator_cd_step_t result = scsiInitiatorCDStep(&g_initiator_state.sectors_done, &sectors_in_batch);
+        scsiInitiatorUpdateLed();
+
+        if (sectors_in_batch > 0)
+        {
+            UIInitiatorProgress(g_initiator_state.target_id, millis() - time_start,
+                                g_initiator_state.sectors_done, sectors_in_batch);
+        }
+
+        if (result == INITIATOR_CD_CONTINUE)
+        {
+            return;
+        }
+
+        if (result == INITIATOR_CD_FAILED)
+        {
+            logmsg("CD imaging on SCSI ID ", g_initiator_state.target_id, " stopped because of errors, the image is incomplete");
+        }
+
+        scsiInitiatorCDEnd();
+        g_initiator_state.imaging = false;
+        g_initiator_state.target_file.close();
+
+        scsiStartStopUnit(g_initiator_state.target_id, false);
+        if (!g_initiator_state.eject_when_done)
+        {
+            logmsg("Marking SCSI ID, ", g_initiator_state.target_id, ", as imaged, wont ask it again.");
+            g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
+        }
+
+        logmsg("Finished imaging CD with id ", g_initiator_state.target_id);
+        LED_OFF();
+        UIInitiatorImagingComplete(g_initiator_state.target_id);
+        return;
     }
     else
     {
