@@ -228,6 +228,8 @@ typedef struct __attribute__((__packed__)) scsi_device_settings_t
     uint8_t tapeImageFormat;
     bool tapeImageLoop; // false: stop after last IMG for a sequential target
     uint8_t as400TapeModel; // 0=IBM 4100 (default), 1=TDC 3600 (opt-in)
+    // Activity LED on selection: -1 = auto (off for network devices), 0 = off, 1 = on
+    int8_t activityLed;
 } scsi_device_settings_t;
 
 
