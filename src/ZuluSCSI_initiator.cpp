@@ -29,6 +29,7 @@
 #include "ZuluSCSI_log_trace.h"
 #include "ZuluSCSI_initiator.h"
 #include "ZuluSCSI_msc_initiator.h"
+#include "ZuluSCSI_initiator_tape.h"
 #include "ZuluSCSI_msc.h"
 #include <ZuluSCSI_platform.h>
 #include <minIni.h>
@@ -117,6 +118,10 @@ static struct {
     // Negotiated bus width for targets
     int targetBusWidth[S2S_MAX_TARGETS];
 
+    // Bitmap of tape drives whose tape has been imaged and unloaded.
+    // The next tape is imaged once the drive reports a medium change.
+    uint32_t tape_wait_media_change;
+
     FsFile target_file;
 } g_initiator_state;
 
@@ -160,6 +165,7 @@ void scsiInitiatorInit()
     g_initiator_state.removable = false;
     g_initiator_state.eject_when_done = false;
     memset(g_initiator_state.removable_count, 0, sizeof(g_initiator_state.removable_count));
+    g_initiator_state.tape_wait_media_change = 0;
     platform_led_breath(true, 0);
 
 }
@@ -167,6 +173,16 @@ void scsiInitiatorInit()
 int scsiInitiatorGetOwnID()
 {
     return g_initiator_state.initiator_id;
+}
+
+int scsiInitiatorGetBusWidth(int target_id)
+{
+    return g_initiator_state.targetBusWidth[target_id];
+}
+
+static bool initiatorIsTape()
+{
+    return g_initiator_state.device_type == SCSI_DEVICE_TYPE_SEQUENTIAL;
 }
 
 // Update progress bar LED during transfers
@@ -332,13 +348,35 @@ void scsiInitiatorMainLoop()
         {
             delay_with_poll(1000);
 
+            if (g_initiator_state.tape_wait_media_change & (1 << g_initiator_state.target_id))
+            {
+                // Do not reload the tape that was just imaged, wait until the
+                // drive reports that a new tape has been inserted.
+                if (!scsiInitiatorTapeMediumChanged(g_initiator_state.target_id))
+                {
+                    return;
+                }
+                logmsg("New tape detected on SCSI ID ", g_initiator_state.target_id);
+                g_initiator_state.tape_wait_media_change &= ~(1 << g_initiator_state.target_id);
+            }
+
             uint8_t inquiry_data[36] = {0};
 
             LED_ON();
 
-            bool startstopok =
-                scsiTestUnitReady(g_initiator_state.target_id) &&
+            bool unitready = scsiTestUnitReady(g_initiator_state.target_id);
+            bool startstopok = unitready &&
                 scsiStartStopUnit(g_initiator_state.target_id, true);
+
+            if (unitready && !startstopok &&
+                scsiInquiry(g_initiator_state.target_id, inquiry_data) &&
+                (inquiry_data[0] & 0x1f) == SCSI_DEVICE_TYPE_SEQUENTIAL)
+            {
+                // LOAD UNLOAD is optional for SCSI-1 tape drives and
+                // the tape is already loaded when the unit is ready.
+                dbgmsg("Tape drive on SCSI ID ", g_initiator_state.target_id, " does not support LOAD, continuing");
+                startstopok = true;
+            }
 
 #if defined(PLATFORM_MAX_BUS_WIDTH) && PLATFORM_MAX_BUS_WIDTH > 0
             if (startstopok)
@@ -358,13 +396,17 @@ void scsiInitiatorMainLoop()
             }
 #endif
 
-            bool readcapok = startstopok &&
+            bool inquiryok = startstopok &&
+                scsiInquiry(g_initiator_state.target_id, inquiry_data);
+
+            // Tape drives do not support READ CAPACITY
+            bool is_tape = inquiryok &&
+                (inquiry_data[0] & 0x1f) == SCSI_DEVICE_TYPE_SEQUENTIAL;
+
+            bool readcapok = startstopok && !is_tape &&
                 scsiInitiatorReadCapacity(g_initiator_state.target_id,
                                           &g_initiator_state.sectorcount,
                                           &g_initiator_state.sectorsize);
-
-            bool inquiryok = startstopok &&
-                scsiInquiry(g_initiator_state.target_id, inquiry_data);
 
             LED_OFF();
 
@@ -404,7 +446,7 @@ void scsiInitiatorMainLoop()
                     return;
                 }
             }
-            else if (startstopok)
+            else if (startstopok && !is_tape)
             {
                 // GT TODO
                 logmsg("SCSI ID ", g_initiator_state.target_id, " responds but ReadCapacity command failed");
@@ -413,7 +455,7 @@ void scsiInitiatorMainLoop()
                 g_initiator_state.sectorcount = g_initiator_state.sectorcount_all = 2097152;
                 g_initiator_state.max_sector_per_transfer = 128;
             }
-            else
+            else if (!is_tape)
             {
                 dbgmsg("Failed to connect to SCSI ID ", g_initiator_state.target_id);
                 g_initiator_state.sectorsize = 0;
@@ -438,18 +480,21 @@ void scsiInitiatorMainLoop()
                 memcpy(revision, &inquiry_data[32], 4);
                 revision[4]=0;
 
-                g_initiator_state.use_read10 = scsiInitiatorTestSupportsRead10(g_initiator_state.target_id, g_initiator_state.sectorsize);
-                if(!g_initiator_state.use_read10)
+                if (!is_tape)
                 {
-                    // READ6 command can transfer up to 256 sectors
-                    g_initiator_state.max_sector_per_transfer = 256;
-                }
+                    g_initiator_state.use_read10 = scsiInitiatorTestSupportsRead10(g_initiator_state.target_id, g_initiator_state.sectorsize);
+                    if(!g_initiator_state.use_read10)
+                    {
+                        // READ6 command can transfer up to 256 sectors
+                        g_initiator_state.max_sector_per_transfer = 256;
+                    }
 
-                // Limit sectors per transfer based on buffer size
-                uint32_t max_by_buffer = sizeof(scsiDev.data) / g_initiator_state.sectorsize;
-                if (max_by_buffer < g_initiator_state.max_sector_per_transfer)
-                {
-                    g_initiator_state.max_sector_per_transfer = max_by_buffer;
+                    // Limit sectors per transfer based on buffer size
+                    uint32_t max_by_buffer = sizeof(scsiDev.data) / g_initiator_state.sectorsize;
+                    if (max_by_buffer < g_initiator_state.max_sector_per_transfer)
+                    {
+                        g_initiator_state.max_sector_per_transfer = max_by_buffer;
+                    }
                 }
 
 
@@ -482,6 +527,11 @@ void scsiInitiatorMainLoop()
                     strncpy(filename_base, "MO00_imaged", sizeof(filename_base));
                     filename_extension = ".img";
                 }
+                else if (g_initiator_state.device_type == SCSI_DEVICE_TYPE_SEQUENTIAL)
+                {
+                    strncpy(filename_base, "TP00_imaged", sizeof(filename_base));
+                    filename_extension = ".tap";
+                }
                 else if (g_initiator_state.device_type != SCSI_DEVICE_TYPE_DIRECT_ACCESS)
                 {
                     logmsg("  No specific handler for the device type, treating as Direct Access Device.");
@@ -506,7 +556,7 @@ void scsiInitiatorMainLoop()
                 g_initiator_state.removable_count[g_initiator_state.target_id] = 1;
             }
 
-            if (g_initiator_state.sectorcount > 0)
+            if (g_initiator_state.sectorcount > 0 || is_tape)
             {
                 char filename[32] = {0};
                 filename_base[2] = scsiEncodeID(g_initiator_state.target_id);
@@ -610,7 +660,7 @@ void scsiInitiatorMainLoop()
                     return;
                 }
 
-                if (SD.fatType() == FAT_TYPE_EXFAT)
+                if (SD.fatType() == FAT_TYPE_EXFAT && !is_tape)
                 {
                     // Only preallocate on exFAT, on FAT32 preallocating can result in false garbage data in the
                     // file if write is interrupted.
@@ -622,10 +672,64 @@ void scsiInitiatorMainLoop()
 
                 UIInitiatorTargetFilename(g_initiator_state.target_id, filename);
 
+                if (is_tape &&
+                    !scsiInitiatorTapeBegin(g_initiator_state.target_id,
+                                            &g_initiator_state.target_file,
+                                            g_initiator_state.max_retry_count))
+                {
+                    logmsg("Failed to prepare tape on SCSI ID ", g_initiator_state.target_id, " for imaging");
+                    g_initiator_state.target_file.close();
+                    SD.remove(filename);
+                    if (g_initiator_state.eject_when_done)
+                    {
+                        // Retry when a tape is inserted again
+                        g_initiator_state.tape_wait_media_change |= (1 << g_initiator_state.target_id);
+                    }
+                    else
+                    {
+                        g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
+                    }
+                    return;
+                }
+
                 logmsg("Starting to copy drive data to ", filename);
                 g_initiator_state.imaging = true;
             }
         }
+    }
+    else if (initiatorIsTape())
+    {
+        // Copy blocks from tape to SIMH .tap file
+        initiator_tape_step_t result = scsiInitiatorTapeStep();
+        if (result == INITIATOR_TAPE_CONTINUE)
+        {
+            return;
+        }
+
+        if (result == INITIATOR_TAPE_FAILED)
+        {
+            logmsg("Tape imaging on SCSI ID ", g_initiator_state.target_id, " stopped because of errors, the image is incomplete");
+        }
+
+        scsiInitiatorTapeEnd();
+        g_initiator_state.imaging = false;
+        g_initiator_state.target_file.close();
+
+        if (g_initiator_state.eject_when_done)
+        {
+            scsiStartStopUnit(g_initiator_state.target_id, false);
+            logmsg("Insert the next tape to image it");
+            g_initiator_state.tape_wait_media_change |= (1 << g_initiator_state.target_id);
+        }
+        else
+        {
+            logmsg("Marking SCSI ID, ", g_initiator_state.target_id, ", as imaged, wont ask it again.");
+            g_initiator_state.drives_imaged |= (1 << g_initiator_state.target_id);
+        }
+
+        logmsg("Finished imaging tape with id ", g_initiator_state.target_id);
+        UIInitiatorImagingComplete(g_initiator_state.target_id);
+        return;
     }
     else
     {
@@ -1065,7 +1169,16 @@ bool scsiStartStopUnit(int target_id, bool start)
         {
             logmsg("Ejecting media on SCSI ID: ", target_id);
             g_initiator_state.removable_count[g_initiator_state.target_id]++;
-            command[4] = 0b00000010; // eject(6), stop(7).
+            if (initiatorIsTape())
+            {
+                // For tape drives this is LOAD UNLOAD, where bit 1 would
+                // request retensioning. Plain unload ejects the tape.
+                command[4] = 0;
+            }
+            else
+            {
+                command[4] = 0b00000010; // eject(6), stop(7).
+            }
         }
     }
 
