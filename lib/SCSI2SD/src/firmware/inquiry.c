@@ -33,6 +33,7 @@
 #include <ZuluSCSI_platform.h>
 #ifdef PLATFORM_AS400
 #include <as400_values.h>
+#include <ZuluSCSI_unmap.h>
 #endif
 
 static uint8_t StandardResponse[] =
@@ -209,6 +210,15 @@ void s2s_scsiInquiry()
 					break;
 				}
 
+#ifdef PLATFORM_AS400
+				// A host only looks for the UNMAP / logical block provisioning
+				// pages (see ZuluSCSI_unmap.h) of a device that claims SPC-3.
+				if (scsiDev.target->cfg->deviceType == S2S_CFG_FIXED &&
+					scsiDiskUnmapAdvertised(1))
+				{
+					scsiDev.data[2] = 5;
+				}
+#endif
 			}
 			scsiDev.phase = DATA_IN;
 		}
@@ -225,10 +235,29 @@ void s2s_scsiInquiry()
 		}
 		else if (pageCode == 0x00)
 		{
+#ifdef PLATFORM_AS400
+			int unmap = scsiDiskUnmapAdvertised(0); // may use scsiDev.data as scratch
+#endif
 			memcpy(scsiDev.data, SupportedVitalPages, sizeof(SupportedVitalPages));
 			scsiDev.dataLen = sizeof(SupportedVitalPages);
+#ifdef PLATFORM_AS400
+			if (unmap)
+			{
+				// Block Limits and Logical Block Provisioning
+				scsiDev.data[scsiDev.dataLen++] = 0xB0;
+				scsiDev.data[scsiDev.dataLen++] = 0xB2;
+				scsiDev.data[3] += 2;
+			}
+#endif
 			scsiDev.phase = DATA_IN;
 		}
+#ifdef PLATFORM_AS400
+		else if ((pageCode == 0xB0 || pageCode == 0xB2) &&
+			(scsiDev.dataLen = scsiDiskUnmapVpdPage(pageCode, scsiDev.data)) > 0)
+		{
+			scsiDev.phase = DATA_IN;
+		}
+#endif
 		else if (pageCode == 0x80)
 		{
 			memcpy(scsiDev.data, UnitSerialNumber, sizeof(UnitSerialNumber));
