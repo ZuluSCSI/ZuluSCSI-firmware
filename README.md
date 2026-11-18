@@ -372,6 +372,14 @@ LED indications in initiator mode:
 The firmware retries reads up to 5 times and attempts to skip any sectors that have problems.
 Any read errors are logged into `zululog.txt`.
 
+CD-ROM drives image data CDs with a single track as `CDxx_imaged.iso`.
+Discs with audio tracks or several tracks (audio CDs, mixed mode and CD-Extra discs) are imaged as `CDxx_imaged.bin` with a matching `.cue` sheet that can be used directly by ZuluSCSI CD-ROM emulation.
+Audio is read as 2352 byte sectors using READ CD, the Plextor/Sony and NEC vendor commands, or READ(10) with density code 0x82, whichever the drive supports.
+Data tracks are stored as raw 2352 byte sectors if the drive supports READ CD, otherwise as 2048 byte sectors.
+Unreadable areas at the end of a track, such as the gap between the sessions of a CD-Extra disc, are left out and recorded as `PREGAP` of the next track so that the tracks keep their positions.
+Audio is read without error correction beyond what the drive does itself, so scratched discs may give clicks where other ripping software would retry.
+The format can be selected with `InitiatorCDBinCue` in `zuluscsi.ini`.
+
 Alternatively, if SD card is not inserted, the SCSI drive will be available to PC through USB connection.
 The drive shows up as mass storage device (USB MSC).
 Currently this primarily supports SCSI harddrives, but basic read access is supported for CD-ROM and other SCSI devices.
