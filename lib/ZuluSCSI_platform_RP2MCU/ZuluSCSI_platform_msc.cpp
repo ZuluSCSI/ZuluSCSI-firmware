@@ -136,7 +136,7 @@ bool platform_sense_msc() {
   {
     if ((uint32_t)(millis() - start) > usb_timeout)
     {
-      logmsg("Waiting for USB enumeration timed out after ", usb_timeout, "ms.");
+      logmsg("Waiting for USB enumeration timed out after ", (int)usb_timeout, "ms.");
       logmsg("-- Try increasing 'USBMassStorageWaitPeriod' in the ", CONFIGFILE);
       timed_out = true;
       break;
