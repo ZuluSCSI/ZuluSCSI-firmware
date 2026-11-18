@@ -1015,6 +1015,11 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
 
                 if (strncasecmp(cuesheetname + strlen(cuesheetname) - 4, ".cue", 4) == 0)
                 {
+                    if (img.cuesheetfile.isHidden())
+                    {
+                        logmsg("---- ",  foldername, "/" ,cuesheetname, " is hidden, skipping");
+                        continue;
+                    }
                     has_cue_sheet = true;
                     valid = cdromValidateCueSheet(img);
                     if (valid)
@@ -1036,15 +1041,18 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
                 audio_reset(target_idx);
 #endif
             }
-            else if (has_cue_sheet)
+            else
             {
-                logmsg("---- No valid .cue sheet found in folder '", foldername, "'");
-                logmsg("!! Please fix or remove folder, invalid .cue sheet can cause image handling issues. !!" );
+                if (has_cue_sheet)
+                {
+                    logmsg("---- No valid .cue sheet found in folder '", foldername, "'");
+                    logmsg("!! Please fix or remove folder, invalid .cue sheet can cause image handling issues. !!" );
+                }
                 img.cuesheetfile.close();
                 img.file.close();
                 img.scsiId = target_idx & (~S2S_CFG_TARGET_ENABLED);
-
             }
+
             delete[] foldername;
             foldername = nullptr;
 
