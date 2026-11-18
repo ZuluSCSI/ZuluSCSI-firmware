@@ -1860,11 +1860,15 @@ uint32_t getBlockSize(const char *filename, uint8_t scsi_id)
     const char *blksizestr = strchr(filename, '_');
     if (blksizestr)
     {
-        int blktmp = strtoul(blksizestr + 1, NULL, 10);
-        if (8 <= blktmp && blktmp <= 64 * 1024)
+        size_t char_till_underscore = blksizestr - filename;
+        if (char_till_underscore > 2 && char_till_underscore <= 4)
         {
-            block_size = blktmp;
-            logmsg("-- Using custom block size, ",(int) block_size," from filename: ", filename);
+            int blktmp = strtoul(blksizestr + 1, NULL, 10);
+            if (8 <= blktmp && blktmp <= 64 * 1024)
+            {
+                block_size = blktmp;
+                logmsg("-- Using custom block size, ",(int) block_size," from filename: ", filename);
+            }
         }
     }
     return block_size;
