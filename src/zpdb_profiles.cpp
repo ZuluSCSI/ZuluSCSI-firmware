@@ -693,9 +693,6 @@ static const char *storeLabel(const ZpdbStore *store)
 // when debug logging is off rather than left to dbgmsg() to discard.
 static void logStoredProfiles(const ZpdbStore &store)
 {
-    if (!g_log_debug)
-        return;
-
     char name[ZPDB_MAX_NAME];
     zpdb_section_ref_t section;
     uint32_t index = 0;
@@ -708,11 +705,11 @@ static void logStoredProfiles(const ZpdbStore &store)
     {
         if (!store.sectionName(section, name, sizeof(name)))
         {
-            dbgmsg("-- ZPDB: ", label, " profile ", (int)index, " has an unreadable name");
+            logmsg("-- ZPDB: ", label, " profile ", (int)index, " has an unreadable name");
             break;
         }
 
-        dbgmsg("-- ZPDB: ", label, " profile ", (int)index, ": '", name, "' -- ",
+        logmsg("-- ZPDB: ", label, " profile ", (int)index, ": '", name, "' -- ",
                (int)section.entry_count, " key(s), ", (int)section.sect_len,
                " bytes at store offset ", (int)section.offset);
         index++;
@@ -790,10 +787,13 @@ void zpdbProfilesInit(uint8_t *scratch, size_t scratch_size)
     openFlashStore(scratch, scratch_size);
     openEmbeddedStore();
 
-    if (g_store.isOpen())
-        logStoredProfiles(g_store);
-    if (g_embedded.isOpen())
-        logStoredProfiles(g_embedded);
+    if (g_scsi_settings.getSystem()->printProfiles)
+    {
+        if (g_store.isOpen())
+            logStoredProfiles(g_store);
+        if (g_embedded.isOpen())
+            logStoredProfiles(g_embedded);
+    }
 }
 
 bool zpdbProfilesAvailable()
