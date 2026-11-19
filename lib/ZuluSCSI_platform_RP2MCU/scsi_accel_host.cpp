@@ -165,6 +165,13 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, in
                 dbgmsg("scsi_accel_host_read: Aborting due to timeout");
                 abort = true;
             }
+            else if (pio_sm_get_rx_fifo_level(SCSI_PIO, SCSI_SM) > 0)
+            {
+                // Race: the PIO pushed the last word into the RX FIFO after 'available' was
+                // sampled above, and a fast target has already moved on to STATUS phase.
+                // Go back and drain the FIFO instead of treating this as an aborted transfer.
+                continue;
+            }
             else
             {
                 // Some drives such as ST-296N may have glitches on phase signals in between
@@ -177,6 +184,12 @@ uint32_t scsi_accel_host_read(uint8_t *buf, uint32_t count, int *parityError, in
                 {
                     debounce--;
                     delayMicroseconds(100);
+                }
+
+                if (debounce == 0 && pio_sm_get_rx_fifo_level(SCSI_PIO, SCSI_SM) > 0)
+                {
+                    // Data arrived while waiting for the debounce, keep reading
+                    continue;
                 }
 
                 if (debounce == 0)
