@@ -592,6 +592,7 @@ static void readIniSCSIDeviceSetting(scsi_device_settings_t &cfg, const char *se
     cfg.reinsertImmediately =  log_ini_getbool(section, "ReinsertImmediately", cfg.reinsertImmediately, CONFIGFILE, log_settings);
     cfg.ejectOnStop =  log_ini_getbool(section, "EjectOnStop", cfg.ejectOnStop, CONFIGFILE, log_settings);
     cfg.tapeImageLoop = log_ini_getbool(section, "TapeImageLoop", cfg.tapeImageLoop, CONFIGFILE, log_settings);
+    cfg.activityLed = log_ini_getl(section, "ActivityLED", cfg.activityLed, CONFIGFILE, log_settings);
     cfg.keepCurrentImageOnBusReset =  log_ini_getbool(section, "KeepCurrentImageOnBusReset", cfg.keepCurrentImageOnBusReset, CONFIGFILE, log_settings);
     cfg.disableMacSanityCheck =  log_ini_getbool(section, "DisableMacSanityCheck", cfg.disableMacSanityCheck, CONFIGFILE, log_settings);
 
@@ -771,6 +772,7 @@ scsi_system_settings_t *ZuluSCSISettings::initSystem(const char *presetName, boo
     cfgDev.tapeImageFormat = 0; // Default: conventional SIMH .tap (even-length padding)
     cfgDev.tapeImageLoop = true; // Default: preserve legacy IMG wraparound
     cfgDev.as400TapeModel = 0; // Default AS400_CISC tape: IBM 4100
+    cfgDev.activityLed = -1; // Default: activity LED off for network devices only
 
 
     // System-specific defaults
