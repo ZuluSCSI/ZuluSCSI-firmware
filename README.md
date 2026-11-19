@@ -372,6 +372,17 @@ LED indications in initiator mode:
 The firmware retries reads up to 5 times and attempts to skip any sectors that have problems.
 Any read errors are logged into `zululog.txt`.
 
+SCSI tape drives are imaged into SIMH format `TPxx_imaged(n).tap` files that can be used directly by ZuluSCSI tape emulation.
+The tape is rewound and read until the drive reports the end of the recorded data.
+Each tape block is stored as one record and each filemark as a tape mark.
+Blocks that cannot be read are stored as SIMH bad data records and imaging gives up after `InitiatorMaxRetry` consecutive read errors.
+Tapes are read in variable block mode if the drive supports it, so they can have been written with any block size.
+Drives that support only one block size, such as QIC-150, are read in fixed block mode.
+The mode can be forced with `InitiatorTapeBlockSize` in `zuluscsi.ini`.
+Blocks larger than the transfer buffer (64 kB on RP2040 and RP2350) are truncated and reported in the log.
+When the tape has been imaged it is rewound and unloaded, and the next tape inserted into the drive is imaged into a new file.
+On FAT32 formatted SD cards the image is limited to 4 GiB; use exFAT for larger tapes.
+
 Alternatively, if SD card is not inserted, the SCSI drive will be available to PC through USB connection.
 The drive shows up as mass storage device (USB MSC).
 Currently this primarily supports SCSI harddrives, but basic read access is supported for CD-ROM and other SCSI devices.

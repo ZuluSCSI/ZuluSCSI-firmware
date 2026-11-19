@@ -50,6 +50,9 @@ void scsiInitiatorMainLoop();
 // Get the SCSI ID used by the initiator itself
 int scsiInitiatorGetOwnID();
 
+// Get the negotiated bus width of a target, 0 = 8-bit, 1 = 16-bit
+int scsiInitiatorGetBusWidth(int target_id);
+
 // Select target and execute SCSI command
 // If timeout is non-zero, it is added to the default watchdog timeout.
 int scsiInitiatorRunCommand(int target_id,
