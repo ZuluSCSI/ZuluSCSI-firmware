@@ -55,6 +55,15 @@ void platform_post_sd_card_init()
      */
 }
 
+bool platform_sd_card_init()
+{
+    /* Initialize the SD card and mount its file system.
+     * Platforms can override the SD card settings here before mounting.
+     */
+    extern SdFs SD;
+    return SD.begin(SD_CONFIG);
+}
+
 void platform_disable_led(void)
 {
     /* This function disables the LED on the ZuluSCSI board
