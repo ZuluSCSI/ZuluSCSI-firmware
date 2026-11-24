@@ -56,6 +56,8 @@
 
 #ifdef SD_USE_RP2350_SDIO
 #include <sdio_rp2350.h>
+#include <minIni.h>
+#include <strings.h>
 #else
 #include <sdio.h>
 #endif
@@ -1488,6 +1490,48 @@ static void watchdog_callback(unsigned alarm_num)
     hardware_alarm_set_target(alarm_num, delayed_by_ms(get_absolute_time(), 1000));
 }
 
+#ifdef SD_USE_RP2350_SDIO
+// SD card CRC errors are collected for this long before they are reported to the log
+#define SD_CRC_ERROR_WINDOW_MS 5000
+
+// Report SD card CRC errors to the log.
+// The individual errors go only to the debug log, because the transfers are retried.
+// The first error starts a window, and the total counts are reported when it ends.
+static void sd_crc_error_poll()
+{
+    static rp2350_sdio_crc_errors_t reported = {}; // Counts that were included in previous reports
+    static bool window_active = false;
+    static uint32_t window_start = 0;
+
+    rp2350_sdio_crc_errors_t errors;
+    rp2350_sdio_get_crc_errors(&errors);
+
+    int read = errors.read_errors - reported.read_errors;
+    int write = errors.write_errors - reported.write_errors;
+    int response = errors.response_errors - reported.response_errors;
+    int total = read + write + response;
+
+    if (!window_active)
+    {
+        if (total > 0)
+        {
+            window_active = true;
+            window_start = millis();
+        }
+        return;
+    }
+
+    uint32_t elapsed = (uint32_t)(millis() - window_start);
+    if (elapsed >= SD_CRC_ERROR_WINDOW_MS)
+    {
+        logmsg("WARNING: ", total, " SD card CRC errors in the last ", (int)((elapsed + 500) / 1000),
+               " seconds (read: ", read, ", write: ", write, ", command response: ", response, ")");
+        reported = errors;
+        window_active = false;
+    }
+}
+#endif
+
 // This function can be used to periodically reset watchdog timer for crash handling.
 // It can also be left empty if the platform does not use a watchdog timer.
 void platform_reset_watchdog()
@@ -1534,6 +1578,11 @@ void platform_reset_watchdog()
     if ((uint32_t)(now - last_usb_log_poll) >= USB_LOG_POLL_INTERVAL_MS)
     {
         last_usb_log_poll = now;
+#ifdef SD_USE_RP2350_SDIO
+        // Done here for the same reason as the USB log, so that errors get reported
+        // also in the SD-card-absent wait.
+        sd_crc_error_poll();
+#endif
         usb_log_poll();
     }
 }
@@ -2441,3 +2490,88 @@ void platform_set_sd_callback(sd_callback_t func, const uint8_t *buffer)
 }
 #endif
 #endif
+
+/*****************************************/
+/* SD card initialization                */
+/*****************************************/
+
+#ifdef SD_USE_RP2350_SDIO
+// Maximum speed the SDIO driver uses when it initializes the SD card
+static rp2350_sdio_mode_t g_sd_max_speed = SDIO_STANDARD;
+
+static rp2350_sdio_mode_t sd_max_speed_callback()
+{
+    return g_sd_max_speed;
+}
+
+// Convert an SdMaxSpeed value to an SDIO mode, returns false if it is not recognized
+static bool parse_sd_max_speed(const char *value, rp2350_sdio_mode_t *mode)
+{
+    if (strcasecmp(value, "20MHz") == 0)
+    {   
+        *mode = SDIO_MMC;
+    }
+    else if (strcasecmp(value, "Standard") == 0)
+    {
+        *mode = SDIO_STANDARD;
+    }
+    else if (strcasecmp(value, "HighSpeed") == 0)
+    {
+        *mode = SDIO_HIGHSPEED;
+    }
+    else if (strcasecmp(value, "HighSpeedOC") == 0)
+    {
+        *mode = SDIO_HIGHSPEED_OVERCLOCK;
+    }
+    else
+    {
+        return false;
+    }
+    return true;
+}
+#endif
+
+bool platform_sd_card_init()
+{
+#ifdef SD_USE_RP2350_SDIO
+    // Mount the SD card at standard speed first so the config file can be read reliably
+    g_sd_max_speed = SDIO_STANDARD;
+    rp2350_sdio_set_max_speed_callback(sd_max_speed_callback);
+    bool mounted = SD.begin(SD_CONFIG);
+
+    if (!mounted && (!SD.card() || SD.sdErrorCode() != 0))
+    {
+        // No usable SD card, so there is nothing to remount.
+        // Restore the default speed selection for the next attempt.
+        rp2350_sdio_set_max_speed_callback(NULL);
+        return false;
+    }
+
+    char value[32] = "";
+    if (mounted)
+    {
+        ini_gets("SCSI", "SdMaxSpeed", "", value, sizeof(value), CONFIGFILE);
+    }
+
+    rp2350_sdio_mode_t mode;
+    if (value[0] != '\0' && parse_sd_max_speed(value, &mode))
+    {
+        logmsg("SdMaxSpeed = ", value, ", setting the SD card maximum speed");
+        g_sd_max_speed = mode;
+    }
+    else
+    {
+        if (value[0] != '\0')
+        {
+            logmsg("WARNING: unknown SdMaxSpeed '", value, "' in ", CONFIGFILE,
+                   ", valid values are 20MHz, Standard, HighSpeed and HighSpeedOC. Using the default SD card speed");
+        }
+        rp2350_sdio_set_max_speed_callback(NULL);
+    }
+
+    // Reinitialize the SD card at the selected speed
+    return SD.begin(SD_CONFIG);
+#else
+    return SD.begin(SD_CONFIG);
+#endif
+}

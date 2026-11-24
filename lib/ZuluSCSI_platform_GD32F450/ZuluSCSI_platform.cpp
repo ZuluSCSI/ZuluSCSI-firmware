@@ -304,6 +304,12 @@ void platform_late_init()
 
 void platform_post_sd_card_init() {}
 
+bool platform_sd_card_init()
+{
+    extern SdFs SD;
+    return SD.begin(SD_CONFIG);
+}
+
 void platform_write_led(bool state)
 {
     if (g_led_blinking) return;
