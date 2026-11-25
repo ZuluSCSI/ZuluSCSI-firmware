@@ -17,8 +17,14 @@
 #ifndef S2S_LED_H
 #define S2S_LED_H
 
+#include <stdint.h>
+
 void s2s_ledInit(void);
 void s2s_ledOn(void);
 void s2s_ledOff(void);
+
+// Turn the LED on for activity of a selected target, unless the
+// activity LED has been turned off for that device
+void s2s_targetLedOn(uint8_t scsiId, uint8_t deviceType);
 
 #endif

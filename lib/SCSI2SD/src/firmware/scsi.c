@@ -1162,7 +1162,7 @@ static void process_SelectionPhase()
 		// (Note: the initiator will be waiting the "Selection time-out delay"
 		// for our BSY response, which is actually a very generous 250ms)
 		*SCSI_CTRL_BSY = 1;
-		s2s_ledOn();
+		s2s_targetLedOn(target->targetId, target->cfg ? target->cfg->deviceType : 0);
 
 		scsiDev.target = target;
 
