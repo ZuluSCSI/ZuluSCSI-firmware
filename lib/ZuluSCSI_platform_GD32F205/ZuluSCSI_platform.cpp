@@ -469,6 +469,11 @@ void platform_post_sd_card_init()
 #endif
 }
 
+bool platform_sd_card_init()
+{
+    return SD.begin(SD_CONFIG);
+}
+
 void platform_write_led(bool state)
 {
     if (g_led_blinking) return;

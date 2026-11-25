@@ -1608,7 +1608,7 @@ static bool mountSDCard()
   scsiDiskCloseSDCardImages();
 
   // Check for the common case, FAT filesystem as first partition
-  if (SD.begin(SD_CONFIG))
+  if (platform_sd_card_init())
   {
 #if defined(HAS_SDIO_CLASS) && HAS_SDIO_CLASS
     int speed = ((SdioCard*)SD.card())->kHzSdClk();
@@ -1772,10 +1772,30 @@ static void reinitSCSI(bool power_on_with_sd)
     if (!scsiDiskCheckAnyImagesConfigured())
     {
   #ifdef RAW_FALLBACK_ENABLE
-      logmsg("No images found, enabling RAW fallback partition");
-      g_scsi_settings.initDevice(RAW_FALLBACK_SCSI_ID, S2S_CFG_FIXED);
-      scsiDiskOpenHDDImage(RAW_FALLBACK_SCSI_ID, "RAW:0:0xFFFFFFFF", 0,
-                          RAW_FALLBACK_BLOCKSIZE);
+      // An image that was configured but failed to open leaves its target
+      // disabled (see image_config_t::image_config_attempted). Exposing the
+      // whole card instead would hand its file system to the host because
+      // of a configuration error.
+      bool imageConfigured = false;
+      for (int id = 0; id < S2S_MAX_TARGETS; id++)
+      {
+        if (scsiDiskImageWasConfigured(id))
+        {
+          imageConfigured = true;
+        }
+      }
+
+      if (imageConfigured)
+      {
+        logmsg("No configured image could be opened, RAW fallback not enabled");
+      }
+      else
+      {
+        logmsg("No images found, enabling RAW fallback partition");
+        g_scsi_settings.initDevice(RAW_FALLBACK_SCSI_ID, S2S_CFG_FIXED);
+        scsiDiskOpenHDDImage(RAW_FALLBACK_SCSI_ID, "RAW:0:0xFFFFFFFF", 0,
+                            RAW_FALLBACK_BLOCKSIZE);
+      }
   #else
       logmsg("No valid image files found!");
   #endif // RAW_FALLBACK_ENABLE

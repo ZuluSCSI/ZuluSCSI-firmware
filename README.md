@@ -29,7 +29,7 @@ Directories and files whose "hidden" attribute is set are skipped. Files whose r
      +------------------- two-character type prefix (case-insensitive)
 
 The type prefix, ID and LUN are read from **fixed byte offsets** in the filename, so
-their positions matter. The block size is read from the first `_` found anywhere in the name.
+their positions matter. The block size is read from the first `_` found immediately after the SCSI ID or LUN.
 The media type can also be set in `zuluscsi.ini`, or directly by the file name or directory prefix.
 
 **Device type file name prefixes**

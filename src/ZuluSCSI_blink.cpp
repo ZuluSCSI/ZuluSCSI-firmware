@@ -24,6 +24,7 @@
 /************************************/
 #include <ZuluSCSI_platform.h>
 #include "ZuluSCSI_blink.h"
+#include "ZuluSCSI_settings.h"
 
 static uint32_t blink_count = 0;
 static uint32_t blink_start = 0;
@@ -39,6 +40,18 @@ extern "C" void s2s_ledOff()
 {
   LED_OFF();
 }
+
+extern "C" void s2s_targetLedOn(uint8_t scsiId, uint8_t deviceType)
+{
+  // Network drivers poll the device all the time, which makes the LED
+  // flicker even without traffic. ActivityLED = -1 turns it off for them.
+  int8_t activityLed = g_scsi_settings.getDevice(scsiId)->activityLed;
+  if (activityLed < 0)
+    activityLed = (deviceType != S2S_CFG_NETWORK && deviceType != S2S_CFG_AMIGAWIFI);
+  if (activityLed)
+    LED_ON();
+}
+
 bool blink_poll()
 {
     bool is_blinking = true;

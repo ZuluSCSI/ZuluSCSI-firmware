@@ -108,6 +108,9 @@ void platform_init();
 // Initialization for main application, not used for bootloader
 void platform_late_init();
 
+// Initialize the SD card and mount its file system, returns the result of SD.begin()
+bool platform_sd_card_init();
+
 // Initialization after the SD Card has been found
 void platform_post_sd_card_init();
 

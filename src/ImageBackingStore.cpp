@@ -183,26 +183,40 @@ ImageBackingStore::ImageBackingStore(const char *filename, uint32_t scsi_block_s
 
 bool ImageBackingStore::_internal_open(const char *filename)
 {
-    m_isreadonly_attr = !!(FS_ATTRIB_READ_ONLY & SD.attrib(filename));
+
+    const char *target_file = filename;
+    char fullpath[MAX_FILE_PATH * 2];
+    if (m_isfolder)
+    {
+        strncpy(fullpath, m_foldername, sizeof(fullpath) - strlen(fullpath));
+        strncat(fullpath, "/", sizeof(fullpath) - strlen(fullpath));
+        strncat(fullpath, filename, sizeof(fullpath) - strlen(fullpath));
+        target_file = fullpath;
+    }
+
+    int attrib = SD.attrib(target_file);
+    if (attrib < 0)
+    {
+        logmsg("---- Image file ", target_file, "  not found");
+        return false;
+    }
+
+    if (attrib & FS_ATTRIB_HIDDEN)
+    {
+        logmsg("---- Image file ", target_file, " is hidden, ignoring");
+        return false;
+    }
+
+    m_isreadonly_attr = !!(FS_ATTRIB_READ_ONLY & attrib);
+
     oflag_t open_flag = O_RDWR;
-    if (m_isreadonly_attr && !m_isfolder)
+    if (m_isreadonly_attr)
     {
         open_flag = O_RDONLY;
         logmsg("---- Image file is read-only, writes disabled");
     }
 
-    if (m_isfolder)
-    {
-        char fullpath[MAX_FILE_PATH * 2];
-        strncpy(fullpath, m_foldername, sizeof(fullpath) - strlen(fullpath));
-        strncat(fullpath, "/", sizeof(fullpath) - strlen(fullpath));
-        strncat(fullpath, filename, sizeof(fullpath) - strlen(fullpath));
-        m_fsfile = SD.open(fullpath, open_flag);
-    }
-    else
-    {
-        m_fsfile = SD.open(filename, open_flag);
-    }
+    m_fsfile = SD.open(target_file, open_flag);
 
 
     if (!m_fsfile.isOpen())
