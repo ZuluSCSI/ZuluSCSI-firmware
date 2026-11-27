@@ -216,6 +216,13 @@ bool ImageBackingStore::_internal_open(const char *filename)
         logmsg("---- Image file is read-only, writes disabled");
     }
 
+#ifdef CONTAINER_IMAGE_SUPPORT
+    // Only .vhd files are checked for a VHD footer. Finding the footer means
+    // seeking to the end of the file, which on FAT walks the whole cluster
+    // chain, so it is skipped for plain images.
+    size_t target_len = strlen(target_file);
+    m_fsfile.setVhdEnabled(target_len >= 4 && strncasecmp(target_file + target_len - 4, ".vhd", 4) == 0);
+#endif
     m_fsfile = SD.open(target_file, open_flag);
 
 

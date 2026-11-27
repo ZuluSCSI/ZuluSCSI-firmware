@@ -56,7 +56,10 @@ extern "C" {
 // Extended configuration stored alongside the normal SCSI2SD target information
 struct image_config_t: public S2S_TargetCfg
 {
-    image_config_t() {};
+    // Defaulted, not user-provided, so value-initialization with
+    // image_config_t() zeroes all members before constructing the class
+    // members. clear() relies on this to reset the struct.
+    image_config_t() = default;
 
     ImageBackingStore file;
 
