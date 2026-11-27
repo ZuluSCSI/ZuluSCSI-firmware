@@ -314,8 +314,11 @@ void image_config_t::clear()
         image_directory.close();
     }
     this->~image_config_t();
+    // Value-initialization zeroes every member and then constructs the class
+    // members. Do not memset the struct afterwards, that also zeroes the class
+    // members' vtable pointers (e.g. ZCFsFile in ImageBackingStore) and any
+    // virtual call on them then jumps to an invalid address.
     new (this) image_config_t();
-    memset((S2S_TargetCfg*)this, 0, sizeof(image_config_t));
 }
 
 uint32_t image_config_t::get_capacity_lba()
@@ -854,7 +857,7 @@ bool scsiDiskOpenHDDImage(int target_idx, const char *filename, int scsi_lun, in
 
         if (type == S2S_CFG_FIXED)
         {
-            logmsg("---- Configuring as disk drive drive");
+            logmsg("---- Configuring as disk drive");
             img.setDeviceType(S2S_CFG_FIXED);
             autoConfigGeometry(img);
 #ifdef CONTAINER_IMAGE_SUPPORT
